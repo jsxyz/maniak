@@ -730,6 +730,10 @@ const TEAMS = {}
 // EVENTS: on from..to [month, day] by the host's local date; while on, CHARS rows with its name as `event` play, `cls`
 //   themes the page and `world` recolours the level: sky (fog and background), sun and hemi [colour, × intensity]
 const EVENTS = []
+// FAUST_HEAD: the sculpted head on the globe (assets/faust_head.*.glb). variant: 'stone' (a statue in the city's greys) or
+//   'skin' (lifelike); both are materials in the one file. software: fetch it under software GL too (tests). Otherwise a
+//   software renderer keeps the light placeholder: CPU-drawn clients, and the dedicated server, which never fetches it
+const FAUST_HEAD = { variant: 'stone', software: false }
 // Every player is The Maniak (the design brief), on his rigged model (MODELS.maniak); skin and shape dress the box-man
 // fallback the page draws until the model loads, or if it can't.
 // The freaks are the bots' rows (BOTS), hidden from the picker; on pedestrian bodies (MODELS.freak, .brute) until card #7's
@@ -1640,7 +1644,12 @@ function cityChunk(seed, S, ci, cj, B = [], scenery = [], spot = [[], [], [], []
 const FAUST = { cell: 96, lid: 1200, detail: 2, physics: 1, retain: 3, calls: 220, triangles: 180000,
   // The cruise altitude is the globe's underside, above the tallest transit mast.
   airBand: [540, 840], cruiseY: 740, skyFar: 40000, globe: { x: 0, y: 2140, z: -3000, radius: 1400 },
-  head: { position: [0, 1550, -1579.2], size: [1380, 1672.5, 405.6] } }
+  head: { position: [0, 1550, -1579.2], size: [1380, 1672.5, 405.6],
+    // The sculpted head (FAUST_HEAD) takes the placeholder's place once loaded: metres, uniform scale, centred on X, tilted down
+    // to glare at the city. Its neck and the back of its hair run into the globe. lod: lod0..lod2 from these distances (m)
+    model: { file: 'faust_head.f3c3c979.glb', position: [0, 1700, -1500], pitch: 0.18, lod: [0, 700, 1700] },
+    // a cold floodlight from the city below, so the face reads from the street; the moon stays the key
+    flood: { color: 0xb4ccff, intensity: 1, from: [0, -1400, 2400] } } }
 const faustBox = (cx, cy, cz, ex, ey, ez, more) => ({ cx, cy, cz, ex, ey, ez, ...more })
 const faustKey = (x, z) => x + ' ' + z
 const faustMix = (seed, x, z) => cityHash((seed >>> 0) ^ Math.imul(x, 73856093) ^ Math.imul(z, 19349663))
@@ -2088,6 +2097,7 @@ function faustSkyline() {
 function faustRender(render, s, cam) {
   const F = faustState
   if (!LV.faust || s !== scene || !F?.skyScene || renderHeadless) return render(s, cam)
+  if (!faustHeadLoading && (FAUST_HEAD.software || !softGL())) faustHeadLoad()
   const skyCam = F.skyCamera, autoClear = renderer.autoClear, reset = renderer.info.autoReset, background = s.background
   skyCam.copy(cam, false); skyCam.near = 10; skyCam.far = FAUST.skyFar; skyCam.updateProjectionMatrix(); skyCam.updateMatrixWorld(true)
   F.skyScene.background = background
@@ -2114,6 +2124,7 @@ function faustRender(render, s, cam) {
 function faustDisposeSky() {
   const F = faustState
   if (!F?.skyScene) return
+  if (faustHeadModel) F.skyScene.remove(faustHeadModel)      // kept for the next city
   const geometries = new Set(), materials = new Set(), textures = new Set()
   F.skyScene.traverse(o => { if (o.geometry) geometries.add(o.geometry); for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m) materials.add(m) })
   for (const material of materials) { for (const value of Object.values(material)) if (value?.isTexture) textures.add(value); material.dispose() }
@@ -2197,6 +2208,34 @@ function faustReplaceHead(mesh) {
   F.headMesh = mesh; F.skyScene.add(mesh); mesh.updateMatrix(); mesh.updateMatrixWorld(true)
   return previous
 }
+// The sculpted head: loaded once, on the first sky frame, and kept across city rebuilds; fetched as the rigs are (assets/,
+// else the published site). The GLB's nodes carry its dequantization transform, which each level keeps. A failed load
+// (missing file, CDN down) logs once and leaves the placeholder.
+let faustHeadModel = null, faustHeadLoading = null
+function faustHeadLoad() {
+  rigLoader()
+  return faustHeadLoading = rigFetch(FAUST.head.model.file).then(async gltf => {
+    const M = FAUST.head.model, root = gltf.scene.getObjectByName('faust_head'), lod = new THREE.LOD()
+    const index = gltf.parser.json.materials.findIndex(m => m.name === 'faust_' + FAUST_HEAD.variant)
+    const material = index >= 0 ? await gltf.parser.getDependency('material', index) : null
+    gltf.scene.updateMatrixWorld(true)
+    M.lod.forEach((distance, i) => {
+      const mesh = root.getObjectByName('lod' + i)
+      mesh.matrix.copy(mesh.matrixWorld); mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale)
+      if (material) mesh.material = material
+      mesh.material.fog = false; mesh.castShadow = mesh.receiveShadow = false
+      lod.addLevel(mesh, distance)
+    })
+    lod.position.fromArray(M.position); lod.rotation.x = M.pitch; lod.updateMatrixWorld(true)
+    faustHeadModel = lod; faustHeadInstall()
+  }).catch(e => console.warn('Faust head: keeping the placeholder,', e?.message || e))
+}
+function faustHeadInstall() {
+  const F = faustState, lod = faustHeadModel
+  if (!lod || !F?.skyScene || lod.parent === F.skyScene) return
+  if (F.headMesh) { F.skyScene.remove(F.headMesh); F.headMesh.geometry.dispose(); F.headMesh.material.dispose(); F.headMesh = null }
+  F.skyScene.add(lod)
+}
 function faustMonument() {
   faustDisposeSky()
   const F = faustState, far = F.skyScene = new THREE.Scene(), batch = faustBatch(), dark = 0x242d39, black = 0x151d28
@@ -2272,6 +2311,10 @@ function faustMonument() {
   headGeometry.translate(-centre.x, -centre.y, -centre.z); headGeometry.scale(1 / size.x, 1 / size.y, 1 / size.z)
   headGeometry.computeVertexNormals(); headGeometry.computeBoundingSphere()
   faustReplaceHead(new THREE.Mesh(headGeometry, skyStone))
+  const flood = new THREE.DirectionalLight(FAUST.head.flood.color, FAUST.head.flood.intensity), at = FAUST.head.model.position
+  flood.position.set(at[0] + FAUST.head.flood.from[0], at[1] + FAUST.head.flood.from[1], at[2] + FAUST.head.flood.from[2])
+  flood.target.position.fromArray(at); far.add(flood, flood.target)
+  faustHeadInstall()
   faustSkyWeather(far)
   // The airborne sculpture has no Bullet body in v1. Future aircraft use the published analytic bounds.
 }
@@ -2349,7 +2392,7 @@ const FAUSTLAND_API = { plan: faustPlan, roadRoute: faustNav, budget: FAUST,
   get state() { return faustState },
   get seed() { return LV.grow?.seed },
   airBand: FAUST.airBand, cruiseY: FAUST.cruiseY, globeBounds: FAUST.globe,
-  headPlacement: FAUST.head, replaceHead: faustReplaceHead, get headMesh() { return faustState?.headMesh || null },
+  headPlacement: FAUST.head, replaceHead: faustReplaceHead, get headMesh() { return faustState?.headMesh || null }, get headModel() { return faustHeadModel },
   cellAt: (x, z) => [Math.floor((x + ARENA) / 96), Math.floor((z + ARENA) / 96)] }
 // ---------------------------------------------------------------- end Faustland
 
@@ -7028,13 +7071,17 @@ function rigFetch(file) {
   }))
   return rigGets.get(file)
 }
-function rigLoad(name, M) {
-  rigLib ||= (self.THREE = THREE, geoLoad(RIG_LIBS)).then(env => {
+// the one GLTFLoader, for the rigs and the sculpted Faust head, made on first use
+function rigLoader() {
+  return rigLib ||= (self.THREE = THREE, geoLoad(RIG_LIBS)).then(env => {
     const loader = new env.GLTF.GLTFLoader()
     loader.setMeshoptDecoder(env.Meshopt.MeshoptDecoder)
     loader.setCrossOrigin('anonymous')
     return loader
   })
+}
+function rigLoad(name, M) {
+  rigLoader()
   Promise.all([rigFetch(M.file), M.anims && rigFetch(M.anims)]).then(([g, a]) => onRigLoaded(M, g, a))
     .catch(e => console.warn('model ' + name + ' failed, using capsules:', e && e.message))
 }

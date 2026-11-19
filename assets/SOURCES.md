@@ -14,3 +14,12 @@ Source packs, all by Quaternius and dedicated to the public domain under CC0 1.0
 - Universal Base Characters [Standard], from quaternius.itch.io/universal-base-characters
 - Universal Animation Library [Standard], from opengameart.org/content/universal-animation-library
 - Universal Animation Library 2 [Standard], from opengameart.org/content/universal-animation-library-2
+
+# Faust's monument head (card #19)
+
+### faust_head.f3c3c979.glb — Faust's monument head (card #19)
+
+- **What it is:** the colossal head of Faust in front of the floating globe. Three LOD meshes (`lod0`, `lod1`, `lod2`; the lower two are simplified subsets of `lod0` that keep its vertex attributes), one material in use (`faust_stone`), plus a second material `faust_skin` exposed through `KHR_materials_variants` (variants `stone`, `skin`). Embedded WebP maps: two 2048² base colours (stone, skin), a 2048² normal map, a 1024² occlusion/roughness map (ORM) and a 512² emissive map (the eyes).
+- **Source of the base geometry:** the MakeHuman project's base mesh `hm08` and its morph targets (macro details, face modifiers, expression units), from the project's public repository `makehumancommunity/makehuman` (`makehuman/data/3dobjs/base.obj`, `makehuman/data/targets/...`). MakeHuman's assets are released under **CC0 1.0** (the repository's `LICENSE.ASSETS.md`, and the header of each asset file). These are artist-made generic models, not scans of a person.
+- **Made for maniak:** Faust's likeness was built from those targets (an original fictional face), then subdivided; the neck extension, the skin folds, the sculpted hair (grown locks unioned as a distance field), the eyes and every texture are procedural work made for maniak.
+- **License:** CC0 1.0 for the MakeHuman-derived geometry; the rest is made for maniak.
