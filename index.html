@@ -55,7 +55,6 @@
   .err{color:#d0453a}.ok{color:#a3ad86}
   label{display:block;color:#86847f;margin:14px 0 4px;font-size:12.5px}
 
-  #levels{margin-bottom:14px}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px}
   #panel{width:min(1060px,100%);border:0;background:none}
   #panel > h1{text-align:center;margin:0 0 10px;font:400 clamp(46px,11vmin,104px)/.86 'Maniak Display',Impact,'Arial Black',sans-serif;
@@ -222,14 +221,8 @@
   #hitmark:before{transform:rotate(45deg)}#hitmark:after{transform:rotate(-45deg)}
   #tab{position:fixed;inset:0;display:none;place-items:center;z-index:9;pointer-events:none}
   #results{position:fixed;inset:0;display:none;place-items:center;z-index:10;pointer-events:none}
-  #vote{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:9;display:none;padding:6px 12px;border:1px solid #353539;border-radius:8px;
-        background:#0f0f10e0;text-align:center}  #vote .help{color:#95938d;font-size:11px}  #vote.voted .b{opacity:.4;pointer-events:none}
   #restitle{color:#c9a55c}
-  #reslevels{display:none;margin-top:10px;flex-wrap:wrap;justify-content:center}
-  #reslevels .card{width:76px;font-size:11px}
   #results.host .tabinner{pointer-events:auto}
-  #results.host #reslevels{display:flex}
-  #host-levels{margin-bottom:12px;grid-template-columns:repeat(auto-fit,minmax(72px,1fr))}
   #resnext{margin-top:10px;color:#86847f;font-size:12.5px;text-align:center}
   /* the players list and the results */
   .tabinner{min-width:min(340px,calc(100vw - 24px));max-width:calc(100vw - 24px);
@@ -416,8 +409,8 @@
     <div id="duo">
     <section id="host-card" class="pc">
       <h2>HOST GAME</h2>
-      <label>LEVEL</label>
-      <div id="levels" class="cards"></div>
+      <label for="host-seed">CITY SEED</label>
+      <input id="host-seed" placeholder="blank = a fresh city" maxlength="10" inputmode="numeric" autocomplete="off">
       <label>MODE</label>
       <div class="sides"><button id="mode-waves">Waves</button><button id="mode-ffa">Free-for-all</button></div>
       <label id="events-label">EVENT</label>
@@ -447,8 +440,6 @@
     <table id="srv-players"></table>
     <div id="srv-stats"></div>
     <div class="row" id="srv-match">
-      <span class="l">Level</span>
-      <button id="srv-level" title="Switch level: the round restarts in the new one"></button>
       <span class="l">Frags</span>
       <button id="srv-frags-less" aria-label="Lower the frag limit">−</button>
       <span id="srv-frags"></span>
@@ -471,8 +462,6 @@
 </div></div>
 
 <div id="hud"></div>
-<div id="vote"><div id="vote-text"></div><div class="help">Y/N to vote · no vote = no objection</div>
-  <button id="vote-yes" class="b">Yes</button><button id="vote-no" class="b">No</button><button id="vote-cancel">Cancel</button></div>
 <div id="reticle"></div>
 <div id="hitmark"></div>
 <div id="hp"><canvas id="radar" width="150" height="150"></canvas><div id="teamstrip"></div><div id="hpbar"><div id="hpfill" style="width:100%"></div></div><div id="fuelbar"><div id="fuelfill"></div></div><div id="sprinting">SPRINT</div></div>
@@ -489,7 +478,6 @@
 <div id="results"><div class="tabinner">
   <h3 id="restitle">MATCH OVER</h3><table id="resrows"></table>
   <div id="resnext"></div>
-  <div id="reslevels" class="cards"></div>
 </div></div>
 <div id="chat"><div id="chatlog"><div id="chatinner"></div></div><div id="chatbar"><input id="chatin" maxlength="160" autocomplete="off" autocapitalize="sentences" autocorrect="off" spellcheck="false" enterkeyhint="send"></div></div>
 
@@ -528,6 +516,8 @@
 <div id="pause" class="ovl"><div class="mbox">
   <h2>Menu</h2>
   <p id="pause-note"></p>
+  <label for="city-seed-value">CITY SEED</label>
+  <div class="row"><input id="city-seed-value" readonly aria-label="Current city seed"><button id="city-seed-copy">Copy seed</button></div>
   <div class="mcol">
     <button id="pause-resume">Resume</button>
     <button id="pause-char">Change character</button>
@@ -542,8 +532,6 @@
 <div id="hostset" class="ovl"><div class="mbox">
   <h2 id="host-title">Host</h2>
   <p id="host-note">Yours to set, and everyone in the room plays it.</p>
-  <label>LEVEL</label>
-  <div id="host-levels" class="cards"></div>
   <div id="host-only">
   <label>CITY SIZE</label>
   <div id="host-city" class="cards"></div>
@@ -874,60 +862,7 @@ const THEME = {
 // screens: where a broadcast shows, decoration only. 'x y z w h yaw': a w by h m screen centred at x y z, facing yaw
 //   (0 faces +z); a trailing 'board' raises it on two posts from y = 0. { buildings, roofs } on a generated city: one tall
 //   building in `buildings`, by its seed, shows one on its widest side, and one low one in `roofs` a board on its roof
-const LEVELS = [
-  { name: 'Yard', brushes: [
-    '0 -3.25 -31.68 72 3.25 40.32', '0 -3.25 56.88 72 3.25 15.12', '-58.32 -3.25 25.2 13.68 3.25 16.56',
-    '30.24 -3.25 25.2 41.76 3.25 16.56', '-28.08 -5.5 25.2 16.56 1 16.56', 'walls',
-    '0 1.5 0 12.24 1.5 12.24', '0 .6 15.64 6.732 .6 3.4', '-15.64 .6 0 3.4 .6 6.732',
-    '21.6 .22 -21.6 2.6 .22 2.6 pad', '-7.2 8.5 0 24.48 .4 2.6', '21.6 8.5 0 10.08 .4 2.6',
-    // walkway, three sides: not a loop
-    '0 8.5 -57.6 44.64 .4 3.2', '-57.6 8.5 -17.28 3.2 .4 33.12', '57.6 8.5 -7.2 3.2 .4 43.2',
-    // steps: each rise within one jump
-    '-56.6 .7 -44.64 1.5 .7 3', '-54.7 1.45 -44.64 1.5 1.45 3', '-52.8 2.2 -44.64 1.5 2.2 3',
-    '-50.9 2.95 -44.64 1.5 2.95 3', '-49 3.7 -44.64 1.5 3.7 3', '-47.1 4.45 -44.64 1.5 4.45 3',
-    '40.32 13 47.52 28.8 .4 3.6', '61.92 .22 61.92 2.6 .22 2.6 pad', '64.8 6.5 61.92 2.4 6.5 2.4',
-    '-11.52 -1.9 25.2 1.2 2.6 15.84', '-28.08 -4.2 9.84 16.56 .3 1', '-16.12 -4.28 25.2 2.6 .22 3.2 pad',
-    '-43.2 1.9 -42.2 21.6 1.9 .8', '-43.2 1.9 -37 21.6 1.9 .8', '-43.2 3.9 -39.6 21.6 .3 3.4',
-    '41.04 1.9 19 25.2 1.9 .8', '41.04 1.9 24.2 25.2 1.9 .8', '41.04 3.9 21.6 25.2 .3 3.4',
-    // crates rise 1.4 m each
-    '37.44 1.2 -44.64 1.6 1.2 1.6', '40.64 1.9 -41.84 1.6 1.9 1.6', '37.44 2.6 -39.04 1.6 2.6 1.6',
-    '40.64 3.3 -36.24 1.6 3.3 1.6', '37.44 4 -33.44 1.6 4 1.6',
-    '-30.24 5 -10.08 2 5 2', '-14.4 3.5 -30.24 2 3.5 2', '10.08 4.5 36 2 4.5 2',
-    '-41.76 3 -50.4 2 3 2', '28.8 2.5 -4.32 2 2.5 2', '-4.32 4 56.16 2 4 2',
-    '-21.6 .9 56.16 6.5 .9 1', '47.52 .9 -24.48 1 .9 6.5', '-53.28 .9 21.6 1 .9 6.5',
-    '7.2 .9 -53.28 6.5 .9 1', '31.68 .9 5.76 6.5 .9 1'],
-    pads: ['0 3 0', '-28.08 -4.5 25.2 Railer', '40.32 13.4 47.52 Big Med', '-57.6 8.9 -17.28', '57.6 8.9 -7.2',
-      '-43.2 0 -39.6', '43.2 0 21.6', '-30.24 0 56.16', '31.68 0 -36', '-56.16 0 44.64', '14.4 0 -21.6',
-      '-14.4 0 -57.6', '24.48 0 60.48', '-61.92 0 -4.32', '7.2 0 40.32'],
-    spawns: ['-61.92 3 -61.92', '61.92 3 -61.92', '-61.92 3 61.92', '63.36 3 36', '0 3 -63.36',
-      '-63.36 3 -14.4', '21.6 3 -61.92', '-21.6 3 61.92', '61.92 3 -28.8', '-46.08 3 -24.48',
-      '28.8 3 46.08', '-7.2 3 -17.28', '47.52 3 4.32', '-33.12 3 1.44'],
-    objects: ['8 .55 24 Ball', '-24 .55 -14 Ball',
-      '16 .8 -12 Crate', '17.7 .8 -12 Crate', '16.85 2.4 -12 Crate', '-6 .8 -40 Crate', '0 .25 -30 Cinderblock'],
-    reach: [1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, '-59.55 4.2 -39.6'],
-    screens: ['0 12 -70.94 16 9 0', '-28 7.6 46 12 6.75 3.1416 board'] },
-  // nowhere to stand lower than the tallest character
-  { name: 'Foundry', brushes: [
-    '0 -1 0 72 1 72',
-    ['q', '44.64 3.2 44.64 11.52 3.2 11.52', '44.64 9.3 44.64 6.48 2.9 6.48'],
-    '0 6 44.64 51.12 .4 6.48', '44.64 6 0 6.48 .4 51.12', '-44.64 6 0 6.48 .4 51.12',
-    '0 6 -44.64 51.12 .4 6.48', '0 11.8 0 44.64 .4 5.04', '0 11.8 0 5.04 .4 44.64',
-    '0 1.4 0 9.36 1.4 9.36', ['q', '13.68 .7 13.68 3.6 .7 3.6'],
-    ['q', '28.8 .22 28.8 2.6 .22 2.6 pad'], '48.96 6.62 0 2.2 .22 2.2 pad',
-    '0 6.62 48.96 2.2 .22 2.2 pad', '-48.96 6.62 0 2.2 .22 2.2 pad', '0 6.62 -48.96 2.2 .22 2.2 pad',
-    ['q', '21.6 .8 51.84 5 .8 1.2', '51.84 .8 21.6 1.2 .8 5',
-          '33.12 1.3 10.08 1.6 1.3 1.6', '10.08 1.3 33.12 1.6 1.3 1.6'], 'walls'],
-    pads: ['0 2.8 0 Railer', ['q', '44.64 6.4 21.6', '21.6 0 44.64', '36 0 36'],
-      '0 12.2 28.8 Big Med', '0 12.2 -28.8'],
-    spawns: [['q', '60.48 3 60.48', '60.48 3 7.2', '7.2 3 60.48']],
-    objects: ['20 .55 0 Ball', '-20 .55 0 Ball',
-      '20 .8 20 Crate', '21.7 .8 20 Crate', '20.85 2.4 20 Crate', '-20 .8 -20 Crate', '36 .25 -30 Cinderblock'],
-    reach: ['pads', '0 2.8 0', '0 6.4 44.64', '44.64 6.4 0', '-44.64 6.4 0', '0 6.4 -44.64', ['q', '53.6 6.4 53.6'], '0 12.2 0'] },
-  { name: 'Sprawl', gen: { kind: 'sprawl', seed: 1337, size: 2 }, objects: ['0 .25 0 Cinderblock'], reach: ['pads'] },
-  { name: 'City', screens: [{ buildings: 6, roofs: 8 }], gen: { kind: 'city', seed: 2026, size: 20, cores: [[-180, -260], [330, 290]],
-      heights: [[140, 72, 168, 0], [300, 36, 120, 0], [520, 16.8, 54, 1], [800, 8.4, 25.2, 1], [Infinity, 4.2, 8.4, 2]] },
-    theme: { fog: [0x2a2a2e], view: [31, 192] }, reach: ['pads'] },
-]
+const LEVELS = [{ name: 'Faustland', gen: { kind: 'faustland', seed: 20261119, size: 20 }, reach: ['pads'] }]
 // OBJECTS: r: ball radius, or half: box half-extents (m); mass (player 1); hit: × shot knock; roll: rolling friction
 // weakens: { effect, within m, struck s }: gives `weak` bodies their `weakness`, else this effect
 const OBJECTS = [
@@ -1660,8 +1595,762 @@ function cityChunk(seed, S, ci, cj, B = [], scenery = [], spot = [[], [], [], []
   return { brushes: B, scenery, spot }
 }
 
+// ---------------------------------------------------------------- Faustland: seeded city, streaming and skyline
+// Metres, Y up. The room sends only seed + size. Every cell is a pure integer-seeded plan.
+// v1 budget (city only, shadows included): 220 draw calls / 180,000 submitted triangles.
+// The skyline has two instanced boxes per lot; detail and Bullet bodies are disposable.
+const FAUST = { cell: 96, lid: 1200, detail: 2, physics: 1, retain: 3, calls: 220, triangles: 180000,
+  // The cruise altitude is the globe's underside, above the tallest transit mast.
+  airBand: [540, 840], cruiseY: 740, skyFar: 40000, globe: { x: 0, y: 2140, z: -3000, radius: 1400 },
+  head: { position: [0, 1550, -1579.2], size: [1380, 1672.5, 405.6] } }
+const faustBox = (cx, cy, cz, ex, ey, ez, more) => ({ cx, cy, cz, ex, ey, ez, ...more })
+const faustKey = (x, z) => x + ' ' + z
+const faustMix = (seed, x, z) => cityHash((seed >>> 0) ^ Math.imul(x, 73856093) ^ Math.imul(z, 19349663))
+function faustPlan(seed, ci, cj, S = 20) {
+  const gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96
+  const rng = genRng(faustMix(seed, gx, gz)), districtHash = faustMix(seed ^ 9187, gx, gz)
+  const distance = (X + 48) ** 2 + (Z + 48) ** 2
+  const district = distance < 480 ** 2 || distance > 650 ** 2 && districtHash % 97 === 0 ? 'core' : gx < -2 && gz < 4 && distance < 1000 ** 2 ? 'civic'
+    : distance > 1050 ** 2 || gz < -7 ? 'industrial' : 'tenement'
+  const centralPlaza = gx >= -2 && gx <= 1 && gz >= -2 && gz <= 1, plaza = centralPlaza || districtHash % 29 === 0
+  const diagonal = gz - gx === 4
+  const layout = district === 'industrial' ? 2 : district === 'civic' && districtHash % 3 === 0 || district === 'core' && districtHash % 7 === 0 ? 1 : 4
+  const lots = [], boxes = [faustBox(X + 48, -0.52, Z + 48, 48.05, 0.5, 48.05)]
+  const roads = [], lanes = [], sidewalks = [], masts = [], screens = []
+  // Edge avenues join exactly. Each cell also owns two 8 m side streets.
+  for (const axis of [0, 1]) for (const offset of [0, 48]) {
+    const wide = offset === 0, width = wide ? 20 : 8, q = (wide ? 4.2 : 2), mid = (axis ? Z : X) + offset
+    const point = (along, across = 0) => axis ? [X + along, 0, mid + across] : [mid + across, 0, Z + along]
+    if (plaza && !wide || centralPlaza && Math.abs(mid) < 192 || !wide && (layout === 1 || layout === 2 && axis === 1)) continue
+    roads.push({ id: [gx, gz, axis, offset].join(':'), a: point(0), b: point(96), width, avenue: wide })
+    for (const side of [-1, 1]) {
+      const path = [point(side < 0 ? 0 : 96, side * q), point(side < 0 ? 96 : 0, side * q)]
+      lanes.push({ kind: 'motor', path, width: wide ? 3.3 : 3 })
+      if (wide) lanes.push({ kind: 'bike', path: [point(0, side * 8.3), point(96, side * 8.3)], width: 1.6 })
+      sidewalks.push([point(0, side * (width / 2 + 2)), point(96, side * (width / 2 + 2))])
+    }
+  }
+  if (diagonal) {
+    roads.push({ id: gx + ':' + gz + ':diagonal', a: [X, 0, Z], b: [X + 96, 0, Z + 96], width: 26, avenue: true })
+    for (const side of [-1, 1]) {
+      lanes.push({ kind: 'motor', path: [[X + side * 4, 0, Z - side * 4], [X + 96 + side * 4, 0, Z + 96 - side * 4]], width: 4 })
+      sidewalks.push([[X + side * 12, 0, Z - side * 12], [X + 96 + side * 12, 0, Z + 96 - side * 12]])
+    }
+  }
+  if (!plaza) for (let i = 0; i < layout; i++) {
+    const x = X + (layout === 1 ? 48 : i & 1 ? 72 : 24), z = Z + (layout < 4 ? 48 : i & 2 ? 72 : 24)
+    const ticket = rng(); let H = 4 * (district === 'core' ? distance > 650 ** 2 ? i === 0 ? 80 + (rng() * 22 | 0) : 12 + (rng() * 8 | 0) : ticket > 0.22 ? 34 + (rng() * 54 | 0) : 9 + (rng() * 16 | 0)
+      : district === 'civic' ? 12 + (rng() * 25 | 0) : district === 'industrial' ? 2 + (rng() * 6 | 0) : 4 + (rng() * 10 | 0))
+    const w = layout === 1 ? 29 : 10 + (rng() * 3 | 0), d = layout < 4 ? 28 : 10 + (rng() * 3 | 0)
+    const gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
+    if (diagonal && Math.abs(z - x - 384) < w + d + 18 || Math.abs(x) < 48 && z > 192 && z < 720) continue
+    const stop = (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 && i === 0
+    if (stop) H = 560 + (districtHash % 4) * 16
+    const style = stop ? 'core' : district
+    const h0 = style === 'industrial' || style === 'tenement' ? H : Math.round(H * 0.55), h1 = H === h0 ? 0 : Math.round(H * 0.3)
+    const mass = [faustBox(x, h0 / 2, z, w, h0 / 2, d)]
+    if (h1) mass.push(faustBox(x, h0 + h1 / 2, z, w * 0.73, h1 / 2, d * 0.73), faustBox(x, h0 + h1 + (H - h0 - h1) / 2, z, w * 0.42, (H - h0 - h1) / 2, d * 0.42))
+    else if (style === 'industrial') mass.push(faustBox(x - w * 0.6, H + 18, z - d * 0.6, 1.6, 18, 1.6), faustBox(x + w * 0.4, H + 4, z, 4, 4, 6))
+    else mass.push(faustBox(x + w * 0.3, H + 2, z, 3, 2, 4), faustBox(x - w * 0.4, H + 5, z - d * 0.3, 2.6, 3, 2.6))
+    const skyMass = h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, w * 0.73, (H - h0) / 2, d * 0.73)] : mass.slice(0, 2)
+    const lot = { x, z, w, d, height: H, gothic, district: style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + i, gz) }
+    lots.push(lot); boxes.push(...mass)
+    // Cornices, pinnacles and lamp posts are real grapple targets, shared by all simulations.
+    for (const b of mass.slice(0, style === 'industrial' ? 1 : 2)) boxes.push(faustBox(b.cx, b.cy + b.ey, b.cz, b.ex + 1.1, 0.45, b.ez + 1.1))
+    if (gothic) for (const a of [-1, 1]) for (const b of [-1, 1]) boxes.push(faustBox(x + a * (w - 0.4), H * 0.24, z + b * (d - 0.4), 1.2, H * 0.24, 1.2, { slim: true }))
+    if (stop) {
+      const platform = faustBox(x, H + 0.2, z, 6, 0.2, 6), id = [gx, gz, i].join(':')
+      boxes.push(platform, faustBox(x, H + 14, z, 0.45, 14, 0.45, { slim: true }))
+      masts.push({ id, x, y: H + 0.4, z, height: H + 0.4, mastTop: H + 28, radius: 20,
+        tower: { id, x, z, roofY: H, district }, platform, cruiseY: FAUST.cruiseY, airBand: FAUST.airBand.slice(),
+        approach: [x + 30, H + 10, z] })
+    }
+    if (H > 36 && i === 0) screens.push({ x, y: 20, z: z + d + 0.12, w: 16, h: 9, yaw: 0, ground: null })
+  }
+  for (const q of [20, 76]) boxes.push(faustBox(X + 11.4, 4.5, Z + q, 0.14, 4.5, 0.14, { slim: true }))
+  const nodes = new Map(), edges = []
+  for (const road of roads) for (let i = 0; i < 2; i++) {
+    const point = k => road.a.map((v, j) => v + (road.b[j] - v) * k / 2)
+    const a = point(i), b = point(i + 1), from = a[0] + ':' + a[2], to = b[0] + ':' + b[2]
+    nodes.set(from, { id: from, x: a[0], y: 0, z: a[2] }); nodes.set(to, { id: to, x: b[0], y: 0, z: b[2] })
+    edges.push({ from, to, width: road.width, road: road.id, bidirectional: true })
+  }
+  const graph = { nodes: [...nodes.values()], edges }, departures = []
+  for (const road of roads) if (road.avenue) for (const i of [0, 1]) {
+    const position = i ? road.b : road.a, direction = [0, 2].map(k => (road.b[k] - road.a[k]) / 96 * (i ? 1 : -1)), edge = S * 48
+    if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
+      departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
+  }
+  const content = { version: 1, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures }
+  // Includes the full plan, including transport hooks; independent of load order and browser state.
+  let hash = 2166136261
+  const json = JSON.stringify(content)
+  for (let i = 0; i < json.length; i++) hash = Math.imul(hash ^ json.charCodeAt(i), 16777619)
+  content.hash = (hash >>> 0).toString(16).padStart(8, '0')
+  return content
+}
+function faustLevel(gen, theme) {
+  const S = Math.max(16, Math.min(32, (gen.size || 20) & ~1)), A = S * 48, seed = gen.seed >>> 0
+  // One unbroken plane is a safety net beneath all chunk seams. Local floor ray meshes unload normally.
+  const boxes = [faustBox(0, -1, 0, A + 2, 1, A + 2, { vis: false })]
+  for (const axis of [0, 2]) for (const side of [-1, 1]) boxes.push(faustBox(axis ? 0 : side * A, 600, axis ? side * A : 0, axis ? A : 1, 600, axis ? 1 : A, { vis: false }))
+  boxes.push(faustBox(0, FAUST.lid, 0, A, 1, A, { vis: false }))
+  // The globe floats: the central plaza has no monument body or plinth.
+  const spawns = [[0, 3, 150], [150, 3, 0], [-150, 3, 0], [0, 3, -150], [192, 3, 96], [-192, 3, -96], [96, 3, 192], [-96, 3, -192]]
+  const pads = [[0, 0, 130], [130, 0, 0], [-130, 0, 0], [0, 0, -130], [192, 0, 96], [-192, 0, -96]]
+  const car = VEHICLES.find(v => v.name === 'Car') || VEHICLES[0]
+  const objects = car ? [[[6, 0, 144], car.name, 0, faustMix(seed, 1, 1)], [[-6, 0, -144], car.name, Math.PI, faustMix(seed, 2, 2)]] : []
+  return { faust: true, A, theme: { ...THEME, ...theme, size: A, height: 1200, lid: FAUST.lid,
+    fog: [0x243044, 360 / A, 2300 / A], ramp: [0, 340], pad: 0xd6c5a0 },
+    boxes, pads, spawns, objects, scenery: [{ kind: 'faustland' }], screens: [], screenRule: null,
+    grow: { seed, S, ring: [], kind: 'faustland' } }
+}
+
+// Pure road routing for v1 bots: cardinal street corners, no per-chunk Recast allocation.
+// Rooftop pursuit, stairs and interiors are deliberately outside this coarse navigation pass.
+function faustNav(at, target) {
+  const snap = v => Math.round(v / 96) * 96, ax = snap(at.x), az = snap(at.z), tx = snap(target.x), tz = snap(target.z)
+  const dx = Math.abs(at.x - ax), dz = Math.abs(at.z - az)
+  let x, z
+  // The plaza is open ground now. Elsewhere, stay on an avenue until the target's junction;
+  // repeatedly returning to the nearest current junction would make a pursuing bot oscillate.
+  if (Math.hypot(at.x - target.x, at.z - target.z) < 24 ||
+      Math.max(Math.abs(at.x), Math.abs(at.z), Math.abs(target.x), Math.abs(target.z)) < 192) { x = target.x; z = target.z }
+  else if (dx < 3) {
+    if (Math.abs(target.x - ax) < 12) { x = target.x; z = target.z }
+    else if (Math.abs(at.z - tz) > 3) { x = ax; z = tz }
+    else { x = tx; z = tz }
+  } else if (dz < 3) {
+    if (Math.abs(target.z - az) < 12) { x = target.x; z = target.z }
+    else if (Math.abs(at.x - tx) > 3) { x = tx; z = az }
+    else { x = tx; z = tz }
+  } else if (dx < dz) { x = ax; z = at.z }
+  else { x = at.x; z = az }
+  return { corner: Math.hypot(x - at.x, z - at.z) > 0.3 ? { x, y: 0, z } : null, there: target.y < 5, pad: null }
+}
+
+let faustState = null
+function faustReset() {
+  faustDisposeSky()
+  faustState = { seed: LV.grow.seed, S: LV.grow.S, chunks: new Map(), skyline: null, materials: null,
+    stats: { plans: 0, dropped: 0, maxPlanMs: 0, maxPhysicsMs: 0, maxVisualMs: 0, maxStreamMs: 0, maxTickMs: 0, maxFrameMs: 0 },
+    last: '', revision: 0 }
+}
+function faustGet(ci, cj) {
+  const F = faustState, key = faustKey(ci, cj)
+  if (F.chunks.has(key)) return F.chunks.get(key)
+  const t = performance.now(), plan = faustPlan(F.seed, ci, cj, F.S), c = { key, plan, ci, cj, physics: null, visual: null }
+  F.chunks.set(key, c); F.stats.plans++; F.stats.maxPlanMs = Math.max(F.stats.maxPlanMs, performance.now() - t)
+  return c
+}
+function faustPhysics(c) {
+  if (c.physics || !world) return
+  const t = performance.now()
+  c.physics = addChunk(c.plan.boxes, [c.ci, c.cj], [], new Set(c.plan.boxes.filter(b => b.slim)))
+  BOXES.push(...c.plan.boxes); grown.add(c.key)
+  faustState.stats.maxPhysicsMs = Math.max(faustState.stats.maxPhysicsMs, performance.now() - t)
+}
+function faustRange(points, r) {
+  const out = new Set(), S = LV.grow.S
+  for (const [x, z] of points) {
+    const ci = Math.floor((x + ARENA) / 96), cj = Math.floor((z + ARENA) / 96)
+    for (let i = Math.max(0, ci - r); i <= Math.min(S - 1, ci + r); i++)
+      for (let j = Math.max(0, cj - r); j <= Math.min(S - 1, cj + r); j++) out.add(faustKey(i, j))
+  }
+  return out
+}
+function faustEnsure(points) {
+  if (!faustState) faustReset()
+  for (const key of faustRange(points, FAUST.physics)) faustPhysics(faustGet(...key.split(' ').map(Number)))
+}
+function faustDrop(c) {
+  if (c.physics) {
+    dropChunk(c.physics)
+    const gone = new Set(c.plan.boxes)
+    for (let i = BOXES.length; i--;) if (gone.has(BOXES[i])) BOXES.splice(i, 1)
+    grown.delete(c.key)
+  }
+  if (c.visual) { worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); faustSkyCell(c, true) }
+  faustState.chunks.delete(c.key); faustState.stats.dropped++
+}
+function faustStream(points, viewPoint) {
+  const F = faustState, t = performance.now(), cell = v => Math.floor((v + ARENA) / 96)
+  if (F.frameStamp !== last) { F.frameStamp = last; F.frameWork = 0 }
+  const budget = () => F.frameWork + performance.now() - t < 3
+  const altitude = viewPoint[2] ?? camera?.position.y ?? 0, detail = altitude > 420 ? 0 : altitude > 120 ? 1 : FAUST.detail
+  const signature = points.map(p => cell(p[0]) + ':' + cell(p[1])).join('|') + '/' + cell(viewPoint[0]) + ':' + cell(viewPoint[1]) + '/' + renderHeadless + '/' + detail
+  if (F.selection?.signature !== signature) {
+    const core = faustRange(points, FAUST.physics), nearby = faustRange(points, 2), keep = faustRange(points, FAUST.retain)
+    const drawn = renderHeadless || !worldGroup ? new Set() : faustRange([viewPoint], detail)
+    const wanted = [...new Set([...nearby, ...drawn])].map(key => faustGet(...key.split(' ').map(Number)))
+    wanted.sort((a, b) => {
+      const distance = c => (c.ci * 96 - ARENA + 48 - viewPoint[0]) ** 2 + (c.cj * 96 - ARENA + 48 - viewPoint[1]) ** 2
+      return distance(a) - distance(b)
+    })
+    for (const c of wanted) if (core.has(c.key)) faustPhysics(c)
+    for (const c of [...F.chunks.values()]) {
+      if (!keep.has(c.key) && !drawn.has(c.key)) faustDrop(c)
+      else if (c.visual && !drawn.has(c.key)) {
+        worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); c.visual = null; faustSkyCell(c, true)
+      }
+    }
+    F.selection = { signature, drawn, physics: wanted.filter(c => nearby.has(c.key) && !c.physics),
+      visuals: wanted.filter(c => drawn.has(c.key) && !c.visual && F.visualJob?.chunk !== c) }
+  }
+  // Optional jobs share a 3 ms allowance across every catch-up tick of a frame.
+  // Immediate core collision is never deferred, including a cold teleport.
+  const next = budget() && F.selection.physics.shift(); if (next) faustPhysics(next)
+  if (F.materials && budget()) {
+    if (F.visualJob && (!F.chunks.has(F.visualJob.chunk.key) || !F.selection.drawn.has(F.visualJob.chunk.key))) F.visualJob = null
+    const visual = !F.visualJob && F.selection.visuals.shift()
+    if (visual) F.visualJob = { chunk: visual, steps: faustVisualSteps(visual) }
+    if (F.visualJob) {
+      const start = performance.now(), job = F.visualJob
+      if (job.steps.next().done) F.visualJob = null
+      F.stats.maxVisualMs = Math.max(F.stats.maxVisualMs, performance.now() - start)
+    }
+  }
+  const work = performance.now() - t
+  F.frameWork += work; F.stats.maxFrameMs = Math.max(F.stats.maxFrameMs, F.frameWork)
+  F.stats.maxStreamMs = Math.max(F.stats.maxStreamMs, work)
+}
+function faustTick() {
+  if (!faustState) faustReset()
+  const t = performance.now(), me = isHost ? players.get(0) : predicted
+  // Host pins physics for every participant and every moving vehicle, including distant guests.
+  const participants = isHost ? [...players.values()] : [predicted].filter(Boolean)
+  const movers = objs.filter(o => o.body && (o.body.isActive() || o.riders?.some(id => id !== undefined)))
+  const points = [...participants, ...movers].map(c => [c.x, c.z])
+  if (!points.length) points.push([0, 144])
+  const vp = me ? [me.x, me.z, me.y] : points[0]
+  faustStream(points, vp); GAME.fogGrown.x = 1e9
+  faustState.stats.maxTickMs = Math.max(faustState.stats.maxTickMs, performance.now() - t)
+}
+
+// Geometry builder: all ornament/road boxes in one buffer; no Object3D per window or pier.
+const FAUST_CUBE = [0, 1, 2].flatMap(axis => [-1, 1].flatMap(sign => {
+  const a = (axis + 1) % 3, d = (axis + 2) % 3
+  const corners = (sign > 0 ? [[-1, -1], [1, -1], [1, 1], [-1, 1]] : [[-1, -1], [-1, 1], [1, 1], [1, -1]]).map(([x, y]) => {
+    const p = [0, 0, 0, 0, 0, 0, axis]; p[axis] = sign; p[a] = x; p[d] = y; p[axis + 3] = sign; return p
+  })
+  return [0, 1, 2, 0, 2, 3].map(i => corners[i])
+}))
+function faustBatch(capacity = 12288) {
+  const p = new Float32Array(capacity * 3), n = new Float32Array(capacity * 3), uv = new Float32Array(capacity * 2), colors = new Float32Array(capacity * 3)
+  const col = new THREE.Color(); let count = 0
+  const vertex = (x, y, z, nx, ny, nz, u, v) => {
+    if (count >= capacity) throw new Error('Faustland geometry budget exceeded')
+    const i = count * 3, j = count * 2
+    p[i] = x; p[i + 1] = y; p[i + 2] = z; n[i] = nx; n[i + 1] = ny; n[i + 2] = nz
+    uv[j] = u; uv[j + 1] = v; colors[i] = col.r; colors[i + 1] = col.g; colors[i + 2] = col.b; count++
+  }
+  const tri = (a, b, c, tint, coords) => {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, length = Math.hypot(nx, ny, nz) || 1
+    col.setHex(tint)
+    for (let i = 0; i < 3; i++) { const q = [a, b, c][i]; vertex(q[0], q[1], q[2], nx / length, ny / length, nz / length, coords?.[i]?.[0] || 0, coords?.[i]?.[1] || 0) }
+  }
+  const box = (b, tint = 0x70757c) => {
+    col.setHex(tint)
+    for (const v of FAUST_CUBE) {
+      const x = b.cx + v[0] * b.ex, y = b.cy + v[1] * b.ey, z = b.cz + v[2] * b.ez
+      vertex(x, y, z, v[3], v[4], v[5], v[6] === 1 ? 0.02 : (v[6] === 0 ? z : x) / 12, v[6] === 1 ? 0.02 : y / 16)
+    }
+  }
+  const geometry = () => {
+    const g = new THREE.BufferGeometry()
+    for (const [key, values, size] of [['position', p, 3], ['normal', n, 3], ['uv', uv, 2], ['color', colors, 3]])
+      g.setAttribute(key, new THREE.BufferAttribute(values.subarray(0, count * size), size))
+    g.computeBoundingSphere(); return g
+  }
+  return { box, tri, geometry, get count() { return count / 3 } }
+}
+function faustMaterials() {
+  const cv = document.createElement('canvas'); cv.width = 128; cv.height = 256
+  const g = cv.getContext('2d'), ecv = document.createElement('canvas'); ecv.width = 128; ecv.height = 256
+  const e = ecv.getContext('2d'); e.fillStyle = '#000000'; e.fillRect(0, 0, 128, 256)
+  g.fillStyle = '#9b9fa5'; g.fillRect(0, 0, 128, 256)
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 4; x++) {
+    const X = x * 32, Y = y * 32, lit = cityHash(x + y * 4) % 6 === 0
+    g.fillStyle = '#767b83'; g.fillRect(X, Y + 29, 32, 3)
+    g.fillStyle = '#171e28'; g.fillRect(X + 7, Y + 5, 18, 22)
+    if (lit) { e.fillStyle = (x + y) % 3 ? '#bc8644' : '#779db7'; e.fillRect(X + 9, Y + 7, 14, 18); e.fillStyle = '#000'; e.fillRect(X + 15, Y + 7, 2, 18) }
+    g.fillStyle = lit ? '#b7bac0' : '#1b2636'; g.fillRect(X + 9, Y + 7, 14, 18)
+    g.fillStyle = '#888c92'; g.fillRect(X + 15, Y + 7, 2, 18); g.fillRect(X + 6, Y + 27, 20, 2)
+  }
+  const map = new THREE.CanvasTexture(cv); map.userData.faustOwned = true; map.wrapS = map.wrapT = THREE.RepeatWrapping; map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4
+  const emissiveMap = new THREE.CanvasTexture(ecv); emissiveMap.userData.faustOwned = true; emissiveMap.wrapS = emissiveMap.wrapT = THREE.RepeatWrapping; emissiveMap.colorSpace = THREE.SRGBColorSpace
+  return { facade: new THREE.MeshStandardMaterial({ map, emissiveMap, emissive: 0xffffff, emissiveIntensity: 1.4, vertexColors: true, roughness: 0.94 }),
+    stone: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.91 }),
+    far: faustFarMaterial(map, emissiveMap) }
+}
+function faustFarMaterial(map, emissiveMap) {
+  const material = new THREE.MeshLambertMaterial({ map, emissiveMap, emissive: 0xffffff, emissiveIntensity: 0.8 })
+  material.onBeforeCompile = shader => {
+    shader.vertexShader = shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+      vec4 faustPosition = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+        faustPosition = instanceMatrix * faustPosition;
+      #endif
+      faustPosition = modelMatrix * faustPosition;
+      vec2 faustUV = abs(normal.y) > 0.5 ? vec2(0.02) : vec2(abs(normal.z) > 0.5 ? faustPosition.x : faustPosition.z, faustPosition.y) / vec2(12.0, 16.0);
+      vMapUv = faustUV; vEmissiveMapUv = faustUV;`)
+  }
+  material.customProgramCacheKey = () => 'faust-far-1'
+  return material
+}
+const FAUST_COLORS = [0x454d5b, 0x333d4d, 0x555d67, 0x39404a]
+function faustDraw(c) { return drain(faustVisualSteps(c)) }
+function* faustVisualSteps(c) {
+  const facade = faustBatch(512), ornament = faustBatch(), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
+  // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
+  ornament.box(faustBox(X + 48, -0.08, Z + 48, 48, 0.08, 48), 0x242a33)
+  if (P.plaza) {
+    ornament.box(faustBox(X + 48, 0.018, Z + 48, 38, 0.018, 38), 0x5d626a)
+    for (let i = 14; i < 96; i += 8) {
+      ornament.box(faustBox(X + i, 0.04, Z + 48, 0.06, 0.01, 38), 0x8e9399)
+      ornament.box(faustBox(X + 48, 0.04, Z + i, 38, 0.01, 0.06), 0x8e9399)
+    }
+  } else for (let i = 0; i < 4; i++) {
+    const x = X + (i & 1 ? 72 : 24), z = Z + (i & 2 ? 72 : 24)
+    if (P.diagonal && Math.abs(z - x - 384) < 42) continue
+    ornament.box(faustBox(x, 0.02, z, 14.8, 0.02, 14.8), 0x737983)
+    for (const side of [-1, 1]) ornament.box(faustBox(x + side * 14.5, 0.045, z, 0.18, 0.01, 14.5), 0xa1a5a9)
+  }
+  for (const axis of [0, 1]) for (const offset of [0, 96]) for (const side of [-1, 1]) {
+    const cross = offset + side * 8.4
+    if (cross < 0 || cross > 96) continue
+    const b = (along, across, len, width, tint) => ornament.box(faustBox(X + (axis ? along : across), 0.012, Z + (axis ? across : along), axis ? len : width, 0.006, axis ? width : len), tint)
+    b(48, cross, 36, 0.74, 0x3d5557); b(48, cross - side * 1, 36, 0.08, 0xa3adb0)
+    for (let a = 16; a <= 80; a += 12) b(a, offset + side * 0.2, 2.4, 0.06, 0xb4a77d)
+    for (let a = 2; a < 10; a += 2) b(a + 10, offset + side * 4.6, 0.55, 3, 0xadb0ad)
+  }
+  yield
+  for (const lot of P.lots) {
+    const { x, z, w, d, height: H, gothic, mass, district, stop } = lot
+    for (const b of mass) facade.box(b, FAUST_COLORS[lot.tint])
+    // Heavy street podiums and industrial sheds anchor the building at pedestrian scale.
+    ornament.box(faustBox(x, 2, z, w + 0.25, 2, d + 0.25), 0x343d4b)
+    if (district === 'industrial') {
+      for (const y of [H + 9, H + 24, H + 35]) ornament.box(faustBox(x - w * 0.6, y, z - d * 0.6, 1.75, 0.5, 1.75), 0x969b9e)
+      for (const q of [-0.6, 0.3]) ornament.box(faustBox(x + q * w, 2.2, z + d + 0.3, 3, 2.2, 0.2), 0x111a26)
+      yield; continue
+    }
+    if (district === 'tenement') {
+      ornament.box(faustBox(x, H, z, w + 0.55, 0.38, d + 0.55), 0xa1a8ae)
+      ornament.box(faustBox(x, 2, z + d + 0.3, 2, 2, 0.2), 0x080f1a)
+      // Fire escapes: iron landings, rails and alternating diagonal ladders.
+      for (let y = 5; y < H; y += 5) {
+        ornament.box(faustBox(x + w + 1.1, y, z, 1.1, 0.12, 3), 0x283342)
+        for (const side of [-1, 1]) ornament.box(faustBox(x + w + 2.1, y + 0.65, z + side * 2.6, 0.07, 0.65, 0.07), 0x8b939b)
+        ornament.box(faustBox(x + w + 2.1, y + 1.25, z, 0.08, 0.08, 2.8), 0x8b939b)
+        ornament.tri([x + w + 0.4, y, z - 2.6], [x + w + 1.6, y, z - 2.6], [x + w + 1.6, y + 5, z + 2.6], 0x6a7480)
+      }
+      yield; continue
+    }
+    // Strong vertical piers and horizontal cornices read from both the street and a roof.
+    for (const side of [-1, 1]) for (const k of [-0.86, 0, 0.86]) {
+      ornament.box(faustBox(x + w * k, H * 0.32, z + side * (d + 0.18), 0.6, H * 0.32, 0.95), 0xb3bac0)
+      ornament.box(faustBox(x + side * (w + 0.18), H * 0.32, z + d * k, 0.95, H * 0.32, 0.6), 0xb3bac0)
+    }
+    for (const b of mass.slice(1)) for (const side of [-1, 1]) for (const k of [-0.7, 0.7]) {
+      ornament.box(faustBox(b.cx + b.ex * k, b.cy, b.cz + side * (b.ez + 0.4), 0.55, b.ey, 0.8), 0xb3bac0)
+      ornament.box(faustBox(b.cx + side * (b.ex + 0.4), b.cy, b.cz + b.ez * k, 0.8, b.ey, 0.55), 0xb3bac0)
+    }
+    for (const b of mass) for (const y of [b.cy + b.ey, b.cy - b.ey + 1.6]) ornament.box(faustBox(b.cx, y, b.cz, b.ex + 1.1, 0.45, b.ez + 1.1), 0xadb0b1)
+    for (const side of [-1, 1]) {
+      ornament.box(faustBox(x + side * w * 0.85, 3, z + d + 0.4, 0.75, 3, 0.9), 0x515963)
+      if (gothic) for (const q of [-1, 1]) {
+        const bx = x + side * w * 0.72, bz = z + q * d * 0.72, y = mass[0].ey * 2
+        ornament.box(faustBox(bx, y + 3, bz, 0.65, 3, 0.65), 0xa4a9ac)
+        ornament.tri([bx - 1.4, y + 6, bz], [bx + 1.4, y + 6, bz], [bx, y + 14, bz], 0x8d949c)
+        ornament.tri([bx, y + 6, bz - 1.4], [bx, y + 14, bz], [bx, y + 6, bz + 1.4], 0x8d949c)
+      }
+    }
+    ornament.box(faustBox(x, 2.1, z + d + 0.08, 2.2, 2.1, 0.12), 0x1b222b)
+    if (gothic) {
+      // Pointed portal with a stone archivolt and deep black tympanum.
+      const front = z + d + 0.5
+      ornament.tri([x - 2.5, 0, front], [x + 2.5, 0, front], [x + 2.5, 6, front], 0x080e18)
+      ornament.tri([x - 2.5, 0, front], [x + 2.5, 6, front], [x - 2.5, 6, front], 0x080e18)
+      ornament.tri([x - 2.5, 6, front], [x + 2.5, 6, front], [x, 9.4, front], 0x080e18)
+      for (const side of [-1, 1]) {
+        ornament.tri([x + side * 3.2, 6, front + 0.1], [x, 10.5, front + 0.1], [x, 9.4, front + 0.1], 0xc0c5c7)
+        ornament.tri([x + side * 3.2, 6, front + 0.1], [x, 9.4, front + 0.1], [x + side * 2.5, 6, front + 0.1], 0xc0c5c7)
+        for (const q of [-1, 1]) {
+          ornament.box(faustBox(x + side * (w - 0.4), H * 0.24, z + q * (d - 0.4), 1.2, H * 0.24, 1.2), 0x596574)
+          const y = mass[0].cy + mass[0].ey
+          ornament.box(faustBox(x + side * w, y + 0.8, z + q * d, 2, 0.65, 1), 0xadb5b9)
+          ornament.tri([x + side * (w + 2), y, z + q * d], [x + side * (w + 1), y + 2.8, z + q * d], [x + side * (w + 0.5), y, z + q * (d + 1.2)], 0xc1c6c7)
+        }
+      }
+    } else if (!stop) {
+      // A fan of metal rays and a chevron above the crown is legible in silhouette.
+      const y = H + 12, front = z + d * 0.43
+      for (let k = -3; k <= 3; k++) ornament.tri([x - 0.4, y, front], [x + 0.4, y, front], [x + k * 2, y + 11 - Math.abs(k) * 1.5, front], 0xc6c8c3)
+    }
+    if (stop) {
+      // The mast's foot is a walkable platform on the roof, rather than an inaccessible spire.
+      ornament.box(faustBox(x, H + 0.2, z, 6, 0.2, 6), 0xb3bac0)
+      ornament.box(faustBox(x, H + 14, z, 0.45, 14, 0.45), 0xc4c9c9)
+      ornament.box(faustBox(x, H + 27, z, 3.4, 0.25, 0.45), 0xe1d2a9)
+      for (const side of [-1, 1]) ornament.box(faustBox(x + side * 5.8, H + 0.9, z, 0.1, 0.5, 5.8), 0x8b969f)
+      yield; continue
+    }
+    // A stepped ziggurat crown; Gothic towers finish in a needle.
+    for (let i = 0; i < 3; i++) ornament.box(faustBox(x, H + 7 + i * 2, z, Math.max(1, w * 0.36 - i), 1, Math.max(1, d * 0.36 - i)), 0x8c939b)
+    if (gothic || H > 180) ornament.box(faustBox(x, H + 23, z, 0.45, 10, 0.45), 0xa4aab0)
+    yield
+  }
+  // Slender paired lamps on the avenue, merged with all other street detail.
+  for (const q of [20, 76]) {
+    ornament.box(faustBox(X + 11.4, 4.5, Z + q, 0.12, 4.5, 0.12), 0x252d37)
+    ornament.box(faustBox(X + 9.9, 8.8, Z + q, 1.6, 0.1, 0.12), 0x5c6671)
+    ornament.box(faustBox(X + 8.6, 8.62, Z + q, 0.65, 0.08, 0.3), 0xd6d0b2)
+  }
+  const root = new THREE.Group()
+  for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
+    // Building masses cast the local shadow; small trim receives it without duplicating its many triangles.
+    const mesh = new THREE.Mesh(data.geometry(), mat); mesh.castShadow = data === facade; mesh.receiveShadow = true; root.add(mesh)
+  }
+  if (faustState.poolMaterial) for (const q of [20, 76]) {
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
+    pool.rotation.x = -Math.PI / 2; pool.position.set(X + 8.6, 0.065, Z + q); root.add(pool)
+  }
+  root.userData.cell = [c.ci, c.cj]; c.visual = root; worldGroup.add(root); still(root)
+  faustSkyCell(c, false)
+}
+function faustSkyCell(c, visible) {
+  const sky = faustState.skyline
+  if (!sky) return
+  const pose = new THREE.Object3D(), offset = (c.ci * faustState.S + c.cj) * 8
+  for (let i = 0; i < 8; i++) {
+    const b = c.plan.lots[i / 2 | 0]?.skyMass[i % 2]
+    if (visible && b) { pose.position.set(b.cx, b.cy, b.cz); pose.scale.set(b.ex * 2, b.ey * 2, b.ez * 2) }
+    else { pose.position.set(0, -100, 0); pose.scale.set(0, 0, 0) }
+    pose.updateMatrix(); sky.setMatrixAt(offset + i, pose.matrix)
+  }
+  sky.instanceMatrix.addUpdateRange(offset * 16, 8 * 16); sky.instanceMatrix.needsUpdate = true
+}
+function faustSkyline() {
+  const F = faustState, sky = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), F.materials.far, F.S * F.S * 8)
+  sky.instanceMatrix.setUsage(THREE.DynamicDrawUsage); F.skyline = sky
+  const col = new THREE.Color()
+  for (let x = 0; x < F.S; x++) for (let z = 0; z < F.S; z++) {
+    const plan = faustPlan(F.seed, x, z, F.S)
+    faustSkyCell({ ci: x, cj: z, plan }, true)
+    for (let i = 0; i < 8; i++) { col.setHex(FAUST_COLORS[plan.lots[i / 2 | 0]?.tint || 0]); sky.setColorAt((x * F.S + z) * 8 + i, col) }
+  }
+  sky.instanceMatrix.clearUpdateRanges(); sky.instanceMatrix.needsUpdate = true
+  sky.computeBoundingSphere(); sky.receiveShadow = false; sky.castShadow = false
+  worldGroup.add(sky)
+}
+// The moon-sized landmark has its own depth range. Clearing depth between passes preserves
+// the city's centimetre-scale precision and guarantees that nearby towers occlude the globe.
+function faustRender(render, s, cam) {
+  const F = faustState
+  if (!LV.faust || s !== scene || !F?.skyScene || renderHeadless) return render(s, cam)
+  const skyCam = F.skyCamera, autoClear = renderer.autoClear, reset = renderer.info.autoReset, background = s.background
+  skyCam.copy(cam, false); skyCam.near = 10; skyCam.far = FAUST.skyFar; skyCam.updateProjectionMatrix(); skyCam.updateMatrixWorld(true)
+  F.skyScene.background = background
+  const t = performance.now() / 1000
+  for (const beam of F.skyBeams || []) {
+    const phase = beam.userData.phase
+    const target = new THREE.Vector3(Math.sin(t * 0.09 + phase) * 1100, 0, -150 + Math.cos(t * 0.075 + phase) * 900)
+    target.sub(beam.position); const length = target.length()
+    beam.scale.y = length / beam.userData.length
+    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), target.normalize())
+  }
+  try {
+    if (reset) renderer.info.reset()
+    renderer.info.autoReset = false
+    renderer.autoClear = true
+    render(F.skyScene, skyCam)
+    F.lastSkyDraw = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }
+    renderer.autoClear = false; s.background = null; renderer.clearDepth()
+    render(s, cam)
+  } finally {
+    s.background = background; renderer.autoClear = autoClear; renderer.info.autoReset = reset
+  }
+}
+function faustDisposeSky() {
+  const F = faustState
+  if (!F?.skyScene) return
+  const geometries = new Set(), materials = new Set(), textures = new Set()
+  F.skyScene.traverse(o => { if (o.geometry) geometries.add(o.geometry); for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m) materials.add(m) })
+  for (const material of materials) { for (const value of Object.values(material)) if (value?.isTexture) textures.add(value); material.dispose() }
+  for (const geometry of geometries) geometry.dispose()
+  for (const texture of textures) texture.dispose()
+  F.skyScene.clear(); F.skyScene = null; F.skyCamera = null; F.skyBeams = []; F.headMesh = null
+}
+function faustGlobeMap() {
+  // Original, deliberately angular continent outlines in longitude/latitude. No external imagery.
+  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 512
+  const g = cv.getContext('2d'), at = ([lon, lat]) => [(lon + 180) / 360 * 1024, (90 - lat) / 180 * 512]
+  g.fillStyle = '#324357'; g.fillRect(0, 0, 1024, 512)
+  const continents = [
+    [[-168,65],[-145,70],[-130,58],[-115,53],[-105,58],[-90,70],[-60,52],[-53,45],[-72,40],[-80,25],[-96,18],[-106,23],[-120,34],[-126,48],[-150,57]],
+    [[-82,12],[-70,10],[-58,6],[-48,-2],[-35,-7],[-40,-22],[-51,-31],[-58,-44],[-68,-55],[-75,-45],[-72,-29],[-80,-11]],
+    [[-57,83],[-25,77],[-40,60],[-53,61],[-65,72]],
+    [[-10,36],[-11,44],[1,49],[10,55],[5,61],[18,71],[35,70],[45,62],[70,71],[100,76],[145,70],[176,62],[164,50],[145,47],[132,36],[123,25],[106,7],[98,14],[90,22],[79,7],[68,24],[55,27],[43,12],[36,31],[27,40],[15,41]],
+    [[-17,35],[10,37],[31,31],[35,17],[51,11],[42,-9],[35,-22],[18,-35],[10,-30],[2,-5],[-12,5],[-17,20]],
+    [[113,-13],[130,-11],[143,-10],[153,-24],[146,-39],[126,-33],[114,-24]],
+    [[46,-13],[50,-17],[47,-26],[43,-24]], [[130,32],[137,36],[142,44],[146,44],[141,35],[134,31]],
+    [[-180,-77],[-145,-73],[-110,-76],[-70,-69],[-35,-78],[15,-70],[55,-68],[100,-74],[145,-69],[180,-77],[180,-90],[-180,-90]]
+  ]
+  for (const land of continents) {
+    g.beginPath(); land.forEach((p, i) => { const [x, y] = at(p); i ? g.lineTo(x, y) : g.moveTo(x, y) }); g.closePath()
+    g.fillStyle = '#c5cbd0'; g.fill(); g.strokeStyle = '#263747'; g.lineWidth = 3; g.stroke()
+    g.save(); g.clip(); g.strokeStyle = '#8798a4'; g.lineWidth = 1
+    for (let x = -512; x < 1024; x += 12) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 512, 512); g.stroke() }
+    g.restore()
+  }
+  g.strokeStyle = 'rgba(210,220,222,0.22)'; g.lineWidth = 1.5
+  for (let lon = -180; lon <= 180; lon += 30) { const x = at([lon, 0])[0]; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 512); g.stroke() }
+  for (let lat = -60; lat <= 60; lat += 30) { const y = at([0, lat])[1]; g.beginPath(); g.moveTo(0, y); g.lineTo(1024, y); g.stroke() }
+  const map = new THREE.CanvasTexture(cv); map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4; map.userData.faustOwned = true
+  return map
+}
+function faustSkyWeather(far) {
+  const F = faustState, G = FAUST.globe, cv = document.createElement('canvas'); cv.width = 256; cv.height = 128
+  const g = cv.getContext('2d')
+  for (const [x, y, r] of [[55,67,40],[101,47,43],[149,51,48],[193,74,39]]) {
+    const gradient = g.createRadialGradient(x, y, 2, x, y, r)
+    gradient.addColorStop(0, 'rgba(235,242,249,0.7)'); gradient.addColorStop(0.45, 'rgba(170,188,211,0.45)'); gradient.addColorStop(1, 'rgba(150,170,195,0)')
+    g.fillStyle = gradient; g.fillRect(0, 0, 256, 128)
+  }
+  const map = new THREE.CanvasTexture(cv); map.userData.faustOwned = true
+  const cloudMaterial = new THREE.SpriteMaterial({ map, color: 0xb3c2d6, opacity: 0.48, fog: false, transparent: true, depthWrite: false })
+  for (let i = 0; i < 12; i++) {
+    const cloud = new THREE.Sprite(cloudMaterial), hash = cityHash(i + 371)
+    cloud.position.set((i % 4 - 1.5) * 610, 830 + (i / 4 | 0) * 270 + hash % 95, -1500 - (i / 4 | 0) * 370)
+    cloud.scale.set(920 + hash % 260, 200 + hash % 90, 1); far.add(cloud)
+  }
+  const beamMaterial = new THREE.MeshBasicMaterial({ color: 0xdcecff, opacity: 0.075, transparent: true, fog: false,
+    depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending })
+  beamMaterial.onBeforeCompile = shader => {
+    shader.vertexShader = 'varying float faustBeamV;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n faustBeamV = uv.y;')
+    shader.fragmentShader = 'varying float faustBeamV;\n' + shader.fragmentShader.replace('#include <alphamap_fragment>', '#include <alphamap_fragment>\n diffuseColor.a *= faustBeamV * faustBeamV;')
+  }
+  beamMaterial.customProgramCacheKey = () => 'faust-downlight-1'
+  F.skyBeams = []
+  // Fixed fixtures on the lower hemisphere; their light cones sweep down towards the city.
+  for (const [x, y, z] of [[-880,1120,-2630],[-420,910,-2510],[420,910,-2510],[880,1120,-2630],[-1120,1490,-2440],[1120,1490,-2440]]) {
+    const length = y + 350, geometry = new THREE.CylinderGeometry(3, 220, length, 12, 1, true); geometry.translate(0, -length / 2, 0)
+    const beam = new THREE.Mesh(geometry, beamMaterial); beam.position.set(x, y, z); beam.userData.phase = F.skyBeams.length * 1.7; beam.userData.length = length
+    F.skyBeams.push(beam); far.add(beam)
+    const lens = new THREE.Mesh(new THREE.SphereGeometry(13, 8, 6), new THREE.MeshBasicMaterial({ color: 0xf1f6ff, fog: false }))
+    lens.position.copy(beam.position); far.add(lens)
+  }
+}
+
+// Head contract for the sculpted replacement: one THREE.Mesh, Y up, looking +Z,
+// with its geometry centred at the origin and normalized to a 1x1x1 bounding box.
+// The height centres the portrait within the globe as seen from the main avenues; its nearer front plane needs perspective compensation.
+// This is its only world transform. The caller owns disposal of the returned old mesh.
+function faustReplaceHead(mesh) {
+  const F = faustState
+  if (!mesh?.isMesh || mesh.children.length || !F?.skyScene) throw new TypeError('Faust head requires one mesh and an active city')
+  const previous = F.headMesh || null
+  if (previous) F.skyScene.remove(previous)
+  mesh.position.fromArray(FAUST.head.position); mesh.rotation.set(0, 0, 0); mesh.scale.fromArray(FAUST.head.size)
+  mesh.castShadow = mesh.receiveShadow = false
+  for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) { material.fog = false; material.needsUpdate = true }
+  F.headMesh = mesh; F.skyScene.add(mesh); mesh.updateMatrix(); mesh.updateMatrixWorld(true)
+  return previous
+}
+function faustMonument() {
+  faustDisposeSky()
+  const F = faustState, far = F.skyScene = new THREE.Scene(), batch = faustBatch(), dark = 0x242d39, black = 0x151d28
+  F.skyCamera = new THREE.PerspectiveCamera()
+  const plaza = faustBatch(36); plaza.box(faustBox(0, -0.01, 0, 192, 0.015, 192), 0x404b5b)
+  const paving = new THREE.Mesh(plaza.geometry(), F.materials.stone); paving.receiveShadow = true; worldGroup.add(paving)
+  far.add(new THREE.HemisphereLight(0x94a9c5, 0x0d1420, 0.26))
+  const moon = new THREE.DirectionalLight(0xb8d3ff, 2.5); moon.position.set(-28, 18, 14); far.add(moon)
+  // No shadow map: a planet-sized shadow would swallow the city and waste its local shadow resolution.
+  const skyStone = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.91, fog: false })
+  skyStone.onBeforeCompile = shader => {
+    shader.vertexShader = 'attribute float faustEye; varying float faustEyeGlow;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n faustEyeGlow = faustEye;')
+    shader.fragmentShader = 'varying float faustEyeGlow;\n' + shader.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += vec3(2.5) * faustEyeGlow;')
+  }
+  skyStone.customProgramCacheKey = () => 'faust-head-eyes-1'
+  // The tyrant's armour shoulders and long black hair are broad, faceted silhouettes.
+  const ring = (y, rx, rz, z0) => Array.from({ length: 16 }, (_, i) => [Math.round(Math.sin(i * Math.PI / 8) * rx * 1000) / 1000, y, z0 + Math.round(Math.cos(i * Math.PI / 8) * rz * 1000) / 1000])
+  const shell = [[290, 65, 57, -8],
+    [375, 75, 62, -8], [445, 68, 57, -12], [488, 43, 44, -14], [505, 0.1, 0.1, -14]].map(r => ring(...r))
+  for (let j = 0; j + 1 < shell.length; j++) for (let i = 0; i < 16; i++) {
+    const a = shell[j][i], b = shell[j][(i + 1) % 16], c = shell[j + 1][(i + 1) % 16], d = shell[j + 1][i]
+    batch.tri(a, b, c, j < 2 ? 0x404b5b : dark); batch.tri(a, c, d, j < 2 ? 0x404b5b : dark)
+  }
+  // Original sculpted face planes: high brow, deep eyes, angular nose, tight mouth and heavy chin.
+  const polygon = (points, tint) => {
+    const area = points.reduce((a, p, i) => a + p[0] * points[(i + 1) % points.length][1] - points[(i + 1) % points.length][0] * p[1], 0)
+    if (area < 0) points.reverse()
+    for (let i = 1; i + 1 < points.length; i++) batch.tri(points[0], points[i], points[i + 1], tint)
+  }
+  polygon([[-45, 445, 34], [-30, 470, 29], [25, 470, 29], [48, 441, 34], [51, 352, 51], [32, 310, 52], [-31, 310, 52], [-50, 352, 51]], 0xaab0b5)
+  polygon([[-45, 445, 35], [-4, 435, 55], [-9, 406, 64], [-48, 414, 49]], 0xc0c5c8)
+  polygon([[4, 435, 55], [48, 441, 35], [48, 414, 49], [9, 406, 64]], 0x9ca5af)
+  polygon([[-48, 414, 50], [-9, 406, 65], [-14, 386, 66], [-39, 389, 61]], black)
+  polygon([[9, 406, 65], [48, 414, 50], [39, 389, 61], [14, 386, 66]], black)
+  polygon([[-35, 401, 64], [-17, 399, 68], [-23, 395, 69]], 0xe2e5de)
+  polygon([[17, 399, 68], [35, 401, 64], [23, 395, 69]], 0xe2e5de)
+  polygon([[-8, 416, 64], [3, 420, 65], [17, 368, 82], [-6, 367, 86]], 0xc6cacb)
+  polygon([[3, 420, 65], [13, 397, 67], [17, 368, 82]], 0x6d7784)
+  polygon([[-6, 367, 86], [17, 368, 82], [10, 359, 68], [-15, 363, 68]], 0x394554)
+  polygon([[-40, 388, 62], [-17, 379, 68], [-23, 351, 68], [-37, 339, 60]], 0xc3c7c8)
+  polygon([[17, 379, 68], [40, 388, 62], [37, 339, 60], [23, 351, 68]], 0x7c8997)
+  polygon([[-24, 347, 70], [-8, 354, 71], [10, 354, 71], [25, 345, 70], [15, 337, 72], [-16, 337, 72]], black)
+  polygon([[-17, 342, 73], [17, 342, 73], [12, 339, 74], [-13, 339, 74]], 0xaeb7bd)
+  polygon([[-29, 330, 61], [29, 330, 61], [25, 312, 59], [-25, 312, 59]], 0xc0c5c7)
+  // The collar is part of the floating sculpture; nothing connects it to the ground.
+  for (const side of [-1, 1]) polygon([[side * 12, 302, 39], [side * 47, 315, 30], [side * 48, 292, 23], [side * 27, 282, 45]], 0x596575)
+  const G = FAUST.globe, globeGeometry = new THREE.SphereGeometry(G.radius, 64, 40)
+  globeGeometry.rotateY(-Math.PI / 2)
+  const globePositions = globeGeometry.attributes.position
+  for (let i = 0; i < globePositions.count; i++) globePositions.setXYZ(i, Math.round(globePositions.getX(i) * 1000) / 1000, Math.round(globePositions.getY(i) * 1000) / 1000, Math.round(globePositions.getZ(i) * 1000) / 1000)
+  globeGeometry.translate(G.x, G.y, G.z)
+  const globeMap = faustGlobeMap()
+  const globe = new THREE.Mesh(globeGeometry, new THREE.MeshStandardMaterial({ map: globeMap, emissiveMap: globeMap, color: 0xd7dfe3, roughness: 0.95, metalness: 0.05, emissive: 0x8093a8, emissiveIntensity: 0.18, fog: false }))
+  globe.material.onBeforeCompile = shader => {
+    shader.vertexShader = 'varying vec3 faustGlobeNormal; varying vec3 faustGlobePosition;\n' + shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+      faustGlobeNormal = mat3(modelMatrix) * normal;
+      faustGlobePosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`)
+    shader.fragmentShader = 'varying vec3 faustGlobeNormal; varying vec3 faustGlobePosition;\n' + shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      vec3 globeFlood = normalize(vec3(-1400.0, 500.0, -800.0) - faustGlobePosition);
+      totalEmissiveRadiance += diffuseColor.rgb * max(0.0, dot(normalize(faustGlobeNormal), globeFlood)) * 1.3;`)
+  }
+  globe.material.customProgramCacheKey = () => 'faust-globe-flood-1'
+  far.add(globe)
+  // The placeholder, including its emissive eyes, is one mesh in a centred unit box.
+  // A replacement uses the same transform, without re-baking its vertices into world coordinates.
+  const eyeStart = batch.count * 3
+  batch.tri([-35, 401, 65], [-23, 395, 70], [-17, 399, 69], 0xffffff)
+  batch.tri([17, 399, 69], [23, 395, 70], [35, 401, 65], 0xffffff)
+  const headGeometry = batch.geometry(), eye = new Float32Array(headGeometry.attributes.position.count)
+  eye.fill(1, eyeStart); headGeometry.setAttribute('faustEye', new THREE.BufferAttribute(eye, 1))
+  headGeometry.computeBoundingBox()
+  const centre = headGeometry.boundingBox.getCenter(new THREE.Vector3()), size = headGeometry.boundingBox.getSize(new THREE.Vector3())
+  headGeometry.translate(-centre.x, -centre.y, -centre.z); headGeometry.scale(1 / size.x, 1 / size.y, 1 / size.z)
+  headGeometry.computeVertexNormals(); headGeometry.computeBoundingSphere()
+  faustReplaceHead(new THREE.Mesh(headGeometry, skyStone))
+  faustSkyWeather(far)
+  // The airborne sculpture has no Bullet body in v1. Future aircraft use the published analytic bounds.
+}
+// Small local pools and shafts carry the night lighting without a light per building.
+function faustAtmosphere() {
+  const F = faustState, root = worldGroup
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128
+  const g = cv.getContext('2d'), glow = g.createRadialGradient(64, 64, 2, 64, 64, 64)
+  glow.addColorStop(0, 'rgba(255,255,255,0.65)'); glow.addColorStop(0.35, 'rgba(255,255,255,0.26)'); glow.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = glow; g.fillRect(0, 0, 128, 128)
+  const map = new THREE.CanvasTexture(cv); map.userData.faustOwned = true
+  const poolMaterial = new THREE.MeshBasicMaterial({ map, color: 0xe5a34f, transparent: true, opacity: 0.42, depthWrite: false, blending: THREE.AdditiveBlending })
+  F.poolMaterial = poolMaterial
+  F.localLights = [0, 1].map(() => { const light = new THREE.PointLight(0xffb15c, 45, 22, 1.6); root.add(light); return light })
+  const smogMaterial = new THREE.SpriteMaterial({ map, color: 0x778ca8, opacity: 0.12, transparent: true, depthWrite: false })
+  for (const [x, z] of [[-360, -200], [320, -80], [-120, 320], [500, 450], [-600, 500]]) {
+    const smog = new THREE.Sprite(smogMaterial); smog.position.set(x, 13, z); smog.scale.set(600, 32, 1); root.add(smog)
+  }
+}
+function faustAtmosphereFrame() {
+  const F = faustState
+  if (!F?.localLights) return
+  const p = camera.position, X = Math.floor((p.x + ARENA) / 96) * 96 - ARENA, Z = Math.floor((p.z + ARENA) / 96) * 96 - ARENA
+  F.localLights.forEach((light, i) => { light.position.set(X + 8.6, 7.8, Z + (i ? 76 : 20)); light.updateMatrix(); light.updateMatrixWorld(true) })
+}
+function faustFarLights() {
+  const F = faustState, lights = faustBatch(F.S * F.S * 48), warnings = []
+  const cv = document.createElement('canvas'); cv.width = 64; cv.height = 32
+  const ctx = cv.getContext('2d'), gradient = ctx.createRadialGradient(32, 16, 1, 32, 16, 19)
+  gradient.addColorStop(0, 'rgba(255,240,210,1)'); gradient.addColorStop(0.2, 'rgba(255,205,125,0.8)'); gradient.addColorStop(1, 'rgba(255,160,65,0)')
+  ctx.fillStyle = gradient; ctx.fillRect(0, 0, 64, 32)
+  const map = new THREE.CanvasTexture(cv); map.userData.faustOwned = true; map.wrapS = THREE.RepeatWrapping
+  const material = new THREE.MeshBasicMaterial({ map, color: 0xffb653, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending })
+  material.onBeforeCompile = shader => {
+    shader.vertexShader = 'varying float faustRoadDistance;\n' + shader.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n faustRoadDistance = length(mvPosition.xyz);')
+    shader.fragmentShader = 'varying float faustRoadDistance;\n' + shader.fragmentShader.replace('#include <alphamap_fragment>', '#include <alphamap_fragment>\n diffuseColor.a *= smoothstep(170.0, 350.0, faustRoadDistance);')
+  }
+  material.customProgramCacheKey = () => 'faust-road-light-1'
+  const mm = x => Math.round(x * 1000) / 1000
+  for (let ci = 0; ci < F.S; ci++) for (let cj = 0; cj < F.S; cj++) {
+    const plan = faustPlan(F.seed, ci, cj, F.S)
+    for (const road of plan.roads) {
+      const dx = road.b[0] - road.a[0], dz = road.b[2] - road.a[2], length = Math.hypot(dx, dz), nx = -dz / length, nz = dx / length
+      for (const side of road.avenue ? [-1, 1] : [1]) {
+        const offset = road.width / 2 - 1.6, half = road.avenue ? 2.1 : 1.4
+        const point = (p, k) => [mm(p[0] + nx * (side * offset + k * half)), 0.085, mm(p[2] + nz * (side * offset + k * half))]
+        const a = point(road.a, -1), b = point(road.a, 1), c = point(road.b, 1), d = point(road.b, -1), u = length / (road.avenue ? 24 : 36)
+        lights.tri(a, b, c, 0xffffff, [[0, 0], [0, 1], [u, 1]]); lights.tri(a, c, d, 0xffffff, [[0, 0], [u, 1], [u, 0]])
+      }
+    }
+    for (const lot of plan.lots) if (lot.district === 'industrial') for (const b of lot.mass.slice(1)) warnings.push(b.cx, b.cy + b.ey + 0.6, b.cz)
+  }
+  // DoubleSide keeps both orientations of a diagonal boulevard visible from above.
+  material.side = THREE.DoubleSide; worldGroup.add(new THREE.Mesh(lights.geometry(), material))
+  const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(warnings, 3))
+  worldGroup.add(new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xff3925, size: 3, sizeAttenuation: true, transparent: true, opacity: 0.95, depthWrite: false, toneMapped: false })))
+}
+
+function faustBuildWorld() {
+  if (!faustState) faustReset()
+  faustState.selection = null; faustState.visualJob = null; faustState.materials = faustMaterials(); faustSkyline(); faustMonument(); faustAtmosphere(); faustFarLights()
+  const hemi = scene.children.find(o => o.isHemisphereLight)
+  if (hemi) { hemi.intensity = 0.16; hemi.color.setHex(0x7083a1); hemi.groundColor.setHex(0x06090f) }
+  if (sunLight) { sunLight.color.setHex(0xb8d3ff); sunLight.intensity = 2.5; sunLight.shadow.camera.far = 1800; sunLight.shadow.bias = -0.0003; sunLight.shadow.normalBias = 0.12; sunLight.shadow.camera.updateProjectionMatrix() }
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ color: 0x303741, roughness: 1 }))
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.025; ground.receiveShadow = true; worldGroup.add(ground)
+  for (const c of faustState.chunks.values()) c.visual = null
+  const me = isHost ? players.get(0) : predicted, p = me ? [me.x, me.z] : [0, 144]
+  for (const key of faustRange([p], 1)) faustDraw(faustGet(...key.split(' ').map(Number)))
+  still(worldGroup)
+}
+// Traffic/aircraft/broadcast hooks consume plans without holding or modifying the city's internal state.
+// No map rows travel on the wire. Call plan(seed,ci,cj,size) anywhere, including a dedicated server.
+const FAUSTLAND_API = { plan: faustPlan, roadRoute: faustNav, budget: FAUST,
+  get state() { return faustState },
+  get seed() { return LV.grow?.seed },
+  airBand: FAUST.airBand, cruiseY: FAUST.cruiseY, globeBounds: FAUST.globe,
+  headPlacement: FAUST.head, replaceHead: faustReplaceHead, get headMesh() { return faustState?.headMesh || null },
+  cellAt: (x, z) => [Math.floor((x + ARENA) / 96), Math.floor((z + ARENA) / 96)] }
+// ---------------------------------------------------------------- end Faustland
+
+// Seed controls are deliberately independent of browser storage and transport.
+let faustRequestedSeed = null
+function faustParseSeed(value, fresh = false) {
+  const text = String(value ?? '').trim()
+  if (!text) return fresh ? crypto.getRandomValues(new Uint32Array(1))[0] : null
+  const n = Number(text)
+  if (!/^\d+$/.test(text) || !Number.isSafeInteger(n) || n > 4294967295) throw new TypeError('Seed must be a whole number from 0 to 4294967295.')
+  return n >>> 0
+}
+function faustSetSeed(value) {
+  const seed = faustParseSeed(value, true)
+  if (phase !== 'menu' && !isHost) return false
+  faustRequestedSeed = seed
+  if (el('#host-seed')) el('#host-seed').value = String(seed)
+  if (isHost && phase !== 'menu') setLevel(levelId, { seed })
+  return seed
+}
+function faustSeedReadout() {
+  const seed = String(levelGen?.seed ?? LV.grow?.seed ?? '')
+  const field = el('#city-seed-value'); if (field) field.value = seed
+}
+function faustCopySeed() {
+  const field = el('#city-seed-value'); faustSeedReadout()
+  const fallback = () => {
+    const copy = document.createElement('textarea'); copy.value = field.value; copy.style.cssText = 'position:fixed;left:-10000px;top:0'
+    document.body.appendChild(copy); copy.select()
+    let done = false; try { done = document.execCommand('copy') } catch (_) {}
+    copy.remove(); if (!done) { field.focus(); field.select() }
+  }
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(field.value).catch(fallback)
+  else fallback()
+}
+
 const tagged = (t, pad) => t === 'paint' ? { paint: true } : t && { mark: pad }
 function compileLevel(L, A) {
+  if (L.gen?.kind === 'faustland') return faustLevel(L.gen, L.theme)
   if (L.gen) { const G = GENERATORS[L.gen.kind](L.gen, L.theme); L = { ...L, ...G, objects: [...G.objects || [], ...L.objects || []] } }
   const T = { ...THEME, ...L.theme }, B = [], h = T.height / 2
   A = A || T.size
@@ -1796,33 +2485,6 @@ const HULL_LIB = { url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm
   sri: 'sha384-XgyJyta94KWI7lZhmHx5tVSnRPNxypE/N3sLoba4Rf0lsIu+G8r0T48ohgz3zm+x' }
 const HULL_MAX = 4096
 
-function levelThumb(L, px, cv = document.createElement('canvas')) {
-  cv.width = cv.height = px
-  const g = cv.getContext('2d')
-  g.fillStyle = '#0a0d13'
-  g.fillRect(0, 0, px, px)
-  const { A, theme: T, boxes: all, grow: G, spawns } = compileLevel(L)
-  // a grown level: three chunks across round its first spawn, as the game grows them
-  const R = G ? 144 : A, [x, z] = G ? [spawns[0][0], spawns[0][2]].map(v => Math.max(R - A, Math.min(A - R, v))) : [0, 0], k = px / (R * 2), cell = v => Math.floor((v + A) / 96)
-  if (G) for (let ci = Math.max(0, cell(x - R)); ci <= Math.min(G.S - 1, cell(x + R)); ci++) for (let cj = Math.max(0, cell(z - R)); cj <= Math.min(G.S - 1, cell(z + R)); cj++)
-    if (!G.ring.some(([a, b]) => a === ci && b === cj)) all.push(...chunkBoxes(G, A, T.pad, ci, cj)[1])
-  const boxes = all.filter(b => b.vis !== false)
-    .sort((a, b) => (a.cy + a.ey) - (b.cy + b.ey))
-  const near = b => Math.abs(b.cx - x) < R + b.ex && Math.abs(b.cz - z) < R + b.ez
-  const tops = boxes.filter(near).map(b => b.cy + b.ey), hi = G ? tops[Math.floor(tops.length * 0.9)] : T.ramp[1]      // sorted: the 90th percentile
-  for (const b of boxes) {
-    const top = b.cy + b.ey
-    if (b.mark) g.fillStyle = '#' + b.mark.toString(16).padStart(6, '0')
-    else {
-      const t = Math.max(0, Math.min(1, (top - T.ramp[0]) / (hi - T.ramp[0])))
-      const v = Math.round(16 + t * t * 150)
-      g.fillStyle = 'rgb(' + v + ',' + (v + 6) + ',' + (v + 14) + ')'
-    }
-    g.fillRect(Math.round((b.cx - b.ex - x + R) * k), Math.round((b.cz - b.ez - z + R) * k),
-               Math.max(1, Math.round(b.ex * 2 * k)), Math.max(1, Math.round(b.ez * 2 * k)))
-  }
-  return cv
-}
 let levelId = 0
 let LV = compileLevel(LEVELS[levelId]), ARENA = LV.A
 let BOXES = LV.boxes, PADS = LV.pads, SPAWNS = LV.spawns
@@ -1877,7 +2539,7 @@ let BOT_COUNT = 3
 
 // ---------------------------------------------------------------- helpers
 // the game this engine runs: each part is attached where the game defines it, and the engine reads them only at call time
-const GAME = {}
+const GAME = { faustland: FAUSTLAND_API }
 const elCache = {}
 const el = sel => elCache[sel] ||
   (elCache[sel] = sel[0] === '#' && !sel.includes(' ')
@@ -2597,6 +3259,7 @@ function rescue(c) {
 }
 
 function leaveRare(c) {
+  clearSeat(c)
   players.delete(c.id); inputs.delete(c.id); roster.delete(c.id)
   detachBody(c)
   if (conns.size) pushRoster()
@@ -2828,6 +3491,7 @@ function padBelow(b) {
 const feetOf = c => { const [x, y, z] = axisOf(c), k = c.h + c.r; return { x: c.x - x * k, y: c.y - y * k, z: c.z - z * k } }
 // next corner, re-asked about every metre; null = straight; no way up: the way to a pad; a car: its own way
 function navPlan(b, tgt, dt, car) {
+  if (LV.faust) return faustNav(car || b, tgt)
   if (!navWorker) startNav()
   if (!navUp) return null
   const ai = b.ai
@@ -3612,6 +4276,7 @@ function initPhysics(Ammo) {
 let statics = [], awaySig = ''
 function loadStatics() {
   for (const c of [...statics]) dropChunk(c)
+  if (LV.faust) { faustReset(); addChunk(BOXES, ['base']); return }
   awaySig = ''
   const cells = new Map()
   for (const b of BOXES) { const k = Math.floor((b.cx + ARENA) / 96) + ' ' + Math.floor((b.cz + ARENA) / 96)
@@ -3673,9 +4338,10 @@ const growReach = () => (isHost ? viewEnd(1) : viewEnd()) + 96
 GAME.fogGrown = { x: 1e9, y: 0 }
 const CAM_STRAY = 2 + Math.max(...VEHICLES.map(V => Math.hypot(V.l, V.w)))
 GAME.fogClamp = () => { const me = isHost ? players.get(0) : predicted
-  return LV.grow && me ? Math.min(growReach(), growNear([[me.x, me.z]], false, undefined, true)) - CAM_STRAY - viewEnd() : 1e9 }
+  return !LV.faust && LV.grow && me ? Math.min(growReach(), growNear([[me.x, me.z]], false, undefined, true)) - CAM_STRAY - viewEnd() : 1e9 }
 // look: the nearest cell not grown within R, growing none
 function growNear(points, all, R = growReach(), look) {
+  if (LV.faust) { if (!look) faustEnsure(points); return Infinity }
   const G = LV.grow, lo = v => Math.max(0, Math.floor((v - R + ARENA) / 96)), hi = v => Math.min(G.S - 1, Math.floor((v + R + ARENA) / 96))
   let best = null, bd = Infinity
   for (const [x, z] of points) for (let ci = lo(x); ci <= hi(x); ci++) for (let cj = lo(z); cj <= hi(z); cj++) {
@@ -3707,6 +4373,7 @@ function growChunk(ci, cj) {
 }
 // host grows all chunks within 96 m of any player (teleports); then the nearest in reach, one a tick
 function growTick() {
+  if (LV.faust) return faustTick()
   GAME.level.tick()
   const me = isHost ? players.get(0) : predicted, pts = isHost ? [...players.values()].map(c => [c.x, c.z])
     : [...tracks.values()].map(tr => [tr.at(-1).p[GAME.schema.col.x], tr.at(-1).p[GAME.schema.col.z]])
@@ -3774,10 +4441,10 @@ const levelSeed = () => ({ ...levelGen && { ls: [levelGen.seed, levelGen.size], 
 const levelWire = () => (levelGen || craters.length || lsLeft) && (lsLeft > 0 ? lsLeft-- : now() - lsAt > 2000) ? (lsAt = now(), levelSeed()) : craterV ? { cv: craterV } : {}
 function loadLevel(id, gen) {
   levelId = clamp(id | 0, 0, LEVELS.length - 1)
-  const L = LEVELS[levelId], g = L.gen && { ...L.gen, ...L.gen.kind === 'city' && CITY_SIZES[settings.city] && { size: CITY_SIZES[settings.city] }, ...gen }
+  const L = LEVELS[levelId], g = L.gen && { ...L.gen, ...['city', 'faustland'].includes(L.gen.kind) && CITY_SIZES[settings.city] && { size: CITY_SIZES[settings.city] }, ...gen }
   levelGen = g && { seed: g.seed >>> 0, size: clamp(g.size | 0, 1, 32) }
   LV = compileLevel(g ? { ...L, gen: { ...g, ...levelGen } } : L); ARENA = LV.A; lsLeft = 8
-  LV.hash = LV.boxes.reduce((h, b) => [b.cx, b.cy, b.cz, b.ex, b.ey, b.ez].reduce((h, v) => Math.imul(h ^ Math.round(v * 1000), 16777619), h), 2166136261) >>> 0
+  LV.hash = LV.boxes.reduce((h, b) => [b.cx, b.cy, b.cz, b.ex, b.ey, b.ez].reduce((h, v) => Math.imul(h ^ Math.round(v * 1000), 16777619), h), (2166136261 ^ (LV.faust ? levelGen.seed : 0))) >>> 0
   BOXES = LV.boxes; SPAWNS = LV.spawns
   JUMPS = jumpsFrom(BOXES)
   craterClear()
@@ -3887,7 +4554,13 @@ function craterClear() {
 function spawnObjects() {
   objTracks.clear(); objSent.clear(); objHeld.clear(); objSeats.clear(); objFirst.clear(); plannedCells.clear(); objVel = null; vehHp = null; wheelState.clear()
   if (!world) return
-  for (const o of objs) o.riders?.forEach((id, i) => { const c = id === undefined ? null : id === predicted?.id ? predicted : players.get(id); if (c) leave(c, o, i) })
+  for (const o of objs) o.riders?.forEach((id, i) => {
+    const c = id === undefined ? null : id === predicted?.id ? predicted : players.get(id)
+    if (c?.body && seatOf(c)?.[0] === o) leave(c, o, i)
+    // A new participant may already have reused an old rider's id; never move it to the old car.
+    o.riders[i] = undefined
+    if (c?.seat?.[0] === o) c.seat = null
+  })
   objs.forEach(dropObject)
   objs = []
   for (const sh of carHull.values()) A.destroy(sh)
@@ -3913,6 +4586,7 @@ const objFirst = new Map()          // guest: first-seen spot of an unseeded obj
 // guest: the seeds of a chunk's parked spots from its plan, before that chunk grows here; each chunk once a level
 const plannedCells = new Set()
 function planSpots(x, z) {
+  if (LV.faust) return
   const G = LV.grow, ci = Math.floor((x + ARENA) / 96), cj = Math.floor((z + ARENA) / 96), cell = ci + ' ' + cj
   if (!G || !(ci >= 0 && ci < G.S && cj >= 0 && cj < G.S) || grown.has(cell) || plannedCells.has(cell)) return
   plannedCells.add(cell)
@@ -4258,6 +4932,17 @@ function dropCar(o) {
 const fell = (c, how, what) => {
   announce('§f' + ((roster.get(c.id) || {}).name || '?') + ' §7' + how)
   if (hooked.death) hookEmit('death', { victim: hookWho(c), weapon: what })
+}
+function clearSeat(c) {
+  const s = seatOf(c)
+  if (s) {
+    const [o, i] = s
+    o.riders[i] = undefined
+    if (!i && o.car) o.V.wheels.at.forEach((w, k) => {
+      o.car.applyEngineForce(0, k); o.car.setBrake(o.K.mass * drive(o.V, 'bail') * TICK / o.V.wheels.at.length, k)
+    })
+  }
+  c.seat = null
 }
 function sit(c, o, i) {
   o.riders[i] = c.id; c.seat = [o, i]
@@ -6858,7 +7543,7 @@ function buildWorld() {
   skipStill(worldGroup); skipStill(objGroup)
   scene.onBeforeRender = (r, s, cam) => cullView(cam)
   const render = renderer.render.bind(renderer)
-  renderer.render = (s, cam) => { try { render(s, cam) } finally { for (const o of culled.splice(0)) o.visible = true } }
+  renderer.render = (s, cam) => { try { faustRender(render, s, cam) } finally { for (const o of culled.splice(0)) o.visible = true } }
   avatarGroup = new THREE.Group(); scene.add(avatarGroup)
   pickGroup = new THREE.Group(); scene.add(pickGroup)
   tracerGroup = new THREE.Group(); scene.add(tracerGroup)
@@ -6873,6 +7558,7 @@ const sunX = new THREE.Vector3(0, 1, 0).cross(sunHome).normalize(), sunY = sunHo
 // hidden for one render: a chunk, or a pooled vehicle by its look's reach, that the camera and the casting sun both miss
 const culled = [], reaches = new Map()
 function cullView(cam) {
+  if (LV.faust) faustAtmosphereFrame()
   for (const o of culled.splice(0)) o.visible = true
   cullFrom(cam)
   drawSeen()
@@ -6887,7 +7573,7 @@ function cullView(cam) {
 }
 function followSun() {
   if (!sunLight || !camera || ARENA <= 96 || !LV.scenery?.length) return
-  const k = Math.max(4, (LV.theme.ramp[1] + 30) / 22); if (sunHome.y !== 22 * k) sunHome.set(12, 22, 8).multiplyScalar(k)
+  const k = Math.max(4, (LV.theme.ramp[1] + 30) / 22); if (sunHome.y !== 22 * k) sunHome.set(...LV.faust ? [-28, 18, 14] : [12, 22, 8]).multiplyScalar(k)
   const c = sunLight.shadow.camera, map = sunLight.shadow.mapSize
   sunFocus.copy(camera.position)
   for (const [axis, step] of [[sunX, (c.right - c.left) / map.x], [sunY, (c.top - c.bottom) / map.y]]) {
@@ -6966,7 +7652,7 @@ function placeChunk(cell, g) {
 // view distance: × the level's fog; far plane capped at 320 m
 const VIEW = { short: 0.6, normal: 1, far: 1.6 }
 let viewScale = 1
-const viewEnd = (k = viewScale) => Math.min(320 * Math.min(k, 1), ARENA * LV.theme.fog[2] * k)
+const viewEnd = (k = viewScale) => LV.faust ? 2200 * k : Math.min(320 * Math.min(k, 1), ARENA * LV.theme.fog[2] * k)
 function applyView() {
   const end = viewEnd()
   if (scene?.fog) { scene.fog.far = end; scene.fog.near = Math.min(ARENA * LV.theme.fog[1] * viewScale, end) }
@@ -6990,7 +7676,7 @@ function rebuildWorld() {
   scene.background = new THREE.Color(sky)
   scene.fog = new THREE.Fog(sky); applyView()
   if (sunLight) {
-    sunHome.set(12, 22, 8).multiplyScalar(ARENA > 96 && LV.scenery?.length ? Math.max(4, (LV.theme.ramp[1] + 30) / 22) : 4)
+    sunHome.set(...LV.faust ? [-28, 18, 14] : [12, 22, 8]).multiplyScalar(ARENA > 96 && LV.scenery?.length ? Math.max(4, (LV.theme.ramp[1] + 30) / 22) : 4)
     sunLight.position.copy(sunHome); sunLight.target.position.set(0, 0, 0)
     sunLight.target.updateMatrixWorld()
     const c = sunLight.shadow.camera
@@ -7016,7 +7702,8 @@ function rebuildWorld() {
     baseTex[kind] = t
   }
   screenSpots.length = 0; screenGroup = null
-  worldGroup.add(...drawBoxes(BOXES, LV.scenery || []).children)   // the level's own meshes stay worldGroup's children
+  if (LV.faust) faustBuildWorld()
+  else worldGroup.add(...drawBoxes(BOXES, LV.scenery || []).children)   // the level's own meshes stay worldGroup's children
   if (LV.screens?.length) { screenSpots.push(...LV.screens.filter(s => BOXES.includes(s.frame))); screensDirty = true }
   screensTake(worldGroup)
   still(worldGroup)
@@ -7026,7 +7713,9 @@ function rebuildWorld() {
   // the new level takes over the old one's programs before they go
   if (!renderHeadless && camera && renderer.compile) renderer.compile(worldGroup, camera, scene)
   warmEffects()
-  for (const m of materials) m.dispose()
+  const faustTextures = new Set()
+  for (const m of materials) { for (const key of ['map', 'emissiveMap']) if (m[key]?.userData.faustOwned) faustTextures.add(m[key]); m.dispose() }
+  for (const texture of faustTextures) texture.dispose()
 }
 function drawBoxes(list, city, clip = []) { return drain(drawSteps(list, city, clip)) }
 function* drawSteps(list, city, clip = []) {
@@ -9873,11 +10562,9 @@ const INPUT_SCHEMA = {
     if (e.code === INPUT_SCHEMA.key.jump) e.preventDefault()
     if (e.code === 'KeyV') setView(!firstPerson)
     if (e.code === 'KeyM') GAME.audio.toggle()
-    if ((e.code === 'KeyY' || e.code === 'KeyN') && !e.repeat) voteBallot(e.code === 'KeyY')
     if (e.code === 'KeyB' && !e.repeat) GAME.audio.cycle()
     if (e.code === 'KeyC' && !e.repeat) teamSwitch()
     if (/^Digit[1-9]$/.test(e.code) && !e.repeat && !(isHost && GAME.match.resultsLeft > 0)) teamSwitch(+e.code.slice(5) - 1)
-    if (isHost && GAME.match.resultsLeft > 0 && /^Digit[1-9]$/.test(e.code) && +e.code.slice(5) <= LEVELS.length) GAME.match.pickNext(+e.code.slice(5) - 1)
   },
   keyUp(e) {
     if (e.code === 'Tab') { tabOpen = false; return }
@@ -9990,6 +10677,7 @@ function letGo() {
 
 function initInput() {
   addEventListener('keydown', e => {
+    if (dbgOpen && e.code === 'KeyC' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); faustCopySeed(); return }
     if (e.code === 'F3') { e.preventDefault(); toggleDebug(); return }
     if (modalOpen) { if (e.key === 'Escape') closeCodeModal(); return }
     if (settingsOpen) { if (e.key === 'Escape') settingsBack(); return }
@@ -10074,7 +10762,7 @@ function initTouch() {
 
   // every overlay must be listed, or a tap on it is a look-drag
   const isUI = t => !!(t && t.closest && t.closest(
-    '#trow, .tbtn, #chat, #ui, .ovl, #vote'))
+    '#trow, .tbtn, #chat, #ui, .ovl'))
   // fire sits in the look area; other buttons stay out (dragging off JUMP never turns)
   const isFire = INPUT_SCHEMA.lookTouch
 
@@ -10270,6 +10958,7 @@ function drawDebug(me, fps) {
              ' of ' + p(MAX_INQ, 2) + '  ticks of standing lag ' +
              p(Math.round(Math.min(...d) * TICK * 1000), 3) + ' ms'
     })()) : '') +
+    (LV.faust ? row('city seed', '<span style="user-select:text;pointer-events:auto">' + String(levelGen?.seed ?? LV.grow.seed) + '</span> · ' + LV.grow.S + ' × ' + LV.grow.S + ' chunks · Ctrl+C copies') : '') +
     GAME.view.debug(row, v, p) +
     row('bg', 'clock ' + v(bgMode.padEnd(6)) +
         (bgActive ? ' <span class="w">running hidden</span>' : ' foreground')) +
@@ -10434,20 +11123,18 @@ function closeSettings() {
 
 // shares settingsOpen
 function openHost() {
+  if (!isHost) return
   settingsOpen = true
-  const lv = el('#host-levels')
-  if (!lv.children.length) buildLevelCards(lv, levelId, i => { if (i === levelId) return; if (isHost) return setLevel(i); closeSettings(); voteFor(i); lockPointer() })
   el('#host-only').style.display = isHost ? '' : 'none'
-  el('#host-title').textContent = isHost ? 'Host' : 'Vote level'
-  el('#host-note').textContent = isHost ? 'Yours to set, and everyone in the room plays it.' : 'Pick one to put it to the room.'
-  markLevel(lv, levelId)
+  el('#host-title').textContent = 'Host'
+  el('#host-note').textContent = 'Set Faustland’s size and the room’s rules.'
   const cs = el('#host-city')
   if (!cs.children.length) for (const k in CITY_SIZES) {
     const d = cs.appendChild(document.createElement('div'))
     d.className = 'card'; d.textContent = k + ' · ' + (CITY_SIZES[k] * 0.096).toFixed(1) + ' km'
-    d.onclick = () => { settings.city = k; saveSettings(); pickCard(cs, d); if (LEVELS[levelId].gen?.kind === 'city') setLevel(levelId) }
+    d.onclick = () => { settings.city = k; saveSettings(); pickCard(cs, d); setLevel(0, { seed: levelGen.seed }) }
   }
-  markLevel(cs, Object.keys(CITY_SIZES).indexOf(settings.city))
+  markCitySize(cs, Object.keys(CITY_SIZES).indexOf(settings.city))
   const ek = settings.event || 'auto'
   el('#set-event').textContent = 'Event: ' + eventLabel(ek) + (ek === 'auto' ? ' (' + (eventOn ? eventOn.name : 'none') + ')' : '')
   el('#set-mode').textContent =
@@ -10943,6 +11630,7 @@ GAME.audio = { frame: sfxFrame, radio: radioTick, fx: sfxFx, play: sfxPlay, take
 // ---------------------------------------------------------------- pause
 // nothing pauses: the host keeps simulating
 function openPause() {
+  faustSeedReadout()
   if (pauseOpen || phase !== 'playing') return
   closeSettings()
   pauseOpen = true
@@ -10950,7 +11638,7 @@ function openPause() {
   el('#pause-note').textContent = isHost
     ? 'The game keeps running for everyone else — you are standing still, not safe.'
     : 'The game keeps running on the host — you are standing still, not safe.'
-  el('#pause-host').textContent = isHost ? 'Host' : 'Vote level'
+  el('#pause-host').style.display = isHost ? '' : 'none'
   el('#pause-char').style.display = PICKABLE.length > 1 ? '' : 'none'
   el('#pause-hint').innerHTML = IS_TOUCH ? '' :
     'WASD move · Shift sprint · Space jump/rise · Q descend (flier) · click fire · right-click your attack · E use or lift<br>' +
@@ -11073,10 +11761,10 @@ function leaveRoom() {
 
 function initPause() {
   el('#pause-char').onclick = fromPause(openCharPick)
-  el('#vote-yes').onclick = () => voteBallot(true); el('#vote-no').onclick = () => voteBallot(false); el('#vote-cancel').onclick = cancelVote
   backdrop('charpick', () => joinPick() || pickBack())
   el('#pick-back').onclick = pickBack
   el('#pick-go').onclick = pickGo
+  el('#city-seed-copy').onclick = faustCopySeed
   el('#pause-resume').onclick = closePause
   el('#pause-settings').onclick = fromPause(openSettings)
   el('#pause-host').onclick = fromPause(openHost)
@@ -11472,7 +12160,6 @@ function closeChat(relock) {
 }
 
 function setLevel(i, gen) {
-  if (poll) endVote('cancelled')
   loadLevel(i, gen)
   GAME.match.restart()
   announce('§e' + LEVELS[levelId].name + '§7 it is.')
@@ -11493,21 +12180,12 @@ const COMMANDS = {
   list:   { args: '', help: 'who is in the room', run: cmdList },
   debug:  { args: '', help: 'toggle the debug panel (same as F3)', run: () => {
               toggleDebug(); sysMsg('§7Debug ' + (dbgOpen ? '§aon' : '§coff')) } },
-  level:  { args: '<name or number>', help: 'host only, change the level', run: a => {
-              if (!isHost) return sysMsg('§cOnly the host picks the level.')
-              const i = levelArg(a)
-              if (i < 0) return levelList()
-              if (i === levelId) return sysMsg('§7Already on §f' + LEVELS[i].name)
-              setLevel(i) } },
-  vote:   { args: '<level|yes|no|cancel>', help: 'ask the room to change the level, or vote', run: a => {
-              const w = String(a || '').trim().toLowerCase(), i = levelArg(w)
-              w === 'yes' || w === 'no' ? voteBallot(w === 'yes') : w === 'cancel' ? cancelVote() : i < 0 ? levelList() : voteFor(i) } },
-  seed:   { args: '[n] [size 1-4]', help: 'host only, roll a generated level anew', run: a => {
-              if (!isHost) return sysMsg('§cOnly the host picks the level.')
-              if (!levelGen) return sysMsg('§c' + LEVELS[levelId].name + ' is not generated.')
-              const [n, size] = String(a || '').trim().split(/\s+/)
-              setLevel(levelId, { seed: /^\d+$/.test(n) ? +n : Math.random() * 2 ** 32, ...size && { size: +size } })
-              sysMsg('§7Seed §f' + levelGen.seed + ' §7size §f' + levelGen.size + ' §7(to keep it, put both in the row\'s gen)') } },
+  seed:   { args: '[0-4294967295]', help: 'show the seed; host: set it, or use random for a fresh city', run: a => {
+              const n = String(a || '').trim()
+              if (!n) return sysMsg('§7City seed §f' + levelGen.seed + ' §7(copy it from Pause or F3)')
+              if (!isHost) return sysMsg('§cOnly the host picks the seed.')
+              try { faustSetSeed(n === 'random' ? '' : n); sysMsg('§7City seed §f' + levelGen.seed) }
+              catch (e) { sysMsg('§c' + e.message) } } },
   frags:  { args: '<0-200>', help: 'host only, kills to win (0 = no limit)', run: a => {
               if (!isHost) return sysMsg('§cOnly the host sets the limits.')
               const n = parseInt(a, 10)
@@ -11868,6 +12546,8 @@ function hookSend() {
 }
 const hookCheck = (ok, what) => { if (!ok) throw new TypeError(what) }
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
+  // No argument: current seed. A uint32 sets the next room, or restarts this host's city. Blank rolls one.
+  seed(value) { return arguments.length ? faustSetSeed(value) : phase === 'menu' ? faustParseSeed(el('#host-seed')?.value ?? faustRequestedSeed) : levelGen?.seed },
   // fn(data, { type, match }) on each event of type ('*': every type); returns what removes it
   on(type, fn) {
     hookCheck(type === '*' || HOOK_TYPES.includes(type) || HOOK_TYPE.test(type) && type.length <= 40, 'no event type ' + type)
@@ -11897,14 +12577,15 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   // Run a server from the landing page, as its button does: { code, level, mode, frags, minutes, enemies, name }, each optional
   serve(o = {}) {
     if (phase !== 'menu' || el('#serve-btn').disabled) return false
-    const lv = o.level === undefined ? pickedLevel : levelArg(o.level), code = o.code === undefined ? '' : codeOf(o.code, '')
-    hookCheck(lv >= 0, 'no level ' + o.level + ': ' + LEVELS.map(L => L.name).join(', '))
+    const lv = o.level === undefined ? 0 : levelArg(o.level), code = o.code === undefined ? '' : codeOf(o.code, '')
+    hookCheck(lv === 0, 'Faustland is the only world.')
     hookCheck(o.code === undefined || code, 'a room code is 6 of ' + CODE_ALPHABET)
     hookCheck(o.mode === undefined || MODES.includes(o.mode), 'no mode ' + o.mode + ': ' + MODES.join(', '))
     hookCheck(o.frags === undefined || Number.isInteger(o.frags) && o.frags >= 0 && o.frags <= 200, 'frags: 0-200')
     hookCheck(o.minutes === undefined || Number.isFinite(o.minutes) && o.minutes >= 0 && o.minutes <= 60, 'minutes: 0-60')
     hookCheck(o.enemies === undefined || Number.isInteger(o.enemies) && o.enemies >= 0, 'enemies: 0 or more')
-    pickedLevel = lv; serveCode = code
+    if (o.seed !== undefined) { faustRequestedSeed = faustParseSeed(o.seed); if (el('#host-seed')) el('#host-seed').value = String(o.seed ?? '') }
+    serveCode = code
     if (o.mode !== undefined) gameMode = o.mode
     if (o.frags !== undefined) settings.frags = o.frags
     if (o.minutes !== undefined) settings.mins = o.minutes
@@ -11931,7 +12612,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     try { runCommand(s) } finally { sysTap = null }
     return out.map(m => m.replace(/§./g, ''))
   },
-  setLevel(level) { const i = levelArg(level); if (!isHost || i < 0 || !hookSend()) return false; setLevel(i); return true },
+  // Compatibility endpoint: Faustland (or its former 1-based index) is a no-op; every other world is refused.
+  setLevel(level) { return isHost && levelArg(level) === 0 },
   setFragLimit(n) { if (!isHost || !(Number.isInteger(n) && n >= 0 && n <= 200)) return false; GAME.match.frags(n); return true },
   setMatchMinutes(n) { if (!isHost || !(Number.isFinite(n) && n >= 0 && n <= 60)) return false; GAME.match.minutes(n); return true },
   setEnemies(n) { if (!isHost || !(Number.isInteger(n) && n >= 0) || !hookSend()) return false; GAME.match.bots(n); return true },
@@ -11974,7 +12656,6 @@ function hostIn() {
   roster.set(0, { cid: myCid, name: myName })
   GAME.rows.joined(players.get(0), myCid)
   pushRoster()
-  if (poll) countVote()
 }
 let roomCodeStr = '', roomOpen = false             // a host's code, claimed on the signaling server once open
 const OPENING = 'opening…', codeText = () => isHost && !roomOpen ? OPENING : roomCodeStr
@@ -12294,10 +12975,13 @@ function applyRoster(list) {
 }
 
 function startHost() {
+  let citySeed
+  try { citySeed = faustParseSeed(el('#host-seed')?.value ?? faustRequestedSeed, true) }
+  catch (e) { setStatus(e.message, 'err'); return }
   isHost = true; myId = 0; phase = 'connecting'
   roomCodeStr = serveCode || roomCode(); roomOpen = false
   scarsLater = false
-  loadLevel(pickedLevel)          // before spawns/bodies
+  loadLevel(0, { seed: citySeed })          // before spawns/bodies
   markStart('level')
   GAME.lifecycle.matchStart()
   picking = !serving
@@ -12376,11 +13060,10 @@ function openHostPeer(attempt) {
       const had = conns.delete(id), p = roster.get(id)
       const gone = p && hooked['player.leave'] && players.has(id) && { player: hookWho(players.get(id)), reason: hookGone.get(id) || 'left' }
       hookGone.delete(id)
-      if (players.has(id)) detachBody(players.get(id))
+      if (players.has(id)) { clearSeat(players.get(id)); detachBody(players.get(id)) }
       players.delete(id); roster.delete(id); GAME.lifecycle.left(id); inputs.delete(id); pkSent.delete(id); tierSent.delete(id); objSent.delete(id)
       inputSeq.delete(id); lastChatSeq.delete(id); lastChatAt.delete(id); lastSeen.delete(id)
       inQ.delete(id); inAck.delete(id)
-      if (poll) { poll.yes.delete(id); poll.no.delete(id); countVote() }
       if (p) announce('§e' + p.name + ' left')
       if (gone) hookEmit('player.leave', gone)
       dropAvatar(id)
@@ -12390,65 +13073,8 @@ function openHostPeer(attempt) {
   })
 }
 
-// ---- level vote: a majority of the humans decides at once, else the ballots cast by the end
-const VOTE_S = 20, VOTE_CD_MS = 30000
-let poll = null, pollSeen = null, myBallot = false, myCall = -1         // the host's count (Sets of ids); what each page was told
-const voteCalled = new Map(), voteRefused = new Map()
-const voters = () => [...serving ? [] : [0], ...[...conns.keys()].filter(id => players.has(id))]
-const levelArg = a => { const w = String(a || '').trim().toLowerCase(), n = /^\d+$/.test(w) ? parseInt(w, 10) - 1 : -1
-  const i = LEVELS.findIndex(L => L.name.toLowerCase() === w); return i >= 0 ? i : LEVELS[n] ? n : -1 }
-const levelList = () => sysMsg('§cLevels: §f' + LEVELS.map((L, n) => (n + 1) + ' ' + L.name).join('  '))
-function callVote(id, lv) {
-  const t = now()
-  const why = !Number.isInteger(lv) || lv < 0 || lv >= LEVELS.length ? 'No such level.' : lv === levelId ? 'Already on ' + LEVELS[lv].name + '.'
-    : poll ? 'A vote is already on.' : !voters().includes(id) ? 'Only players vote.'
-    : t - (voteCalled.get(id) ?? -Infinity) < VOTE_CD_MS ? 'Not yet: wait a little.' : ''
-  if (why) { if (!(t - voteRefused.get(id) < 1000)) voteRefused.set(id, t), tell(id, '§7' + why); return }
-  voteCalled.set(id, t)
-  poll = { lv, by: roster.get(id)?.name || 'Someone', until: t + VOTE_S * 1000, yes: new Set([id]), no: new Set() }
-  countVote()
-}
-function ballot(id, yes) {
-  if (!poll || !voters().includes(id) || poll.yes.has(id) || poll.no.has(id)) return
-  (yes ? poll.yes : poll.no).add(id)
-  countVote()
-}
-const sayPoll = m => { broadcast(m); takePoll(m) }
-function countVote() {
-  const n = voters().length, y = poll.yes.size, x = poll.no.size, left = poll.until - now()
-  if (y > n / 2 || left <= 0 && y > x) return endVote('passed')
-  if (x >= n / 2 || left <= 0) return endVote('failed')
-  sayPoll({ k: 'poll', lv: poll.lv, by: poll.by, yes: y, no: x, left: Math.ceil(left / 1000) })
-}
-function endVote(end) {
-  const lv = poll.lv
-  poll = null
-  sayPoll({ k: 'poll', end })
-  if (end === 'passed') setLevel(lv)
-}
-const cancelVote = () => { if (isHost && poll) endVote('cancelled') }
-function takePoll(d) {
-  if (d.end !== undefined) {
-    if (pollSeen && ['passed', 'failed', 'cancelled'].includes(d.end)) sysMsg('§7The vote for §f' + LEVELS[pollSeen.lv].name + '§7 ' + (d.end === 'cancelled' ? 'was called off' : d.end) + '.')
-    pollSeen = null; myBallot = false
-    return
-  }
-  const lv = d.lv, n = v => clamp(v | 0, 0, MAX_PLAYERS)
-  if (!Number.isInteger(lv) || lv < 0 || lv >= LEVELS.length) return
-  if (!pollSeen) { myBallot = myCall === lv; myCall = -1 }
-  pollSeen = { lv, by: cleanName(d.by) || 'Someone', yes: n(d.yes), no: n(d.no), until: now() + clamp(Number(d.left) || 0, 0, VOTE_S) * 1000 }
-}
-const toHost = m => isHost ? onHostData(0, m) : sendHost(m)
-function voteFor(lv) { myCall = lv; toHost({ k: 'vote', lv }) }
-function voteBallot(yes) { if (pollSeen && !myBallot) myBallot = true, toHost({ k: 'ballot', y: yes }) }
-function drawPoll() {
-  const p = pollSeen
-  hud('voteOn', el('#vote'), 'display', p ? 'block' : 'none')
-  if (!p) return
-  hud('voteText', el('#vote-text'), 'textContent', p.by + ' wants ' + LEVELS[p.lv].name + ': ' + p.yes + ' yes / ' + p.no + ' no (' + Math.max(0, Math.ceil((p.until - now()) / 1000)) + ' s)')
-  hud('voted', el('#vote'), '.voted', myBallot)
-  hud('voteHost', el('#vote-cancel'), 'display', isHost ? '' : 'none')
-}
+// Compatibility for existing server clients; this game has one world.
+const levelArg = value => ['faustland', '1'].includes(String(value ?? '').trim().toLowerCase()) ? 0 : -1
 
 const welcome = id => ({ k: 'welcome', id, code: roomCodeStr, lv: levelId, ...levelSeed() })
 
@@ -12509,7 +13135,7 @@ function stopServing() {
 }
 
 
-function dropBot(c) { detachBody(c); players.delete(c.id); inputs.delete(c.id); roster.delete(c.id) }
+function dropBot(c) { clearSeat(c); detachBody(c); players.delete(c.id); inputs.delete(c.id); roster.delete(c.id) }
 
 
 
@@ -12534,8 +13160,7 @@ const HOST_MSGS = {
     announce('§e' + name + ' joined')
     pushRoster()
     if (hooked['player.join']) hookEmit('player.join', { player: hookWho(players.get(id)) })
-    if (poll) countVote()
-    return
+      return
   } },
   c: { apply: (id, d) => {
     if ((lastChatSeq.get(id) || -1) >= d.s) return
@@ -12560,8 +13185,6 @@ const HOST_MSGS = {
     if (p && (hookFilters.has('join') || hooked['player.rename'])) return hookRename(id, p, d)
     if (p) { p.name = cleanName(d.name) || p.name; pushRoster() }
   } },
-  vote: { apply: (id, d) => callVote(id, d.lv) },
-  ballot: { validate: d => typeof d.y === 'boolean' ? d : null, apply: (id, d) => ballot(id, d.y) },
   bye: { apply: (id, d) => {
     const c = conns.get(id)
     if (c) { try { c.close() } catch (e) {} }
@@ -12657,7 +13280,7 @@ let levelSwitchAt = -Infinity, levelMissTold = false
 function hostLevel(lv, ls, lh) {
   lv |= 0
   const L = LEVELS[lv], gen = L && L.gen && Array.isArray(ls) && { seed: ls[0] >>> 0, size: clamp(ls[1] | 0, 1, 32) }
-  if (lv !== levelId || gen && (gen.seed !== levelGen.seed || gen.size !== levelGen.size)) {
+  if (lv !== levelId || gen && (!levelGen || gen.seed !== levelGen.seed || gen.size !== levelGen.size)) {
     if (!L) {
       if (!levelMissTold) sysMsg('§cThe host is playing a level this copy of the game does not have.')
       levelMissTold = true
@@ -12698,9 +13321,6 @@ const GUEST_MSGS = {
   },
   lag: { apply: d => { onLag(d.n) } },
   sys: { apply: d => { sysMsg(String(d.m || '').slice(0, 200)) } },
-  poll: { apply: d => {
-    takePoll(d); return
-  } },
   kicked: { apply: d => { kickedBy = String(d.by || 'the host').slice(0, 16) } },
   full: { apply: d => { endSession('Room full', (gameMode === 'waves' ? 'Waves takes ' : 'The room takes ') + (d.n | 0) + ' players.', false) } },
   hostgone: { apply: () => { endSession('Host left', 'The host closed the game.', true) } },
@@ -12877,7 +13497,7 @@ function reconcile(a) {
 }
 
 function clearSession() {
-  pauseOpen = false; closeSettings(); closeCharPick(); picking = false; poll = pollSeen = null
+  pauseOpen = false; closeSettings(); closeCharPick(); picking = false
   if (isHost) hookMatchEnd('stop', null)
   endServing()                       // first: nothing below may think it serves
   const pe = el('#pause')
@@ -13333,8 +13953,7 @@ const HOST_PHASES = {
   if (resultsLeft > 0) {
     if ((resultsLeft -= dt) <= 0) {
       hostEvent()
-      if (nextLevel >= 0 && nextLevel !== levelId) setLevel(nextLevel); else resetMatch()
-      nextLevel = -1
+      resetMatch()
     }
   } else if (timeLimit && matchLeft > 0 && (matchLeft -= dt) <= 0) {
     matchLeft = 0
@@ -13612,7 +14231,7 @@ function setMatchMinutes(n) {
   settings.mins = n; saveSettings()
 }
 // the match's limits and its restart, as chat, settings and a level change set them
-GAME.match = { frags: setFragLimit, minutes: setMatchMinutes, restart: () => { hostEvent(); resetMatch() }, event: k => pickEvent(k), get fragLimit() { return fragLimit }, get timeLimit() { return timeLimit }, bots: spawnBots, mode: setMode, pickNext: i => pickNext(i), get resultsLeft() { return resultsLeft }, get fragSteps() { return FRAG_STEPS }, get minuteSteps() { return MINUTE_STEPS } }
+GAME.match = { frags: setFragLimit, minutes: setMatchMinutes, restart: () => { hostEvent(); resetMatch() }, event: k => pickEvent(k), get fragLimit() { return fragLimit }, get timeLimit() { return timeLimit }, bots: spawnBots, mode: setMode, get resultsLeft() { return resultsLeft }, get fragSteps() { return FRAG_STEPS }, get minuteSteps() { return MINUTE_STEPS } }
 // the commands this game adds to the page's own
 GAME.commands = {
   event:  { args: '<name|auto|off>', help: 'host only, the seasonal event', run: a => {
@@ -13990,7 +14609,6 @@ function stepSim(t) {
   acc += dt
   if (phase !== 'playing') acc = 0
   else checkLiveness(t, own)
-  if (poll && t >= poll.until) countVote()
   sampleInput()
 
   if (t - rateAt >= 1000) {
@@ -14373,15 +14991,10 @@ function drawResults(others) {
   el('#restitle').textContent =
     top.id === myId ? 'YOU WIN' : who + ' WINS'
   el('#resrows').innerHTML = scoreRows(rows)
-  el('#resnext').textContent = 'Next round in ' + left + (isHost ? ' on ' + LEVELS[nextLevel >= 0 ? nextLevel : levelId].name +
-    (IS_TOUCH ? ' (tap a level to change it)' : ' (press 1-' + Math.min(9, LEVELS.length) + ' to change it)') : '')
-  const lv = el('#reslevels')
-  if (isHost && !lv.children.length) buildLevelCards(lv, levelId, pickNext, !IS_TOUCH)
-  if (isHost && nextLevel < 0) markLevel(lv, levelId)
+  el('#resnext').textContent = 'Next round in ' + left + ' · Faustland'
   res.classList.toggle('host', isHost)
 }
-let lastResSig = null, nextLevel = -1
-const pickNext = i => { nextLevel = i; markLevel(el('#reslevels'), i); lastResSig = null }
+let lastResSig = null
 
 // server screen: 4 Hz; table rebuilt only on change, or a kick button is replaced mid-click
 let srvDrawnAt = 0, srvSig = null
@@ -14425,7 +15038,6 @@ function drawServer(t) {
         'received', ((bytesDownAll + bytesDown) / 1048576).toFixed(2) + ' MB'),
     row('uptime', since, 'signaling', link)].join('\n'))
   hud('srvBots', el('#srv-bots'), 'textContent', String(BOT_COUNT))
-  hud('srvLevel', el('#srv-level'), 'textContent', LEVELS[levelId].name + ' ▸')
   hud('srvFrags', el('#srv-frags'), 'textContent', fragLimit ? String(fragLimit) : 'none')
   hud('srvTime', el('#srv-time'), 'textContent', timeLimit ? +(timeLimit / 60).toFixed(2) + ' min' : 'untimed')
 }
@@ -14444,8 +15056,6 @@ function initServerPanel() {
   el('#srv-less').onclick = bots(-1)
   el('#srv-more').onclick = bots(1)
   el('#srv-stop').onclick = stopServing
-  el('#srv-level').onclick = () => {
-    setLevel((levelId + 1) % LEVELS.length); srvDrawnAt = 0 }
   const frags = d => () => { setFragLimit(stepFrom(FRAG_STEPS, fragLimit, d)); srvDrawnAt = 0 }
   const mins = d => () => { setMatchMinutes(stepFrom(MINUTE_STEPS, timeLimit / 60, d)); srvDrawnAt = 0 }
   el('#srv-frags-less').onclick = frags(-1)
@@ -14462,7 +15072,6 @@ function drawHud(me, others, t) {
   const hage = t - hitSeenAt
   const ff = FC.jet ? clamp((me.fuel || 0) / FC.jet.fuel, 0, 1) : 0
   const nm = (roster.get(myId) || {}).name || myName
-  drawPoll()
 
   const seat = !(me.dead > 0) && (seatOf(me) || me.ride), car = seat && (seat[0].V ? seat[0] : rideOf(me))
   const P = primaryOf(me)
@@ -14683,7 +15292,7 @@ class Arena extends ENABLE3D.Scene3D {
       const broke = m => { if (phase === 'connecting' || picking) setStatus('Something broke: ' + m, 'err') }
       addEventListener('error', e => broke(e.message))
       addEventListener('unhandledrejection', e => broke(String(e.reason && e.reason.message || e.reason)))
-      thumbsOn = true; idleThumbs(); joinLink()
+      joinLink()
     } catch (e) {
       console.error(e)
       setStatus('Startup failed: ' + ((e && e.message) || e), 'err')
@@ -14707,35 +15316,12 @@ const pickCard = (wrap, d) => { for (const c of wrap.children) c.classList.remov
 // a team shows as its first member
 const pickEntries = side => PICKABLE.filter(i => !offEvent(CHARS[i]) && (SIDES[CHARS[i].side] ? CHARS[i].side : '') === side && (!CHARS[i].team || CHARS.findIndex(C => C.team === CHARS[i].team) === i))
 const teamOf = i => CHARS[i].team, members = t => CHARS.flatMap((C, i) => C.team === t ? [i] : [])
-let pickedLevel = 0
 // what a Host draws first: the pick and its team, the first wave or the free-for-all's bots
 function prepMenu() {
   const team = CHARS[myCid].team
   prepareRows([...(team ? members(team) : [myCid]).map(k => [0, k]), ...botPairs(GAME.rows.menuBots(myCid))])
 }
-// a thumbnail compiles its level: drawn when idle after Ready, at most half a second later on a page that never idles
-const thumbsDue = [], paintThumbs = () => { for (const f of thumbsDue.splice(0)) try { f() } catch (e) { console.error(e) } }
-const idleThumbs = () => window.requestIdleCallback ? requestIdleCallback(paintThumbs, { timeout: 500 }) : setTimeout(paintThumbs)
-let thumbsOn = false
-function buildLevelCards(wrap = el('#levels'), sel = pickedLevel, pick = i => { pickedLevel = i }, numbered) {
-  if (!wrap) return
-  LEVELS.forEach((L, i) => {
-    const d = document.createElement('div')
-    d.className = 'card lv' + (i === sel ? ' sel' : '')
-    const cv = d.appendChild(document.createElement('canvas'))
-    cv.width = cv.height = 128
-    thumbsDue.push(() => levelThumb(L, 128, cv))
-    const nm = document.createElement('div')
-    nm.className = 'nm'
-    nm.textContent = (numbered ? i + 1 + ' ' : '') + L.name
-    d.appendChild(nm)
-    d.onclick = () => { pick(i); pickCard(wrap, d) }
-    wrap.appendChild(d)
-  })
-  if (thumbsOn) idleThumbs()
-}
-const markLevel = (wrap, i) => [...wrap.children].forEach((d, k) => d.classList.toggle('sel', k === i))
-
+const markCitySize = (wrap, i) => [...wrap.children].forEach((d, k) => d.classList.toggle('sel', k === i))
 
 scarsLater = true            // the landing page: scars and their worker wait for a game
 for (const L of [LIBS.peer, LIBS.qr]) loadLib(L).catch(() => {})       // preloaded in the head; Host / Join wait for them only if they beat them
@@ -14744,7 +15330,6 @@ el('#serve-btn').disabled = true
 el('#join-btn').disabled = true
 loadSettings()
 if (PICKABLE.includes(settings.cid)) myCid = settings.cid
-buildLevelCards()
 const nameIn = el('#name-in')
 const NAME_1 = ('Quick Lucky Grim Brave Sly Iron Wild Calm Neon Dusty Rusty Jade ' +
                 'Void Bold Sharp Pale Lone Odd Snap Vex Zip Mild Keen Raw').split(' ')
