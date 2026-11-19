@@ -51,7 +51,7 @@ Everything is an environment variable (`-e NAME=value`).
 | `MINUTES` | `0` | length of a match, 0–60; 0 is untimed |
 | `ENEMIES` | `3` | computer-run enemies: Freaks, and the bigger, slower Brutes |
 | `SEED` | fresh each run | the city's seed, a whole number from 0 to 4294967295. The same seed builds the same city, so a seed you like can be played again. The log and `GET /status` name the seed in play, and `POST /command` with `/seed 42` (or `/seed random`) rebuilds the city from another. A `GAME_FILE` without seeded cities ignores it and says so |
-| `ROOM_CODE` | random | a fixed room code, 6 characters of `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, so the join link stays the same. Codes are this game's own: another game's server may use the same one |
+| `ROOM_CODE` | random | a fixed room code, 6 characters of `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, so the join link stays the same. Codes leave out 0, 1, I, L and O, which are easy to misread, so `FAUST1` is refused and the server exits 2. Codes are this game's own: another game's server may use the same one |
 | `SERVER_NAME` | `The server` | the name players see when it kicks them |
 | `JOIN_URL` | the public game page | printed with `#` and the room code as the join link |
 | `HOOKS_DIR` | `/hooks` | hook modules |

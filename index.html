@@ -697,6 +697,7 @@
    wireRow trims trailing zeros to 16 columns; absent tail fields read as 0.
    ammo/sp use -1 for unlimited; anim is one integer; cid selects the row.
 
+   Rigged characters (card #10): MODELS rows of kind 'rig' load GLBs from assets/ (RIG_FILES), animate in rigAnimate.
    Reskin: edit the CONTENT tables and look recipes. Keep pack/unpack and the
    wire guards aligned.
 */
@@ -729,17 +730,18 @@ const TEAMS = {}
 // EVENTS: on from..to [month, day] by the host's local date; while on, CHARS rows with its name as `event` play, `cls`
 //   themes the page and `world` recolours the level: sky (fog and background), sun and hemi [colour, × intensity]
 const EVENTS = []
-// Every player is The Maniak (the design brief). His look is a placeholder on the shared rig: real models replace it.
-// The freaks are the bots' rows (BOTS), hidden from the picker; placeholders too, until the comic's freaks arrive
+// Every player is The Maniak (the design brief), on his rigged model (MODELS.maniak); skin and shape dress the box-man
+// fallback the page draws until the model loads, or if it can't.
+// The freaks are the bots' rows (BOTS), hidden from the picker; on pedestrian bodies (MODELS.freak, .brute) until card #7's
 const CHARS = [
-  { name: 'The Maniak', side: 'maniak', primary: 'Haymaker', r: 0.42, h: 0.56, speed: 7.4, jump: 8.6, hp: 150, color: 0xe8e2d4,
+  { name: 'The Maniak', side: 'maniak', primary: 'Haymaker', r: 0.48, h: 0.50, model: 'maniak', speed: 7.4, jump: 8.6, hp: 150, color: 0xe8e2d4,
     role: 'Billionaire vigilante · fists, and a haymaker',
     shape: { torso: [1.34, 1, 1.24], arm: [1.36, 1, 1.3], hand: [1.24, 1, 1.2], leg: [1.16, 1, 1.12], boot: [1.1, 1, 1.06] },
     skin: { head: 0x141416, torso: 0x1c1c20, arm: 0x1c1c20, hand: 0x2b2a2e, leg: 0x232327, boot: 0x5a5960 } },
-  { name: 'Freak', side: 'freaks', hidden: true, atk: 'Shiv', r: 0.36, h: 0.5, speed: 7.6, jump: 8.6, hp: 70, color: 0xa59d7c,
+  { name: 'Freak', side: 'freaks', hidden: true, atk: 'Shiv', model: 'freak', r: 0.36, h: 0.5, speed: 7.6, jump: 8.6, hp: 70, color: 0xa59d7c,
     role: 'One of Faustland\'s own · a shiv and a grudge',
     skin: { head: 0xa59d7c, torso: 0x5b3a36, arm: 0xa59d7c, hand: 0x8e8668, leg: 0x34333c, boot: 0x26221f } },
-  { name: 'Brute', side: 'freaks', hidden: true, atk: 'Sledge', r: 0.44, h: 0.58, speed: 5.2, jump: 7.4, hp: 180, color: 0x6f6a74,
+  { name: 'Brute', side: 'freaks', hidden: true, atk: 'Sledge', model: 'brute', r: 0.44, h: 0.58, speed: 5.2, jump: 7.4, hp: 180, color: 0x6f6a74,
     role: 'In charge of something · a sledgehammer',
     shape: { torso: [1.3, 1, 1.25], arm: [1.3, 1, 1.25], leg: [1.15, 1, 1.12] },
     skin: { head: 0x8c7a68, torso: 0x45454d, arm: 0x8c7a68, hand: 0x7a6a5a, leg: 0x3a3a42, boot: 0x1e1e22 } },
@@ -933,7 +935,43 @@ const VEHICLES = [
 // sha384-Oa+BcLukVPbtZ7kColOygKyQvDUR0mmaZq4Wrj5BNFylre7BPJZVju/2zVCTMAO4
 const ASSETS =
   'https://cdn.jsdelivr.net/gh/enable3d/enable3d.github.io@1dd9baa5328249fe19b48507a880de9b11f4b4a0/src/assets/glb/'
+// RIGGED CHARACTERS (card #10). GLB files in assets/ beside the page, named by content hash (pin rule 9); a page opened
+// from a file, or a host without them, fetches them from the published site. RIG_LIBS: three's own GLTFLoader and meshopt
+// decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
+// neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
+const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
+const RIG_FILES = { anims: 'anims.4491f331.glb', civ_f_coat: 'civ_f_coat.c55d8093.glb', civ_f_dress: 'civ_f_dress.16b9f27f.glb', civ_m_coat: 'civ_m_coat.69013444.glb', civ_m_suit: 'civ_m_suit.29e88161.glb', civ_m_worker: 'civ_m_worker.11e6984e.glb', maniak: 'maniak.dae0434f.glb', props: 'props.c509eb59.glb' }
+const RIG_LIBS = [
+  { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
+    sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
+  { name: 'gltf', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/loaders/GLTFLoader.js',
+    sri: 'sha384-Lq1Wl94so5JCKGDvezrdVMJhdeKQkwb8iwRo59QrPPd61CnrCJZLxYmFlQ8ZuOKR', swaps: [["from '../utils/BufferGeometryUtils.js'", 'bgu']], expose: 'GLTF' },
+  { name: 'meshopt', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/libs/meshopt_decoder.module.js',
+    sri: 'sha384-zhZjnxc+3j2IeX2itXt+5CnnC0YleVRvu5EOaj733tRp38E9hBPnZjweEWX2kN7y', expose: 'Meshopt' },
+]
+// a pedestrian body as a rig: the shared clips, a freak's gait at a walk
+const RIG_CIV = { kind: 'rig', anims: RIG_FILES.anims, yaw: Math.PI, gripReach: 0.85, lods: [12, 28], cape: [], deathShow: 2.2,
+  clips: { idle: 'freak_idle', walk: 'freak_walk', run: 'run', sprint: 'sprint', fall: 'fall', crouch: 'crouch', crouchRun: 'crouch_walk',
+    climb: 'chain_hang', dive: 'fall', fly: 'fall', drive: 'drive', sit: 'sit', lift: 'smash_air', death: 'death', leap: 'fall', land: 'land',
+    hits: ['hit_chest', 'hit_head'], aim: 'pistol_idle', shoot: 'pistol_shoot' },
+  pace: { walk: 0.57, run: 1.55, sprint: 3.25, crouch: 0.41 } }
 const MODELS = {
+  // The Maniak (pin rule 10): kind 'rig'. clips: the avatar's states to clip names; pace: each locomotion clip's ground
+  // speed in statures/s, for stride matching; punches: a GUNS row's punch kind to [clip, start s] (several: a combo), drawn
+  // over the legs' clip (slam: the whole body); lods: m from the camera where LOD1 and LOD2 begin; cape: its bones, on a spring
+  maniak: {
+    kind: 'rig', file: RIG_FILES.maniak, anims: RIG_FILES.anims, yaw: Math.PI, gripReach: 0.85,
+    clips: { idle: 'idle', walk: 'walk', run: 'run', sprint: 'sprint', fall: 'fall', crouch: 'smash_charge', crouchRun: 'crouch_walk',
+      climb: 'chain_hang', dive: 'smash_air', fly: 'fall', drive: 'drive', sit: 'sit', lift: 'smash_air', death: 'death',
+      leap: 'smash_air', land: 'smash_land', hits: ['hit_chest', 'hit_head'], aim: 'pistol_idle', shoot: 'pistol_shoot' },
+    pace: { walk: 0.62, run: 1.55, sprint: 3.25, crouch: 0.41 },
+    punches: { jab: [['jab', 0.12], ['cross', 0.18], ['hook', 0.04]], rise: [['haymaker', 0.36]], slam: [['smash_land', 0]] },
+    lods: [12, 28], cape: ['cape_01', 'cape_02', 'cape_03'], capeK: 0.11, capeMax: 1.25, deathShow: 2.2,
+  },
+  // the freaks until card #7 brings the comic's: the trench coat for the Freak, the heavy worker for the Brute; a creeping
+  // walk, the freak's swipe for a shiv, a hook for anything else swung (the Brute's sledge)
+  freak: { ...RIG_CIV, file: RIG_FILES.civ_m_coat, punches: { jab: [['freak_attack', 0.35]], melee: [['hook', 0.04]] } },
+  brute: { ...RIG_CIV, file: RIG_FILES.civ_m_worker, punches: { jab: [['hook', 0.04]], melee: [['hook', 0.04], ['cross', 0.18]] } },
   man: {
     url: ASSETS + 'box_man.glb',
     yaw: Math.PI,
@@ -5564,7 +5602,7 @@ const modelFor = (id, cid) => { const C = GAME.participant(id, cid), M = MODELS[
 // wire anim (fixed): 0 idle, 1 moving, 2 rising, 3 falling, 4 climbing, 5 flying, 6 diving; profiles pick local clips
 function animProfile(spec) {
   const M = MODELS[spec.model || 'man']
-  if (M.kind === 'built') return null
+  if (M.kind === 'built' || M.kind === 'rig') return null
   const K = M.clips, H = 2 * (spec.h + spec.r), run = spec.run ?? spec.speed * RUN, at = (clip, o) => ({ clip, rate: 1, ...o })
   const move = (v, gait, [rate, pace], top) => { rate *= (v / H / pace) ** 0.25; const k = v / (rate * gait * H)
     return k < 1 ? { rate, stride: k } : { rate: Math.min(v / (gait * H), top) } }
@@ -6969,6 +7007,7 @@ function loadModels() {
   for (const name of Object.keys(MODELS)) {
     const M = MODELS[name]
     if (M.kind === 'built') continue
+    if (M.kind === 'rig') { rigLoad(name, M); continue }
     try {
       scene3d.load.gltf(M.url).then(g => onModelLoaded(M, g))
         .catch(e => console.warn('model ' + name + ' failed:', e && e.message))
@@ -6976,6 +7015,44 @@ function loadModels() {
       console.warn('model ' + name + ' unavailable, using capsules:', e && e.message)
     }
   }
+}
+
+// a rig's files: from assets/ beside the page, else the published site (a page opened from a file, a host without them);
+// either failing keeps the capsule fallback. One loader for all, each file fetched once
+let rigLib = null
+const rigGets = new Map()
+function rigFetch(file) {
+  if (!rigGets.has(file)) rigGets.set(file, rigLib.then(loader => {
+    const at = base => new Promise((ok, no) => loader.load(base + file, ok, undefined, no))
+    return at(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? at(RIG_SITE) : Promise.reject(e))
+  }))
+  return rigGets.get(file)
+}
+function rigLoad(name, M) {
+  rigLib ||= (self.THREE = THREE, geoLoad(RIG_LIBS)).then(env => {
+    const loader = new env.GLTF.GLTFLoader()
+    loader.setMeshoptDecoder(env.Meshopt.MeshoptDecoder)
+    loader.setCrossOrigin('anonymous')
+    return loader
+  })
+  Promise.all([rigFetch(M.file), M.anims && rigFetch(M.anims)]).then(([g, a]) => onRigLoaded(M, g, a))
+    .catch(e => console.warn('model ' + name + ' failed, using capsules:', e && e.message))
+}
+// gltfpack keeps a LOD node's name on a parent and puts the mesh in an unnamed child: read either
+const rigLods = root => { const m = []; root.traverse(o => { const k = /_lod(\d)$/.exec(o.name) || /_lod(\d)$/.exec(o.parent?.name || ''); if (o.isSkinnedMesh && k) m[+k[1]] = o }); return m }
+function onRigLoaded(M, gltf, anims) {
+  const root = gltf.scene
+  root.traverse(n => { if (n.isMesh) { n.castShadow = true; n.frustumCulled = false; if (n.geometry) n.geometry.userData.shared = true } })
+  M.anims = (anims || gltf).animations
+  // measured standing in its idle (the rest pose is a T), LOD0 only
+  const lods = rigLods(root), idle = M.anims.find(c => c.name === M.clips.idle), mixer = new THREE.AnimationMixer(root)
+  lods.forEach((m, i) => { if (m) m.visible = i === 0 })
+  if (idle) { mixer.clipAction(idle).play(); mixer.update(0) }
+  const b = measureBounds(root)
+  mixer.stopAllAction(); mixer.uncacheRoot(root)
+  if (!b) { console.warn('model has no measurable height'); return }
+  M.height = b.h; M.footY = b.minY; M.proto = root
+  rebuildAvatars()
 }
 
 // seeded and pure: draws alike on every screen and realm
@@ -7048,6 +7125,8 @@ const slamParts = (f, T) => {
 const WALL_EASE = 0.15, wallTurns = new WeakMap(), wallRolls = new WeakMap(), seatAims = new WeakMap(), eased = (k, on, dt) => Math.min(1, Math.max(0, k + (on ? dt : -dt) / WALL_EASE))
 function drawSeat(m, c, seat, list) {
   seatAims.delete(m)
+  const seated = avatars.get(c.id)
+  if (seated) seated.seat = seat ? seat[1] : -1
   const o = seat && list.find(o => o.id === seat[0]), V = o && vehicleOf(o.K)
   if (!V?.seats[seat[1]]) return false
   const frame = { ...o, at0: hullAt(o.K) }
@@ -7807,6 +7886,7 @@ function* warmSteps(root, far) {
 }
 // a body a step per call: its bodySteps, then its walk poses while more(); true once ready (a built model's in BUILT_CACHE)
 function bodyStep(B, M, id, cid, key, more) {
+  if (M.kind === 'rig') return true
   if (M.kind === 'built' && BUILT_CACHE.has(key)) { B.inst ||= BUILT_CACHE.get(key); return true }
   if (!B.inst) {
     const r = (B.gen ||= bodySteps(M, id, cid, key, GAME.participant(id, cid))).next()
@@ -7874,6 +7954,7 @@ function prepareStep() {
     }
     if (!Array.isArray(prepQueue[0])) { if (!offPlay()) return; const E = prepQueue[0]; if ((E.gen ||= E.steps()).next().done) prepQueue.shift(); fresh = false; continue }
     const [id, cid] = prepQueue[0], M = modelFor(id, cid), key = GAME.looks.key(id, cid)
+    if (M.kind === 'rig') { prepQueue.shift(); continue }      // a rig is a clone: nothing to build ahead
     if (M.kind !== 'built' && !M.proto) return
     if (!bodyStep(prepAt ||= {}, M, id, cid, key, more)) { fresh = false; continue }
     if (camera && id >= 0 && !detailCache.has(key)) { (prepAt.far ||= farSteps(id, cid, profOf(id, cid), GAME.participant(id, cid))).next(); fresh = false; continue }
@@ -7968,7 +8049,7 @@ function* avatarSteps(id, cid, cap, body) {
   if (a) dropAvatar(id)
   const C = GAME.participant(id, cid)
   const tint = GAME.looks.color(id, cid)
-  let mesh, mixer = null, actions = null, drop = 0, walkDrop = 0, sprintDrop = 0, ankle = 0, turned = new Map()
+  let mesh, mixer = null, actions = null, drop = 0, walkDrop = 0, sprintDrop = 0, ankle = 0, turned = new Map(), rig = null
 
   const key = GAME.looks.key(id, cid), built = M.kind === 'built', ready = prepReady.get(key)
   if (id >= 0 && !body && ready && !offPlay() && ready.a.cid === cid && ready.proto === M.proto) {
@@ -7983,6 +8064,14 @@ function* avatarSteps(id, cid, cap, body) {
     if (!proto) BUILT_CACHE.set(key, proto = bodyFor(M, id, cid, key, C))
     mesh = proto.clone()
     ownMaterials(mesh)
+  } else if (M.kind === 'rig' && M.proto) {
+    const inst = cloneSkinned(M.proto)
+    inst.traverse(n => { if (n.isMesh) n.material = n.material.clone() })        // materials per avatar: ghost() fades only one
+    fitToCapsule(inst, 2 * (C.h + C.r), M.height, M.footY, M.yaw || 0)
+    inst.userData.y = inst.position.y
+    mesh = new THREE.Group()
+    mesh.add(inst)
+    rig = rigParts(inst, M)
   } else if (M.proto) {
     const inst = body || bodyFor(M, id, cid, key, C)
     mixer = new THREE.AnimationMixer(inst)
@@ -8022,7 +8111,7 @@ function* avatarSteps(id, cid, cap, body) {
   avatarGroup.add(mesh)
   mesh.traverse(cullSkin)
   avatars.set(id, { mesh, cid, spec: C, stand: standOf(C), mixer, actions, prof, drop, walkDrop, sprintDrop, ankle, turned, anim: -1, fast: false, v: 0, model: built || !!M.proto,
-    ...built && { height: 2 * (C.h + C.r), animate: M.animate, built: builtParts(mesh) } })
+    ...built && { height: 2 * (C.h + C.r), animate: M.animate, built: builtParts(mesh) }, ...rig && { rig, animate: rigAnimate, dying: -1 } })
   updateCap(avatars.get(id), cap, id)
   const F = COSTUMES[C.costume]?.form
   if (F) { const a = avatars.get(id); a.form = 0; wear(a); formMap(a, F) }
@@ -8070,7 +8159,7 @@ function* farSteps(id, cid, prof, C) {
 }
 function avatarDetail(id, far) {
   const a = avatars.get(id)
-  if (!a || !a.model || !!a.far === !!far) return
+  if (!a || !a.model || a.rig || !!a.far === !!far) return
   if (!a.detail) {
     const geometries = farDetail(id, a.cid, a.prof, a.spec)
     a.detail = []
@@ -8278,6 +8367,7 @@ function formed(a, skin) {
 const dress = (a, skin) => { const g = formed(a, skin); return tinted(a.hold === 'sit' ? capeSeated(g, MODELS[a.spec.model || 'man'].sit) : g, a.tint) }
 // its own meshes only (a held weapon is in avatarGroup)
 function wear(a) {
+  if (a.rig) return
   const F = COSTUMES[a.spec.costume]?.form
   a.mesh.traverse(n => {
     if (!n.isMesh || n.userData.damageOverlay) return
@@ -8802,6 +8892,136 @@ function setAnim(id, want, dt, t, hold, still, ticks, shift) {
   fitCeiling(a, t)
   bendLimit(a)
 }
+// RIG ANIMATION (kind 'rig'): setAnim hands over here (a.animate). The legs' clip comes from the wire state (still one
+// integer), the hold, the seat and the drawn speed; punches (the gun's punch kind) and hit reactions are drawn over the
+// upper body, a slam over all of it; the clip's own stride is matched to the speed; LOD by distance; the cape swings
+const RIG_UPPER = /^(spine_0[123]|neck_01|Head|clavicle|upperarm|lowerarm|hand|index|middle|ring|pinky|thumb)/
+const rigQ = new THREE.Quaternion(), rigV = new THREE.Vector3(), rigW = new THREE.Quaternion(), rigU = new THREE.Vector3(), rigF = new THREE.Vector3()
+function rigParts(inst, M) {
+  const bones = new Map()
+  inst.traverse(n => { if (n.isBone) bones.set(n.name, n) })
+  const cape = (M.cape || []).map(n => bones.get(n)).filter(Boolean)
+  return { M, inst, bones, lods: rigLods(inst), lod: -1, mixer: new THREE.AnimationMixer(inst), acts: new Map(), base: null, name: '',
+    gait: 'walk', cape, capeRest: cape.map(b => b.quaternion.clone()), capeA: 0, capeV: 0, poses: new Map(), over: null, combo: -1, frame: 0 }
+}
+const rigClip = (M, name) => M.anims.find(c => c.name === name)
+function rigAction(R, name) {
+  let x = R.acts.get(name)
+  if (x === undefined) { const c = rigClip(R.M, name); R.acts.set(name, x = c ? R.mixer.clipAction(c) : null) }
+  return x
+}
+// a clip's pose at a time, blended over what the bones hold (mask: the bones it may touch)
+function rigPose(R, clip, time, w, mask) {
+  const key = clip.name + (mask ? ':upper' : ':all')
+  let list = R.poses.get(key)
+  if (!list) R.poses.set(key, list = clip.tracks.flatMap(tr => {
+    const dot = tr.name.lastIndexOf('.'), bone = R.bones.get(tr.name.slice(0, dot)), path = tr.name.slice(dot + 1)
+    if (!bone || mask && !mask.test(bone.name) || path !== 'quaternion' && !(path === 'position' && bone.name === 'pelvis')) return []
+    return [[bone, path, tr.createInterpolant(new Float32Array(path === 'quaternion' ? 4 : 3))]]
+  }))
+  for (const [bone, path, it] of list) {
+    const v = it.evaluate(time)
+    if (path === 'quaternion') bone.quaternion.slerp(rigQ.fromArray(v), w)
+    else bone.position.lerp(rigV.fromArray(v), w)
+  }
+}
+function rigAnimate(a, want, dt, t) {
+  const R = a.rig, M = R.M, K = M.clips, H = 2 * (a.spec.h + a.spec.r), hold = a.hold, v = a.v || 0
+  R.frame++
+  if (camera) {      // in the picker's stage (not the avatars' group) it is a close-up: LOD0
+    const d = a.mesh.parent === avatarGroup ? a.mesh.position.distanceTo(camera.position) : 0, lod = d < M.lods[0] ? 0 : d < M.lods[1] ? 1 : 2
+    if (lod !== R.lod) { R.lod = lod; R.lods.forEach((m, i) => { if (m) { m.visible = i === lod; m.castShadow = i < 2 } }) }
+  }
+  // the legs' clip
+  let name = K.idle, rate = 1, once = false, fade = 0.2
+  const airborne = want === 2 || want === 3
+  if (want === 'crouch') R.charged = t
+  if (a.dying >= 0) { name = K.death; once = true; fade = 0.1 }
+  else if (hold === 'sit') name = a.seat === 0 ? K.drive : K.sit
+  else if (hold === 'swing' || hold === 'climb' || hold === 'ceiling' || want === 4) name = K.climb
+  else if (hold === 'dive' || want === 6) name = K.dive
+  else if (hold === 'fly' || hold === 'hover' || hold === 'ascend' || hold === 'descend' || want === 5) name = K.fly
+  else if (want === 'crouch') { name = K.crouch; fade = 0.12 }
+  else if (want === 'crouchRun') { name = K.crouchRun; rate = clamp(v / (M.pace.crouch * H), 0.6, 1.6) }
+  else if (airborne) name = t - (R.charged ?? -Infinity) < 2500 ? K.leap : K.fall           // a charged jump flies arms-high
+  else if (want === 1 || v > 0.6) {
+    const P = M.pace, walk = P.walk * H, run = P.run * H, sprint = P.sprint * H
+    R.gait = v < (R.gait === 'walk' ? 1.12 : 0.9) * (walk + run) / 2 ? 'walk' : v < (R.gait === 'sprint' ? 0.9 : 1.12) * (run + sprint) / 2 ? 'run' : 'sprint'
+    name = K[R.gait]; rate = clamp(v / (P[R.gait] * H), 0.55, 1.6)
+  }
+  // landing from a charged jump or a dive: the two-arm smash over everything
+  if (R.wasAir && !airborne && t - (R.charged ?? -Infinity) < 4000 && want !== 'crouch') { R.charged = -Infinity; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
+  if (a.landAt !== undefined && a.landAt !== R.landSeen && t - a.landAt < 150) { R.landSeen = a.landAt; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
+  R.wasAir = airborne
+  const next = rigAction(R, name)
+  if (next && R.name !== name) {
+    const prev = R.base, gaits = [K.walk, K.run, K.sprint, K.crouchRun]
+    next.reset()
+    next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity)
+    next.clampWhenFinished = once
+    if (prev && gaits.includes(R.name) && gaits.includes(name)) next.time = prev.time / prev.getClip().duration * next.getClip().duration
+    next.play()
+    if (prev && prev !== next) next.crossFadeFrom(prev, fade, false)
+    R.base = next; R.name = name
+  }
+  if (R.base) R.base.timeScale = rate
+  // a struck avatar's hit-stop, as the engine asks for it; far ones update every other frame
+  const step = t < (a.holdTo || 0) ? 0 : dt
+  if (R.lod < 2 || R.frame % 2 === 0) R.mixer.update(R.lod < 2 ? step : step * 2)
+  // arms held over the legs' clip: a lifted object overhead, a held gun's stance
+  const upper = hold === 'lift' ? rigClip(M, K.lift) : a.held?.visible && !(a.dying >= 0) ? rigClip(M, K.aim) : null
+  if (upper) rigPose(R, upper, (t / 1000) % upper.duration, 1, RIG_UPPER)
+  // punches: the gun's punch kind, a combo for jabs (a gun without one: its shot); then hit reactions
+  const G = GUNS[a.shotGun], list = G && (M.punches[G.punch] || G.melee && M.punches.melee)
+  if (list && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 400) {
+    R.shotSeen = a.shotAt
+    const [clipName, t0] = list[(R.combo = (R.combo + 1) % list.length)], clip = rigClip(M, clipName)
+    if (clip) R.over = { clip, t0, at: t, full: G.punch === 'slam', speed: G.punch === 'jab' ? 1.5 : 1.15 }
+  } else if (G && !G.melee && a.held?.visible && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 200) {
+    R.shotSeen = a.shotAt
+    const clip = rigClip(M, K.shoot)
+    if (clip) R.over = { clip, t0: 0, at: t, speed: 1.6 }
+  }
+  if (a.struckAt !== undefined && a.struckAt !== R.struckSeen && t - a.struckAt < 200 && K.hits && !(R.over && !R.over.hit)) {
+    R.struckSeen = a.struckAt
+    const clip = rigClip(M, K.hits[(R.hitN = (R.hitN || 0) + 1) % K.hits.length])
+    if (clip) R.over = { clip, t0: 0, at: t, hit: true, w: 0.85, speed: 1.2 }
+  }
+  if (R.over && a.dying < 0) {
+    const o = R.over, ct = o.t0 + (t - o.at) / 1000 * (o.speed || 1), d = o.clip.duration
+    if (ct >= d) R.over = null
+    else rigPose(R, o.clip, ct, (o.w ?? 1) * Math.min(1, (t - o.at) / 60, (d - ct) / 0.15), o.full ? null : RIG_UPPER)
+  } else if (a.dying >= 0) R.over = null
+  // seated: the hips on the cushion, where seatFit put the capsule SIT_HIP above it
+  if (hold === 'sit' && R.bones.get('pelvis')) {
+    a.mesh.updateMatrixWorld(true); R.bones.get('pelvis').getWorldPosition(rigV)
+    R.inst.position.y += a.mesh.position.y - SIT_HIP * (a.spec.h + a.spec.r) + 0.06 * H - rigV.y
+  } else R.inst.position.y = R.inst.userData.y
+  rigCape(a, R, dt)
+}
+// the cape: one angle on a damped spring, pulled back by speed with a flutter, held near plumb when the torso pitches
+function rigCape(a, R, dt) {
+  if (!R.cape.length || !dt) return
+  const M = R.M, v = a.v || 0
+  const want = Math.min(M.capeMax, v * M.capeK) + Math.sin(R.frame / 9 + a.cid) * 0.04 * Math.min(1, v / 3)
+  R.capeV += ((want - R.capeA) * 40 - R.capeV * 9) * Math.min(dt, 0.05); R.capeA += R.capeV * Math.min(dt, 0.05)
+  a.mesh.updateMatrixWorld(true)
+  rigV.set(1, 0, 0).applyQuaternion(a.mesh.getWorldQuaternion(rigW))
+  rigF.set(0, 0, 1).applyQuaternion(rigW)
+  R.cape.forEach((b, k) => {
+    b.parent.getWorldQuaternion(rigW)
+    rigU.set(0, 1, 0).applyQuaternion(rigW)
+    const pitch = k ? 0 : Math.atan2(rigU.dot(rigF), rigU.y) * 0.85
+    rigW.invert()
+    b.quaternion.copy(R.capeRest[k]).premultiply(rigQ.setFromAxisAngle(rigU.copy(rigV).applyQuaternion(rigW).normalize(), k ? R.capeA * (0.35 + 0.2 * k) : R.capeA + pitch))
+  })
+}
+// shown while alive; a rig also while its death clip plays (the respawn counts down from RESPAWN_S)
+function rigShown(id, dead) {
+  const a = avatars.get(id)
+  if (a?.rig) a.dying = dead > 0 ? RESPAWN_S - dead : -1
+  return !(dead > 0) || !!a?.rig && a.dying < (a.rig.M.deathShow ?? RESPAWN_S)
+}
 // a knee or elbow posed past straight is turned back to it about its hinge
 function bendLimit(a) {
   const H = MODELS[a.spec.model || 'man'].hinge, S = H && a.mesh.getObjectByProperty('isSkinnedMesh', true)?.skeleton
@@ -8838,6 +9058,7 @@ function dropAvatar(id) {
   const a = avatars.get(id)
   if (!a) return
   if (a.mixer) a.mixer.stopAllAction()
+  if (a.rig) a.rig.mixer.stopAllAction()
   clearHeld(a)
   if (a.runTrail) {
     const m = a.runTrail.mesh
@@ -8861,6 +9082,8 @@ function clearHeld(a) {
 }
 
 function handSocket(a, side = 1, tag = 'hand') {
+  const grip = a.rig && tag === 'hand' && a.rig.inst.getObjectByName(side > 0 ? 'grip_r' : 'grip_l')
+  if (grip) return { object: grip, point: new THREE.Vector3() }
   a.mesh.updateWorldMatrix(true, true)
   let best = null, right = -Infinity
   a.mesh.traverse(n => {
@@ -14855,7 +15078,7 @@ function draw(dt, t) {
   if (isHost) for (const o of objs) o.riders?.forEach((p, i) => { if (p !== undefined) sits.set(p, [o.id, i]) })
   else { const s = seatOf(me); sits.delete(myId); if (s || me.ride) sits.set(myId, s ? [s[0].id, s[1]] : me.ride) }
   const meMesh = avatarFor(myId, me.cid, me.cap | 0)
-  meMesh.visible = !(me.dead > 0) && !joinPick()
+  meMesh.visible = rigShown(myId, me.dead) && !joinPick()
   const meP = drawnPose(me), meD = meP ? { ...me, x: meP[0], y: meP[1], z: meP[2] } : me
   meMesh.position.set(meD.x, meD.y, meD.z)
   const myHold = holdOf(myId, me) || me.ceil && 'ceiling'
@@ -14872,7 +15095,7 @@ function draw(dt, t) {
   for (const o of others) {
     live.add(o.id)
     const m = avatarFor(o.id, o.cid, o.cap | 0)
-    m.visible = !(o.dead > 0)
+    m.visible = rigShown(o.id, o.dead)
     ghost(m, o.prot || 0)
     m.position.set(o.x, o.y, o.z)
     const C = GAME.participant(o.id, o.cid)
