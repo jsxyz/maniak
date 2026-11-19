@@ -17,11 +17,10 @@ docker logs maniak
 The log names the room and its join link:
 
 ```
-Room K7XQ2M  Yard  join: https://jsxyz.github.io/maniak/#K7XQ2M
+Room K7XQ2M  Faustland  seed 3501965595  join: https://jsxyz.github.io/maniak/#K7XQ2M
 ```
 
-A game whose city grows from a seed also names the seed after the level (`Room K7XQ2M  Faustland  seed 20261119  join:
-…`).
+Faustland, the city, grows from the seed. Run the server with `SEED` set to one you liked to play that city again.
 
 The image is rebuilt from this repository whenever the game changes, so `latest` always runs the game players open. Each
 build is also tagged with its commit's sha. To build it yourself instead, from the repository root:
@@ -46,12 +45,12 @@ Everything is an environment variable (`-e NAME=value`).
 
 | Variable | Default | |
 |---|---|---|
-| `LEVEL` | `Yard` | a level by name or number: Yard, Foundry, Sprawl, City |
+| `LEVEL` | `Faustland` | Faustland is the only world, so leave it unset. Any other level stops the server ("Faustland is the only world.") |
 | `MODE` | `waves` | `ffa` (free-for-all, 32 players) or `waves` (4 players against waves of Freaks and Brutes) |
 | `FRAGS` | `25` | kills to win, 0–200; 0 is no limit |
 | `MINUTES` | `0` | length of a match, 0–60; 0 is untimed |
 | `ENEMIES` | `3` | computer-run enemies: Freaks, and the bigger, slower Brutes |
-| `SEED` | fresh each match | the city's seed, a whole number from 0 to 4294967295. The same seed builds the same city, so a seed you like can be played again. The log and `GET /status` name the seed in play. A game without seeded cities ignores it and says so |
+| `SEED` | fresh each run | the city's seed, a whole number from 0 to 4294967295. The same seed builds the same city, so a seed you like can be played again. The log and `GET /status` name the seed in play, and `POST /command` with `/seed 42` (or `/seed random`) rebuilds the city from another. A `GAME_FILE` without seeded cities ignores it and says so |
 | `ROOM_CODE` | random | a fixed room code, 6 characters of `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, so the join link stays the same. Codes are this game's own: another game's server may use the same one |
 | `SERVER_NAME` | `The server` | the name players see when it kicks them |
 | `JOIN_URL` | the public game page | printed with `#` and the room code as the join link |
@@ -62,7 +61,7 @@ Everything is an environment variable (`-e NAME=value`).
 | `ACTION_HOST`, `ACTION_PORT` | `127.0.0.1`, `8080` | the action API; port 0 turns it off |
 | `ACTION_TOKEN` (or `ACTION_TOKEN_FILE`) | | required whenever `ACTION_HOST` is not loopback |
 | `GAME_FILE` | the game in the image | run another copy of the game, mounted into the container |
-| `BROADCAST_URL` | | a stream every player sees on the level's screens (see Broadcasts) |
+| `BROADCAST_URL` | | a stream for the city's screens (see Broadcasts) |
 
 An event type list is `*` for every type, a comma list such as `kill,player.join`, or a list of types to leave out such as
 `-damage,-chat`.
@@ -100,7 +99,7 @@ Each event is one JSON object, the same on stdout and to a webhook:
 | `broadcast.start` | `origin`: a broadcast started, or switched to a stream from there |
 | `broadcast.stop` | `origin` |
 
-Every `match.start` is followed by one `match.end`. A level change, a restart or the room emptying ends it as
+Every `match.start` is followed by one `match.end`. A restart, a new city seed or the room emptying ends it as
 `restart`. Hook modules can add types of their own.
 
 **Names and chat are typed by players.** They are capped (16 and 160 characters) and stripped of control and colour
@@ -109,10 +108,11 @@ event carries the room code, the room's only credential.
 
 ## Broadcasts
 
-`BROADCAST_URL`, `POST /broadcast` or a hook's `broadcast(url)` names a stream that plays on the level's screens: a wall
-and a billboard in the Yard, building fronts and rooftop boards in the City. The server only names it. Each player's
-own browser fetches and plays it, so **the stream's server sees every player's address**. A player can turn broadcasts
-off in the settings.
+`BROADCAST_URL`, `POST /broadcast` or a hook's `broadcast(url)` names a stream for screens on Faustland's buildings.
+Faustland has no screens yet: `GET /status` names the stream's origin and the `broadcast.start` and `broadcast.stop`
+events go out, but players see it only once the city's facades carry it. The server only names it. Each player's own
+browser fetches and plays it, so **the stream's server sees every player's address**. A player can turn broadcasts off
+in the settings.
 
 - The URL must be https, and the stream's server must allow the game's page (`https://jsxyz.github.io`) by CORS.
   Without that, the screens keep their idle look, and each player is told why once.
@@ -176,9 +176,10 @@ export default function (hooks) {
 - `emit(type, data)` sends an event of your own, a lowercase dotted name such as `league.goal`, with at most 8 KB of
   JSON. Your other hooks, stdout and the webhooks get it like any event.
 - `announce(text)`, `tell(id, text)` and `kick(id or name)` act on players. So do `command('/bots 4')` (any chat
-  command, returning the lines it printed), `setLevel(name or number)`, `setFragLimit(n)`, `setMatchMinutes(n)`,
-  `setEnemies(n)`, `restart()` and `broadcast(url)` (an https URL, or null to stop). Each returns false when refused.
-- `players()` lists everyone in the game. `room()` describes the room, its code included.
+  command, returning the lines it printed), `setLevel('Faustland')` (the only world, so it changes nothing; any other
+  level is refused), `setFragLimit(n)`, `setMatchMinutes(n)`, `setEnemies(n)`, `restart()` and `broadcast(url)` (an
+  https URL, or null to stop). Each returns false when refused.
+- `players()` lists everyone in the game. `room()` describes the room, its code included. `seed()` is the city's seed.
 
 Hooks run in the middle of the game's own work, so keep them quick. A hook that throws is skipped and counted, and the
 game goes on. Whatever hooks send players is held to a player's own limits: a line is at most 160 characters, eight may go at
@@ -202,7 +203,7 @@ without a token. A token set on loopback is required there too.
 | `POST /tell` | `{"id", "text"}` | a line to one player |
 | `POST /kick` | `{"id"}` or `{"name"}` | |
 | `POST /command` | `{"line"}` | a chat command, such as `/bots 4`; answers the lines it printed |
-| `POST /level` | `{"level"}` | |
+| `POST /level` | `{"level"}` | `Faustland` (or 1) only, which changes nothing; any other level answers `done: false` |
 | `POST /frags` | `{"frags"}` | |
 | `POST /minutes` | `{"minutes"}` | |
 | `POST /enemies` | `{"enemies"}` | |
