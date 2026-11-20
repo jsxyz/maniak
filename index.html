@@ -1804,6 +1804,117 @@ function faustPlan(seed, ci, cj, S = 20) {
   content.hash = (hash >>> 0).toString(16).padStart(8, '0')
   return content
 }
+// Spawn points come from the plan (card #33), never the road: the paving of the central plaza and the pavement tiles of the
+// near blocks, 2.5 m clear of every motor and bike lane, 2.5 m clear of the painted crossings, off every lot and a metre clear
+// of every collider a body could stand in. Each faces along its street: the open way (lots and colliders) the most toward the
+// plaza. Pure in (seed, S) with no Math.hypot or atan2 in the choice, so host, guests and a dedicated server agree.
+// Rows are [x, y, z, yaw] (yaw 0 faces -Z); a point is scored by its room and kept a cell at a time, then spread out.
+const FAUST_SPAWN = { plaza: 8, near: 16, reach: 225, grid: 2, lane: 2.5, crossing: 2.5, lot: 2, box: 1, run: 48 }
+let faustSpawnMemo = null
+function faustSpawns(seed, S, avoid = []) {
+  const key = seed + ' ' + S + ' ' + JSON.stringify(avoid)
+  if (faustSpawnMemo?.key === key) return faustSpawnMemo.rows
+  const H = S / 2, K = FAUST_SPAWN, plans = new Map(), sq = v => v * v
+  const plan = (gx, gz) => {
+    if (gx < -H || gz < -H || gx >= H || gz >= H) return null
+    const k = faustKey(gx, gz)
+    if (!plans.has(k)) plans.set(k, faustPlan(seed, gx + H, gz + H, S))
+    return plans.get(k)
+  }
+  const rect = (x, z, x0, z0, x1, z1) => { const dx = Math.max(0, x0 - x, x - x1), dz = Math.max(0, z0 - z, z - z1); return Math.sqrt(dx * dx + dz * dz) }
+  const seg = (x, z, ax, az, bx, bz) => {
+    const dx = bx - ax, dz = bz - az, L = dx * dx + dz * dz, t = L ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L)) : 0
+    const ex = x - ax - dx * t, ez = z - az - dz * t
+    return Math.sqrt(ex * ex + ez * ez)
+  }
+  // what stands round a cell: its own and its eight neighbours' lanes, lots and low colliders
+  const around = (gx, gz) => {
+    const lanes = [], lots = [], boxes = []
+    for (let i = gx - 1; i <= gx + 1; i++) for (let j = gz - 1; j <= gz + 1; j++) {
+      const p = plan(i, j); if (!p) continue
+      lanes.push(...p.lanes); lots.push(...p.lots)
+      for (const b of p.boxes) if (b.cy - b.ey < 2.6 && b.cy + b.ey > 0.05) boxes.push(b)
+    }
+    return { lanes, lots, boxes }
+  }
+  // the painted crossings: across each avenue, 11.45-18.55 m out from each junction, kerb to kerb
+  const crossing = (x, z) => {
+    const jx = Math.round(x / 96) * 96, jz = Math.round(z / 96) * 96, u = Math.abs(x - jx), v = Math.abs(z - jz)
+    return Math.min(rect(u, v, 0, 11.45, 10, 18.55), rect(v, u, 0, 11.45, 10, 18.55))
+  }
+  // the open way from (x, z) along a cardinal direction, up to K.run
+  const run = (x, z, dx, dz, near) => {
+    let t = K.run
+    for (const b of near.boxes) {
+      const ex = b.ex + 0.5, ez = b.ez + 0.5
+      if (dx) { if (Math.abs(z - b.cz) < ez && (b.cx - x) * dx > 0) t = Math.min(t, Math.abs(b.cx - x) - ex) }
+      else if (Math.abs(x - b.cx) < ex && (b.cz - z) * dz > 0) t = Math.min(t, Math.abs(b.cz - z) - ez)
+    }
+    return Math.max(0, t)
+  }
+  const pool = []
+  let pts = new Float64Array(4096)
+  for (let gx = -H; gx < H; gx++) for (let gz = -H; gz < H; gz++) {
+    const X = gx * 96, Z = gz * 96, cx = X + 48, cz = Z + 48, nx = Math.max(0, X, -X - 96), nz = Math.max(0, Z, -Z - 96)
+    if (nx * nx + nz * nz > K.reach * K.reach) continue
+    const p = plan(gx, gz), near = around(gx, gz)
+    // the paving the city draws: a plaza's one square, else the four pale pavement tiles (a diagonal boulevard takes some)
+    const tiles = p.plaza ? [[cx, cz, 37.5]] : [[X + 24, Z + 24], [X + 72, Z + 24], [X + 24, Z + 72], [X + 72, Z + 72]]
+      .filter(([x, z]) => !(p.diagonal && Math.abs(z - x - 384) < 42)).map(([x, z]) => [x, z, 14.3])
+    let n = 0
+    for (const [tx, tz, r] of tiles) {
+      // only what is within reach of this tile can bound a point's room (capped at 4 m), as flat [x0, z0, x1, z1, w] rows
+      const R = r + 6, by = (x0, z0, x1, z1) => x1 > tx - R && x0 < tx + R && z1 > tz - R && z0 < tz + R, flat = list => Float64Array.from(list.flat())
+      const lanes = flat(near.lanes.map(l => [l.path[0][0], l.path[0][2], l.path[1][0], l.path[1][2], l.width / 2])
+        .filter(([x0, z0, x1, z1, w]) => by(Math.min(x0, x1) - w, Math.min(z0, z1) - w, Math.max(x0, x1) + w, Math.max(z0, z1) + w)))
+      const lots = flat(near.lots.map(L => [L.x - L.w, L.z - L.d, L.x + L.w, L.z + L.d]).filter(q => by(...q)))
+      const boxes = flat(near.boxes.map(b => [b.cx - b.ex, b.cz - b.ez, b.cx + b.ex, b.cz + b.ez]).filter(q => by(...q)))
+      const m = Math.floor(r / K.grid)
+      for (let i = -m; i <= m; i++) for (let j = -m; j <= m; j++) {
+        const x = tx + i * K.grid, z = tz + j * K.grid
+        if (x * x + z * z > K.reach * K.reach) continue
+        let lane = 99, lot = 99, box = 99
+        for (let k = 0; k < lanes.length; k += 5) lane = Math.min(lane, seg(x, z, lanes[k], lanes[k + 1], lanes[k + 2], lanes[k + 3]) - lanes[k + 4])
+        if (lane < K.lane || crossing(x, z) < K.crossing) continue
+        for (let k = 0; k < lots.length; k += 4) lot = Math.min(lot, rect(x, z, lots[k], lots[k + 1], lots[k + 2], lots[k + 3]))
+        if (lot < K.lot) continue
+        for (let k = 0; k < boxes.length; k += 4) box = Math.min(box, rect(x, z, boxes[k], boxes[k + 1], boxes[k + 2], boxes[k + 3]))
+        if (box < K.box || avoid.some(([ax, az, ar]) => sq(x - ax) + sq(z - az) < ar * ar)) continue
+        // room: the nearest of lane, lot, collider; off #26's pavement rings (about 1.9 m out from a lot) where there is room
+        const room = Math.min(lane - K.lane, lot - K.lot, box - K.box, 4) + Math.min(Math.abs(lot - 1.9), 1.5) * 0.5
+        if (n * 4 >= pts.length) { const grown = new Float64Array(pts.length * 2); grown.set(pts); pts = grown }
+        pts[n * 4] = x; pts[n * 4 + 1] = z; pts[n * 4 + 2] = room; pts[n * 4 + 3] = sq(x - cx) + sq(z - cz); n++
+      }
+    }
+    // a cell gives its roomiest point (ties: nearest its middle, then west, then north), and its roomiest 30 m from that
+    const better = (a, b) => pts[a + 2] - pts[b + 2] || pts[b + 3] - pts[a + 3] || pts[b] - pts[a] || pts[b + 1] - pts[a + 1]
+    let best = -1, next = -1
+    for (let k = 0; k < n * 4; k += 4) if (best < 0 || better(k, best) > 0) best = k
+    for (let k = 0; best >= 0 && k < n * 4; k += 4)
+      if (sq(pts[k] - pts[best]) + sq(pts[k + 1] - pts[best + 1]) >= 900 && (next < 0 || better(k, next) > 0)) next = k
+    for (const k of [best, next]) if (k >= 0) pool.push({ x: pts[k], z: pts[k + 1], plaza: p.centralPlaza, near })
+  }
+  // spread: farthest-point picks, the plaza's first nearest its middle, then the near blocks' from those
+  const out = [], spread = (list, n, from) => {
+    const d = list.map(c => out.length ? Math.min(...out.map(o => sq(o.x - c.x) + sq(o.z - c.z))) : sq(c.x - from[0]) + sq(c.z - from[1]))
+    for (let k = 0; k < n && list.length; k++) {
+      let i = 0
+      for (let j = 1; j < list.length; j++) if (out.length ? d[j] > d[i] : d[j] < d[i]) i = j
+      const c = list.splice(i, 1)[0]; d.splice(i, 1); out.push(c)
+      for (let j = 0; j < list.length; j++) d[j] = Math.min(d[j], sq(list[j].x - c.x) + sq(list[j].z - c.z))
+    }
+  }
+  spread(pool.filter(c => c.plaza), K.plaza, [0, 0])
+  spread(pool.filter(c => !c.plaza), K.near, [0, 0])
+  const rows = out.map(c => {
+    // face along the street: of the four ways, the longest open run, ties to the one most toward the plaza's middle
+    const ways = [[0, -1, 0], [-1, 0, Math.PI / 2], [0, 1, Math.PI], [1, 0, -Math.PI / 2]].map(([dx, dz, yaw]) => ({ yaw, open: run(c.x, c.z, dx, dz, c.near), toward: -(dx * c.x + dz * c.z) }))
+    ways.sort((a, b) => b.open - a.open || b.toward - a.toward)
+    return [c.x, 3, c.z, ways[0].yaw]
+  })
+  faustSpawnMemo = { key, rows }
+  return rows
+}
 function faustLevel(gen, theme) {
   const S = Math.max(16, Math.min(32, (gen.size || 20) & ~1)), A = S * 48, seed = gen.seed >>> 0
   // One unbroken plane is a safety net beneath all chunk seams. Local floor ray meshes unload normally.
@@ -1811,10 +1922,11 @@ function faustLevel(gen, theme) {
   for (const axis of [0, 2]) for (const side of [-1, 1]) boxes.push(faustBox(axis ? 0 : side * A, 600, axis ? side * A : 0, axis ? A : 1, 600, axis ? 1 : A, { vis: false }))
   boxes.push(faustBox(0, FAUST.lid, 0, A, 1, A, { vis: false }))
   // The globe floats: the central plaza has no monument body or plinth.
-  const spawns = [[0, 3, 150], [150, 3, 0], [-150, 3, 0], [0, 3, -150], [192, 3, 96], [-192, 3, -96], [96, 3, 192], [-96, 3, -192]]
   const pads = [[0, 0, 130], [130, 0, 0], [-130, 0, 0], [0, 0, -130], [192, 0, 96], [-192, 0, -96]]
   const car = VEHICLES.find(v => v.name === 'Car') || VEHICLES[0]
   const objects = car ? [[[6, 0, 144], car.name, 0, faustMix(seed, 1, 1)], [[-6, 0, -144], car.name, Math.PI, faustMix(seed, 2, 2)]] : []
+  // card #33: on the paving and pavements, off the road (faustSpawns); 5 m clear of the pads and the parked cars
+  const spawns = faustSpawns(seed, S, [...pads, ...objects.map(o => o[0])].map(p => [p[0], p[2], 5]))
   return { faust: true, A, theme: { ...THEME, ...theme, size: A, height: 1200, lid: FAUST.lid,
     fog: [0x243044, 360 / A, 2300 / A], ramp: [0, 340], pad: 0xd6c5a0 },
     boxes, pads, spawns, objects, scenery: [{ kind: 'faustland' }], screens: [], screenRule: null,
@@ -3695,6 +3807,17 @@ function pickSpawn(c) {
   return best
 }
 
+// card #33: a player who arrives on a spawn point by a jump of 10 m or more (a respawn, the first spawn, a rescue) looks the
+// way it faces. SPAWNS are the same on every client, from the seed, so nothing goes on the wire
+let spawnLast = null
+function spawnFace(me) {
+  const was = spawnLast
+  spawnLast = { x: me.x, z: me.z }
+  if (!was || me.dead > 0 || (me.x - was.x) * (me.x - was.x) + (me.z - was.z) * (me.z - was.z) < 100) return
+  const s = SPAWNS.find(s => s[3] !== undefined && (s[0] - me.x) * (s[0] - me.x) + (s[2] - me.z) * (s[2] - me.z) < 2.25)
+  if (s) { input.yaw = s[3]; input.pitch = 0 }
+}
+
 // a rescue, not a death: health, powers, guns, proficiency kept
 const VOID_Y = -30
 function rescue(c) {
@@ -3720,6 +3843,7 @@ function respawn(c) {
   if (LV.grow) growNear([[s[0], s[2]]], true)       // before anyone stands there
   c.prot = SPAWN_PROT
   setCharPos(c, s[0], s[1], s[2])
+  if (s[3] !== undefined) { c.yaw = s[3]; if (c.ai) c.ai.yaw = s[3] }
   c.hp = (c.bot && c.bot.hp) || CHARS[c.cid].hp
   c.fuel = tankOf(c)
   c.jLock = false
@@ -18756,6 +18880,7 @@ function draw(dt, t) {
 
   drawPickups(pkl, t)
   drawObjects(obl, d => wheelsOf(d, isHost ? now() : renderT, camera.position))      // null: its own stand
+  spawnFace(me)
   GAME.audio.frame(me, others, t, obl)
   GAME.audio.radio()
 
