@@ -133,6 +133,9 @@
   body.playing.touch #gun{top:calc(48px + env(safe-area-inset-top))}
   #hp{position:fixed;bottom:14px;left:16px;z-index:5;display:none;pointer-events:none}
   /* card #14: the heat, in screaming faces; the lit ones flash while the enforcers have lost him */
+  /* card #14: a plain line for the host while the enforcers are off */
+  #enfoff{position:fixed;top:122px;right:16px;z-index:5;display:none;pointer-events:none;font-size:12px;letter-spacing:.06em;color:#95938d;text-shadow:0 1px 3px #000}
+  body.playing.touch #enfoff{top:calc(162px + env(safe-area-inset-top))}
   #wanted{position:fixed;top:56px;right:16px;z-index:5;display:none;pointer-events:none;text-align:right;font-size:clamp(20px,2.6vmin,34px);
     line-height:1;letter-spacing:.1em;text-shadow:0 1px 4px #000}
   #wanted svg{display:inline-block;width:clamp(34px,5.2vmin,64px);height:clamp(34px,5.2vmin,64px);margin-left:5px;vertical-align:top;
@@ -450,6 +453,7 @@
   <div id="vhpbar"><div id="vhpfill"></div></div><div id="radio"></div></div>
 <div id="gun"><div id="pills"></div></div>
 <div id="wanted" aria-hidden="true"></div>
+<div id="enfoff" aria-hidden="true"></div>
 <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><symbol id="mface" viewBox="0 0 64 64">
   <clipPath id="mfclip"><circle cx="32" cy="32" r="29"/></clipPath>
   <circle cx="32" cy="32" r="29" fill="#c48a5a"/>
@@ -741,6 +745,9 @@ const TEXT = {
   enforcersUsage: '§cUsage: §f/enforcers off|on §7(now {state})',                         // reply, /enforcers with no or a wrong word
   enforcersState: { on: 'on', off: 'off' },                                              // {state} above
   enforcersHost: '§cOnly the host controls the enforcers.',                              // reply, /enforcers from a guest
+  enforcersOffHud: 'Enforcers off',                                                       // HUD line for the host while /enforcers is off
+  giveSquad: '§7A squad car §f5 m ahead',                                                 // reply, /give squad
+  giveSquadNo: '§cNo room for a squad car here.',                                         // reply, /give squad
   enforcersNoWanted: "§7Faust's enforcers are off (§f/enforcers on§7).",                  // reply, /wanted while they are off           // chat, you reach one star
   disguisePill: 'IN DISGUISE',                                   // HUD pill while disguised
   safePill: 'SAFE {s}s',                                         // HUD pill while spawn-protected
@@ -29016,8 +29023,9 @@ const HEAT = {
 // host: player id -> { pts, stars, state (0 clear, 1 wanted, 2 searching), seenAt (ms), last {x, y, z}, left (s of search), at {kind: ms}, spawnAt }
 const heat = new Map()
 let enforcersGuest = true       // what the host's snapshot said (`en`); the host's own is settings.enforcers
-let enforcersHostOff = false     // /enforcers off: this hosting session only, never saved; every new host session starts on
-const enforcersEnabled = () => isHost ? !enforcersHostOff : enforcersGuest
+let enforcersHostOff = false     // /enforcers off in a browser: this hosting session only, never saved; every new host session starts on
+// a dedicated server keeps it with the room's settings (the test room stays peaceful across restarts)
+const enforcersEnabled = () => isHost ? (serving ? settings.enforcers !== false : !enforcersHostOff) : enforcersGuest
 let heatMine = { stars: 0, state: 0, left: 0 }, heatAt = -Infinity, heatAcc = 0, heatRoster = false
 const heatStars = pts => { let n = 0; for (let k = 1; k < HEAT.stars.length; k++) if (pts >= HEAT.stars[k]) n = k; return n }
 const heatFor = id => heat.get(id) || heat.set(id, { pts: 0, stars: 0, state: 0, seenAt: 0, last: { x: 0, y: 0, z: 0 }, left: 0, at: {}, spawnAt: 0 }).get(id)
@@ -29154,7 +29162,7 @@ function enforcersPurge() {
   if (heatRoster) { heatRoster = false; if (conns.size) pushRoster() }
 }
 function enforcersSet(on) {
-  enforcersHostOff = !on
+  if (serving) { settings.enforcers = !!on; saveSettings() } else enforcersHostOff = !on
   if (!on) enforcersPurge()
 }
 function heatTick(dt, all) {
@@ -29192,6 +29200,9 @@ function enforcerDown(c) { enforcerDrop(c); if (conns.size) pushRoster() }
   HOST_PHASES.afterPhysics = t => { ap(t); heatTick(t.dt, t.all) }
 }
 function heatHud() {
+  const off = isHost && !enforcersEnabled()
+  hud('enfoffT', el('#enfoff'), 'textContent', off ? gameText('enforcersOffHud') : '')
+  hud('enfoffD', el('#enfoff'), 'display', off ? 'block' : 'none')
   const W = isHost ? heat.get(myId) : heatMine, stars = W?.stars | 0, state = stars ? W.state : 0, key = stars + ':' + state
   if (lastHud.wanted === key) return
   lastHud.wanted = key
@@ -29702,12 +29713,27 @@ const testTools = (() => {
 })()
 // card #71: /give [kind]: a loose object 3 m ahead of the host, on the ground (QA's grab, punt and throw tests). A kind is an OBJECTS
 // name, or: crate, block (cinderblock), ball, car, van, truck, bus, sports, door (a car's front-left door), wreck.
-const GIVE = { block: 'Cinderblock', sports: 'Sports car', wreck: 'Wreck', door: 'Car door fl', maniak: 'Maniak car' }
+const GIVE = { squad: 'Car', block: 'Cinderblock', sports: 'Sports car', wreck: 'Wreck', door: 'Car door fl', maniak: 'Maniak car' }
+// card #14: a squad car (a Car in the squad's paint, with its light bar: squadIds) 5 m ahead, braked, for a look at it
+function giveSquad(me) {
+  const k = squadK(), id = squadId(trafficState || { departures: [] })
+  if (k < 0 || id < 0 || objs.length >= OBJ_MAX - 8) return sysMsg(gameText('giveSquadNo'))
+  const yaw = input.yaw, x = me.x - Math.sin(yaw) * 5, z = me.z - Math.cos(yaw) * 5, hit = []
+  staticRay(x, me.y + 1, z, 0, -1, 0, 8, hit)
+  const gy = hit.length && hit[4] > 0.5 ? hit[1] : me.y - me.h - me.r
+  squadIds.add(id)
+  const o = addObject(k, [x, gy + 1, z], id, yaw)
+  if (!o) { squadIds.delete(id); return sysMsg(gameText('giveSquadNo')) }
+  o.at = [x, gy - o.low + 0.02, z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body)
+  o.V.wheels.at.forEach((w, i) => { o.car.applyEngineForce(0, i); o.car.setBrake(6, i) })
+  sysMsg(gameText('giveSquad'))
+}
 function testGive(a) {
   if (!isHost || serving) return sysMsg('§cOnly the host can use test commands.')
   const me = selfChar()
   if (!me || me.dead > 0) return sysMsg('§cNot while you are down.')
   const want = String(a || 'crate').trim().toLowerCase(), name = GIVE[want] || want
+  if (want === 'squad') return giveSquad(me)
   const k = OBJECTS.findIndex(K => K.name.toLowerCase() === name.toLowerCase())
   if (k < 0 || OBJECTS[k].plane) return sysMsg('§cUsage: §f/give [kind] §7(' + [...Object.keys(GIVE), ...OBJECTS.filter(K => !K.model && !K.plane).map(K => K.name.toLowerCase())].join(', ') + ')')
   if (objs.length >= OBJ_MAX - 8) return sysMsg('§cToo many objects here.')
@@ -29718,7 +29744,7 @@ function testGive(a) {
   placeObject(k, [x, K.shape === 'hull' ? gy : gy + (K.half ? K.half[1] : K.r || 0.5) + 0.05, z], yaw)
   sysMsg('§7A §f' + K.name.toLowerCase() + ' §7' + d + ' m ahead')
 }
-Object.assign(GAME.commands, { give: { args: '[kind]', help: 'host only, test: a loose object ahead (crate, block, ball, van, truck, bus, door, car)', run: testGive } })
+Object.assign(GAME.commands, { give: { args: '[kind]', help: 'host only, test: a loose object ahead (crate, block, ball, van, truck, bus, door, car, squad)', run: testGive } })
 // card #75: /go <x> <z> | <thing> [walk|run|sprint], on foot by the bots' way; any real key or click stops it
 const goCommand = a => {
   if (!isHost || serving || !selfChar()) return sysMsg('§cOnly the host, with a character.')
