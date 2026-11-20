@@ -21202,7 +21202,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     serveCode = code
     if (o.frags !== undefined) settings.frags = o.frags
     if (o.minutes !== undefined) settings.mins = o.minutes
-    if (o.enemies !== undefined) BOT_COUNT = o.enemies
+    if (o.enemies !== undefined) { BOT_COUNT = o.enemies; botsSlider() }
     const name = cleanName(o.name)
     withLib(LIBS.peer, () => { startServer(); if (name) myName = name }, e => setStatus(e.message, 'err'))
     return true
@@ -21611,7 +21611,7 @@ function startHost() {
     background.mark('match'); GAME.lifecycle.matchStart()
     loadingText('Bringing the streets to life…')
     for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && c.owner === undefined) { dropBot(c); yield }
-    { const sb = el('#set-bots'); if (sb?.dataset.shown) BOT_COUNT = clamp(+sb.value | 0, 0, regulars()) }      // card #59 fix: the slider as shown
+    { const sb = el('#set-bots'); if (sb && sb.value !== '') BOT_COUNT = clamp(+sb.value | 0, 0, regulars()) }      // card #59 fix: the Freaks slider, as it stands
     background.mark('bots'); for (const i of foesWanted()) { addBot(i); yield }
     markStart('bots')
     if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('draw0'); draw(0, now()); yield }
@@ -22431,7 +22431,14 @@ function addBot(i) {
 
 function spawnBots(n) {
   BOT_COUNT = clamp(n | 0, 0, regulars())
+  botsSlider()
   spawnList(foesWanted())
+}
+// card #59 fix: the host's Freaks slider shows the enemy count whatever changed it; the host start reads it back
+function botsSlider() {
+  const sb = el('#set-bots'), out = el('#set-bots-v')
+  if (sb) { sb.max = regulars(); sb.value = BOT_COUNT }
+  if (out) out.textContent = String(BOT_COUNT)
 }
 
 function foesWanted() {
@@ -27169,7 +27176,7 @@ GAME.commands = {
               GAME.heat.set(myId, n); sysMsg('§7Heat: §f' + n) } },
   despawn:{ args: '', help: 'host only, remove every enemy', run: () => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
-              BOT_COUNT = 0; stepSquad()
+              BOT_COUNT = 0; botsSlider(); stepSquad()
               spawnList([])
               sysMsg('§7Cleared.') } },
   bots:   { args: '<0-6>', help: 'host only, set how many enemies', run: a => {
