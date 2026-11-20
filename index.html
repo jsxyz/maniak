@@ -4218,8 +4218,79 @@ function faustStoneMaterial() {
 }
 const FAUST_COLORS = [0x454d5b, 0x333d4d, 0x555d67, 0x39404a]
 function faustDraw(c) { return drain(faustVisualSteps(c)) }
+// card #69: Art Deco on the core and civic towers, from the lot alone (pure in lot, so the same for every player). Corner fins
+// (diamond columns with spire caps) up the three masses, a crown on legs over the roof (the roof stays walkable under it), by
+// the lot's seed a stepped ziggurat with a spire, a sunburst of blades, or a radio mast. Geometry only; trim tints are the city's own.
+const FAUST_DECO = { crown: 0x8c939b, pier: 0xb3bac0, band: 0xadb0b1, steel: 0xa4aab0, ray: 0xc6c8c3, brass: 0xe1d2a9 }
+// a square pyramid on a base of half extents hx, hz at height y (outward faces)
+function faustPyramid(g, cx, y, cz, hx, hz, h, tint) {
+  const c = [[cx - hx, cz + hz], [cx + hx, cz + hz], [cx + hx, cz - hz], [cx - hx, cz - hz]], a = [cx, y + h, cz]
+  for (let i = 0; i < 4; i++) g.tri([c[i][0], y, c[i][1]], [c[(i + 1) % 4][0], y, c[(i + 1) % 4][1]], a, tint)
+}
+// a column of diamond section (corners on the axes, radius r) from y0 to y1, a spire cap above it and a foot cap under it
+function faustFin(g, cx, cz, r, y0, y1, cap, foot, tint) {
+  const c = [[cx - r, cz], [cx, cz + r], [cx + r, cz], [cx, cz - r]]
+  for (let i = 0; i < 4; i++) {
+    const p = c[i], q = c[(i + 1) % 4]
+    g.tri([p[0], y0, p[1]], [q[0], y0, q[1]], [q[0], y1, q[1]], tint); g.tri([p[0], y0, p[1]], [q[0], y1, q[1]], [p[0], y1, p[1]], tint)
+    if (cap > 0) g.tri([p[0], y1, p[1]], [q[0], y1, q[1]], [cx, y1 + cap, cz], tint)
+    if (foot > 0) g.tri([q[0], y0, q[1]], [p[0], y0, p[1]], [cx, y0 - foot, cz], tint)
+  }
+}
+function faustDecoTower(g, lot) {
+  const { x, z, height: H, gothic, mass, seed } = lot, D = FAUST_DECO
+  if (mass.length < 3) return
+  const [m0, m1, m2] = mass, kind = (seed >>> 7) % 3, spire = gothic ? 2.2 : 1
+  // corner fins: the base's from over the belt course, the middle's and the top's from their own ledges
+  for (const [m, r, y0, y1, cap] of [[m0, 1.1, 5.4, m0.cy + m0.ey + 1.5, 4], [m1, 0.95, m1.cy - m1.ey, m1.cy + m1.ey + 2, 5], [m2, 0.8, m2.cy - m2.ey, H + 6.7, 6]])
+    if (!(gothic && m === m0)) for (const sx of [-1, 1]) for (const sz of [-1, 1])
+      faustFin(g, m.cx + sx * m.ex, m.cz + sz * m.ez, r, y0, y1, cap * spire, m === m0 ? 1.2 : 0, D.pier)
+  // the crown stands on its slab 6 m over the roof, on the fins' tops: players walk the roof and its stair exit under it
+  const e = [m2.ex, m2.ez], B = H + 6.7, tiers = kind === 2 ? 2 : kind === 1 ? 3 : 4, th = Math.min(5, Math.max(2.5, H * 0.012))
+  g.box(faustBox(x, H + 6.35, z, e[0] + 0.6, 0.35, e[1] + 0.6), D.band)
+  let y = B
+  for (let i = 0; i < tiers; i++) {
+    const hx = Math.max(1.1, e[0] * (0.9 - i * 0.2)), hz = Math.max(1.1, e[1] * (0.9 - i * 0.2))
+    g.box(faustBox(x, y + th / 2, z, hx, th / 2, hz), D.crown)
+    // the lit band: a thin course round the first step, lit at night
+    if (i === 0) g.box(faustBox(x, y + th * 0.5, z, hx + 0.12, 0.22, hz + 0.12), D.brass, 0.5)
+    y += th
+  }
+  const top = y
+  if (kind === 1) {
+    // a sunburst: blades fanned on each face of the top step, tall at the middle
+    const hx = Math.max(1.1, e[0] * (0.9 - 2 * 0.2)), hz = Math.max(1.1, e[1] * (0.9 - 2 * 0.2)), len = th * 2.6
+    for (let k = -2; k <= 2; k++) {
+      const u = k * 0.4, h = len - Math.abs(k) * th * 0.5
+      g.tri([x + u * hx - 0.35, top, z + hz + 0.06], [x + u * hx + 0.35, top, z + hz + 0.06], [x + u * hx, top + h, z + hz + 0.06], D.ray)
+      g.tri([x + u * hx + 0.35, top, z - hz - 0.06], [x + u * hx - 0.35, top, z - hz - 0.06], [x + u * hx, top + h, z - hz - 0.06], D.ray)
+      g.tri([x + hx + 0.06, top, z + u * hz + 0.35], [x + hx + 0.06, top, z + u * hz - 0.35], [x + hx + 0.06, top + h, z + u * hz], D.ray)
+      g.tri([x - hx - 0.06, top, z + u * hz - 0.35], [x - hx - 0.06, top, z + u * hz + 0.35], [x - hx - 0.06, top + h, z + u * hz], D.ray)
+    }
+    g.box(faustBox(x, top + len * 0.5 + th, z, 0.3, len * 0.5 + th, 0.3), D.steel)
+    return
+  }
+  const last = Math.max(1.1, e[0] * (0.9 - (tiers - 1) * 0.2)), lastZ = Math.max(1.1, e[1] * (0.9 - (tiers - 1) * 0.2))
+  if (kind === 0) {
+    // a stepped hip roof and a spire with a brass collar and a lit tip
+    const ph = Math.max(6, H * 0.04), nl = Math.max(6, H * 0.025)
+    faustPyramid(g, x, top, z, last * 0.8, lastZ * 0.8, ph, D.crown)
+    g.box(faustBox(x, top + ph + nl, z, 0.28, nl, 0.28), D.steel)
+    g.box(faustBox(x, top + ph + 0.8, z, 0.8, 0.12, 0.8), D.brass)
+    g.box(faustBox(x, top + ph + nl * 2 + 0.3, z, 0.22, 0.3, 0.22), D.brass, 0.9)
+  } else {
+    // a radio mast: a slim mast with three brass crossbars, tapering up
+    const nl = Math.max(14, H * 0.07)
+    g.box(faustBox(x, top + nl * 0.5, z, 0.38, nl * 0.5, 0.38), D.steel)
+    for (let i = 1; i <= 3; i++) {
+      const cy = top + nl * (0.3 + 0.17 * i), half = 2.6 - i * 0.6
+      g.box(faustBox(x, cy, z, half, 0.1, 0.1), D.brass); g.box(faustBox(x, cy + 0.9, z, 0.1, 0.1, half), D.brass)
+    }
+    g.box(faustBox(x, top + nl + 0.3, z, 0.22, 0.3, 0.22), D.brass, 0.9)
+  }
+}
 function* faustVisualSteps(c) {
-  const facade = faustBatch(3072), ornament = faustBatch(20480), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
+  const facade = faustBatch(3072), ornament = faustBatch(26624), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
   ornament.box(faustBox(X + 48, -0.08, Z + 48, 48, 0.08, 48), 0x242a33)
   if (P.plaza) {
@@ -4317,10 +4388,6 @@ function* faustVisualSteps(c) {
           ornament.tri([x + side * (w + 2), y, z + q * d], [x + side * (w + 1), y + 2.8, z + q * d], [x + side * (w + 0.5), y, z + q * (d + 1.2)], 0xc1c6c7)
         }
       }
-    } else if (!stop) {
-      // A fan of metal rays and a chevron above the crown is legible in silhouette.
-      const y = H + 12, front = z + d * 0.43
-      for (let k = -3; k <= 3; k++) ornament.tri([x - 0.4, y, front], [x + 0.4, y, front], [x + k * 2, y + 11 - Math.abs(k) * 1.5, front], 0xc6c8c3)
     }
     if (stop) {
       // The mast's foot is a walkable platform on the roof, rather than an inaccessible spire.
@@ -4330,9 +4397,8 @@ function* faustVisualSteps(c) {
       for (const side of [-1, 1]) ornament.box(faustBox(x + side * 5.8, H + 0.9, z, 0.1, 0.5, 5.8), 0x8b969f)
       yield; continue
     }
-    // A stepped ziggurat crown; Gothic towers finish in a needle.
-    for (let i = 0; i < 3; i++) ornament.box(faustBox(x, H + 7 + i * 2, z, Math.max(1, w * 0.36 - i), 1, Math.max(1, d * 0.36 - i)), 0x8c939b)
-    if (gothic || H > 180) ornament.box(faustBox(x, H + 23, z, 0.45, 10, 0.45), 0xa4aab0)
+    // card #69: the tower's Art Deco crown, setback pylons and corner fins
+    faustDecoTower(ornament, lot)
     yield
   }
   // Slender paired lamps on the avenue, merged with all other street detail.
