@@ -4105,6 +4105,402 @@ function faustSolids() {
   }, { valid: () => gen === faustSolidsGen && LV === lv && world === w }).catch(e => console.warn('Faust solids: the head is not solid yet,', e?.message || e))
 }
 
+// ---------------------------------------------------------------- card #18 stage 2: highways, interchanges and bridges
+// Pin rule 16: "large bridges and highways coming out from the city and spanning fields". Four radial highways leave the
+// city at grade on its avenues (x = -288 north, x = +288 south, z = +288 east, z = -288 west), climb onto viaducts at the
+// city's edge, cross an elevated ring road 3 km out (four ramps at each crossing, in its four quadrants), and run on over
+// the fields to the world's edge on embankments, viaducts and tall bridges, to a closed border gate.
+// The plan is a pure function of the seed and the city's size (pin rule 11): integer hashes and polynomials only, every
+// point rounded to the cm, so a seed gives the same roads in every engine. The city's own plans are unchanged.
+// Colliders and the look stream in 1 km cells: colliders within a cell of any player or moving vehicle (as #3's cells),
+// the look within the view's reach of the camera, both built in the background in bounded steps, in the stone material
+// (no shader of their own). Hooks: faustRoadsPlan(seed, S).roads, each with its lanes (faustRoadLanes) for traffic and
+// pursuits (#4, #14) and the car's open road (#12); GAME.faustland.roads().
+const FAUST_ROADS = { version: 1, cell: 1000, ring: 3000, corner: 700, deck: 12, ringDeck: 24, bridge: 30, fill: 1.2,
+  grade: 0.045, step: 20, half: 14.5, rampHalf: 5.5, slab: 1.6, avenue: 288, cross: 380, end: 60, gore: 8, part: 1000 }
+const faustR2 = v => Math.round(v * 100) / 100
+const faustLen = (x, z) => Math.sqrt(x * x + z * z)
+// points every `step` m along a uniform Catmull-Rom through ctrl ([x, z]), ends clamped
+function faustRoadCurve(ctrl, step, closed) {
+  const P = closed ? [ctrl.at(-1), ...ctrl, ctrl[0], ctrl[1]] : [ctrl[0], ...ctrl, ctrl.at(-1)], dense = []
+  for (let k = 1; k < P.length - 2; k++) for (let j = 0; j < 24; j++) {
+    const t = j / 24, t2 = t * t, t3 = t2 * t, a = P[k - 1], b = P[k], c = P[k + 1], d = P[k + 2]
+    dense.push([0, 1].map(e => 0.5 * (2 * b[e] + (c[e] - a[e]) * t + (2 * a[e] - 5 * b[e] + 4 * c[e] - d[e]) * t2 + (3 * b[e] - a[e] - 3 * c[e] + d[e]) * t3)))
+  }
+  dense.push(closed ? ctrl[0] : ctrl.at(-1))
+  return faustResample(dense, step)
+}
+// a polyline resampled every `step` m along its length (the last stub kept), rounded to the cm
+function faustResample(dense, step) {
+  const out = [dense[0]]; let need = step
+  for (let i = 1; i < dense.length; i++) {
+    const a = dense[i - 1], b = dense[i], len = faustLen(b[0] - a[0], b[1] - a[1]); let at = 0
+    while (len - at >= need) { at += need; const u = at / len; out.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]); need = step }
+    need -= len - at
+  }
+  if (need < step - 0.5) out.push(dense.at(-1))
+  return out.map(p => p.map(faustR2))
+}
+// heights along a road: targets, then no climb or fall steeper than the grade (transitions run on past their mark)
+function faustRoadProfile(targets, y0, step) {
+  const g = FAUST_ROADS.grade * step, y = targets.slice(); y[0] = y0
+  for (let i = 1; i < y.length; i++) y[i] = Math.min(Math.max(y[i], y[i - 1] - g), y[i - 1] + g)
+  return y.map(faustR2)
+}
+// a road from its centre points ([x, z]) and heights: the side (unit, to the right going forward) and half-width per point
+function faustRoad(id, kind, xz, ys, half, twoWay) {
+  const n = xz.length, pts = xz.map((p, i) => [p[0], ys[i], p[1]]), side = [], halves = []
+  for (let i = 0; i < n; i++) {
+    const a = xz[Math.max(0, i - 1)], b = xz[Math.min(n - 1, i + 1)], dx = b[0] - a[0], dz = b[1] - a[1], l = faustLen(dx, dz) || 1
+    side.push([-dz / l, dx / l]); halves.push(typeof half === 'function' ? half(i) : half)
+  }
+  return { id, kind, pts, side, half: halves, twoWay, gap: { l: new Set(), r: new Set() }, gore: [], noPylon: new Set(), noLamp: new Set() }
+}
+let faustRoadsMemo = null
+// the plan, at once (the map, the API, offline checks); the game makes it in the background (faustRoadsReady)
+function faustRoadsPlan(seed, S) { return faustRoadsMemo?.key === (seed >>> 0) + '/' + S ? faustRoadsMemo : drain(faustRoadsPlanSteps(seed, S)) }
+// its steps, a road (or a crossing's four ramps) apiece
+function* faustRoadsPlanSteps(seed, S) {
+  const key = (seed >>> 0) + '/' + S
+  if (faustRoadsMemo?.key === key) return faustRoadsMemo
+  const R = FAUST_ROADS, A = S * 48, W = FAUST.world, step = R.step, roads = []
+  // ---- the ring: a square 2 R across with rounded corners (quadratic Béziers), clockwise from the north side
+  const Q = R.ring, r = R.corner, ring = []
+  const straight = (a, b) => { for (let k = 0; k < 40; k++) ring.push([a[0] + (b[0] - a[0]) * k / 40, a[1] + (b[1] - a[1]) * k / 40]) }
+  const corner = (a, c, b) => { for (let k = 0; k < 32; k++) { const t = k / 32, u = 1 - t; ring.push([u * u * a[0] + 2 * u * t * c[0] + t * t * b[0], u * u * a[1] + 2 * u * t * c[1] + t * t * b[1]]) } }
+  const sides = [[[-(Q - r), -Q], [Q - r, -Q], [Q, -Q], [Q, -(Q - r)]], [[Q, -(Q - r)], [Q, Q - r], [Q, Q], [Q - r, Q]],
+    [[Q - r, Q], [-(Q - r), Q], [-Q, Q], [-Q, Q - r]], [[-Q, Q - r], [-Q, -(Q - r)], [-Q, -Q], [-(Q - r), -Q]]]
+  for (const [a, b, c, d] of sides) { straight(a, b); corner(b, c, d) }
+  ring.push(ring[0])
+  const ringXZ = faustResample(ring, step)
+  if (faustLen(ringXZ.at(-1)[0] - ringXZ[0][0], ringXZ.at(-1)[1] - ringXZ[0][1]) < 1) ringXZ.pop()     // closed: no doubled point
+  const ringRoad = faustRoad('ring', 'ring', ringXZ, ringXZ.map(() => R.ringDeck), R.half, true)
+  ringRoad.closed = true
+  roads.push(ringRoad)
+  yield
+  // ---- the radials: f forward (outward), o the avenue's offset across it, n across (+ to the right of f)
+  const radials = [['north', [0, -1], [-R.avenue, 0]], ['south', [0, 1], [R.avenue, 0]], ['east', [1, 0], [0, R.avenue]], ['west', [-1, 0], [0, -R.avenue]]]
+  const crossings = []
+  for (const [q, [name, f, o]] of radials.entries()) {
+    const sEnd = W - R.end - A, sCross = Q - A, ctrl = []
+    const across = [Math.abs(f[1]), Math.abs(f[0])]                       // the axis the road wanders along
+    for (let k = 0, s = 0; ; k++, s = Math.min(k * 2000, sEnd)) {
+      const lat = k <= 3 || s >= sEnd ? 0 : faustMix(seed ^ 0x48574159, q, k) % 1201 - 600
+      ctrl.push([o[0] + f[0] * (A + s) + across[0] * lat, o[1] + f[1] * (A + s) + across[1] * lat])
+      if (s >= sEnd) break
+    }
+    const xz = faustRoadCurve(ctrl, step), n = xz.length, targets = []
+    for (let i = 0; i < n; i++) {
+      const s = i * step, k = Math.floor(s / 2000), h = faustMix(seed ^ 0x42524447, q, k) % 100
+      targets.push(s <= sCross + 600 ? R.deck : s >= sEnd - 900 ? R.fill : h < 35 ? R.fill : h < 70 ? R.deck : R.bridge)
+    }
+    // its city end meets the avenue (20 m wide) and widens to the highway's width over 120 m
+    const road = faustRoad(name, 'radial', xz, faustRoadProfile(targets, 0.05, step), i => Math.min(R.half, 10 + (R.half - 10) * i * step / 120), true)
+    road.gate = true; road.cross = Math.round(sCross / step)
+    roads.push(road); crossings.push(road)
+    yield
+  }
+  // ---- the interchanges: at each crossing, a ramp in each quadrant from the radial (12 m) to the ring (24 m)
+  const nearest = (road, x, z, from = 0, to = road.pts.length) => { let best = from, bd = Infinity
+    for (let i = from; i < to; i++) { const p = road.pts[i], d = faustLen(p[0] - x, p[2] - z); if (d < bd) { bd = d; best = i } } return best }
+  for (const rad of crossings) {
+    const ic = rad.cross, C = rad.pts[ic], jc = nearest(ringRoad, C[0], C[2])
+    const f = [rad.pts[ic + 1][0] - rad.pts[ic - 1][0], rad.pts[ic + 1][2] - rad.pts[ic - 1][2]], fl = faustLen(...f), F = [f[0] / fl, f[1] / fl]
+    const N = ringRoad.pts.length, g0 = ringRoad.pts[(jc + N - 1) % N], g1 = ringRoad.pts[(jc + 1) % N], gl = faustLen(g1[0] - g0[0], g1[2] - g0[2]), G = [(g1[0] - g0[0]) / gl, (g1[2] - g0[2]) / gl]
+    const off = R.half + R.rampHalf + 0.3, L = R.cross * 0.55
+    for (let d = -2; d <= 2; d++) { ringRoad.noPylon.add((jc + d + N) % N); rad.noLamp.add(ic + d) }
+    for (const a of [-1, 1]) for (const b of [-1, 1]) {
+      const P0 = [C[0] + a * R.cross * F[0] + b * off * G[0], C[2] + a * R.cross * F[1] + b * off * G[1]]
+      const P3 = [C[0] + b * R.cross * G[0] + a * off * F[0], C[2] + b * R.cross * G[1] + a * off * F[1]]
+      const P1 = [P0[0] - a * L * F[0], P0[1] - a * L * F[1]], P2 = [P3[0] - b * L * G[0], P3[1] - b * L * G[1]], dense = []
+      for (let k = 0; k <= 64; k++) { const t = k / 64, u = 1 - t
+        dense.push([0, 1].map(e => u * u * u * P0[e] + 3 * u * u * t * P1[e] + 3 * u * t * t * P2[e] + t * t * t * P3[e])) }
+      const xz = faustResample(dense, step), m = xz.length
+      const ys = xz.map((_, i) => { const t = m > 1 ? i / (m - 1) : 0; return faustR2(R.deck + (R.ringDeck - R.deck) * t * t * (3 - 2 * t)) })
+      const ramp = faustRoad(rad.id + ' ramp ' + (a > 0 ? 'out' : 'in') + (b > 0 ? '+' : '-'), 'ramp', xz, ys, R.rampHalf, true)
+      // where the ramp runs beside its main road (under FAUST_ROADS.gore m apart), the parapets between them open and a
+      // gore deck fills the gap
+      for (const [main, ends, k0, near] of [[rad, 'start', 0, ic], [ringRoad, 'end', m - 1, jc]]) {
+        const dir = ends === 'start' ? 1 : -1
+        for (let k = k0; k >= 0 && k < m; k += dir) {
+          const p = ramp.pts[k], lo = Math.max(0, near - 40), hi = Math.min(main.pts.length, near + 40), j = nearest(main, p[0], p[2], lo, hi)
+          const q = main.pts[j], s = main.side[j], d = (p[0] - q[0]) * s[0] + (p[2] - q[2]) * s[1], side = d > 0 ? 'r' : 'l', sg = d > 0 ? 1 : -1
+          const gap = Math.abs(d) - main.half[j] - ramp.half[k]
+          if (gap > R.gore) break
+          main.gap[side].add(j)
+          const rs = ramp.side[k], inner = ((q[0] - p[0]) * rs[0] + (q[2] - p[2]) * rs[1]) > 0 ? 'r' : 'l', isg = inner === 'r' ? 1 : -1
+          ramp.gap[inner].add(k)
+          const e = [q[0] + s[0] * main.half[j] * sg, q[1], q[2] + s[1] * main.half[j] * sg], ri = [p[0] + rs[0] * ramp.half[k] * isg, p[1], p[2] + rs[1] * ramp.half[k] * isg]
+          ramp.gore.push([k, e, ri])
+        }
+      }
+      roads.push(ramp)
+    }
+    yield
+  }
+  // ---- cells: each segment (i, i + 1) by its middle; the gates by their road's last point
+  const cells = new Map(), C = R.cell, put = (x, z, item) => { const k = Math.floor(x / C) + ' ' + Math.floor(z / C); (cells.get(k) || cells.set(k, []).get(k)).push(item) }
+  roads.forEach((road, ri) => { const P = road.pts, n = road.closed ? P.length : P.length - 1
+    for (let i = 0; i < n; i++) { const a = P[i], b = P[(i + 1) % P.length]; put((a[0] + b[0]) / 2, (a[2] + b[2]) / 2, [ri, i]) } })
+  // the hash of every point, to compare engines
+  let h = 2166136261
+  for (const road of roads) for (const p of road.pts) for (const v of p) { h = Math.imul(h ^ Math.round(v * 100), 16777619) }
+  return faustRoadsMemo = { key, roads, cells, hash: (h >>> 0).toString(16).padStart(8, '0'), version: R.version }
+}
+// this city's plan once it's made, else null (and its making started, in the background)
+function faustRoadsReady(F) {
+  if (faustRoadsMemo?.key === (F.seed >>> 0) + '/' + F.S) return faustRoadsMemo
+  F.roadsPlanning ||= background.run('roads plan', function* () { yield* faustRoadsPlanSteps(F.seed, F.S) }, { valid: () => faustState === F })
+    .catch(e => frameFailed('roads', e))
+  return null
+}
+// a road's lanes: [{ dir: +1 along the points or -1, pts: [[x, y, z]...] }], right-hand traffic, 3.6 m lanes
+function faustRoadLanes(road) {
+  const out = [], two = road.kind !== 'ramp'
+  for (const dir of [1, -1]) for (let k = 0; k < (two ? 3 : 1); k++) {
+    const o = two ? 1.4 + 3.6 * (k + 0.5) : 2.6
+    out.push({ dir, pts: road.pts.map((p, i) => [faustR2(p[0] + road.side[i][0] * o * dir), p[1], faustR2(p[2] + road.side[i][1] * o * dir)]) })
+  }
+  return out
+}
+// one cell's roads, as faces and boxes: emit.face(a, b, c, d, normal, tint, solid), emit.box(box, tint, light, solid).
+// Asphalt, concrete, parapets, the median and the markings; pylons, cap beams, bridge towers, lamps and the border gates.
+function* faustRoadCellSteps(plan, key, emit, look) {
+  // card #72's pass: concrete carries a little emission in its own tint (G), so a pylon in the deck's moon shadow and the deck's
+  // underside read as concrete rather than holes; the parapets are pale and the fascia girders deep, for the road's line
+  const R = FAUST_ROADS, T = { asphalt: 0x2a2d33, shoulder: 0x575c63, concrete: 0x5c6168, fascia: 0x8a8f95, parapet: 0x9ea2a7, median: 0x8a8f95,
+    mark: 0xd9d2be, pylon: 0x6a6f76, pole: 0x30353c, lamp: 0xffb35a, gate: 0x8e3a2c, gateBar: 0xd8d0bb, tower: 0x7a7f86 },
+    G = { side: 0.6, under: 0.35, fasciaUnder: 0.3, parapet: 0.45, pylon: 0.35, beam: 0.3, tower: 0.4 }
+  const at = (p, s, o, dy = 0) => [p[0] + s[0] * o, p[1] + dy, p[2] + s[1] * o]
+  const items = plan.cells.get(key) || []
+  for (let n = 0; n < items.length; n++) {
+    const [ri, i] = items[n], road = plan.roads[ri], P = road.pts, j = (i + 1) % P.length
+    const a = P[i], b = P[j], sa = road.side[i], sb = road.side[j], ha = road.half[i], hb = road.half[j], low = Math.max(a[1], b[1]) < 6
+    const up = [0, 1, 0], fw = [b[0] - a[0], 0, b[2] - a[2]], right = [sa[0], 0, sa[1]], left = [-sa[0], 0, -sa[1]]
+    const L = (p, s, h, dy) => at(p, s, -h, dy), Rr = (p, s, h, dy) => at(p, s, h, dy)
+    // the deck: its top, its underside (or, low, retaining walls to the ground) and its sides
+    if (!look) emit.face(L(a, sa, ha), L(b, sb, hb), Rr(b, sb, hb), Rr(a, sa, ha), up, T.asphalt, true)
+    else {
+      // the look: dark asphalt between pale shoulders (1.2 m inside each parapet)
+      const ka = Math.max(0.5, ha - 1.7), kb = Math.max(0.5, hb - 1.7)
+      emit.face(L(a, sa, ka), L(b, sb, kb), Rr(b, sb, kb), Rr(a, sa, ka), up, T.asphalt, false)
+      emit.face(L(a, sa, ha), L(b, sb, hb), L(b, sb, kb), L(a, sa, ka), up, T.shoulder, false)
+      emit.face(Rr(a, sa, ka), Rr(b, sb, kb), Rr(b, sb, hb), Rr(a, sa, ha), up, T.shoulder, false)
+    }
+    // the slab under the deck, and the fascia girders down each edge, 2.4 m deep (0.4 m wide), hung lower than the slab
+    const da = low ? -a[1] : -R.slab, db = low ? -b[1] : -R.slab, fa = low ? da : -2.4, fb = low ? db : -2.4
+    if (!low) {
+      emit.face(L(a, sa, ha - 0.4, da), Rr(a, sa, ha - 0.4, da), Rr(b, sb, hb - 0.4, db), L(b, sb, hb - 0.4, db), [0, -1, 0], T.concrete, true, G.under)
+      for (const sg of [-1, 1]) {
+        const io = o => sg * (o - 0.4), oo = o => sg * o, inn = sg > 0 ? left : right
+        emit.face(at(a, sa, io(ha), fa), at(a, sa, oo(ha), fa), at(b, sb, oo(hb), fb), at(b, sb, io(hb), fb), [0, -1, 0], T.fascia, false, G.fasciaUnder)
+        emit.face(at(a, sa, io(ha), da), at(b, sb, io(hb), db), at(b, sb, io(hb), fb), at(a, sa, io(ha), fa), inn, T.fascia, false, G.fasciaUnder)
+      }
+    }
+    emit.face(L(a, sa, ha), L(a, sa, ha, fa), L(b, sb, hb, fb), L(b, sb, hb), left, low ? T.concrete : T.fascia, true, G.side)
+    emit.face(Rr(a, sa, ha), Rr(b, sb, hb), Rr(b, sb, hb, fb), Rr(a, sa, ha, fa), right, low ? T.concrete : T.fascia, true, G.side)
+    // parapets, 1.1 m tall and 0.5 m thick, but where a ramp runs alongside
+    for (const [g, sg] of [['l', -1], ['r', 1]]) if (!road.gap[g].has(i)) {
+      const oa = sg * ha, ob = sg * hb, ia = sg * (ha - 0.5), ib = sg * (hb - 0.5), out = sg > 0 ? right : left, inn = sg > 0 ? left : right
+      emit.face(at(a, sa, ia, 1.1), at(b, sb, ib, 1.1), at(b, sb, ob, 1.1), at(a, sa, oa, 1.1), up, T.parapet, true, G.parapet)
+      emit.face(at(a, sa, ia), at(b, sb, ib), at(b, sb, ib, 1.1), at(a, sa, ia, 1.1), inn, T.parapet, true, G.parapet)
+      emit.face(at(a, sa, oa), at(a, sa, oa, 1.1), at(b, sb, ob, 1.1), at(b, sb, ob), out, T.parapet, true, G.parapet)
+    }
+    // the median barrier (two-way highways), 0.8 m wide, 0.9 m tall
+    if (road.kind !== 'ramp') {
+      emit.face(at(a, sa, -0.4, 0.9), at(b, sb, -0.4, 0.9), at(b, sb, 0.4, 0.9), at(a, sa, 0.4, 0.9), up, T.median, true, G.parapet)
+      emit.face(at(a, sa, -0.4), at(a, sa, -0.4, 0.9), at(b, sb, -0.4, 0.9), at(b, sb, -0.4), left, T.median, true, G.parapet)
+      emit.face(at(a, sa, 0.4), at(b, sb, 0.4), at(b, sb, 0.4, 0.9), at(a, sa, 0.4, 0.9), right, T.median, true, G.parapet)
+    }
+    // a gore deck between a ramp and its main road where they part
+    for (const [k, e, ri2] of road.gore) if (k === i) {
+      const g2 = road.gore.find(x => x[0] === j)
+      if (g2) emit.face(ri2, g2[2], g2[1], e, up, T.asphalt, true)
+    }
+    if (look) {
+      // the markings: edge lines solid, lane lines dashed (6 m of each 40 m segment pair)
+      const lines = road.kind === 'ramp' ? [[-(road.half[i] - 1), 1], [0, 0], [road.half[i] - 1, 1]]
+        : [-12.2, -8.6, -5.0, -1.4, 1.4, 5.0, 8.6, 12.2].map(o => [o * Math.min(1, ha / R.half), Math.abs(o) === 1.4 || Math.abs(o) === 12.2 ? 1 : 0])
+      for (const [o, solid] of lines) {
+        if (!solid && i % 2) continue
+        const t1 = solid ? 1 : 0.3, m = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e = [a[0] + m[0] * t1, a[1] + m[1] * t1, a[2] + m[2] * t1]
+        emit.face(at(a, sa, o - 0.08, 0.03), at(e, sb, o - 0.08, 0.03), at(e, sb, o + 0.08, 0.03), at(a, sa, o + 0.08, 0.03), up, T.mark, false)
+      }
+    }
+    // pylons every 40 m under a viaduct (80 m under a tall bridge), on a cap beam across the deck
+    const tall = a[1] >= 20
+    if (!low && i % (tall ? 4 : 2) === 0 && !road.noPylon.has(i)) {
+      const cols = road.kind === 'ramp' ? [0] : [-ha * 0.5, ha * 0.5], w = tall ? 1.6 : 0.9, top = a[1] - R.slab
+      for (const o of cols) { const c = at(a, sa, o); emit.box(faustBox(c[0], top / 2, c[2], w, top / 2, w), T.pylon, G.pylon, true) }
+      // the cap beam: 0.8 m deep under the slab, 2 m along the road, between the fascia girders
+      const fl = faustLen(fw[0], fw[2]) || 1, u = [fw[0] / fl, fw[2] / fl], cy = top - 0.8, hw = ha - 0.4
+      const beam = (o, d, dy = 0) => [a[0] + sa[0] * o + u[0] * d, cy + dy, a[2] + sa[1] * o + u[1] * d]
+      emit.face(beam(-hw, -1), beam(hw, -1), beam(hw, 1), beam(-hw, 1), [0, -1, 0], T.concrete, false, G.beam)
+      for (const sg of [-1, 1]) emit.face(beam(-hw, sg), beam(hw, sg), beam(hw, sg, 0.8), beam(-hw, sg, 0.8), [u[0] * sg, 0, u[1] * sg], T.concrete, false, G.beam)
+    }
+    // a tall bridge's towers, Art Deco and stepped, either side every 160 m, each with a lamp on top
+    // (the bridges' 30 m stretches only: the ring's 24 m deck had them standing beside it like columns through the road)
+    if (a[1] >= R.bridge - 3 && b[1] >= R.bridge - 3 && road.kind !== 'ramp' && i % 8 === 0) for (const sg of [-1, 1]) {
+      const c = at(a, sa, sg * (ha + 1.4))
+      emit.box(faustBox(c[0], a[1] + 5 - 1.2, c[2], 1.3, 5 + 1.2, 1.3), T.tower, G.tower, true)
+      emit.box(faustBox(c[0], a[1] + 12, c[2], 0.85, 2, 0.85), T.tower, G.tower, true)
+      if (look) emit.box(faustBox(c[0], a[1] + 14.5, c[2], 0.6, 0.5, 0.6), T.lamp, -1, false)
+    }
+    // lamps every 60 m: on the median, or a ramp's right edge
+    if (look && i % 3 === 0 && !road.noLamp.has(i)) {
+      const c = road.kind === 'ramp' ? at(a, sa, ha - 0.8) : at(a, sa, 0)
+      emit.box(faustBox(c[0], a[1] + 5, c[2], 0.14, 5, 0.14), T.pole, 0, false)
+      emit.box(faustBox(c[0], a[1] + 10.1, c[2], 0.5, 0.18, 0.5), T.lamp, -1, false)
+      // its pool on the deck: a fan whose glow falls from the middle to nothing at the rim
+      emit.pool?.(at(a, sa, 0, 0.02), road.kind === 'ramp' ? 5 : 11, a, b)
+    }
+    // the border gate at a radial's end: a bar across the road between two booths
+    if (road.gate && j === P.length - 1) {
+      const fl = faustLen(fw[0], fw[2]) || 1, u = [fw[0] / fl, fw[2] / fl], g = at(b, sb, 0)
+      const bar = (o, d, dy) => [g[0] + sb[0] * o + u[0] * d, g[1] + dy, g[2] + sb[1] * o + u[1] * d]
+      const H = hb - 0.5
+      emit.face(bar(-H, -0.6, 1.6), bar(-H, 0.6, 1.6), bar(H, 0.6, 1.6), bar(H, -0.6, 1.6), up, T.gateBar, true)
+      emit.face(bar(-H, -0.6, 0), bar(H, -0.6, 0), bar(H, -0.6, 1.6), bar(-H, -0.6, 1.6), [-u[0], 0, -u[1]], T.gate, true)
+      emit.face(bar(-H, 0.6, 0), bar(-H, 0.6, 1.6), bar(H, 0.6, 1.6), bar(H, 0.6, 0), [u[0], 0, u[1]], T.gate, true)
+      for (const sg of [-1, 1]) { const c = bar(sg * (hb + 3), 0, 0); emit.box(faustBox(c[0], c[1] + 2, c[2], 2.5, 2, 2.5), T.gate, 0, true) }
+    }
+    if (n % 24 === 23) yield
+  }
+}
+// a cell's colliders: { tris: Float32Array (x y z ×3), boxes }
+function* faustRoadCellSolid(plan, key) {
+  const tris = [], boxes = []
+  const face = (a, b, c, d, nrm, tint, solid) => { if (!solid) return
+    for (const t of [[a, b, c], [a, c, d]]) {
+      const u = [t[1][0] - t[0][0], t[1][1] - t[0][1], t[1][2] - t[0][2]], v = [t[2][0] - t[0][0], t[2][1] - t[0][1], t[2][2] - t[0][2]]
+      const dot = (u[1] * v[2] - u[2] * v[1]) * nrm[0] + (u[2] * v[0] - u[0] * v[2]) * nrm[1] + (u[0] * v[1] - u[1] * v[0]) * nrm[2]
+      tris.push(...(dot < 0 ? [t[0], t[2], t[1]] : t).flat())
+    } }
+  yield* faustRoadCellSteps(plan, key, { face, box: (b, tint, light, solid) => { if (solid) boxes.push(b) } }, false)
+  return { tris: new Float32Array(tris), boxes }
+}
+// a cell's look: one geometry in the stone material's layout (position, normal, uv, color, faustGlow), flat normals a face.
+// Its own buffer rather than faustBatch, for a glow per vertex: concrete's ambient lift and the lamps' pools on the deck.
+function faustRoadBuf() {
+  const P = [], N = [], C = [], Gl = [], col = new THREE.Color()
+  const vert = (q, n, c, g) => { P.push(q[0], q[1], q[2]); N.push(n[0], n[1], n[2]); C.push(c.r, c.g, c.b); Gl.push(g) }
+  // a triangle facing nrm (its winding turned to match), glow per vertex
+  const tri = (t, nrm, tint, g) => {
+    const u = [t[1][0] - t[0][0], t[1][1] - t[0][1], t[1][2] - t[0][2]], v = [t[2][0] - t[0][0], t[2][1] - t[0][1], t[2][2] - t[0][2]]
+    const dot = (u[1] * v[2] - u[2] * v[1]) * nrm[0] + (u[2] * v[0] - u[0] * v[2]) * nrm[1] + (u[0] * v[1] - u[1] * v[0]) * nrm[2]
+    const o = dot < 0 ? [0, 2, 1] : [0, 1, 2], l = faustLen(faustLen(nrm[0], nrm[1]), nrm[2]) || 1, n = [nrm[0] / l, nrm[1] / l, nrm[2] / l]
+    col.setHex(tint)
+    for (const k of o) vert(t[k], n, col, Array.isArray(g) ? g[k] : g)
+  }
+  const face = (a, b, c, d, nrm, tint, g = 0) => { tri([a, b, c], nrm, tint, g); tri([a, c, d], nrm, tint, g) }
+  const box = (B, tint, g = 0) => {
+    const x0 = B.cx - B.ex, x1 = B.cx + B.ex, y0 = B.cy - B.ey, y1 = B.cy + B.ey, z0 = B.cz - B.ez, z1 = B.cz + B.ez
+    face([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1], [1, 0, 0], tint, g)
+    face([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [-1, 0, 0], tint, g)
+    face([x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [0, 1, 0], tint, g)
+    face([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [0, -1, 0], tint, g)
+    face([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1], tint, g)
+    face([x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0], [0, 0, -1], tint, g)
+  }
+  const geometry = () => {
+    const g = new THREE.BufferGeometry(), n = Gl.length
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P), 3))
+    g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(N), 3))
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2))
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(C), 3))
+    g.setAttribute('faustGlow', new THREE.BufferAttribute(new Float32Array(Gl), 1))
+    g.computeBoundingSphere(); return g
+  }
+  return { tri, face, box, geometry, get count() { return Gl.length / 3 } }
+}
+function* faustRoadCellLook(plan, key) {
+  const buf = faustRoadBuf(), up = [0, 1, 0], pool = 0x2a2d33
+  // a lamp's pool: 12 wedges round m of radius r, tilted to the deck's grade from a to b, glowing in the lamps' colour at the
+  // middle and fading to nothing at the rim
+  const fan = (m, r, a, b) => {
+    const dx = b[0] - a[0], dz = b[2] - a[2], l = faustLen(dx, dz) || 1, gr = (b[1] - a[1]) / l, ux = dx / l, uz = dz / l
+    const rim = k => { const t = k / 12 * 6.283185307179586, x = m[0] + Math.cos(t) * r, z = m[2] + Math.sin(t) * r
+      return [x, m[1] + gr * ((x - m[0]) * ux + (z - m[2]) * uz), z] }
+    for (let k = 0; k < 12; k++) buf.tri([m, rim(k), rim(k + 1)], up, pool, [-0.55, 0, 0])
+  }
+  yield* faustRoadCellSteps(plan, key, { face: (a, b, c, d, nrm, tint, solid, g) => buf.face(a, b, c, d, nrm, tint, g || 0),
+    box: (b, tint, light) => buf.box(b, tint, light), pool: fan }, true)
+  return buf.geometry()
+}
+// each sim tick: the road cells within a cell of any player or moving vehicle get colliders (in the background, a part of
+// FAUST_ROADS.part triangles a step); those two cells clear of all of them lose theirs
+function faustRoadsTick(points) {
+  const F = faustState
+  if (!F || !world || !LV.faust) return
+  const plan = faustRoadsReady(F), C = FAUST_ROADS.cell, Rd = F.roads ||= { cells: new Map(), sig: '' }, w = world
+  if (!plan) return
+  const at = points.map(p => [Math.floor(p[0] / C), Math.floor(p[1] / C)]), sig = at.join('|')
+  if (sig === Rd.sig) return
+  Rd.sig = sig
+  const near = (k, r) => { const [i, j] = k.split(' ').map(Number); return at.some(([x, z]) => Math.abs(x - i) <= r && Math.abs(z - j) <= r) }
+  for (const [k, cell] of [...Rd.cells]) if (!near(k, 2)) {
+    background.cancel('road:' + k)
+    for (const c of cell.chunks) try { dropChunk(c) } catch (e) { frameFailed('roads', e) }
+    Rd.cells.delete(k)
+  }
+  for (const k of plan.cells.keys()) if (near(k, 1) && !Rd.cells.has(k)) {
+    const cell = { chunks: [] }
+    Rd.cells.set(k, cell)
+    background.run('road:' + k, function* () {
+      const { tris, boxes } = yield* faustRoadCellSolid(plan, k), per = FAUST_ROADS.part * 9
+      if (boxes.length) { cell.chunks.push(addChunk(boxes, 'road boxes ' + k, [], null, false)); yield }
+      for (let i = 0; i < tris.length; i += per) { cell.chunks.push(addChunk([], 'road ' + k + ' ' + i / per, tris.subarray(i, i + per), null, true)); yield }
+    }, { priority: 2, valid: () => faustState === F && F.roads === Rd && Rd.cells.get(k) === cell && world === w })
+      .catch(e => frameFailed('roads', e))
+  }
+}
+// each frame: the road cells within the view's reach of the camera get their look (in the background), and lose it 800 m
+// beyond
+function faustRoadsFrame() {
+  const F = faustState
+  if (!F?.materials || !camera || renderHeadless || !LV.faust) return
+  const plan = faustRoadsReady(F)
+  if (!plan) return
+  const V = F.roadLooks ||= new Map(), C = FAUST_ROADS.cell, p = camera.position, reach = viewEnd() + 300
+  const stamp = Math.floor(p.x / 100) + ' ' + Math.floor(p.z / 100) + ' ' + Math.round(reach / 100)
+  if (F.roadStamp === stamp) return
+  F.roadStamp = stamp
+  const dist = k => { const [i, j] = k.split(' ').map(Number); return faustLen(Math.max(i * C - p.x, 0, p.x - (i + 1) * C), Math.max(j * C - p.z, 0, p.z - (j + 1) * C)) }
+  for (const [k, v] of [...V]) if (dist(k) > reach + 800) {
+    background.cancel('roadlook:' + k)
+    if (v.mesh) { worldGroup.remove(v.mesh); v.mesh.geometry.dispose() }
+    V.delete(k)
+  }
+  for (const k of plan.cells.keys()) if (!V.has(k) && dist(k) < reach) {
+    const v = { mesh: null }
+    V.set(k, v)
+    background.run('roadlook:' + k, function* () {
+      const g = yield* faustRoadCellLook(plan, k)
+      v.mesh = new THREE.Mesh(g, F.materials.stone); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
+    }, { valid: () => faustState === F && F.roadLooks === V && V.get(k) === v }).catch(e => frameFailed('roads', e))
+  }
+}
+// the map (#68): the highways, ramps and bridges, painted once with its cached picture
+function faustRoadsMapLayer() {
+  GAME.map?.layer?.('highways', { static(g, c) {
+    const F = faustState, plan = F && faustRoadsReady(F)
+    if (!plan) return
+    for (const pass of [0, 1]) for (const road of plan.roads) {
+      g.beginPath()
+      road.pts.forEach((p, i) => { const [x, y] = c.xy(p[0], p[2]); i ? g.lineTo(x, y) : g.moveTo(x, y) })
+      if (road.closed) g.closePath()
+      const wide = Math.max(1.2, 2 * road.half[road.half.length >> 1] * c.k)
+      g.lineWidth = pass ? wide : wide + 2.4; g.strokeStyle = pass ? (road.kind === 'ramp' ? '#8d8676' : '#b9ae92') : '#06080b'; g.stroke()
+    }
+    // the bridges: a brass line over the stretches 20 m up or more
+    g.strokeStyle = '#c9a45c'; g.lineWidth = 1.4
+    for (const road of plan.roads) { let open = false
+      g.beginPath()
+      road.pts.forEach(p => { const [x, y] = c.xy(p[0], p[2]); if (p[1] >= 20) { open ? g.lineTo(x, y) : g.moveTo(x, y); open = true } else open = false })
+      g.stroke() }
+  } })
+}
+
 // Pure road routing for v1 bots: cardinal street corners, no per-chunk Recast allocation.
 // Rooftop pursuit, stairs and interiors are deliberately outside this coarse navigation pass.
 function faustNav(at, target) {
@@ -4226,6 +4622,7 @@ function faustTick() {
   if (!points.length) points.push([0, 144])
   const vp = me ? [me.x, me.z, me.y] : points[0]
   try { faustStream(points, vp) } catch (e) { frameFailed('city', e) }
+  try { faustRoadsTick(points) } catch (e) { frameFailed('roads', e) }      // card #18: the highways' colliders
   GAME.fogGrown.x = 1e9
   try { faustInteriorTick(participants) } catch (e) { frameFailed('interiors', e) }
   faustState.stats.maxTickMs = Math.max(faustState.stats.maxTickMs, performance.now() - t)
@@ -5195,7 +5592,7 @@ function faustAtmosphere() {
     const smog = new THREE.Sprite(smogMaterial); smog.position.set(x, 13, z); smog.scale.set(600, 32, 1); root.add(smog)
   }
 }
-function faustAtmosphereFrame() { faustFieldsFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
+function faustAtmosphereFrame() { faustFieldsFrame(); faustRoadsFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
 function faustFarLights() { return drain(faustFarLightsSteps()) }
 function* faustFarLightsSteps() {
   const F = faustState, lights = faustBatch(F.S * F.S * 48), warnings = []
@@ -5273,6 +5670,7 @@ function faustOutskirts() {
   const first = faustFieldsSteps(0, 144, F.seed); let r; do r = first.next(); while (!r.done)
   const fields = new THREE.Mesh(r.value, F.materials.stone); fields.position.y = -0.02; fields.receiveShadow = true; worldGroup.add(fields)
   F.fields = { mesh: fields, at: '0 144', job: null }
+  F.roadLooks = new Map(); F.roadStamp = ''; faustRoadsMapLayer()      // stage 2's highways: their look streams in afresh
   // the wall: its inner face on the world's edge, 36 m tall, with a coping; the pylons and lamps
   const H = 36, pylons = Math.ceil((2 * W - 200) / 400), wall = faustBatch(4 * 36 * (2 + 2 * pylons))
   for (const side of [-1, 1]) for (const axis of [0, 1]) {
@@ -5309,6 +5707,8 @@ function* faustBuildWorldSteps() {
 // Traffic/aircraft/broadcast hooks consume plans without holding or modifying the city's internal state.
 // No map rows travel on the wire. Call plan(seed,ci,cj,size) anywhere, including a dedicated server.
 const FAUSTLAND_API = { interior: faustInterior, storey: faustStorey, plan: faustPlan, roadRoute: faustNav, budget: FAUST,
+  // card #18: the highways (faustRoadsPlan: roads with pts, side, half, kind) and a road's lanes, for traffic and pursuits
+  roads: () => faustState && faustRoadsPlan(faustState.seed, faustState.S), roadLanes: faustRoadLanes,
   get state() { return faustState },
   get seed() { return LV.grow?.seed },
   airBand: FAUST.airBand, cruiseY: FAUST.cruiseY, globeBounds: FAUST.globe,
