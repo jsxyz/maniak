@@ -922,6 +922,7 @@ const RIG_CIV = { kind: 'rig', anims: RIG_FILES.anims, yaw: Math.PI, gripReach: 
     hits: ['hit_chest', 'hit_head'], aim: 'pistol_idle', shoot: 'pistol_shoot' },
   pace: { walk: 0.57, run: 1.55, sprint: 3.25, crouch: 0.41 } }
 const MODELS = {
+  trafficDriver: { ...RIG_CIV, file: RIG_FILES.civ_m_suit },
   // The Maniak (pin rule 10): kind 'rig'. clips: the avatar's states to clip names; pace: each locomotion clip's ground
   // speed in statures/s, for stride matching; punches: a GUNS row's punch kind to [clip, start s] (several: a combo), drawn
   // over the legs' clip (slam: the whole body); lods: m from the camera where LOD1 and LOD2 begin; cape: its bones, on a spring
@@ -4909,6 +4910,7 @@ function craterClear() {
 
 // host only: guests get bodies from tracks
 function spawnObjects() {
+  trafficReset()
   objTracks.clear(); objSent.clear(); objHeld.clear(); objSeats.clear(); objFirst.clear(); plannedCells.clear(); objVel = null; vehHp = null; wheelState.clear()
   if (!world) return
   for (const o of objs) o.riders?.forEach((id, i) => {
@@ -5096,6 +5098,7 @@ function holdBy(o, c) {
   o.heldBy = c ? c.id : undefined
 }
 function liftUp(o, c) {
+  if (isHost && o.traffic) trafficDetach(o)
   if (o.V) { o.riders.forEach((id, i) => { const r = id !== undefined && whoIs(id); if (r) leave(r, o, i) }); setParked(o, true) }
   holdBy(o, c)
 }
@@ -5128,7 +5131,7 @@ const whoIs = id => isHost ? players.get(id) : predicted && id === predicted.id 
 function holdObjects() {
   for (const o of objs) {
     // Bullet never sleeps a raycast vehicle: park it
-    if (o.car && !o.parked && o.riders.every(id => id === undefined) && o.body.getAngularVelocity().length() < 0.1 &&
+    if (o.car && !o.parked && !o.traffic && o.riders.every(id => id === undefined) && o.body.getAngularVelocity().length() < 0.1 &&
         Math.hypot(o.body.getLinearVelocity().x(), o.body.getLinearVelocity().z()) < 0.1) setParked(o, true)
     if (o.V && o.riders.some(id => id !== undefined)) {     // stepObjects hasn't seen this step yet
       o.body.getMotionState().getWorldTransform(tmpTrans)
@@ -5302,6 +5305,7 @@ function clearSeat(c) {
   c.seat = null
 }
 function sit(c, o, i) {
+  if (isHost && o.traffic) trafficDetach(o)
   o.riders[i] = c.id; c.seat = [o, i]
   world.removeRigidBody(c.body)
   setParked(o, false)
@@ -5426,6 +5430,353 @@ function stepPhysics(dt) {
   holdObjects()
   stepObjects()
 }
+
+// ---------------------------------------------------------------- Road traffic (host authoritative)
+// Simulation is separate from the seeded city: graph edges come from its motor lanes. No player slots are used.
+// Traffic uses ordinary Bullet cars and object snapshots. The bounded `tf` roster adds lifecycle + driver state only.
+const TRAFFIC = { cap: 36, fleet: ['Car','Van','Truck','Bus'], density: {core:24,civic:14,tenement:12,industrial:8}, radius: 420, retire: 520, think: 0.1, cruise: [7, 11], trim: 15, stop: 21 }
+let trafficState = null
+const trafficRemote = new Map(), trafficViews = new Map()
+const trafficKey = (x, z) => x + ':' + z
+function trafficReset() {
+  trafficState = { cells: new Set(), occlusion: new Map(), queue: [], warm: '', nodes: new Map(), edges: [], cars: new Map(), locks: new Map(), spawn: 0, serial: 0,
+    stats: { ticks: 0, ms: 0, maxMs: 0, spawned: 0, retired: 0, carjacks: 0, distance: 0 }, departures: [] }
+  trafficRemote.clear()
+  for (const v of trafficViews.values()) { v.mixer.stopAllAction(); v.root.removeFromParent() }
+  trafficViews.clear()
+}
+function trafficCell(ci, cj) {
+  const S = LV.grow.S, T = trafficState, key = faustKey(ci, cj)
+  if (ci < 0 || cj < 0 || ci >= S || cj >= S || T.cells.has(key)) return
+  T.cells.add(key)
+  const p = faustGet(ci, cj).plan
+  T.occlusion.set(key, p.lots.map(l => ({x:l.x,z:l.z,w:l.w,d:l.d,height:l.mass[0].ey*2})))
+  // Avenues have room for buses, safe passing offsets and long stopping distances. Diagonal/side streets remain free.
+  for (const road of p.roads) {
+    if (!road.avenue || road.a[0] !== road.b[0] && road.a[2] !== road.b[2]) continue
+    const lanes = p.lanes.filter(l => l.kind === 'motor' && l.path.every(v => road.a[0] === road.b[0]
+      ? Math.abs(v[0] - road.a[0]) < 5 : Math.abs(v[2] - road.a[2]) < 5))
+    for (const l of lanes) {
+      const [a, b] = l.path, dx = (b[0] - a[0]) / 96, dz = (b[2] - a[2]) / 96
+      if (Math.abs(dx) + Math.abs(dz) !== 1) continue
+      const ax = dx ? a[0] : road.a[0], az = dz ? a[2] : road.a[2], bx = ax + dx * 96, bz = az + dz * 96
+      const node = (x, z) => { const k = trafficKey(x, z); if (!T.nodes.has(k)) T.nodes.set(k, { key: k, x, z, out: [] }); return T.nodes.get(k) }
+      const from = node(ax, az), to = node(bx, bz)
+      if (from.out.some(e => e.to === to)) continue
+      const e = { from, to, dx, dz, ox: a[0] - ax, oz: a[2] - az, district: p.district, length: 96 }
+      from.out.push(e); T.edges.push(e)
+    }
+  }
+}
+function trafficNear(x, z, r = 1) {
+  const [ci, cj] = FAUSTLAND_API.cellAt(x, z)
+  for (let i = ci - r; i <= ci + r; i++) for (let j = cj - r; j <= cj + r; j++) trafficCell(i, j)
+}
+const trafficClock = () => (isHost ? tickAt || now() : renderT || now()) / 1000
+// Explicit t is host milliseconds (tickAt/renderT), for deterministic street life.
+// 24 s: 8 s X, 2 s clearance, 8 s Z, 2 s clearance, 4 s pedestrians. Absolute room clock, shared by guests.
+function trafficSignal(x, z, axis, t = trafficClock() * 1000) {
+  const p = ((t / 1000 + ((Math.round(x / 96) + Math.round(z / 96)) & 1) * 4) % 24 + 24) % 24
+  return axis === 'x' ? p < 8 ? 'green' : p < 10 ? 'amber' : 'red' : p >= 10 && p < 18 ? 'green' : p >= 18 && p < 20 ? 'amber' : 'red'
+}
+function trafficCrossing(x, z, t = trafficClock() * 1000) {
+  const p = ((t / 1000 + ((Math.round(x / 96) + Math.round(z / 96)) & 1) * 4) % 24 + 24) % 24
+  return p >= 20
+}
+// Find a path to the nearest reachable road point. A bounded A* search expands plans on demand; never steers across lots.
+function trafficRoute(start, target, avoid) {
+  trafficNear(target.x, target.z, 1)
+  const T = trafficState, candidates = [...T.nodes.values()].filter(n => n.out.length)
+  const goal = candidates.reduce((a, b) => Math.hypot(b.x - target.x, b.z - target.z) < Math.hypot(a.x - target.x, a.z - target.z) ? b : a, start)
+  const open = [start], cost = new Map([[start, 0]]), came = new Map(), done = new Set()
+  for (let tries = 0; open.length && tries < 2304; tries++) {
+    open.sort((a, b) => cost.get(a) + Math.hypot(a.x - goal.x, a.z - goal.z) - cost.get(b) - Math.hypot(b.x - goal.x, b.z - goal.z))
+    const n = open.shift(); if (n === goal) { const out = []; let q = n; while (came.has(q)) { const e = came.get(q); out.unshift(e); q = e.from }; return out }
+    if (done.has(n)) continue
+    done.add(n); trafficNear(n.x, n.z)
+    for (const e of n.out) if (!(n === start && e.to === avoid) && !done.has(e.to) && cost.get(n) + e.length < (cost.get(e.to) ?? Infinity)) {
+      cost.set(e.to, cost.get(n) + e.length); came.set(e.to, e); open.push(e.to)
+    }
+  }
+  return null
+}
+function trafficNext(a) {
+  const e = a.edge; trafficNear(e.to.x, e.to.z)
+  if (a.route) return a.route.shift() || null
+  const choices = e.to.out.filter(n => n.to !== e.from && n.to.out.length && Math.max(Math.abs(n.to.x), Math.abs(n.to.z)) < ARENA - 24)
+  if (!choices.length) return null
+  const straight = choices.find(n => n.dx === e.dx && n.dz === e.dz)
+  return straight && Math.random() < 0.65 ? straight : choices[Math.random() * choices.length | 0]
+}
+const trafficPoint = (e, s) => ({ x: e.from.x + e.ox + e.dx * s, z: e.from.z + e.oz + e.dz * s })
+function trafficAttach(o, edge, route = null) {
+  const a = { edge, route, next: null, path: null, index: 0, cruise: TRAFFIC.cruise[0] + Math.random() * (TRAFFIC.cruise[1] - TRAFFIC.cruise[0]),
+    think: 0, input: {}, hp: o.hp, flee: 0, wait: 0, distance: 0, x: o.x, z: o.z, driver: true, ambient: !route }
+  a.next = trafficNext(a); o.traffic = a; o.trafficAmbient = !route; trafficState.cars.set(o.id, o); setParked(o, false)
+  return a
+}
+function trafficDriveTo(vehicle, point, options = {}) {
+  if (!isHost || !LV.faust || !point || !Number.isFinite(point.x) || !Number.isFinite(point.z) || Math.abs(point.x) > ARENA || Math.abs(point.z) > ARENA) return false
+  const o = typeof vehicle === 'number' ? objs.find(v => v.id === vehicle) : vehicle
+  if (!o?.V || !objs.includes(o) || !TRAFFIC.fleet.includes(o.V.name) || !o.car || o.heldBy !== undefined || o.riders.some(v => v !== undefined)) return false
+  trafficState ||= (trafficReset(), trafficState); trafficNear(o.x, o.z)
+  const fw = rotq(o.q, [0, 0, -1])
+  const score = e => { const p = trafficPoint(e, clamp((o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, 15, 81)); return Math.hypot(o.x - p.x, o.z - p.z) + (1 - fw[0] * e.dx - fw[2] * e.dz) * 8 }
+  const current = o.traffic, edge = current?.edge || trafficState.edges.reduce((a, b) => !a || score(b) < score(a) ? b : a, null)
+  if (!edge || score(edge) > 28) return false
+  trafficNear(point.x, point.z)
+  const gap = e => { const q = trafficPoint(e, clamp((point.x-e.from.x)*e.dx+(point.z-e.from.z)*e.dz, 18, 78)); return Math.hypot(point.x-q.x,point.z-q.z) }
+  const end = trafficState.edges.reduce((a,b)=>gap(b)<gap(a)?b:a,edge), goalS=clamp((point.x-end.from.x)*end.dx+(point.z-end.from.z)*end.dz,18,78)
+  const start = current?.path ? current.next : edge
+  const route = end === start && !current?.path && goalS > (o.x-edge.from.x)*edge.dx+(o.z-edge.from.z)*edge.dz ? [] : trafficRoute(start.to,end.from,start.from)
+  if (!route) return false
+  if (end !== start || route.length || current?.path) route.push(end)
+  const a = current || trafficAttach(o, edge, route)
+  if (current) { a.route = route; if (!a.path) a.next = trafficNext(a) }
+  if (!a.next && !a.path && a.lock) { if (trafficState.locks.get(a.lock) === o.id) trafficState.locks.delete(a.lock); a.lock=null }
+  a.arrived = false; a.follow = options.follow ? point : null; a.replan = 2; a.ambient = false; o.trafficAmbient = false; a.driver = options.driver !== false; a.cruise = clamp(options.speed || 10, 3, 14); a.goal = trafficPoint(end, goalS); a.goalEdge = end; a.goalS = goalS
+  return { id: o.id, destination: a.goal }
+}
+// Retain the egress event on this car for eight seconds. The seeded clip is evaluated at the snapshot clock on guests.
+function trafficDetach(o, eject = true) {
+  const a = o.traffic
+  if (!a) return
+  if (a.lock && trafficState?.locks.get(a.lock) === o.id) trafficState.locks.delete(a.lock)
+  if (eject && a.driver && o.V) {
+    const p = seatAt(o, o.V.exit[0]), fw = rotq(o.q, [1, 0, 0]), event = [r2(trafficClock()), r2(p[0]), r2(p[2]), r2(-fw[0]), r2(-fw[2])]
+    o.trafficExit = GAME.streetLife?.driverExit ? null : event; trafficState.stats.carjacks++
+    GAME.streetLife?.driverExit?.({ vehicleId: o.id, x: p[0], y: p[1], z: p[2], dx: -fw[0], dz: -fw[2] })
+  }
+  o.traffic = null
+  if (o.car) o.V.wheels.at.forEach((w, k) => { o.car.applyEngineForce(0, k); o.car.setBrake(1, k) })
+}
+function trafficTurn(a) {
+  const e = a.edge, n = a.next, r = TRAFFIC.trim, p = trafficPoint(e, 96 - r), q = trafficPoint(n, r)
+  const c = { x: p.x + e.dx * r * 0.7, z: p.z + e.dz * r * 0.7 }, d = { x: q.x - n.dx * r * 0.7, z: q.z - n.dz * r * 0.7 }
+  a.path = Array.from({ length: 13 }, (_, i) => { const t = i / 12, s = 1 - t; return { x: s ** 3 * p.x + 3 * s * s * t * c.x + 3 * s * t * t * d.x + t ** 3 * q.x,
+    z: s ** 3 * p.z + 3 * s * s * t * c.z + 3 * s * t * t * d.z + t ** 3 * q.z } }); a.index = 0
+}
+// An exit lane is a rectangle, not a radius: a bus in the opposite lane must not block it.
+function trafficExitBlocked(o, e) {
+  const q=trafficPoint(e,25)
+  return objs.some(p=>{
+    if(p===o || p.heldBy!==undefined || Math.abs(p.y-o.y)>4)return false
+    const f=rotq(p.q,[0,0,-1]), along=Math.abs(f[0]*e.dx+f[2]*e.dz), across=Math.abs(f[0]*-e.dz+f[2]*e.dx)
+    const length=p.V?along*p.V.l/2+across*p.V.w/2:p.R, width=p.V?across*p.V.l/2+along*p.V.w/2:p.R
+    const dx=p.x-q.x,dz=p.z-q.z
+    return Math.abs(dx*e.dx+dz*e.dz)<length+o.V.l/2+2 && Math.abs(dx*-e.dz+dz*e.dx)<width+o.V.w/2+0.6
+  })
+}
+function trafficThink(o, dt, people) {
+  const a = o.traffic, e = a.edge, fw = rotq(o.q, [0, 0, -1]), yaw = Math.atan2(-fw[0], -fw[2]), speed = speedOf(o)
+  const along = (o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, left = 96 - along
+  let target, desired = a.flee > 0 ? Math.min(14, a.cruise * 1.4) : a.cruise, stop = Infinity
+  if (!a.path && e === a.goalEdge && !a.next) {
+    const remaining = a.goalS - along;
+    if (remaining < 2 && speed < 0.4) a.arrived = true
+    stop = Math.max(0, remaining - 1)
+  }
+  if (a.path) {
+    while (a.index < a.path.length - 1 && Math.hypot(o.x - a.path[a.index].x, o.z - a.path[a.index].z) < 4) a.index++
+    target = a.path[a.index]; desired = 4
+    if (a.index === a.path.length - 1 && Math.hypot(o.x - target.x, o.z - target.z) < 3) {
+      if (trafficState.locks.get(a.lock) === o.id) trafficState.locks.delete(a.lock)
+      a.lock = null; a.edge = a.next; a.next = trafficNext(a); a.path = null
+      return trafficThink(o, 0, people)
+    }
+  } else {
+    target = trafficPoint(e, clamp(along + 4 + speed * 0.45, 15, 96 - TRAFFIC.trim))
+    if (left < 35) desired = Math.min(desired, 5 + Math.max(0, left - 18) * 0.4)
+    const junction = e.to, key = junction.key
+    const owner = trafficState.locks.get(key), green = trafficSignal(junction.x, junction.z, e.dx ? 'x' : 'z') === 'green'
+    const blockedExit = a.next && trafficExitBlocked(o, a.next)
+    if ((!a.next && !a.goal) || (!a.lock && (!green || owner !== undefined && owner !== o.id || blockedExit))) stop = Math.min(stop, Math.max(0, left - TRAFFIC.stop - o.V.l / 2))
+    else if (a.next && left < TRAFFIC.stop + o.V.l / 2 + 2 && !a.lock) { trafficState.locks.set(key, o.id); a.lock = key }
+    if (a.lock && left < TRAFFIC.trim + 1) { trafficTurn(a); return trafficThink(o, 0, people) }
+  }
+  // Front bumper lookahead; all people (including the Maniak), street life and other vehicles get a stopping gap.
+  let offset = 0
+  const obstacle = (x, y, z, radius) => {
+    if (Math.abs(y - o.y) > 3.5) return
+    const dx = x - o.x, dz = z - o.z, f = dx * fw[0] + dz * fw[2], side = dx * -fw[2] + dz * fw[0]
+    if (f <= 0 || f > 38 || Math.abs(side) > o.V.w / 2 + radius + 0.7) return
+    stop = Math.min(stop, Math.max(0, f - o.V.l / 2 - radius - 2.5))
+    if (Math.abs(side) > o.V.w / 2 && !a.path) offset = (side > 0 ? -0.65 : 0.65)
+  }
+  for (const c of people) if (!(c.dead > 0) && !seatOf(c)) obstacle(c.x, c.y, c.z, c.r || 0.5)
+  for (const p of objs) if (p !== o && p.heldBy === undefined) obstacle(p.x, p.y, p.z, p.V ? Math.min(p.V.l / 2, p.R) : p.R)
+  for (const c of GAME.streetLife?.obstacles?.(o.x + fw[0] * 15, o.z + fw[2] * 15, 25) || []) obstacle(c.x, c.y || 1, c.z, c.radius || 0.6)
+  // Static obstacles and thrown props use real collision rays. A swerve stays within the avenue's motor lane.
+  const reach = 5 + speed * speed / 10, y = o.y + 0.2
+  const rays = [-0.7, 0, 0.7].map(s => castRay(o.x - fw[2] * s + fw[0] * (o.V.l / 2 + 0.3), y,
+    o.z + fw[0] * s + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], reach, RAY_GROUP | G_OBJ) * reach)
+  if (Math.min(...rays) < reach) { stop = Math.min(stop, Math.max(0, Math.min(...rays) - 2)); if (!a.path) offset = rays[0] < rays[2] ? 0.65 : -0.65 }
+  if (stop < Infinity) desired = Math.min(desired, Math.sqrt(Math.max(0, stop) * 6))
+  const err = wrapPi(Math.atan2(o.x - target.x - -e.dz * offset, o.z - target.z - e.dx * offset) - yaw)
+  if (Math.abs(err) > 0.6) desired = Math.min(desired, 4)
+  a.wait = speed < 0.3 ? a.wait + dt : 0
+  // A blocked car waits visibly. Never teleport through an obstacle to recover a queue.
+  return { f: speed > desired + 0.2 ? -1 : desired < 0.3 ? 0 : clamp((desired - speed) * 0.45, 0, 0.7), r: clamp(-1.4 * err, -1, 1), j: desired < 0.3, yaw, pitch: 0 }
+}
+// Conservative visibility: buildings must hide all four corners of the car from every player (yaw is irrelevant).
+// Test analytic plans along the sight line, including unloaded cells; rooftop/long sight lines can defer spawning.
+function trafficHidden(x, z, people) {
+  for (const c of people) {
+    if (Math.hypot(c.x - x, c.z - z) < 90) return false
+    const ridden = seatOf(c)?.[0], reach = ridden ? 2 * ridden.V.l + 4 : 8, cy = c.y + (c.h || 0.6) + reach
+    // Include the third-person camera reach, including when it peeks round a corner.
+    for (const [ex, ez] of [[-reach,-reach],[-reach,reach],[reach,-reach],[reach,reach]]) for (const [sx, sz] of [[-5,-5],[-5,5],[5,-5],[5,5]]) {
+      const cx = c.x + ex, cz = c.z + ez, tx = x + sx, tz = z + sz, dx = tx - cx, dz = tz - cz, dy = 3.5 - cy, cells = new Set(), length = Math.hypot(dx, dz)
+      let hidden = false
+      for (let d = 0; d <= length && !hidden; d += 40) {
+        const u = length ? d / length : 0, [ci, cj] = FAUSTLAND_API.cellAt(cx + dx * u, cz + dz * u), key = faustKey(ci, cj)
+        if (cells.has(key) || ci < 0 || cj < 0 || ci >= LV.grow.S || cj >= LV.grow.S) continue
+        cells.add(key)
+        const lots = trafficState.occlusion.get(key)
+        if (!lots) return false      // an unplanned sight line is never assumed hidden
+        for (const lot of lots) {
+          let lo = 0, hi = 1
+          for (const [p, v, mn, mx] of [[cx, dx, lot.x - lot.w + 1, lot.x + lot.w - 1], [cy, dy, 0, lot.height - 1], [cz, dz, lot.z - lot.d + 1, lot.z + lot.d - 1]]) {
+            if (Math.abs(v) < 1e-6) { if (p < mn || p > mx) hi = -1 }
+            else { const a = (mn - p) / v, b = (mx - p) / v; lo = Math.max(lo, Math.min(a,b)); hi = Math.min(hi,Math.max(a,b)) }
+          }
+          if (lo < hi && hi > 0.01 && lo < 0.99) { hidden = true; break }
+        }
+      }
+      if (!hidden) return false
+    }
+  }
+  return people.length > 0
+}
+function trafficSpawn(people) {
+  const T = trafficState, count = [...T.cars.values()].filter(o => o.trafficAmbient).length
+  if (count >= TRAFFIC.cap || objs.length >= OBJ_MAX - 8 || !people.length) return
+  const p = people[(T.serial++) % people.length], district = faustGet(...FAUSTLAND_API.cellAt(p.x,p.z)).plan.district
+  const anchors=[];for(const c of people)if(anchors.every(a=>Math.hypot(a.x-c.x,a.z-c.z)>TRAFFIC.radius*1.5))anchors.push(c)
+  const density=Math.min(TRAFFIC.density[district]||8,Math.max(1,Math.floor(TRAFFIC.cap/anchors.length)))
+  if ([...T.cars.values()].filter(o => o.traffic?.ambient && Math.hypot(o.x - p.x, o.z - p.z) < TRAFFIC.radius + 80).length >= density) return
+  const edges = T.edges.filter(e => { const q = trafficPoint(e, 48), d = Math.hypot(q.x - p.x, q.z - p.z); return d > 120 && d < TRAFFIC.radius && Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96 })
+  for (let trial = 0; edges.length && trial < 12; trial++) {
+    const e = edges[Math.random() * edges.length | 0], q = trafficPoint(e, 28 + Math.random() * 40)
+    if (objs.some(o => Math.hypot(o.x - q.x, o.z - q.z) < 22) || !trafficHidden(q.x, q.z, people)) continue
+    const mix = ['Car','Car','Car','Van','Car','Truck','Bus','Car'], name = mix[T.serial % mix.length], k = OBJECTS.findIndex(K => K.name === name)
+    let id = OBJ_MAX - 1; while (id >= 16 && (objs.some(o => o.id === id) || T.departures.some(v => v.id === id && v.until > trafficClock()))) id--
+    if (id < 16) return
+    faustEnsure([[q.x, q.z]])
+    const o = addObject(k, [q.x, 1, q.z], id, Math.atan2(-e.dx, -e.dz))
+    if (!o) return
+    o.at = [q.x, -o.low + 0.02, q.z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body)
+    trafficAttach(o, e); T.stats.spawned++; return
+  }
+}
+function trafficTick(dt, all) {
+  if (!LV.faust) return
+  if (!trafficState) trafficReset()
+  const t = performance.now(), T = trafficState, people = all.filter(c => !c.bot && c.owner === undefined && c.body), clock = trafficClock()
+  for (const o of [...T.cars.values()]) {
+    if (!objs.includes(o)) { T.cars.delete(o.id); continue }
+    const a = o.traffic
+    if (a) {
+      if (!o.V || o.heldBy !== undefined || o.riders.some(v => v !== undefined) || upOf(o) < 0.4 || o.fuse !== undefined) trafficDetach(o, !!o.V)
+      else {
+        const distance = Math.hypot(o.x - a.x, o.z - a.z); a.distance += distance; T.stats.distance += distance; a.x = o.x; a.z = o.z
+        if (a.follow && (a.replan -= dt) <= 0) { a.replan = 2; trafficDriveTo(o,a.follow,{follow:true,driver:a.driver,speed:a.cruise}) }
+        if (o.hp < a.hp - 0.1) a.flee = 12
+        a.hp = o.hp; a.flee = Math.max(0, a.flee - dt)
+        if ((a.think -= dt) <= 0) { a.input = trafficThink(o, TRAFFIC.think, all); a.think += TRAFFIC.think }
+        // Reuse the engine's driveStep with a private seat reference; AI drivers are never roster participants.
+        const driver = { id: -1000 - o.id, seat: [o, 0] }, saved = o.riders[0]
+        o.riders[0] = driver.id; driveStep(driver, a.input); o.riders[0] = saved
+      }
+    }
+    if (!o.riders?.some(v => v !== undefined) && o.heldBy === undefined && people.length && people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.retire) && trafficHidden(o.x, o.z, people) && o.trafficAmbient) {
+      trafficDetach(o, false); dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({id:o.id,until:clock+12}); T.stats.retired++
+      for (const sent of objSent.values()) sent.delete(o.id)
+    }
+    if (o.trafficExit && clock - o.trafficExit[0] > 8) o.trafficExit = null
+  }
+  T.departures = T.departures.filter(d => d.until > clock)
+  // Preparing a spawn ring is optional work. One cell per tick avoids an 81-plan cold-frame burst.
+  const warm = people.map(p => FAUSTLAND_API.cellAt(p.x,p.z).join(':')).join('|')
+  if (warm !== T.warm) { T.warm=warm; T.queue=[...faustRange(people.map(p=>[p.x,p.z]),4)].filter(key=>!T.cells.has(key)) }
+  const cell = T.queue.shift(); if(cell)trafficCell(...cell.split(' ').map(Number))
+  if ((T.spawn -= dt) <= 0) { T.spawn += 0.75; trafficSpawn(people) }
+  const ms = performance.now() - t; T.stats.ticks++; T.stats.ms += ms; T.stats.maxMs = Math.max(T.stats.maxMs, ms)
+}
+function trafficRows() {
+  return trafficState ? [...trafficState.cars.values()].map(o => [o.id, o.traffic?.driver ? 1 : 0, ...o.trafficExit || []]) : []
+}
+function trafficTake(rows) {
+  if (rows === undefined || !Array.isArray(rows) || rows.length > OBJ_MAX || !rows.every(r => Array.isArray(r) && (r.length === 2 || r.length === 7) && r.every(Number.isFinite) && Number.isInteger(r[0]) && r[0] >= 0 && r[0] < OBJ_MAX && (r[1] === 0 || r[1] === 1) && (r.length === 2 || r[2] >= 0 && Math.abs(r[3]) <= ARENA + 16 && Math.abs(r[4]) <= ARENA + 16 && Math.hypot(r[5],r[6]) <= 1.1)) || new Set(rows.map(r=>r[0])).size !== rows.length) return
+  const ids = new Set(rows.map(r => r[0]))
+  for (const id of trafficRemote.keys()) if (!ids.has(id)) { const o=objs.find(o=>o.id===id); if(o) {dropObject(o);objs.splice(objs.indexOf(o),1)}; objTracks.delete(id); objVel?.delete(id); settledAt.delete(id); wheelState.delete(id); objFirst.delete(id) }
+  trafficRemote.clear(); for (const r of rows) trafficRemote.set(r[0], r)
+}
+// Two instanced draws for the nearby signal poles and their active lamps, in either look.
+let trafficLights = null
+function trafficDrawSignals() {
+  if (!LV.faust || !objGroup || !camera) return
+  if (!trafficState) trafficReset()
+  trafficNear(camera.position.x, camera.position.z, 2)
+  if (!trafficLights) {
+    const root = new THREE.Group(), poles = new THREE.InstancedMesh(new THREE.BoxGeometry(0.16, 4.6, 0.16), new THREE.MeshStandardMaterial({color:0x28313a,roughness:0.7}), 100)
+    const lamps = new THREE.InstancedMesh(new THREE.SphereGeometry(0.25,8,6), new THREE.MeshBasicMaterial({color:0xffffff}), 100)
+    root.add(poles,lamps); trafficLights={root,poles,lamps,matrix:new THREE.Matrix4(),color:new THREE.Color()}
+  }
+  const L=trafficLights; if(L.root.parent!==objGroup)objGroup.add(L.root)
+  let count=0
+  for(const n of trafficState.nodes.values()) {
+    if(count>=98 || !n.out.some(e=>e.dx) || !n.out.some(e=>e.dz) || Math.hypot(n.x-camera.position.x,n.z-camera.position.z)>220)continue
+    for(const [axis,s] of [['x',1],['z',-1]]) {
+      const x=n.x+s*9,z=n.z+s*9,colour=trafficSignal(n.x,n.z,axis)
+      L.poles.setMatrixAt(count,L.matrix.makeTranslation(x,2.3,z));L.lamps.setMatrixAt(count,L.matrix.makeTranslation(x,4.5,z))
+      L.lamps.setColorAt(count,L.color.setHex(colour==='green'?0x65ef9b:colour==='amber'?0xffc04b:0xff514c));count++
+    }
+  }
+  for(const m of [L.poles,L.lamps]) {m.count=count;m.instanceMatrix.needsUpdate=true;m.computeBoundingSphere()}
+  if(L.lamps.instanceColor)L.lamps.instanceColor.needsUpdate=true
+}
+// Existing civilian rig/clip assets: only nearby drivers are drawn, using their cheapest mesh. No new download.
+function trafficDraw(list) {
+  if (!objGroup) return
+  const rows = isHost ? trafficRows() : [...trafficRemote.values()], active = new Set(), t = trafficClock(), M = MODELS.trafficDriver
+  trafficDrawSignals()
+  if (!M.proto) return
+  for (const r of rows) {
+    const o = list.find(v => v.id === r[0]); if (!o) continue
+    const age = r.length === 7 ? t - r[2] : -1, exiting = age >= 0 && age < 8
+    if (!r[1] && !exiting) continue
+    let x, y, z, yaw
+    if (exiting) {
+      const d = Math.min(7, age * 2.5), ray = staticRay(r[3], 0.8, r[4], r[5], 0, r[6], d + 0.5), step = Math.max(0, Math.min(d, ray - 0.5))
+      x = r[3] + r[5] * step; y = 0.86; z = r[4] + r[6] * step; yaw = Math.atan2(-r[5], -r[6])
+    } else {
+      const V = vehicleOf(OBJECTS[o.k]); if (!V) continue
+      const p = seatAt({ ...o, at0: hullAt(OBJECTS[o.k]) }, V.seats[0]); [x,y,z] = p; y += 0.1032; const f = rotq(o.q,[0,0,-1]); yaw = Math.atan2(-f[0],-f[2])
+    }
+    if (Math.hypot(x-camera.position.x,y-camera.position.y,z-camera.position.z)>65) continue
+    let v = trafficViews.get(r[0])
+    if (!v) {
+      const root = new THREE.Group(), inst = cloneSkinned(M.proto); fitToCapsule(inst, 1.72, M.height, M.footY, M.yaw || 0)
+      rigLods(inst).forEach((m,i) => { if(m) { m.visible=i===2; m.castShadow=false; m.frustumCulled=false } }); root.add(inst); objGroup.add(root)
+      v={root,inst,mixer:new THREE.AnimationMixer(inst),clip:'',restY:inst.position.y,pelvis:inst.getObjectByName('pelvis'),hip:new THREE.Vector3()}; trafficViews.set(r[0],v)
+    }
+    if (v.root.parent !== objGroup) objGroup.add(v.root)
+    const clip = exiting ? 'run' : 'drive'
+    if(v.clip!==clip) { v.mixer.stopAllAction(); const c=M.anims.find(c=>c.name===clip); if(c) v.mixer.clipAction(c).play(); v.clip=clip }
+    v.inst.position.y=v.restY; v.mixer.setTime(exiting ? Math.max(0,age) : 0); v.root.position.set(x,y,z); v.root.rotation.y=yaw
+    if(!exiting && v.pelvis) {v.root.updateMatrixWorld(true);v.pelvis.getWorldPosition(v.hip);v.inst.position.y+=y-v.hip.y}
+    v.root.visible=true; active.add(r[0])
+  }
+  for (const [id,v] of trafficViews) if(!active.has(id)) { v.root.visible=false; if(!rows.some(r=>r[0]===id)) {v.mixer.stopAllAction();v.root.removeFromParent();trafficViews.delete(id)} }
+}
+GAME.traffic = { driveTo: trafficDriveTo, pursue: (vehicle,target,options={}) => trafficDriveTo(vehicle,target,{...options,follow:true}), cancel: id => { const o=objs.find(o=>o.id===id); if(o)trafficDetach(o,false) },
+  signalAt: trafficSignal, crossingOpen: trafficCrossing, get state(){return trafficState}, budget: TRAFFIC,
+  vehicles: () => (isHost ? objs : objectsAt(renderT).concat(objs)).filter(o=>vehicleOf(OBJECTS[o.k])).map(o=>{
+    const V=vehicleOf(OBJECTS[o.k]), tr=objTracks.get(o.id), b=tr?.at(-1), a=tr?.at(-2), dt=a&&b?(b.t-a.t)/1000:0, v=o.body?.getLinearVelocity()
+    return {id:o.id,x:o.x,y:o.y,z:o.z,vx:v?v.x():dt?(b.p[1]-a.p[1])/dt:0,vz:v?v.z():dt?(b.p[3]-a.p[3])/dt:0,radius:V.w/2,length:V.l,ai:isHost?!!o.traffic:!!trafficRemote.get(o.id)?.[1]}}),
+  get stats(){ const T=trafficState; return T && {...T.stats, count:T.cars.size, ai:[...T.cars.values()].filter(o=>o.traffic).length, meanMs:T.stats.ms/Math.max(1,T.stats.ticks),byDistrict:[...T.cars.values()].reduce((out,o)=>{const d=o.traffic?.edge.district;if(d)out[d]=(out[d]||0)+1;return out},{})} } }
+// ---------------------------------------------------------------- end road traffic
 
 // ---------------------------------------------------------------- rewind
 // one entry per tick; shots resolve at the shooter's view time (interpD + half RTT back)
@@ -10004,6 +10355,7 @@ function drawObjects(list, wheelsAt = () => null) {
   objMesh.forEach((m, k) => {         // new bounds, or it is culled where it was
     if (m && (m.count = n[k])) { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere() }
   })
+  trafficDraw(list)
   if (wheelBucket) {
     for (const m of wheelBucket) m.count = wheelN
     if (wheelN) { wheelBucket[0].instanceMatrix.needsUpdate = true; wheelBucket[0].computeBoundingSphere(); wheelBucket[1].boundingSphere = wheelBucket[0].boundingSphere }
@@ -14354,6 +14706,7 @@ const GUEST_MSGS = {
   takeOwn(d.pv)
   GAME.audio.takeRadio(d.or)
   if (d.vh !== undefined) vehHp = Number.isInteger(d.vh) && d.vh >= 0 && d.vh <= 1e6 ? d.vh : null
+  trafficTake(d.tf)
   if (d.o) takeObjects(d.o, d.t)       // after lv: a switch clears the tracks
   if (d.fx && d.fx.length) {
     // held until renderT reaches it: bodies are drawn interpD behind
@@ -15048,6 +15401,7 @@ const HOST_PHASES = {
   stepPickups(dt, all)
   weakenNear(all)
   t.credit = credit
+  trafficTick(dt, all)
   },
   afterPhysics: t => { const { dt, all, credit } = t
   for (const c of all) chainAfter(c)
@@ -15716,6 +16070,7 @@ function sendSnapshot(s) {
   const seats = JSON.stringify(objs.flatMap(o => o.V ? o.riders.flatMap((p, i) => p === undefined ? [] : [o.id, i, p]) : []))
   const held = JSON.stringify(objs.flatMap(o => o.heldBy === undefined ? [] : [o.id, o.heldBy]))
   // a guest reads an absent vehicle as RADIO_START
+  const traffic = JSON.stringify(trafficRows())
   const tuned = JSON.stringify(objs.flatMap(o => o.V && o.radio !== RADIO_START ? [o.id, o.radio] : []))
   const rows = s.P.map(r => ({ id: r[GAME.schema.col.id], json: JSON.stringify(wireRow(r)), state: rowState(r), c: players.get(r[GAME.schema.col.id]) }))
   const head = '{"k":"s","t":' + JSON.stringify(s.t) + ',"P":['
@@ -15762,7 +16117,7 @@ function sendSnapshot(s) {
     const pv = me?.tie || me?.flung ? ',"pv":' + JSON.stringify([me.x, me.y, me.z, me.vx, me.vy, me.vz].map(v => +v.toPrecision(9))) : ''
     const vh = sat ? Math.round(Math.max(0, sat.hp)) : null
     const vhs = vh === null ? '' : repeatField(sent, 'vh', vh)
-    const ot = repeatField(sent, 'or', tuned) + repeatField(sent, 'cb', JSON.stringify(chainMarks))
+    const ot = repeatField(sent, 'tf', traffic) + repeatField(sent, 'or', tuned) + repeatField(sent, 'cb', JSON.stringify(chainMarks))
     const withPk = pkSent.get(gid) !== pk, end = (ob.length ? ',"o":[' + ob + ']' : '') + oh + ot + ov + pv + vhs
     const msg = head + out.join(',') + (end ? tail(withPk).slice(0, -1) + end + '}' : tail(withPk))
     try { c.send(msg); bytesUp += msg.length; if (withPk) pkSent.set(gid, pk) } catch (e) {}
