@@ -22220,19 +22220,19 @@ function autoGoNew(me, A, find) {
   if (!LV.faust || !faustState) throw new Error('go: Faustland only')
   if (seatOf(me)) throw new Error('go: on foot only, get out of the car (or use drive)')
   A = typeof A === 'string' ? { thing: A } : A || {}
-  let x = Number(A.x), z = Number(A.z), what = 'x ' + x + ' z ' + z, y = Number(A.y) || 0
+  let x = Number(A.x), z = Number(A.z), what = 'x ' + x + ' z ' + z, y = Number(A.y) || 0, rad
   if (A.thing) {
     const t = find(String(A.thing).toLowerCase(), me)
     if (!t) throw new Error('go: no ' + A.thing + ' yet')
     const p = t.spot || t
-    x = p.x; z = p.z; y = t.y0 || 0; what = t.what
+    x = p.x; z = p.z; y = t.y0 || 0; what = t.what; rad = p.radius
   }
   if (!Number.isFinite(x) || !Number.isFinite(z)) throw new TypeError('go: needs x and z, or a thing')
   if (y > 5) throw new Error('go: ' + what + ' is on a roof: not reachable on foot (tp to it)')
   const pace = A.pace === undefined ? 'run' : String(A.pace)
   if (!Object.hasOwn(AUTO_PACE, pace)) throw new TypeError('go: pace is walk, run or sprint')
   const d0 = Math.hypot(x - me.x, z - me.z), t0 = now()
-  return { x, z, y, what, pace, radius: Number(A.radius) || (A.thing ? 2.5 : 1.5), d0, t0, last: t0, ax: me.x, az: me.z, progT: t0, blocked: 0, side: 1, kick: 0, deadline: t0 + Math.min(900, 30 + d0 / 1.5) * 1000 }
+  return { x, z, y, what, pace, radius: Number(A.radius) || (A.thing ? rad ?? 2.5 : 1.5), d0, t0, last: t0, ax: me.x, az: me.z, progT: t0, blocked: 0, side: 1, kick: 0, deadline: t0 + Math.min(900, 30 + d0 / 1.5) * 1000 }
 }
 // one frame of it: writes `input`; true on arrival. ray(y, ux, uz) is the distance to the level along a horizontal ray from the
 // feet's x, z (Infinity: none within 8 m); nav(me, target) the bots' way ({ corner, there, pad })
@@ -29177,7 +29177,7 @@ const testTools = (() => {
       const B = inBuilding(q.id), C = B.core, K = FAUST_IN, lx0 = C.stairX + 2 * K.stair.width + K.stair.well + K.part
       q.x = lx0 + K.lift - 0.9; q.z = C.z1 - K.part - 0.7
       q.what = 'express lift (UP panel) of a ' + B.style + ' tower, ' + B.storeys.length + ' storeys'
-      q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B } } })),
+      q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B, radius: 0.5 } } })),
     window: c => windowsNear(c, false), brokenwindow: c => windowsNear(c, true),             // intact panes a punch reaches (#77); #46's breaches
     performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk), enforcer: bots(b => b.enforcer),
     squad: () => objs.filter(o => squadIds.has(o.id) && o.squadKind !== 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'squad car (' + (o.V ? o.squadState || 'driving' : 'wrecked') + ')' })),
