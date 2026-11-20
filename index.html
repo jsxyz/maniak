@@ -24693,7 +24693,7 @@ function slRunTo(x, z, dx, dz, d) {
 }
 const slR2 = v => Math.round(v * 100) / 100
 function slKnock(ag, p, ux, uz, power, by, T) {
-  if (ag.kind === SL_K.pram) slPramHit(ag, p, by, T)          // card #45: an attacked pram blows up
+  if (ag.kind === SL_K.pram) slPramHit(ag, p, by, T)          // card #45: its baby turns on the attacker; a hit pram burns or blows
   if (!slKnockable(ag, p)) return slDodge(ag, p, ux, uz, T)
   const n = Math.hypot(ux, uz) || 1, d = Math.max(1, Math.min(7, 0.8 + power))
   const [x1, z1] = slRunTo(p.x, p.z, ux / n, uz / n, d)
@@ -24801,7 +24801,7 @@ function slAim(shooter, list, viewT, G) {
     const ride = ag.kind === SL_K.cyclist
     add.push({ street: true, agent: ag, pose: { ...p }, id: -1000 - add.length, x: p.x, y: (ag.kind === SL_K.stray ? 0.35 : (ride ? 0.45 : 0) + 0.9) + p.y, z: p.z, r: ag.kind === SL_K.stray ? 0.35 : 0.3, h: ag.kind === SL_K.stray ? 0.05 : 0.6,
       hp: 1e9, dead: 0, prot: 0, axis: AXIS_UP, grounded: true, cid: 0 })
-    if (ag.kind === SL_K.pram && !slPramGone(ag, T)) add.push({ ...add.at(-1), id: -1000 - add.length,
+    if (ag.kind === SL_K.pram && !slPramGone(ag, T)) add.push({ ...add.at(-1), pram: true, id: -1000 - add.length,
       x: p.x + Math.sin(p.yaw) * STREET.pramBack, z: p.z + Math.cos(p.yaw) * STREET.pramBack, y: 0.55, r: 0.45, h: 0.25 })
   })
   return add.length ? list.concat(add) : list
@@ -24809,7 +24809,9 @@ function slAim(shooter, list, viewT, G) {
 function slStruck(c, h, G, ux, uy, uz) {
   if (!isHost || !slState) return
   const T = tickAt || now(), power = Math.max(1, (G?.knock ?? 6) * 0.35 + (G?.dmg ?? 10) * 0.03)
-  slKnock(h.agent, h.pose, ux, uz, power, c, T)
+  // card #45: which part of a pram's agent was struck (its pram, or its mother), and how hard
+  slHit.part = h.agent.kind === SL_K.pram ? (h.pram ? 'pram' : 'mother') : null; slHit.dmg = (G?.dmg ?? 10) * profDmg(c, G?.name)
+  try { slKnock(h.agent, h.pose, ux, uz, power, c, T) } finally { slHit.part = null; slHit.dmg = Infinity }
 }
 // what traffic brakes for: people and riders in the roadway near (x, z) (crossing, riding, running, knocked down)
 const slRoadFuture = SL_POSE()
@@ -27084,12 +27086,14 @@ GAME.destruction = {
 
 // ---------------------------------------------------------------- the pram's baby, and the exploding pram (card #45)
 // Every pram carries a baby with a man's stubbled face, a bonnet, a cigar and a snub-nosed revolver, sitting up under the hood.
-// It goes where its pram goes, on street life's schedule. On the host it fights as the engine's pistol thugs aim and fire
-// (SHOOTER's range, aim error and turn rate; the Pistol row through fireHitscan): it picks the nearest Maniak in range, the one
-// it can see first, turns in the pram toward him, and fires when on target. An attack on the pram (any knock on its agent: a
-// blow, a shot, a blast, the cinderblock, a car) blows it up with a car's blast (VEHICLES' Car boom, dealt as boom() deals it:
-// damage and knock over its radius, cars in it set burning, people in it knocked down) and boom()'s fire and smoke. Pram and
-// baby are gone until the mother comes back on her schedule. Host records in street life's 'sl' field, played alike on every
+// It goes where its pram goes, on street life's schedule, in plain view. It shoots only once attacked (the brief: "Baby should
+// shoot when attacked but be visible the whole time"): a hit on the baby, its pram or its mother marks the attacker, and it
+// turns on him and fires as the engine's pistol thugs aim and fire (SHOOTER's range, aim error and turn rate; the Pistol row
+// through fireHitscan), the nearest such attacker it can see first. The mark lasts while he lives and the pram is near anyone;
+// his death ends it. An attack on the pram itself (a blow, a shot, a blast, the cinderblock, a car; on it or the baby in it)
+// blows it up; violence on the mother doesn't hit the pram. It blows with a car's blast (VEHICLES' Car boom, dealt as boom()
+// deals it: damage and knock over its radius, cars in it set burning, people in it knocked down) and boom()'s fire and smoke.
+// Pram and baby are gone until the mother comes back on her schedule. Host records in street life's 'sl' field, played alike on every
 // client: [6, agent, t, x, z, player] the baby aims at a player (-1: it stands down); [7, agent, t, x, z] the pram blew up there
 const SL_BABY = {
   name: 'Baby', range: SHOOTER.fireRange, aimErr: SHOOTER.aimErr, turn: 3.0 + (0.07 - SHOOTER.aimErr) * 30, gun: SHOOTER.far, sticky: 0.7,
@@ -27099,9 +27103,12 @@ const SL_BABY = {
   // drawing: LOD steps and draw distance (m), how many are drawn at once; host: aim records refreshed while it keeps a target
   lod: [9, 20], draw: 40, pool: 8, refreshMs: 20000,
 }
+// what the hit being dealt struck, set by its caller around slKnock: 'pram' (its tub or the baby in it), 'mother', or null (a
+// knock that says neither: the cinderblock, a car, a blast, a test), and its damage
+const slHit = { part: null, dmg: Infinity }
 const SL_BABY_ID = -45, SL_BOOM_IDS = 16
 const SL_BABY_ROW = { name: SL_BABY.name, side: 'freaks' }
-const slBabyOf = st => st.bb ||= { live: new Map(), recs: new Map(), pending: [], booms: 0 }
+const slBabyOf = st => st.bb ||= { live: new Map(), recs: new Map(), pending: [], booms: 0, mad: new Map() }
 // ---- records 6 and 7, kept apart from the ones that steer people (an aim or a blast moves nobody)
 function slBabyRec(r, a, local) {
   const st = slState, B = slBabyOf(st)
@@ -27129,13 +27136,13 @@ function slBabyForget(r) {
 }
 // the pram blew up at or before T, and its mother isn't back yet
 function slPramGone(ag, T) {
-  const L = slState?.bb?.recs.get(ag.id)
+  const L = slState?.bb?.recs.get(ag.id); T = Math.round(T)               // records keep whole ms: the same tick's record counts
   if (L) for (let i = L.length - 1; i >= 0; i--) { const r = L[i]; if (r.kind === 7 && r.t <= T && T - r.t < STREET.backS * 1000) return r }
   return null
 }
 // the player the baby aims at at T, or -1
 function slBabyTarget(ag, T) {
-  const L = slState?.bb?.recs.get(ag.id)
+  const L = slState?.bb?.recs.get(ag.id); T = Math.round(T)
   if (L) for (let i = L.length - 1; i >= 0; i--) { const r = L[i]; if (r.t <= T) return r.kind === 6 ? r.tgt : -1 }
   return -1
 }
@@ -27148,10 +27155,14 @@ function slPramAt(p, o) {
 }
 
 // ---- the host: the babies near a Maniak think, aim and fire; attacked prams blow up
-// slKnock calls this first for a pram's agent: the record now, the blast at the end of the tick (its own sweep of the street
-// would reuse the pose the caller is iterating with)
+// slKnock calls this first for a pram's agent. The attacker (a player) is marked for its baby. Unless only the mother was struck,
+// the pram blows: the record now, the blast at the end of the tick (its own sweep of the street would reuse the pose the caller
+// is iterating with)
 function slPramHit(ag, p, by, T) {
   if (!isHost || !slState || slPramGone(ag, T)) return
+  const B = slBabyOf(slState)
+  if (by && players.get(by.id) === by && !by.bot) (B.mad.get(ag.id) || B.mad.set(ag.id, new Set()).get(ag.id)).add(by.id)
+  if (slHit.part === 'mother') return
   const q = slPramAt(p, {})
   slPramBlow(ag.id, q.x, q.z, by, T)
 }
@@ -27159,7 +27170,7 @@ function slPramHit(ag, p, by, T) {
 function slPramBlow(id, x, z, by, T) {
   slAddRec([7, id, Math.round(T), slR2(x), slR2(z)])
   slBabyOf(slState).pending.push({ x, z, by: by && players.get(by.id) === by ? by : null, T })
-  slState.bb.live.delete(id)
+  slState.bb.live.delete(id); slState.bb.mad.delete(id)
 }
 // boom()'s blast, at a pram: players in its radius hurt and thrown (credited to whoever set it off), vehicles in it damaged
 // (they burn and blow in their own turn), people in it knocked down, the street panicked; one fire-and-smoke record
@@ -27202,8 +27213,8 @@ function slBabyAimRec(bb, tgt, T) {
   bb.recTgt = tgt; bb.recT = T
   slAddRec([6, bb.id, Math.round(T), slR2(bb.x || 0), slR2(bb.z || 0), tgt])
 }
-// botThink's targeting and aim, for a baby that can't leave its pram: the nearest Maniak in range, one it can see first (as if 60 m
-// nearer), keeping its target (0.7); the aim drifts by aimErr, leads the target, turns at its rate; it fires the Pistol on target
+// botThink's targeting and aim, for a baby that can't leave its pram, among those who attacked it (men): the nearest in range, one it
+// can see first (as if 60 m nearer), keeping its target (0.7); the aim drifts by aimErr, leads the target, turns at its rate; it fires the Pistol on target
 function slBabyThink(bb, q, men, dt, T) {
   const s = q.s, E = SL_BABY.aimErr, G = GUNS[gunNamed(SL_BABY.gun)]
   bb.x = q.x; bb.z = q.z
@@ -27249,19 +27260,23 @@ function slBabyThink(bb, q, men, dt, T) {
 // every host tick: the blasts set off this tick, then (20 Hz) the babies near a Maniak
 function slBabyHost(t) {
   const st = slState; if (!st || !isHost || !LV.faust) return
-  const B = slBabyOf(st), T = tickAt || now()
+  const B = slBabyOf(st), T = tickAt || now(), dt0 = t.dt || 1 / 60
   for (const e of B.pending.splice(0)) slPramBlast(e, t.credit)
   if ((B.tick = (B.tick || 0) + 1) % 3) return
-  const dt = (t.dt || 1 / 60) * 3, men = [...players.values()].filter(c => !c.bot && !(c.dead > 0)), seen = new Map()
+  const dt = dt0 * 3, men = [...players.values()].filter(c => !c.bot && !(c.dead > 0)), seen = new Map()
   for (const c of men) slAround(c.x, c.z, SL_BABY.range + 6, T, (ag, p) => {
-    if (ag.kind !== SL_K.pram || seen.has(ag.id) || p.hidden || p.scale < 0.6 || p.down || slPramGone(ag, T)) return
+    if (ag.kind !== SL_K.pram || seen.has(ag.id) || p.hidden || p.scale < 0.6 || slPramGone(ag, T)) return
     seen.set(ag.id, slPramAt(p, {}))
   })
+  // the marks: gone with the pram's nearness (nobody near it), and with each attacker's death
+  for (const [id, mad] of B.mad) { if (!seen.has(id)) { B.mad.delete(id); continue } for (const pid of mad) { const c = players.get(pid); if (!c || c.dead > 0) mad.delete(pid) } }
   for (const [id, bb] of B.live) if (!seen.has(id)) { slBabyAimRec(bb, -1, T); B.live.delete(id) }
   for (const [id, q] of seen) {
+    const mad = B.mad.get(id), foes = mad?.size ? men.filter(c => mad.has(c.id)) : []
     let bb = B.live.get(id)
+    if (!bb && !foes.length) continue                     // never attacked: it sits, and fires at nobody
     if (!bb) B.live.set(id, bb = { id, tgt: -1, yaw: q.yaw, pitch: 0, aimX: 0, aimY: 0, driftX: 0, driftY: 0, driftT: 0, cool: 0, recT: -1e9, recTgt: slBabyTarget({ id }, T) })
-    slBabyThink(bb, q, men, dt, T)
+    slBabyThink(bb, q, foes, dt, T)
   }
 }
 
