@@ -939,6 +939,71 @@ const VEHICLES = [
     variants: [{}, { color: 0xb8322a, speed: 1.05 }, { color: 0x2f7d4f, grip: 1.05 }, { color: 0x3a6fb5, speed: 0.95, grip: 1.05 }], wreck: 'Bus Wreck', rows: [1.3, 3.78], aimY: [0, 1.75, 1.75, 1.75, 1.75] },
   { name: 'Sports car', share: 0.5, engine: 65, brake: [1.4, 0.85], hand: 0.6, steer: 0.55, turn: 22, steerTime: 0.16, turnIn: 0.16, speed: 72, hp: 280, ram: 3.2, boom: { dmg: 120, knock: 16, radius: 7 }, com: 0.46, bal: 0, wheels: { slip: [1.55, 1.7], stiff: 45, travel: 0.18, damp: [4.8, 3.6], roll: 0.25 }, wreck: 'Sports wreck', variants: [{}, { color: 0xd63c32, speed: 1.04, grip: 0.96 }, { color: 0xe2e4e7, speed: 0.96, grip: 1.04 }, { color: 0x284b89 }] },
 ].map(vehicleRow)
+// card #44: Faustland's period fleet, drawn from assets/vehicles.*.glb (made for The MANIAK; see SOURCES.md). VEHICLE_STYLES:
+// per VEHICLES row, per variant (by index, as variantAt picks it): style, the file's model (sedan, taxi, beater, coupe,
+// speedster, van, truck, bus); wheels: 'ww' whitewalls and chrome hubcaps, 'bk' black tyres on painted steel; paints: [body,
+// roof, fenders, trim] schemes, one picked per vehicle by its seed; taxi: the share of that variant's sedans that run in a
+// cab's livery (taxiPaints). A wreck burns out as its style's shell. Only the drawing changes: the rows' physics, hulls and
+// wheel layouts stay as they are, and the models are built on each row's own width, length, height and axles.
+const VEHICLE_FILE = 'vehicles.350d74fc.glb'
+const NOIR = { black: 0x141518, maroon: 0x3e1a1c, wine: 0x452222, green: 0x1d3a2a, teal: 0x1f3b3e, cream: 0xd9cfb2, ivory: 0xe6dfca,
+  grey: 0x5b6066, slate: 0x353c45, navy: 0x1b2433, tan: 0x7d6b52, brown: 0x3a281c, yellow: 0xd9a627, silver: 0x9aa0a6, olive: 0x4a4a32,
+  rose: 0x6e4a46, steel: 0x46505a }
+const VEHICLE_STYLES = (({ black, maroon, wine, green, teal, cream, ivory, grey, slate, navy, tan, brown, yellow, silver, olive, rose, steel }) => ({
+  Car: [
+    { style: 'sedan', wheels: 'ww', paints: [[black, black, black, cream], [maroon, maroon, black, cream], [green, green, black, cream], [grey, grey, grey, cream], [navy, navy, black, cream], [slate, slate, black, ivory]] },
+    { style: 'coupe', wheels: 'ww', paints: [[cream, maroon, maroon, maroon], [black, black, black, cream], [wine, black, black, cream], [silver, slate, slate, maroon], [green, cream, green, cream]] },
+    { style: 'sedan', wheels: 'ww', taxi: 0.4, taxiPaints: [[yellow, yellow, black, black]], paints: [[maroon, cream, maroon, cream], [black, grey, black, cream], [teal, ivory, teal, cream]] },
+    { style: 'sedan', wheels: 'ww', paints: [[cream, maroon, maroon, maroon], [grey, black, black, cream], [tan, brown, brown, cream], [navy, ivory, navy, cream]] },
+    { style: 'beater', wheels: 'bk', paints: [[tan, tan, black, cream], [olive, olive, black, cream], [rose, grey, black, cream], [grey, grey, slate, cream]] },
+  ],
+  Van: [
+    { style: 'van', wheels: 'bk', paints: [[cream, cream, black, maroon], [ivory, green, black, green]] },
+    { style: 'van', wheels: 'bk', paints: [[green, green, black, cream], [teal, teal, black, cream]] },
+    { style: 'van', wheels: 'bk', paints: [[maroon, black, black, cream], [wine, wine, black, ivory]] },
+    { style: 'van', wheels: 'bk', paints: [[slate, slate, black, cream], [grey, black, black, ivory]] },
+  ],
+  Truck: [
+    { style: 'truck', wheels: 'bk', paints: [[black, black, black, cream], [steel, steel, black, cream]] },
+    { style: 'truck', wheels: 'bk', paints: [[green, green, black, cream], [olive, olive, black, cream]] },
+    { style: 'truck', wheels: 'bk', paints: [[maroon, maroon, black, cream], [brown, brown, black, cream]] },
+    { style: 'truck', wheels: 'bk', paints: [[slate, slate, black, cream], [navy, navy, black, cream]] },
+  ],
+  Bus: [
+    { style: 'bus', wheels: 'bk', paints: [[maroon, cream, black, cream]] },
+    { style: 'bus', wheels: 'bk', paints: [[green, cream, black, cream]] },
+    { style: 'bus', wheels: 'bk', paints: [[navy, silver, black, cream]] },
+    { style: 'bus', wheels: 'bk', paints: [[slate, ivory, black, maroon]] },
+  ],
+  'Sports car': [
+    { style: 'speedster', wheels: 'ww', paints: [[black, black, black, cream], [silver, silver, silver, black]] },
+    { style: 'speedster', wheels: 'ww', paints: [[wine, wine, wine, cream], [maroon, maroon, maroon, cream]] },
+    { style: 'speedster', wheels: 'ww', paints: [[ivory, ivory, ivory, maroon], [cream, cream, cream, black]] },
+    { style: 'speedster', wheels: 'ww', paints: [[navy, navy, navy, cream], [teal, teal, teal, cream]] },
+  ],
+}))(NOIR)
+// lods: m from the camera where a car's LOD1 and LOD2 begin, by quality (WHEELS_NEAR still splits the instanced wheels from the
+// whole model). Only High draws LOD0 near; Medium and Low (phones) start at LOD1, whose body and wheels together cost no more
+// triangles than the drawn-in-code car did. wheelNear: m within which the instanced wheels are LOD0, by quality; lamp: the
+// lamps' emissive intensity, in every look
+const PERIOD = { lods: { high: [22, 70], medium: [0, 56], low: [0, 44] }, wheelNear: { high: 16, medium: 0, low: 0 }, lamp: 3.5, wheelCap: 1024,
+  wreck: { sedan: 'sedan', taxi: 'sedan', beater: 'sedan', coupe: 'coupe', speedster: 'speedster', van: 'van', truck: 'truck', bus: 'bus' } }
+// card #54: each vehicle's room for its riders, in model space as VEHICLE_SHAPES (x right, y up, -z ahead): floor and roof y;
+// x: the half-width by height [[y, m]...]; front, back: the z the room ends at, by height (the windscreen and the rear glass
+// rake). The tighter of the drawn-in-code model and #44's period one (its Car row holds the coupe's lower roof); where a
+// body is closed (a van's or a bus's walls, a car's tub below the belt) the room runs to its shell, which hides what is in
+// it. seatPose keeps a rider's head, shoulders, arms, knees and feet in it
+const VEHICLE_CABINS = {
+  Car: { floor: 0.36, roof: 1.395, x: [[0.36, 0.67], [0.97, 0.67], [1.0, 0.66], [1.31, 0.6], [1.4, 0.5]],
+    front: [[0.36, -0.7], [0.97, -0.61], [1.31, -0.39], [1.4, -0.2]], back: [[0.36, 1.3], [0.97, 1.4], [1.31, 1.08], [1.4, 0.7]] },
+  'Sports car': { floor: 0.28, roof: 1.335, x: [[0.28, 0.56], [0.36, 0.62], [0.89, 0.65], [0.93, 0.635], [1.25, 0.55], [1.335, 0.42]],
+    front: [[0.28, -0.42], [0.89, -0.3], [1.25, 0.0], [1.335, 0.3]], back: [[0.28, 1.5], [0.89, 1.76], [1.25, 1.1], [1.3, 1.02], [1.335, 0.92]] },
+  Van: { floor: 0.58, roof: 2.02, x: [[0.58, 0.68], [0.79, 0.69], [0.86, 0.94], [1.9, 0.94], [2.02, 0.86]],
+    front: [[0.58, -1.84], [1.4, -1.84], [1.46, -1.82], [1.9, -1.42], [2.02, -1.12]], back: [[0.58, 2.7], [2.02, 2.6]] },
+  Truck: { floor: 0.72, roof: 1.88, x: [[0.72, 0.84], [1.81, 0.82], [1.88, 0.74]],
+    front: [[0.72, -1.22], [1.43, -1.2], [1.81, -0.86], [1.88, -0.68]], back: [[0.72, 0.88], [1.88, 0.86]] },
+  Bus: { floor: 0.55, roof: 2.62, x: [[0.55, 1.1], [2.62, 1.07]], front: [[0.55, -1.9], [1.5, -1.9], [2.62, -1.7]], back: [[0.55, 3.7], [2.62, 3.6]] },
+}
 // GLTFLoader has no SRI check; keep the asset commit pinned.
 // sha384-Oa+BcLukVPbtZ7kColOygKyQvDUR0mmaZq4Wrj5BNFylre7BPJZVju/2zVCTMAO4
 const ASSETS =
@@ -948,7 +1013,7 @@ const ASSETS =
 // decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
 // neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.f6e96404.glb', maniak_moves: 'maniak_moves.a48768e9.glb', props: 'props.c509eb59.glb' }
+const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.f6e96404.glb', maniak_moves: 'maniak_moves.a48768e9.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -972,7 +1037,7 @@ const MODELS = {
   // speed in statures/s, for stride matching; punches: a GUNS row's punch kind to [clip, start s] (several: a combo), drawn
   // over the legs' clip (slam: the whole body); lods: m from the camera where LOD1 and LOD2 begin; cape: its bones, on a spring
   maniak: {
-    kind: 'rig', file: RIG_FILES.maniak, anims: [RIG_FILES.anims, RIG_FILES.maniak_moves], yaw: Math.PI, gripReach: 0.85,
+    kind: 'rig', file: RIG_FILES.maniak, anims: [RIG_FILES.anims, RIG_FILES.maniak_moves, RIG_FILES.maniak_strikes], yaw: Math.PI, gripReach: 0.85,
     clips: { idle: 'idle', walk: 'walk', run: 'maniak_run', sprint: 'maniak_sprint', fall: 'fall', crouch: 'smash_charge', crouchRun: 'crouch_walk',
       climb: 'chain_hang', dive: 'smash_air', fly: 'fall', drive: 'drive', sit: 'sit', lift: 'smash_air', death: 'death',
       leap: 'smash_air', land: 'smash_land', jump: 'jump', hopLand: 'land', hits: ['hit_chest', 'hit_head'], aim: 'pistol_idle', shoot: 'pistol_shoot' },
@@ -982,7 +1047,18 @@ const MODELS = {
     // statures/s, 4.44 m/s). gaits: walk and run part at runAt statures/s, run and sprint where their rates meet (sprintAt,
     // +- band), each rate held to its range; plants: the sprint's footfalls (cycle phase, left, right)
     gaits: { runAt: 1.35, sprintAt: 3.016, band: 0.06, rates: { walk: [0.55, 2.2], run: [0.55, 1.45], sprint: [0.48, 1.6] } }, plants: [0, 0.5],
-    punches: { jab: [['jab', 0.12], ['cross', 0.18], ['hook', 0.04]], rise: [['haymaker', 0.36]], slam: [['smash_land', 0]] },
+    punches: { jab: [['maniak_jab', 0, 1], ['maniak_cross', 0, 1], ['maniak_hook', 0, 1]], rise: [['maniak_haymaker', 0.434, 1]], slam: [['smash_land', 0]] },
+    // card #51: his strikes (assets/maniak_strikes.*) are whole-body clips: a guard, then jab, cross and hook (each lands
+    // 0.075-0.1 s in and is back in the guard by 0.27 s, then holds it), and the haymaker. Standing, his hips and legs play
+    // them too, his feet where the idle plants them (only the rear heel, or the lead heel in the hook, lifts and turns on its
+    // ball); moving, the upper body plays them over the legs' clip. hay: the haymaker's clip on its clock (hayAge s x rate),
+    // its blow landing 0.434 s in, on the hit (hayWind 0.42 s, struck on the tick after); a punch after hay.free s cuts it
+    // strikeAt: each strike's clip time (s) where his fist lands: on his centre line at head height (1.68-1.70 m), 1.02 m
+    // ahead in the jab and cross, 0.80 m in the hook and 0.82 m in the haymaker (standing; his facing frame, from his axis)
+    strikes: /^maniak_(jab|cross|hook|haymaker)$/, hay: { clip: 'maniak_haymaker', rate: 1, free: 0.76 },
+    // strikesLow (#57's, when it lands): a low variant per strike (a body shot), played instead while a.strikeLow is set as
+    // the strike starts (the haymaker: at its first frame, kept for its swing), with the same strikeAt timing
+    strikeAt: { maniak_jab: 0.075, maniak_cross: 0.09, maniak_hook: 0.1, maniak_haymaker: 0.434 },
     chargeGait: true,      // card #50: charging on the move, his legs keep walking, running or sprinting (rigAnimate), the charge over them
     lods: [12, 28], cape: ['cape_01', 'cape_02', 'cape_03'], capeK: 0.11, capeMax: 0.7, deathShow: 2.2,
     // card #36: the cape on his body. capeMax: the most speed streams it back (rad from plumb; about 40°, a heavy cloth);
@@ -1575,7 +1651,7 @@ function driveRow(V, seed, id) {
   const rows = variantRows.get(V) || variantRows.set(V, []).get(V)
   return rows[i] ||= s === 1 && g === 1 ? V : { ...V, speed: V.speed * s, engine: V.engine * s, turn: drive(V, 'turn') * g, wheels: { ...V.wheels, slip: Array.isArray(V.wheels.slip) ? V.wheels.slip.map(x => x * g) : V.wheels.slip * g } }
 }
-const variantColor = (K, seed, id) => vehicleOf(K)?.variants?.[variantAt(vehicleOf(K), seed, id)]?.color
+const variantColor = (K, seed, id) => { const V = vehicleOf(K), i = variantAt(V, seed, id); return VEHICLE_STYLES[V?.name]?.[i]?.paints[0][0] ?? V?.variants?.[i]?.color }
 const hullAt = K => hullOf(K)?.at || [0, 0, 0]
 
 const FOV_MAX = 110                 // deg, vertical
@@ -9053,10 +9129,13 @@ function drawSeat(m, c, seat, list) {
   seatAims.delete(m)
   const seated = avatars.get(c.id)
   if (seated) seated.seat = seat ? seat[1] : -1
+  if (seated && !seat) seated.cabin = null
   const o = seat && list.find(o => o.id === seat[0]), V = o && vehicleOf(o.K)
-  if (!V?.seats[seat[1]]) return false
-  const frame = { ...o, at0: hullAt(o.K) }
-  m.position.set(...seatAt(frame, seatFit(V.seats[seat[1]], GAME.participant(c.id, c.cid))))
+  if (!V?.seats[seat[1]]) { if (seated) seated.cabin = null; return false }
+  const frame = { ...o, at0: hullAt(o.K) }, fit = seatFit(V.seats[seat[1]], GAME.participant(c.id, c.cid))
+  m.position.set(...seatAt(frame, fit))
+  if (seated) { const key = V.name + ':' + seat[1] + ':' + fit.join(',')
+    if (seated.cabinKey !== key) { seated.cabinKey = key; seated.cabin = seatCabin(VEHICLE_CABINS[V.name], V.seats[seat[1]], fit, seat[1] === 0) } }
   m.quaternion.set(...o.q)
   if (V.aimY?.[seat[1]]) seatAims.set(m, seatAt(frame, [0, V.aimY[seat[1]], 0]))
   wallTurns.delete(m); wallRolls.delete(m); ceilingTurns.delete(m)
@@ -9749,7 +9828,7 @@ function inkPrepare(root) {
       const character = !!(o.geometry?.attributes.skinIndex && o.geometry?.attributes.skinWeight)
       const signal = typeof trafficLights !== 'undefined' && o === trafficLights?.lamps
       const facade = m === faustState?.materials?.facade || m === faustState?.materials?.far
-      const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe, groundLight = !!m.userData.inkGroundLight, vehicleLamp = m.name === 'vehicle-headlamp' || m.name === 'vehicle-taillamp'
+      const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe, groundLight = !!m.userData.inkGroundLight, vehicleLamp = m.name === 'vehicle-headlamp' || m.name === 'vehicle-taillamp' || !!m.userData.vehicleLamps, vehicleLamps = !!m.userData.vehicleLamps
       m.onBeforeCompile = function(shader, r) {
         before.call(this, shader, r)
         Object.assign(shader.uniforms, inkUniforms)
@@ -9869,6 +9948,7 @@ function inkPrepare(root) {
           float warm = step(emission.b * 1.3 + 0.015, emission.r) * step(emission.b * 1.15, emission.g);
           ink = mix(ink, mix(vec3(0.94), vec3(1.0, 0.66, 0.28), warm), ${globe ? '0.0' : 'smoothstep(0.08, 0.5, glow)'});
           float blood = inkRed(diffuseColor.rgb);
+          ${vehicleLamps ? 'blood = 0.0;' : ''}
           outgoingLight = mix(ink, vec3(max(tone, 0.18), 0.008, 0.012), blood);
           ${vehicleLamp ? 'outgoingLight = max(outgoingLight, totalEmissiveRadiance);' : ''}
         ` : cloud ? `
@@ -9914,7 +9994,7 @@ function inkPrepare(root) {
             gl_FragColor.rgb *= 1.0 - edgeFade;
           }`)
       }
-      m.customProgramCacheKey = () => key + '|ink-6|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight) + Number(character) + Number(signal) + Number(vehicleLamp)
+      m.customProgramCacheKey = () => key + '|ink-6|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight) + Number(character) + Number(signal) + Number(vehicleLamp) + Number(vehicleLamps)
       m.needsUpdate = true
     }
   })
@@ -12705,6 +12785,7 @@ function setAnim(id, want, dt, t, hold, still, ticks, shift) {
 // integer), the hold, the seat and the drawn speed; punches (the gun's punch kind) and hit reactions are drawn over the
 // upper body, a slam over all of it; the clip's own stride is matched to the speed; LOD by distance; the cape swings
 const RIG_UPPER = /^(spine_0[123]|neck_01|Head|clavicle|upperarm|lowerarm|hand|index|middle|ring|pinky|thumb)/
+const RIG_LOWER = /^(pelvis|thigh|calf|foot|ball)/
 const rigQ = new THREE.Quaternion(), rigV = new THREE.Vector3(), rigW = new THREE.Quaternion(), rigU = new THREE.Vector3(), rigF = new THREE.Vector3()
 function rigParts(inst, M) {
   const bones = new Map()
@@ -12722,7 +12803,7 @@ function rigAction(R, name) {
 }
 // a clip's pose at a time, blended over what the bones hold (mask: the bones it may touch)
 function rigPose(R, clip, time, w, mask) {
-  const key = clip.name + (mask ? ':upper' : ':all')
+  const key = clip.name + (mask ? ':' + mask.source : ':all')
   let list = R.poses.get(key)
   if (!list) R.poses.set(key, list = clip.tracks.flatMap(tr => {
     const dot = tr.name.lastIndexOf('.'), bone = R.bones.get(tr.name.slice(0, dot)), path = tr.name.slice(dot + 1)
@@ -12735,9 +12816,137 @@ function rigPose(R, clip, time, w, mask) {
     else bone.position.lerp(rigV.fromArray(v), w)
   }
 }
+// card #51: where a strike stands when another starts, for the next to blend from (its own start, while it eases in)
+// (none while that one is still easing in from the legs' clip: the next eases in from there too)
+const rigStrike = (M, name) => !!M.strikes?.test(name) || !!M.strikesLow && Object.values(M.strikesLow).includes(name)
+// the clip a strike plays: its low variant while the avatar's strike lands low (a.strikeLow, card #57), else its own
+const rigStrikeClip = (M, a, name) => a.strikeLow && M.strikesLow?.[name] && rigClip(M, M.strikesLow[name]) || rigClip(M, name)
+const rigFrom = (M, o, t) => !o || o.hit || !rigStrike(M, o.clip.name) ? null : t - o.at < 90 ? o.from || null :
+  { clip: o.clip, ct: Math.min(o.clip.duration, o.clock ?? o.t0 + (t - o.at) / 1000 * (o.speed || 1)) }
+// card #54: a rider fitted to his vehicle's room (VEHICLE_CABINS), after the clip (seat 0 drives, the others sit): the body
+// shifted in from the door, the spine reclined, the hips dropped and the head bowed under the roof, the legs folded so the
+// feet stand on the footwell's floor, the hands on the wheel (a passenger's on his knees). Bones it turns, and the body's
+// shift, are put back at the next frame's start (restoreSeatPose), as rigMovePose's are. SEAT_POSE: m in the seat's frame;
+// headTop/shoulder: the head's top above its bone and a shoulder's reach past its joint, per m of stature (a rig's own
+// sizes); gaps: kept clear of the roof and the sides; recline, bow: most rad the spine leans back and the neck bows; drop:
+// most m the hips sink into the cushion; ankle: the ankle over the floor; reach: most m the feet go out ahead of the hips;
+// toe: the foot's length ahead of the ankle; grip: the hands either side of the wheel's centre; seat: the seat of his
+// trousers below the pelvis, per m of stature
+const SEAT_POSE = { headTop: 0.105, shoulder: 0.095, roofGap: 0.025, sideGap: 0.03, recline: 0.55, bow: 0.4, drop: 0.1,
+  ankle: 0.12, reach: 0.9, toe: 0.27, grip: 0.15, seat: 0.06 }
+const SEAT_BONES = ['pelvis', 'spine_01', 'spine_02', 'spine_03', 'neck_01', 'Head', 'clavicle_l', 'clavicle_r', 'upperarm_l', 'lowerarm_l', 'hand_l',
+  'upperarm_r', 'lowerarm_r', 'hand_r', 'thigh_l', 'calf_l', 'foot_l', 'thigh_r', 'calf_r', 'foot_r']
+const seatLin = (pts, y) => { if (y <= pts[0][0]) return pts[0][1]
+  for (let i = 1; i < pts.length; i++) if (y <= pts[i][0]) { const [a, va] = pts[i - 1], [b, vb] = pts[i]; return va + (vb - va) * (y - a) / (b - a) }
+  return pts.at(-1)[1] }
+// a seat's room in the rider's own frame: C a VEHICLE_CABINS row, seat the row's cushion, centre where seatFit put the rider
+function seatCabin(C, seat, centre, drives) {
+  if (!C) return null
+  const [x, y, z] = centre
+  return { C, centre, x, y, z, drives, wheel: drives ? [seat[0] - x, seat[1] + 0.45 - y, seat[2] - 0.54 - z] : null }
+}
+function restoreSeatPose(R) {
+  const S = R.seatSaved
+  if (!S?.active) return
+  for (const [b, q] of S.bones) b.quaternion.copy(q)
+  R.inst.position.x = S.x; R.inst.position.z = S.z; S.active = false
+}
+function seatPose(a, R) {
+  const K = a.cabin
+  if (!K || !R.bones.get('pelvis')) return
+  const P = SEAT_POSE, C = K.C, st = 2 * (a.spec.h + a.spec.r)
+  const S = R.seatSaved ||= { bones: SEAT_BONES.map(n => R.bones.get(n)).filter(Boolean).map(b => [b, b.quaternion.clone()]), x: R.inst.position.x, z: R.inst.position.z,
+    v: Array.from({ length: 12 }, () => new THREE.Vector3()), q: Array.from({ length: 4 }, () => new THREE.Quaternion()) }
+  for (const [b, q] of S.bones) q.copy(b.quaternion)
+  S.x = R.inst.position.x; S.z = R.inst.position.z; S.active = true
+  const [p0, p1, p2, t, pole, dir, hinge, from, to, axis, A, B] = S.v, [meshQ, parentQ, delta, tmpQ] = S.q
+  const m = a.mesh
+  const at = (name, out) => { const b = R.bones.get(name); if (!b) return null; b.getWorldPosition(out); return m.worldToLocal(out) }
+  const sync = () => m.updateMatrixWorld(true)
+  sync(); m.getWorldQuaternion(meshQ)
+  // turn a bone about an axis given in the seat's frame
+  const turn = (name, xyz, angle) => {
+    const b = R.bones.get(name); if (!b || !angle) return
+    b.parent.getWorldQuaternion(parentQ)
+    axis.set(...xyz).applyQuaternion(meshQ).applyQuaternion(parentQ.invert())
+    b.quaternion.premultiply(delta.setFromAxisAngle(axis.normalize(), angle))
+  }
+  // turn a bone so its world direction u becomes v
+  const rotate = (b, u, v) => {
+    b.parent.getWorldQuaternion(parentQ)
+    delta.setFromUnitVectors(u.normalize(), v.normalize())
+    tmpQ.copy(parentQ).invert().multiply(delta).multiply(parentQ).multiply(b.quaternion)
+    b.quaternion.copy(tmpQ)
+  }
+  // two bones to a goal (seat frame), the middle joint toward a pole (seat frame), lengths kept
+  const reach = (n0, n1, n2, goal, bend) => {
+    const upper = R.bones.get(n0), lower = R.bones.get(n1), end = R.bones.get(n2)
+    if (!upper || !lower || !end) return
+    upper.getWorldPosition(p0); lower.getWorldPosition(p1); end.getWorldPosition(p2)
+    t.copy(goal); m.localToWorld(t); pole.copy(bend); m.localToWorld(pole)
+    const u = p0.distanceTo(p1), f = p1.distanceTo(p2)
+    dir.subVectors(t, p0); const d = clamp(dir.length(), Math.abs(u - f) + 0.001, u + f - 0.002); dir.normalize()
+    t.copy(p0).addScaledVector(dir, d)
+    const along = (u * u - f * f + d * d) / (2 * d)
+    hinge.subVectors(pole, p0); hinge.addScaledVector(dir, -hinge.dot(dir)).normalize()
+    hinge.multiplyScalar(Math.sqrt(Math.max(0, u * u - along * along))).addScaledVector(dir, along).add(p0)
+    rotate(upper, from.subVectors(p1, p0), to.subVectors(hinge, p0))
+    lower.getWorldPosition(p1); end.getWorldPosition(p2)
+    rotate(lower, from.subVectors(p2, p1), to.subVectors(t, p1))
+  }
+  const toY = y => y - K.y, toZ = z => z - K.z, X = y => seatLin(C.x, y + K.y), front = y => toZ(seatLin(C.front, y + K.y))
+  // 1. in from the door: both shoulders (with their reach) inside the sides at shoulder height
+  at('upperarm_l', A); at('upperarm_r', B)
+  const half = Math.abs(A.x - B.x) / 2 + P.shoulder * st, mid = (A.x + B.x) / 2, side = X((A.y + B.y) / 2) - P.sideGap
+  const lo = -side - K.x + half, hi = side - K.x - half, want = lo <= hi ? clamp(mid, lo, hi) : (lo + hi) / 2
+  if (want !== mid) { R.inst.position.x += want - mid; sync() }
+  // 2. clear of the back (a rear wall, a fastback's glass): the shoulders' reach behind them inside it
+  const back = y => toZ(seatLin(C.back, y + K.y))
+  at('spine_03', A); const rear = A.z + 1.6 * P.shoulder * st - back(A.y) + P.sideGap
+  if (rear > 0) { R.inst.position.z -= rear; sync() }
+  // 3. under the roof: sink into the cushion, lean back as far as the glass behind allows, then bow, until the head's top
+  // clears it
+  const headTop = () => { at('Head', A); return A.y + P.headTop * st }, roof = toY(C.roof - P.roofGap)
+  const headBack = () => A.z + P.headTop * st * 0.9 - back(A.y + P.headTop * st)
+  // no deeper than the floor lets the seat of his trousers go
+  let over = headTop() - roof
+  at('pelvis', B); const room = B.y - P.seat * st - toY(C.floor)
+  if (over > 0 && room > 0) { R.inst.position.y -= Math.min(over, P.drop, room); sync() }
+  let lean = 0
+  for (let i = 0; i < 6 && headTop() > roof && lean < P.recline; i++) {
+    at('spine_01', B); const L = Math.max(0.2, A.y - B.y), step = Math.min(P.recline - lean, 0.08, Math.acos(clamp(1 - (headTop() - roof) / L, -1, 1)) + 0.01)
+    turn('spine_01', [1, 0, 0], step * 0.6); turn('spine_02', [1, 0, 0], step * 0.4); sync()
+    headTop()
+    if (headBack() > 0) { turn('spine_02', [1, 0, 0], -step * 0.4); turn('spine_01', [1, 0, 0], -step * 0.6); sync(); break }
+    lean += step
+  }
+  turn('neck_01', [1, 0, 0], -lean * 0.45); sync()                // eyes back toward the road
+  for (let i = 0; i < 4 && headTop() > roof; i++) { turn('neck_01', [1, 0, 0], -P.bow / 4); turn('spine_03', [1, 0, 0], -P.bow / 8); sync() }
+  // 3. the feet on the floor, as far ahead as the footwell lets them, the knees up
+  const floor = toY(C.floor) + P.ankle
+  for (const s of ['l', 'r']) {
+    const hip = at('thigh_' + s, A), sgn = s === 'l' ? -1 : 1           // his left is the seat frame's -x
+    const z = Math.max(front(floor) + P.toe * st / 1.96, hip.z - P.reach)
+    reach('thigh_' + s, 'calf_' + s, 'foot_' + s, t.set(hip.x + sgn * 0.04, floor, z).clone(), pole.set(hip.x + sgn * 0.12, hip.y + 0.8, hip.z - 0.5).clone())
+    // the foot level, its toes ahead
+    const foot = R.bones.get('foot_' + s), ball = R.bones.get('ball_' + s)
+    if (foot && ball) { foot.getWorldPosition(p0); ball.getWorldPosition(p1); from.subVectors(p1, p0); to.set(0, -0.3, -1).applyQuaternion(meshQ); rotate(foot, from, to) }
+  }
+  sync()
+  // 4. the hands: on the wheel's rim, the elbows down and out; a passenger's on his knees
+  for (const s of ['l', 'r']) {
+    const sgn = s === 'l' ? -1 : 1, sh = at('upperarm_' + s, A).clone()
+    let goal
+    if (K.wheel) goal = B.set(K.wheel[0] + sgn * P.grip, K.wheel[1], K.wheel[2])
+    else { at('calf_' + s, B); goal = B.add(t.set(0, 0.08, 0.06)) }
+    reach('upperarm_' + s, 'lowerarm_' + s, 'hand_' + s, goal.clone(), pole.set(sh.x + sgn * 0.35, sh.y - 0.5, sh.z + 0.1).clone())
+  }
+  sync()
+}
 function rigAnimate(a, want, dt, t) {
   const R = a.rig, M = R.M, K = M.clips, H = 2 * (a.spec.h + a.spec.r), hold = a.hold, v = a.v || 0
   restoreMovePose(R)
+  restoreSeatPose(R)
   R.frame++
   if (camera) {      // outside the avatars' group (a body being prepared) it is LOD0
     const d = a.mesh.parent === avatarGroup ? a.mesh.position.distanceTo(camera.position) : 0, lod = d < M.lods[0] ? 0 : d < M.lods[1] ? 1 : 2
@@ -12808,15 +13017,21 @@ function rigAnimate(a, want, dt, t) {
   const HG = GUNS[a.heldGun], upper = hold === 'lift' ? rigClip(M, K.lift) : a.held?.visible && !(a.dying >= 0) ? rigClip(M, M.aims?.[HG?.grip] ?? M.aims?.[HG?.name] ?? K.aim) : null
   if (upper) rigPose(R, upper, (t / 1000) % upper.duration, 1, RIG_UPPER)
   // punches: the gun's punch kind, a combo for jabs (a gun without one: its shot); then hit reactions
-  const wind = GUNS[a.chargeGun]
+  const wind = GUNS[a.chargeGun], HAY = M.hay || { clip: 'haymaker', rate: 1.4, end: 1.3 }
   if (wind?.hayWind && a.chargeAt !== R.windSeen && t - a.chargeAt < wind.hayWind * 1000) {
-    R.windSeen = a.chargeAt; const clip = rigClip(M, 'haymaker'); if (clip) R.over = { clip, t0: 0, at: a.chargeAt, speed: 1.4 }
+    R.windSeen = a.chargeAt; const clip = rigStrikeClip(M, a, HAY.clip); if (clip) R.over = { clip, t0: 0, at: a.chargeAt, speed: HAY.rate, from: rigFrom(M, R.over, t) }
   }
   const G = GUNS[a.shotGun], list = G && (M.punches[G.punch] || G.melee && M.punches.melee)
   if (list && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 400) {
     R.shotSeen = a.shotAt
-    const [clipName, t0] = list[(R.combo = (R.combo + 1) % list.length)], clip = rigClip(M, clipName)
-    if (clip && !(G.hayWind && R.over?.clip.name === 'haymaker')) R.over = { clip, t0, at: t, full: G.punch === 'slam', speed: G.punch === 'jab' ? 1.5 : 1.15 }
+    // card #51: a flurry after a pause opens with the jab; one strike runs into the next from where the last one was; a
+    // punch thrown in the haymaker's recovery (past hay.free) cuts it short
+    if (t - (R.comboAt ?? -Infinity) > 900) R.combo = -1
+    R.comboAt = t
+    const [clipName, t0, speed] = list[(R.combo = (R.combo + 1) % list.length)], clip = rigStrikeClip(M, a, clipName)
+    if (HAY.free && !G.hayWind && a.hayAge > HAY.free) R.hayCut = a.hayAge
+    if (clip && !(G.hayWind && [HAY.clip, M.strikesLow?.[HAY.clip]].includes(R.over?.clip.name))) R.over = { clip, t0, at: t, full: G.punch === 'slam', speed: speed ?? (G.punch === 'jab' ? 1.5 : 1.15),
+      from: rigStrike(M, clipName) ? rigFrom(M, R.over, t) : null }
   } else if (G && !G.melee && a.held?.visible && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 200) {
     R.shotSeen = a.shotAt
     const clip = rigClip(M, M.shoots?.[G.grip] ?? M.shoots?.[G.name] ?? K.shoot)
@@ -12827,18 +13042,34 @@ function rigAnimate(a, want, dt, t) {
     const clip = rigClip(M, K.hits[(R.hitN = (R.hitN || 0) + 1) % K.hits.length])
     if (clip) R.over = { clip, t0: 0, at: t, hit: true, w: a.spec.poise ? 0.4 : 0.85, speed: a.spec.poise ? 1.6 : 1.2 }
   }
-  if (R.over?.clock !== undefined && !(a.hayAge > 0 && a.hayAge * 1.4 < 1.3)) R.over = null
-  if (a.hayAge > 0 && a.hayAge * 1.4 < 1.3 && M.punches.rise) { const clip = rigClip(M, 'haymaker'); if (clip) R.over = { clip, t0: 0, at: t - 100, clock: a.hayAge * 1.4 } }
+  if (!(a.hayAge > 0)) { R.hayCut = 0; R.hayLow = undefined }
+  // (the haymaker's clip, or its low variant, is chosen at its first frame and kept for its swing)
+  else if (R.hayLow === undefined) R.hayLow = rigStrikeClip(M, a, HAY.clip)?.name !== HAY.clip
+  const hayClip = M.punches.rise && rigClip(M, R.hayLow ? M.strikesLow[HAY.clip] : HAY.clip), hayT = (a.hayAge || 0) * HAY.rate
+  const hayOn = !!hayClip && a.hayAge > 0 && hayT < (HAY.end ?? hayClip.duration) && !(R.hayCut && a.hayAge >= R.hayCut)
+  if (R.over?.clock !== undefined && !hayOn) R.over = null
+  // the haymaker eases in over its first 60 ms (90 ms from a strike he was throwing)
+  if (hayOn) R.over = { clip: hayClip, t0: 0, at: t - a.hayAge * 1000, clock: hayT, from: R.over?.clock !== undefined ? R.over.from : rigFrom(M, R.over, t) }
   if (a.chainState?.[0] === 1) R.over = null
+  // card #51: standing (on the idle), his strikes take his hips and legs too; R.stand eases there and back
+  R.stand = (R.stand ?? 0) + ((R.name === K.idle ? 1 : 0) - (R.stand ?? 0)) * Math.min(1, dt * 12)
   if (R.over && a.dying < 0) {
-    const o = R.over, ct = o.clock ?? o.t0 + (t - o.at) / 1000 * (o.speed || 1), d = o.clip.duration
+    const o = R.over, ct = o.clock ?? o.t0 + (t - o.at) / 1000 * (o.speed || 1), d = o.clip.duration, body = !o.full && rigStrike(M, o.clip.name)
+    const draw = (clip, time, w, legs) => { rigPose(R, clip, time, w, o.full ? null : RIG_UPPER); if (body && legs > 0 && R.stand > 0.01) rigPose(R, clip, time, legs * R.stand, RIG_LOWER) }
     if (ct >= d) R.over = null
-    else rigPose(R, o.clip, ct, (o.w ?? 1) * Math.min(1, (t - o.at) / 60, (d - ct) / 0.15), o.full ? null : RIG_UPPER)
+    else {
+      // his arms ease in (from the last strike's pose, if one was showing); his legs take a strike whole from its first
+      // frame, as each starts and ends on the idle's footing, so a planted foot never slides in a blend
+      const w = o.w ?? 1, out = Math.min(1, (d - ct) / 0.15)
+      if (o.from && t - o.at < 90) draw(o.from.clip, o.from.ct, 1, 0)
+      draw(o.clip, ct, w * Math.min(1, (t - o.at) / (o.from ? 90 : 60), out), w * out)
+    }
   } else if (a.dying >= 0) R.over = null
   // seated: the hips on the cushion, where seatFit put the capsule SIT_HIP above it
   if (hold === 'sit' && R.bones.get('pelvis')) {
     a.mesh.updateMatrixWorld(true); R.bones.get('pelvis').getWorldPosition(rigV)
     R.inst.position.y += a.mesh.position.y - SIT_HIP * (a.spec.h + a.spec.r) + 0.06 * H - rigV.y
+    seatPose(a, R)
   } else R.inst.position.y = R.inst.userData.y
   rigMovePose(a, R, want, t)
   rigCape(a, R, dt)
@@ -13010,19 +13241,8 @@ function rigMovePose(a, R, want, t) {
 
   } else if (air) {
     arm('r',[-0.22,2.55,0.08],[-1.2,1.9,-0.1]);arm('l',[0.22,2.55,0.08],[1.2,1.9,-0.1])
-  } else {
-    const wind = THREE.MathUtils.smoothstep(age,0,0.23)*(1-THREE.MathUtils.smoothstep(age,0.32,0.42))
-    const follow = THREE.MathUtils.smoothstep(age,0.32,0.44)*(1-THREE.MathUtils.smoothstep(age,0.57,0.9))
-    turn('spine_01',[1,0,0],-0.20*wind+0.08*follow)
-    turn('spine_02',[1,0,0],-0.20*wind+0.12*follow)
-    turn('spine_03',[1,0,0],-0.12*wind)
-    turn('spine_01',[0,1,0],-0.16*wind+0.20*follow)
-    turn('spine_02',[0,1,0],-0.16*wind+0.18*follow)
-    if (wind>0.05) arm('r',[-0.80,1.73,-0.68],[-1.25,1.22,-0.25])
-    else if(follow>0.1) arm('r',[0.35,1.40,1.12],[-0.9,1.35,0.65])
-
-    R.inst.rotateX(-0.25*wind)
   }
+  // (card #51: the haymaker is its clip, maniak_haymaker, drawn by rigAnimate; here it only keeps his feet on the floor)
   if (planted && !(charge >= 0 && moving)) R.inst.position.y += floor-feet()     // card #50: a charged run keeps its own stride
 }
 
@@ -13685,6 +13905,157 @@ function objLook(K) {
   depthFor(m)
   return m
 }
+// ---- card #44: the period fleet (VEHICLE_FILE). Per style it holds LOD0/1/2 bodies (the wheels apart), the burned-out shell, and
+// the wheels ('ww', 'bk') at LOD0/1/2, all on one material whose 64 px palette carries every part's colour, roughness/metal
+// and emission: the head, tail, marker and sign lamps glow through it, so a car is one draw. A car's paint scheme recolours
+// the palette's first four cells (body, roof, fenders, trim). Until the file loads, or where it never does (headless, a
+// dedicated server), the models drawn in code stand in.
+let periodFleet = null
+const PERIOD_CACHE = new Map(), periodOf = new Map()
+function periodLoad() {
+  if (periodFleet || renderHeadless || serving || !scene) return
+  periodFleet = { ready: false, failed: false }
+  rigLoader()
+  rigFetch(VEHICLE_FILE).then(periodSetup).catch(e => { periodFleet.failed = true; console.warn('period fleet: its models did not load, the drawn ones stay:', e && e.message) })
+}
+// a mesh's geometry in model space: float position, normal and uv, its node's transform applied
+function periodBake(mesh) {
+  const g = mesh.geometry, P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv, n = P.count
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), uv = new Float32Array(n * 2), v = new THREE.Vector3()
+  const nm = new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld)
+  for (let i = 0; i < n; i++) {
+    v.fromBufferAttribute(P, i).applyMatrix4(mesh.matrixWorld).toArray(pos, i * 3)
+    v.fromBufferAttribute(N, i).applyMatrix3(nm).normalize().toArray(nor, i * 3)
+    uv[i * 2] = U.getX(i); uv[i * 2 + 1] = U.getY(i)
+  }
+  const out = new THREE.BufferGeometry()
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3)); out.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); out.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+  out.setIndex(g.index ? Array.from(g.index.array) : [...Array(n).keys()])
+  out.computeBoundingBox(); out.computeBoundingSphere(); out.userData.shared = true
+  return out
+}
+// geometries [g, matrix?] into one
+function periodMerge(parts) {
+  let nv = 0, ni = 0
+  for (const [g] of parts) { nv += g.attributes.position.count; ni += g.index.count }
+  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), idx = new Uint32Array(ni), v = new THREE.Vector3()
+  let o = 0, j = 0
+  for (const [g, m] of parts) {
+    const P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv, I = g.index.array, nm = m && new THREE.Matrix3().getNormalMatrix(m)
+    for (let i = 0; i < P.count; i++) {
+      v.fromBufferAttribute(P, i); if (m) v.applyMatrix4(m); v.toArray(pos, (o + i) * 3)
+      v.fromBufferAttribute(N, i); if (m) v.applyMatrix3(nm).normalize(); v.toArray(nor, (o + i) * 3)
+      uv[(o + i) * 2] = U.getX(i); uv[(o + i) * 2 + 1] = U.getY(i)
+    }
+    for (let i = 0; i < I.length; i++) idx[j + i] = I[i] + o
+    o += P.count; j += I.length
+  }
+  const out = new THREE.BufferGeometry()
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3)); out.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); out.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+  out.setIndex(new THREE.BufferAttribute(idx, 1)); out.computeBoundingBox(); out.computeBoundingSphere(); out.userData.shared = true
+  return out
+}
+function periodSetup(gltf) {
+  const F = periodFleet, geo = {}
+  let base = null
+  gltf.scene.updateMatrixWorld(true)
+  gltf.scene.traverse(o => { if (o.isMesh) { geo[o.name] = periodBake(o); base ||= o.material } })
+  if (!base || !geo.sedan_lod0) throw new Error('not a period fleet file')
+  // the palette is sampled at cell centres: nearest, no mipmaps, so a far car never blends neighbouring cells
+  for (const t of [base.map, base.emissiveMap, base.roughnessMap, base.metalnessMap]) if (t) { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true }
+  base.side = THREE.FrontSide; base.envMap = chrome().envMap; base.emissiveIntensity = PERIOD.lamp; base.name = 'vehicle-period'
+  base.userData.vehicleLamps = true; base.needsUpdate = true
+  Object.assign(F, { geo, base, paints: new Map(), whole: new Map(), stats: {} })
+  for (const [k, g] of Object.entries(geo)) F.stats[k] = g.index.count / 3
+  // the instanced wheels: whitewall and black, LOD0 near and LOD1 out to WHEELS_NEAR
+  F.wheels = {}
+  for (const kind of ['ww', 'bk']) for (const lod of [0, 1]) {
+    const m = new THREE.InstancedMesh(geo['wheel_' + kind + '_lod' + lod], base, PERIOD.wheelCap)
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.castShadow = m.receiveShadow = true; m.count = 0; m.visible = false; m.userData.n = 0; depthFor(m)
+    F.wheels[kind + lod] = m
+  }
+  F.ready = true
+  if (renderer?.compileAsync && scene) { const probe = new THREE.Group(); probe.add(new THREE.Mesh(geo.sedan_lod2, base), F.wheels.ww1); renderer.compileAsync(probe, camera, scene).catch(() => {}).finally(() => probe.remove(F.wheels.ww1)) }
+}
+// a paint scheme's material: the palette with its four paint cells filled
+function periodPaint(paint) {
+  const F = periodFleet, key = paint ? paint.join(',') : ''
+  if (!paint) return F.base
+  if (!F.paints.has(key)) {
+    const src = F.base.map, cv = document.createElement('canvas'); cv.width = src.image.width; cv.height = src.image.height
+    const g = cv.getContext('2d'), cell = cv.width / 8
+    g.drawImage(src.image, 0, 0)
+    paint.forEach((c, i) => { g.fillStyle = css(c); g.fillRect(i * cell, 0, cell, cell) })
+    const t = new THREE.CanvasTexture(cv)
+    t.colorSpace = src.colorSpace; t.flipY = src.flipY; t.wrapS = src.wrapS; t.wrapT = src.wrapT
+    t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false
+    const m = F.base.clone(); m.map = t; m.userData.vehicleLamps = true
+    F.paints.set(key, m)
+  }
+  return F.paints.get(key)
+}
+// the look a vehicle (or a wreck) wears: its style, paint and wheels, by its row, its variant and its seed; null until loaded
+function periodLook(K, o) {
+  if (!periodFleet) periodLoad()
+  if (!periodFleet?.ready) return null
+  const id = o.id ?? -1, c = periodOf.get(id)
+  if (c && c.k === o.k && c.seed === o.seed) return c.P
+  const V = K.drive ? vehicleOf(K) : VEHICLES.find(v => v.wreck === K.name), row = V && VEHICLE_STYLES[V.name]
+  let P = null
+  if (row) {
+    const v = row[variantAt(V, o.seed, o.id)] || row[0], h = Math.imul((o.seed || (o.id ?? 0) + 1) ^ 0x5bd1e995, 0x27d4eb2d) >>> 0
+    const cab = !!v.taxi && (h >>> 12) % 100 < v.taxi * 100, style = cab ? 'taxi' : v.style, paints = cab ? v.taxiPaints : v.paints, paint = paints[h % paints.length]
+    P = K.drive ? { key: style + ':' + paint.join(','), style, paint, wheels: v.wheels, shape: V.name } : { key: 'wreck:' + PERIOD.wreck[style], style: PERIOD.wreck[style], wreck: true }
+    if (!periodFleet.geo[P.style + (P.wreck ? '_wreck' : '_lod0')]) P = null
+  }
+  periodOf.set(id, { k: o.k, seed: o.seed, P })
+  return P
+}
+// a body with its wheels merged in (parked, far, or past the wheel cap): one draw
+function periodWhole(P, lod) {
+  const F = periodFleet, key = P.style + ':' + P.wheels + ':' + P.shape + ':' + lod
+  if (!F.whole.has(key)) {
+    const W = VEHICLE_SHAPES[P.shape].wheels, wheel = F.geo['wheel_' + P.wheels + '_lod' + lod], m = new THREE.Matrix4()
+    F.whole.set(key, periodMerge([[F.geo[P.style + '_lod' + lod]], ...W.at.map(([x, y, z]) => [wheel, m.clone().makeScale(W.r, W.r, W.r).setPosition(x, y, z)])]))
+  }
+  return F.whole.get(key)
+}
+// the model a view clones: LOD meshes (userData.lod) for a vehicle, the shell for a wreck
+function periodModel(P, whole) {
+  const key = P.key + (whole ? ':whole' : '')
+  if (!PERIOD_CACHE.has(key)) {
+    const F = periodFleet, root = new THREE.Group()
+    if (P.wreck) root.add(new THREE.Mesh(F.geo[P.style + '_wreck'], F.base))
+    else for (let i = 0; i < 3; i++) {
+      const m = new THREE.Mesh(whole ? periodWhole(P, i) : F.geo[P.style + '_lod' + i], periodPaint(P.paint))
+      m.userData.lod = i; m.visible = !i; root.add(m)
+    }
+    PERIOD_CACHE.set(key, root)
+  }
+  return PERIOD_CACHE.get(key)
+}
+// the LOD a look shows from the camera; the wheels' bucket
+const periodLods = () => PERIOD.lods[settings.quality] || PERIOD.lods.high
+function periodPick(look, d) {
+  const L = periodLods(), lod = d < L[0] ? 0 : d < L[1] ? 1 : 2
+  for (const c of look.children) if (c.userData.lod !== undefined) c.visible = c.userData.lod === lod
+}
+function periodWheelFits(P, n) { const b = periodFleet.wheels[P.wheels + 0], c = periodFleet.wheels[P.wheels + 1]; return b.userData.n + n <= PERIOD.wheelCap && c.userData.n + n <= PERIOD.wheelCap }
+function periodWheelOut(P, d, pos, quat, r) {
+  const T = objTmp, b = periodFleet.wheels[P.wheels + (d < (PERIOD.wheelNear[settings.quality] ?? 0) ? 0 : 1)]
+  T[0].compose(T[1].set(...pos), T[2].set(...quat), T[4].set(r, r, r))
+  b.setMatrixAt(b.userData.n++, T[0])
+}
+function periodWheelsFrame() {
+  const F = periodFleet
+  if (!F?.ready) return
+  for (const b of Object.values(F.wheels)) {
+    if (b.parent !== objGroup) objGroup.add(b)
+    b.count = b.userData.n; b.visible = b.count > 0
+    if (b.count) { b.instanceMatrix.needsUpdate = true; b.computeBoundingSphere() }
+    b.userData.n = 0
+  }
+}
 function drawObjects(list, wheelsAt = () => null) {
   if (!objGroup) return
   const T = objTmp || (objTmp = [new THREE.Matrix4(), new THREE.Vector3(), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1), new THREE.Vector3()])
@@ -13700,14 +14071,14 @@ function drawObjects(list, wheelsAt = () => null) {
       const H = hullOf(K), m = H && hullView(o.id ?? o, held, () => Object.assign(new THREE.Group(), { matrixAutoUpdate: false }))
       if (!m) continue
       if (m.parent !== objGroup) objGroup.add(m)
-      const paint = K.drive ? variantColor(K, o.seed, o.id) : undefined
-      if (m.userData.k !== o.k || m.userData.paint !== paint) {
+      const paint = K.drive ? variantColor(K, o.seed, o.id) : undefined, P = periodLook(K, o), dress = P ? P.key : ''
+      if (m.userData.k !== o.k || m.userData.paint !== paint || m.userData.dress !== dress) {
         const mats = new Set()
         m.traverse(n => { if (n.material) mats.add(n.material) })
         mats.forEach(x => x.dispose())
-        m.clear(); m.userData = { k: o.k, paint }; m.matrixWorldNeedsUpdate = true
+        m.clear(); m.userData = { k: o.k, paint, dress, P }; m.matrixWorldNeedsUpdate = true
         for (const whole of K.drive ? [false, true] : [true]) {
-          const look = propModel('object', o.k, whole, paint).clone()
+          const look = (P ? periodModel(P, whole) : propModel('object', o.k, whole, paint)).clone()
           ownMaterials(look)
           look.traverse(c => { if (c.isMesh) c.castShadow = c.receiveShadow = true
             if (K.drive && c.userData.part === 'wheel') c.visible = false })
@@ -13718,12 +14089,13 @@ function drawObjects(list, wheelsAt = () => null) {
       const p = m.position, q = m.quaternion
       if (p.x !== o.x || p.y !== o.y || p.z !== o.z || q.x !== o.q[0] || q.y !== o.q[1] || q.z !== o.q[2] || q.w !== o.q[3]) { p.set(o.x, o.y, o.z); q.set(...o.q); m.updateMatrix() }
       m.userData.oid = o.id
-      const W = K.drive && VEHICLE_SHAPES[K.model || K.name]?.wheels
+      const W = K.drive && VEHICLE_SHAPES[K.model || K.name]?.wheels, Q = m.userData.P, d = Q && camera ? camera.position.distanceTo(p) : 0
       if (W) {
-        const posed = wheelsAt(o), rolling = !!posed && wheelN + W.at.length <= WHEEL_CAP
+        const posed = wheelsAt(o), rolling = !!posed && (Q ? periodWheelFits(Q, W.at.length) : wheelN + W.at.length <= WHEEL_CAP)
         m.children[0].visible = rolling; m.children[1].visible = !rolling
-        if (rolling) for (let i = 0; i < W.at.length; i++) wheelOut(posed[i].pos, posed[i].quat, W.r)
+        if (rolling) for (let i = 0; i < W.at.length; i++) Q ? periodWheelOut(Q, d, posed[i].pos, posed[i].quat, W.r) : wheelOut(posed[i].pos, posed[i].quat, W.r)
       }
+      if (Q) for (const c of m.children) if (c.visible) periodPick(c, d)
       continue
     }
     if (!(n[o.k] < OBJ_MAX)) continue
@@ -13734,6 +14106,7 @@ function drawObjects(list, wheelsAt = () => null) {
     if (m && (m.count = n[k])) { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere() }
   })
   trafficDraw(list)
+  periodWheelsFrame()
   if (wheelBucket) {
     for (const m of wheelBucket) m.count = wheelN
     if (wheelN) { wheelBucket[0].instanceMatrix.needsUpdate = true; wheelBucket[0].computeBoundingSphere(); wheelBucket[1].boundingSphere = wheelBucket[0].boundingSphere }
