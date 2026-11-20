@@ -2070,12 +2070,12 @@ const FAUST_CUBE = [0, 1, 2].flatMap(axis => [-1, 1].flatMap(sign => {
 }))
 function faustBatch(capacity = 12288) {
   const p = new Float32Array(capacity * 3), n = new Float32Array(capacity * 3), uv = new Float32Array(capacity * 2), colors = new Float32Array(capacity * 3)
-  const col = new THREE.Color(); let count = 0
+  const glow = new Float32Array(capacity), col = new THREE.Color(); let count = 0, lit = 0
   const vertex = (x, y, z, nx, ny, nz, u, v) => {
     if (count >= capacity) throw new Error('Faustland geometry budget exceeded')
     const i = count * 3, j = count * 2
     p[i] = x; p[i + 1] = y; p[i + 2] = z; n[i] = nx; n[i + 1] = ny; n[i + 2] = nz
-    uv[j] = u; uv[j + 1] = v; colors[i] = col.r; colors[i + 1] = col.g; colors[i + 2] = col.b; count++
+    uv[j] = u; uv[j + 1] = v; colors[i] = col.r; colors[i + 1] = col.g; colors[i + 2] = col.b; glow[count] = lit; count++
   }
   const tri = (a, b, c, tint, coords) => {
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]
@@ -2083,17 +2083,23 @@ function faustBatch(capacity = 12288) {
     col.setHex(tint)
     for (let i = 0; i < 3; i++) { const q = [a, b, c][i]; vertex(q[0], q[1], q[2], nx / length, ny / length, nz / length, coords?.[i]?.[0] || 0, coords?.[i]?.[1] || 0) }
   }
-  const box = (b, tint = 0x70757c) => {
-    col.setHex(tint)
+  // light: the box glows (the stone material's emission): below 0 in the lamps' colour, above 0 in its own tint.
+  // Flat paint (under 3 cm tall: road markings, kerb and plaza lines) draws its top only: its centimetre-tall sides were
+  // slivers far off, which a software rasterizer can draw in front of a near wall (single pixels through it, on the horizon)
+  const box = (b, tint = 0x70757c, light = 0) => {
+    col.setHex(tint); lit = light
+    const flat = b.ey < 0.015
     for (const v of FAUST_CUBE) {
+      if (flat && !(v[6] === 1 && v[4] > 0)) continue
       const x = b.cx + v[0] * b.ex, y = b.cy + v[1] * b.ey, z = b.cz + v[2] * b.ez
       vertex(x, y, z, v[3], v[4], v[5], v[6] === 1 ? 0.02 : (v[6] === 0 ? z : x) / 12, v[6] === 1 ? 0.02 : y / 16)
     }
+    lit = 0
   }
   const geometry = () => {
     const g = new THREE.BufferGeometry()
-    for (const [key, values, size] of [['position', p, 3], ['normal', n, 3], ['uv', uv, 2], ['color', colors, 3]])
-      g.setAttribute(key, new THREE.BufferAttribute(values.subarray(0, count * size), size))
+    for (const [key, values, size] of [['position', p, 3], ['normal', n, 3], ['uv', uv, 2], ['color', colors, 3], ['faustGlow', glow, 1]])
+      g.setAttribute(key, new THREE.BufferAttribute(values.slice(0, count * size), size))
     g.computeBoundingSphere(); return g
   }
   return { box, tri, geometry, get count() { return count / 3 } }
@@ -2114,7 +2120,7 @@ function faustMaterials() {
   const map = new THREE.CanvasTexture(cv); map.userData.faustOwned = true; map.wrapS = map.wrapT = THREE.RepeatWrapping; map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4
   const emissiveMap = new THREE.CanvasTexture(ecv); emissiveMap.userData.faustOwned = true; emissiveMap.wrapS = emissiveMap.wrapT = THREE.RepeatWrapping; emissiveMap.colorSpace = THREE.SRGBColorSpace
   return { facade: new THREE.MeshStandardMaterial({ map, emissiveMap, emissive: 0xffffff, emissiveIntensity: 1.4, vertexColors: true, roughness: 0.94 }),
-    stone: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.91 }),
+    stone: faustStoneMaterial(),
     far: faustFarMaterial(map, emissiveMap) }
 }
 function faustFarMaterial(map, emissiveMap) {
@@ -2132,10 +2138,251 @@ function faustFarMaterial(map, emissiveMap) {
   material.customProgramCacheKey = () => 'faust-far-1'
   return material
 }
+// ---- the night's light (card #28): a fill everywhere, and street lamps that light what is near them, wherever the camera is
+// FAUST_NIGHT. hemi: the fill, the scene's hemisphere light (sky and ground colours, intensity); moon: the key light.
+//   lamps: the street lamps on every road (faustLampSites): color, candela (cd), range m (where their light ends), y m (the
+//   light, under the head); post, head: m from the road's centre line; near, far: m along the road for the lamps on its
+//   +x/+z and its -x/-z kerb; glow: the heads' brightness, in the lamps' colour.
+//   shops: the lots' shopfronts (faustShopfronts): window tints (lit warm, lit cool) and unlit; lit: the share lit; glow,
+//   their brightness in their own tint; signs: the neon tints over a third of the lit ones, signGlow. Their tints are
+//   their own (each over 0.01 in linear colour from every other tint in the city), so a look that draws shopfronts of
+//   its own can tell them apart.
+//   grid: the lamps near the camera, as a float texture every lit material reads (faustLampHook): cell m, n cells a side,
+//   k lamps a cell (the strongest there), fade m from the camera over which their light ends (the road ribbons take over),
+//   plans: the most cell plans a frame's rebuild may compute (a plan takes a few ms; the old grid stays lit meanwhile).
+//   looks: per look (LOOKS' keys; other: any look not listed), lamps: the lamps' strength; shadow: the moon's shadow
+//   intensity (three's: 1, black; less lets that share of the moon into the shadows); pools: the old pool decals at the
+//   avenue's lamps (faustAtmosphere), for a look whose own lights stop short; wet: the lamps' sheen on the street, a
+//   reflection that makes their pools read on dark asphalt (the stone material's ground only). Ink draws light in bands,
+//   so its lamps are weaker there, for pools rather than walls of white.
+//   hero: the player at night in Realistic (its rig material, faustHeroHook), whose dark suit was lost on a dark street:
+//   fill, light from the camera (irradiance, in fillColor), so the back the player sees reads, with wrap the share left
+//   where his surface turns from the camera; rim, a cool edge on his outline (radiance at grazing, in rimColor, falling off
+//   by rimPower), so he stands off the street behind him.
+const FAUST_NIGHT = {
+  hemi: { sky: 0x7d8fb3, ground: 0x3d2e20, intensity: 1.25 }, moon: 2.5,
+  lamps: { color: 0xffb15c, candela: 560, range: 18, y: 8.45, post: 10.4, head: 8.6, near: [20, 76], far: [36, 60], glow: 3 },
+  shops: { windows: [0xffd7a0, 0xcfe0f0], dark: 0x2a1f1a, lit: 0.6, glow: 1.5, signs: [0xff5a7a, 0x5ad8ff, 0xb6ff6a, 0xffb347], signGlow: 2.4 },
+  grid: { cell: 8, n: 48, k: 4, fade: [125, 170], plans: 1 },
+  looks: { plain: { lamps: 1, shadow: 0.75, pools: false, wet: 1 }, ink: { lamps: 0.42, shadow: 1, pools: false, wet: 0 },
+    realistic: { lamps: 1, shadow: 1, pools: false, wet: 0 }, other: { lamps: 1, shadow: 1, pools: true, wet: 0 } },
+  hero: { fill: 2, wrap: 0.35, fillColor: 0xc4cde0, rim: 0.2, rimPower: 3, rimColor: 0xa9bde0 },
+}
+// The street lamps a cell's plan implies, one { x, z, nx, nz, own } each: (x, z) its head, where the light is; (nx, nz) the
+// way to its post (0, 0: a lantern on top of it). Every road has four, two a kerb; the diagonal boulevard has lanterns down
+// both kerbs, and the other roads keep out of its roadway. own: the avenue's pair that every cell draws already. Pure: every
+// client finds the same lamps, and none of it is on the wire.
+function faustLampSites(P) {
+  const L = FAUST_NIGHT.lamps, X = (P.ci - P.S / 2) * 96, Z = (P.cj - P.S / 2) * 96, out = []
+  for (const q of [20, 76]) out.push({ x: X + 8.6, z: Z + q, nx: 1, nz: 0, own: true })
+  for (const road of P.roads) {
+    const dx = road.b[0] - road.a[0], dz = road.b[2] - road.a[2], length = Math.hypot(dx, dz), ux = dx / length, uz = dz / length
+    if (dx && dz) {
+      for (const side of [1, -1]) for (const along of side > 0 ? [17, 51, 85, 119] : [34, 68, 102])
+        out.push({ x: road.a[0] + ux * along + side * Math.SQRT1_2 * 11, z: road.a[2] + uz * along - side * Math.SQRT1_2 * 11, nx: 0, nz: 0 })
+      continue
+    }
+    const nx = dx ? 0 : 1, nz = dx ? 1 : 0, own = !dx && road.avenue && road.a[0] === X
+    for (const side of [1, -1]) for (const along of side > 0 ? own ? [] : L.near : L.far)
+      out.push({ x: road.a[0] + ux * along + nx * side * L.head, z: road.a[2] + uz * along + nz * side * L.head, nx: nx * side, nz: nz * side })
+  }
+  const clear = (x, z) => Math.abs(z - x - (Z - X)) * Math.SQRT1_2 > 14
+  return P.diagonal ? out.filter(s => s.own || !s.nx && !s.nz || clear(s.x, s.z) && clear(s.x + s.nx * (L.post - L.head), s.z + s.nz * (L.post - L.head))) : out
+}
+// a cell's lamps as lights: x, y, z, candela each
+function faustLamps(P) {
+  const L = FAUST_NIGHT.lamps
+  return Float32Array.from(faustLampSites(P).flatMap(s => [s.x, s.nx || s.nz ? L.y : 8.3, s.z, L.candela]))
+}
+// a lamp in a cell's street detail: a post on the kerb, an arm, a glowing head over the road; or a lantern on its post
+function faustLampDraw(batch, s) {
+  const L = FAUST_NIGHT.lamps, reach = L.post - L.head, span = (a, b) => s.nx ? [a, b] : [b, a]
+  if (!s.nx && !s.nz) {
+    batch.box(faustBox(s.x, 4.15, s.z, 0.14, 4.15, 0.14), 0x252d37)
+    batch.box(faustBox(s.x, 8.45, s.z, 0.3, 0.15, 0.3), 0xd6d0b2, -L.glow)
+    return
+  }
+  const [ax, az] = span((reach + 0.4) / 2, 0.12), [hx, hz] = span(0.65, 0.3), arm = (reach - 0.2) / 2
+  batch.box(faustBox(s.x + s.nx * reach, 4.5, s.z + s.nz * reach, 0.12, 4.5, 0.12), 0x252d37)
+  batch.box(faustBox(s.x + s.nx * arm, 8.8, s.z + s.nz * arm, ax, 0.1, az), 0x5c6671)
+  batch.box(faustBox(s.x, 8.62, s.z, hx, 0.08, hz), 0xd6d0b2, -L.glow)
+}
+// A lot's shopfronts: on its podium's front (+z) face, a window either side of the door, lit (warm or cool) or dark by the
+// lot's seed, and over a third of the lit ones a neon sign. Industrial sheds and transit towers have none.
+function faustShopfronts(batch, lot) {
+  if (lot.district === 'industrial' || lot.stop) return
+  const S = FAUST_NIGHT.shops, { x, z, w, d } = lot
+  for (const side of [-1, 1]) {
+    const h = cityHash(lot.seed ^ Math.imul(side + 2, 0x9e3779b9)), lit = h % 100 < S.lit * 100, cx = x + side * w * 0.45
+    batch.box(faustBox(cx, 1.7, z + d + 0.28, 1.25, 1.2, 0.03), lit ? S.windows[h >>> 8 & 1] : S.dark, lit ? S.glow : 0)
+    if (lit && (h >>> 12) % 3 === 0) batch.box(faustBox(cx, 3.55, z + d + 0.42, 1.1, 0.22, 0.08), S.signs[(h >>> 16) % S.signs.length], S.signGlow)
+  }
+}
+// GLSL: is a vertex colour one of the shopfronts' or signs' tints (a look that draws shopfronts of its own drops them)
+const faustShopTintGlsl = () => 'bool faustShopTint(vec3 c) {\n' + [...FAUST_NIGHT.shops.windows, FAUST_NIGHT.shops.dark, ...FAUST_NIGHT.shops.signs]
+  .map(hex => { const k = new THREE.Color(hex); return `  if (all(lessThan(abs(c - vec3(${k.r.toFixed(6)}, ${k.g.toFixed(6)}, ${k.b.toFixed(6)})), vec3(0.0015)))) return true;` })
+  .join('\n') + '\n  return false;\n}\n'
+// The lamps near the camera, for faustLampHook: a float texture of n x n cells round the camera, k texels a cell, each a
+// lamp that reaches the cell (x, y, z, candela; 0 candela: none, and none after it), its strongest first. Built again when
+// the camera has moved 2 cells or the city changed, from the lamps of every 96 m cell whose lamps can reach the grid (a
+// lamp stands up to 9 m outside its own cell), each cell's kept for the city. Every frame it sets the look's levels.
+// plans: the most new cell plans this call may compute (tests pass Infinity); built: the grid is the city's, round
+// (cx, cz). stats: for tests.
+const faustLamp = { texture: null, order: null, count: null, city: null, built: false, cx: 0, cz: 0, sites: new Map(), colour: null,
+  stats: { builds: 0, lamps: 0, cellMax: 0, cut: 0, ms: 0, waits: 0 } }
+const faustLampUniforms = { faustLampGrid: { value: null }, faustLampArea: { value: new THREE.Vector4() },
+  faustLampLight: { value: new THREE.Vector4() }, faustLampFade: { value: new THREE.Vector4() },
+  faustHeroFill: { value: new THREE.Vector4() }, faustHeroRim: { value: new THREE.Vector4() } }
+function faustLampGrid(plans = FAUST_NIGHT.grid.plans) {
+  const F = faustState, G = FAUST_NIGHT.grid, L = FAUST_NIGHT.lamps, U = faustLampUniforms, S = faustLamp
+  if (!F || !camera || !LV.faust) { U.faustLampArea.value.w = 0; return }
+  const look = FAUST_NIGHT.looks[activeLook] || FAUST_NIGHT.looks.other, colour = S.colour ||= new THREE.Color(L.color), R = L.range
+  U.faustLampLight.value.set(colour.r * look.lamps, colour.g * look.lamps, colour.b * look.lamps, 1 / (R * R))
+  U.faustLampFade.value.z = look.wet
+  const H = FAUST_NIGHT.hero, hero = S.hero ||= [new THREE.Color(), new THREE.Color()]
+  hero[0].set(H.fillColor).multiplyScalar(H.fill); hero[1].set(H.rimColor).multiplyScalar(H.rim)
+  U.faustHeroFill.value.set(hero[0].r, hero[0].g, hero[0].b, H.wrap); U.faustHeroRim.value.set(hero[1].r, hero[1].g, hero[1].b, H.rimPower)
+  if (sunLight) sunLight.shadow.intensity = look.shadow
+  const n = G.n, k = G.k, cell = G.cell, cx = Math.floor(camera.position.x / cell), cz = Math.floor(camera.position.z / cell)
+  if (S.city === F && S.built && Math.abs(cx - S.cx) < 2 && Math.abs(cz - S.cz) < 2) return
+  const t = performance.now(), ox = (cx - n / 2) * cell, oz = (cz - n / 2) * cell, span = n * cell
+  if (S.city !== F) { S.city = F; S.built = false; S.sites.clear(); U.faustLampArea.value.w = 0 }
+  const lo = v => Math.max(0, Math.floor((v - R - 9 + ARENA) / 96)), hi = v => Math.min(F.S - 1, Math.floor((v + R + 9 + ARENA) / 96))
+  let missing = false
+  for (let ci = lo(ox); ci <= hi(ox + span); ci++) for (let cj = lo(oz); cj <= hi(oz + span); cj++) {
+    const key = faustKey(ci, cj), plan = F.chunks.get(key)?.plan
+    if (S.sites.has(key)) continue
+    if (!plan && plans-- <= 0) { missing = true; continue }
+    S.sites.set(key, faustLamps(plan || faustPlan(F.seed, ci, cj, F.S)))
+  }
+  if (missing) { S.stats.waits++; return }
+  if (!S.texture) {
+    S.texture = new THREE.DataTexture(new Float32Array(n * k * n * 4), n * k, n, THREE.RGBAFormat, THREE.FloatType)
+    S.texture.magFilter = S.texture.minFilter = THREE.NearestFilter; S.texture.generateMipmaps = false
+    S.order = new Float32Array(n * n * k); S.count = new Uint16Array(n * n)
+  }
+  const data = S.texture.image.data, order = S.order, count = S.count
+  data.fill(0); order.fill(0); count.fill(0)
+  let lamps = 0, cut = 0, cellMax = 0
+  for (let ci = lo(ox); ci <= hi(ox + span); ci++) for (let cj = lo(oz); cj <= hi(oz + span); cj++) {
+    const list = S.sites.get(faustKey(ci, cj))
+    for (let q = 0; q < list.length; q += 4) {
+      const x = list[q], y = list[q + 1], z = list[q + 2], I = list[q + 3]
+      const i0 = Math.max(0, Math.floor((x - R - ox) / cell)), i1 = Math.min(n - 1, Math.floor((x + R - ox) / cell))
+      const j0 = Math.max(0, Math.floor((z - R - oz) / cell)), j1 = Math.min(n - 1, Math.floor((z + R - oz) / cell))
+      if (i0 > i1 || j0 > j1) continue
+      lamps++
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const ex = Math.max(0, ox + i * cell - x, x - ox - (i + 1) * cell), ez = Math.max(0, oz + j * cell - z, z - oz - (j + 1) * cell)
+        if (ex * ex + ez * ez >= R * R) continue
+        const c = j * n + i, p = I / (ex * ex + ez * ez + 16)
+        if (++count[c] > k) cut++
+        cellMax = Math.max(cellMax, count[c])
+        let s = k
+        while (s > 0 && order[c * k + s - 1] < p) s--
+        if (s === k) continue
+        for (let m = k - 1; m > s; m--) { order[c * k + m] = order[c * k + m - 1]; data.copyWithin((c * k + m) * 4, (c * k + m - 1) * 4, (c * k + m) * 4) }
+        const o = (c * k + s) * 4; order[c * k + s] = p; data[o] = x; data[o + 1] = y; data[o + 2] = z; data[o + 3] = I
+      }
+    }
+  }
+  S.texture.needsUpdate = true; S.built = true; S.cx = cx; S.cz = cz
+  U.faustLampGrid.value = S.texture; U.faustLampArea.value.set(ox, oz, 1 / cell, n); U.faustLampFade.value.x = G.fade[0]; U.faustLampFade.value.y = G.fade[1]
+  Object.assign(S.stats, { builds: S.stats.builds + 1, lamps, cellMax, cut, ms: +(performance.now() - t).toFixed(2) })
+}
+// Every lit material takes the lamps' light after three's own lights (faustLampGlsl): diffuse, inverse-square, thrown
+// down and out (a tenth above the head), ending smoothly at the lamps' range and fading with distance from the camera. The hook is Material.prototype's, so a material
+// made anywhere has it; a material with a hook of its own calls faustLampHook (ink's patch chains to it). three keys a
+// program by its hook's text, which never varies. mode true (the stone's): the street's sheen too, a Blinn-Phong lobe on
+// level ground at street height, scaled by the look's wet (faustLampFade.z). mode 'pbr' (Realistic's materials): each
+// lamp goes through three's own direct light (RE_Direct), diffuse and specular, so a wet street's roughness shows it.
+const FAUST_LAMP_PARS = 'uniform highp sampler2D faustLampGrid;\nuniform vec4 faustLampArea, faustLampLight, faustLampFade;\n'
+const faustLampGlsl = mode => mode === 'pbr' ? `
+if (faustLampArea.w > 0.0) {
+  vec3 faustP = cameraPosition + geometryPosition * mat3(viewMatrix);
+  vec2 faustG = (faustP.xz - faustLampArea.xy) * faustLampArea.z;
+  float faustFar = 1.0 - smoothstep(faustLampFade.x, faustLampFade.y, distance(faustP.xz, cameraPosition.xz));
+  if (faustFar > 0.0 && min(faustG.x, faustG.y) >= 0.0 && max(faustG.x, faustG.y) < faustLampArea.w) {
+    ivec2 faustCell = ivec2(int(faustG.x) * ${FAUST_NIGHT.grid.k}, int(faustG.y));
+    for (int i = 0; i < ${FAUST_NIGHT.grid.k}; i++) {
+      vec4 faustLampAt = texelFetch(faustLampGrid, faustCell + ivec2(i, 0), 0);
+      if (faustLampAt.w <= 0.0) break;
+      vec3 faustL = faustLampAt.xyz - faustP;
+      float faustD2 = max(dot(faustL, faustL), 0.25), faustInv = inversesqrt(faustD2), faustW = clamp(1.0 - faustD2 * faustLampLight.w, 0.0, 1.0);
+      float faustAim = mix(0.1, 1.0, smoothstep(-0.1, 0.35, faustL.y * faustInv));
+      IncidentLight faustLight;
+      faustLight.direction = normalize(mat3(viewMatrix) * faustL);
+      faustLight.color = faustLampLight.rgb * (faustLampAt.w * faustW * faustW * faustAim * faustFar / faustD2);
+      faustLight.visible = true;
+      RE_Direct(faustLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
+    }
+  }
+}
+` : faustLampGlslDiffuse(mode)
+// the diffuse light every other material takes (wet: and the stone's sheen)
+const faustLampGlslDiffuse = wet => `
+if (faustLampArea.w > 0.0) {
+  vec3 faustP = cameraPosition + geometryPosition * mat3(viewMatrix);
+  vec2 faustG = (faustP.xz - faustLampArea.xy) * faustLampArea.z;
+  float faustFar = 1.0 - smoothstep(faustLampFade.x, faustLampFade.y, distance(faustP.xz, cameraPosition.xz));
+  if (faustFar > 0.0 && min(faustG.x, faustG.y) >= 0.0 && max(faustG.x, faustG.y) < faustLampArea.w) {
+    vec3 faustN = geometryNormal * mat3(viewMatrix);
+    ivec2 faustCell = ivec2(int(faustG.x) * ${FAUST_NIGHT.grid.k}, int(faustG.y));
+    float faustE = 0.0;${wet ? `
+    float faustS = 0.0, faustWet = faustLampFade.z * smoothstep(0.9, 0.98, faustN.y) * (1.0 - smoothstep(0.08, 0.3, faustP.y));
+    vec3 faustV = normalize(cameraPosition - faustP);` : ''}
+    for (int i = 0; i < ${FAUST_NIGHT.grid.k}; i++) {
+      vec4 faustLampAt = texelFetch(faustLampGrid, faustCell + ivec2(i, 0), 0);
+      if (faustLampAt.w <= 0.0) break;
+      vec3 faustL = faustLampAt.xyz - faustP;
+      float faustD2 = max(dot(faustL, faustL), 0.25), faustInv = inversesqrt(faustD2), faustW = clamp(1.0 - faustD2 * faustLampLight.w, 0.0, 1.0);
+      // a street lamp's spread: full below it and out to the side, a tenth above its head, so a wall's pool washes down
+      float faustAim = mix(0.1, 1.0, smoothstep(-0.1, 0.35, faustL.y * faustInv));
+      float faustI = faustLampAt.w * faustW * faustW * faustAim * max(dot(faustN, faustL), 0.0) * faustInv / faustD2;
+      faustE += faustI;${wet ? `
+      if (faustWet > 0.0) faustS += faustI * pow(max(dot(faustN, normalize(faustL * faustInv + faustV)), 0.0), 36.0);` : ''}
+    }
+    reflectedLight.directDiffuse += faustE * faustFar * faustLampLight.rgb * BRDF_Lambert(material.diffuseColor);${wet ? `
+    reflectedLight.directSpecular += faustS * faustWet * faustFar * 0.3 * faustLampLight.rgb;` : ''}
+  }
+}
+`
+function faustLampHook(shader, mode = false) {
+  if (!shader.fragmentShader.includes('#include <lights_fragment_end>')) return
+  Object.assign(shader.uniforms, faustLampUniforms)
+  shader.fragmentShader = FAUST_LAMP_PARS + shader.fragmentShader.replace('#include <lights_fragment_end>', '#include <lights_fragment_end>' + faustLampGlsl(mode))
+}
+THREE.Material.prototype.onBeforeCompile = function (shader) { faustLampHook(shader) }
+// The player at night (FAUST_NIGHT.hero), for Realistic's rig material: a fill from the camera and a rim on his outline,
+// after the lights, as the lamps are
+function faustHeroHook(shader) {
+  if (!shader.fragmentShader.includes('#include <lights_fragment_end>')) return
+  Object.assign(shader.uniforms, { faustHeroFill: faustLampUniforms.faustHeroFill, faustHeroRim: faustLampUniforms.faustHeroRim })
+  shader.fragmentShader = 'uniform vec4 faustHeroFill, faustHeroRim;\n' + shader.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+{
+  float faustFacing = saturate(dot(geometryNormal, geometryViewDir));
+  reflectedLight.indirectDiffuse += faustHeroFill.rgb * BRDF_Lambert(material.diffuseColor) * mix(faustHeroFill.w, 1.0, faustFacing);
+  reflectedLight.indirectSpecular += faustHeroRim.rgb * pow(1.0 - faustFacing, faustHeroRim.w);
+}
+`)
+}
+// The city's stone: the lamps' light, and what glows (faustBatch's glow): lamp heads in the lamps' colour (a negative glow),
+// shopfronts and signs in their own tint
+function faustStoneMaterial() {
+  const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.91 }), c = new THREE.Color(FAUST_NIGHT.lamps.color)
+  material.onBeforeCompile = shader => {
+    faustLampHook(shader, true)
+    shader.vertexShader = 'attribute float faustGlow;\nvarying float faustGlowV;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n faustGlowV = faustGlow;')
+    shader.fragmentShader = 'varying float faustGlowV;\n' + shader.fragmentShader.replace('#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>\n totalEmissiveRadiance += faustGlowV < 0.0 ? vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)}) * -faustGlowV : vColor * faustGlowV;`)
+  }
+  material.customProgramCacheKey = () => 'faust-stone-glow-2'
+  return material
+}
 const FAUST_COLORS = [0x454d5b, 0x333d4d, 0x555d67, 0x39404a]
 function faustDraw(c) { return drain(faustVisualSteps(c)) }
 function* faustVisualSteps(c) {
-  const facade = faustBatch(512), ornament = faustBatch(), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
+  const facade = faustBatch(512), ornament = faustBatch(16384), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
   ornament.box(faustBox(X + 48, -0.08, Z + 48, 48, 0.08, 48), 0x242a33)
   if (P.plaza) {
@@ -2164,6 +2411,7 @@ function* faustVisualSteps(c) {
     for (const b of mass) facade.box(b, FAUST_COLORS[lot.tint])
     // Heavy street podiums and industrial sheds anchor the building at pedestrian scale.
     ornament.box(faustBox(x, 2, z, w + 0.25, 2, d + 0.25), 0x343d4b)
+    faustShopfronts(ornament, lot)
     if (district === 'industrial') {
       for (const y of [H + 9, H + 24, H + 35]) ornament.box(faustBox(x - w * 0.6, y, z - d * 0.6, 1.75, 0.5, 1.75), 0x969b9e)
       for (const q of [-0.6, 0.3]) ornament.box(faustBox(x + q * w, 2.2, z + d + 0.3, 3, 2.2, 0.2), 0x111a26)
@@ -2239,8 +2487,10 @@ function* faustVisualSteps(c) {
   for (const q of [20, 76]) {
     ornament.box(faustBox(X + 11.4, 4.5, Z + q, 0.12, 4.5, 0.12), 0x252d37)
     ornament.box(faustBox(X + 9.9, 8.8, Z + q, 1.6, 0.1, 0.12), 0x5c6671)
-    ornament.box(faustBox(X + 8.6, 8.62, Z + q, 0.65, 0.08, 0.3), 0xd6d0b2)
+    ornament.box(faustBox(X + 8.6, 8.62, Z + q, 0.65, 0.08, 0.3), 0xd6d0b2, -FAUST_NIGHT.lamps.glow)
   }
+  // and every road's other lamps (faustLampSites)
+  for (const s of faustLampSites(P)) if (!s.own) faustLampDraw(ornament, s)
   const root = new THREE.Group()
   for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
     // Building masses cast the local shadow; small trim receives it without duplicating its many triangles.
@@ -2515,19 +2765,16 @@ function faustAtmosphere() {
   const map = new THREE.CanvasTexture(cv); map.userData.faustOwned = true
   const poolMaterial = new THREE.MeshBasicMaterial({ map, color: 0xe5a34f, transparent: true, opacity: 0.42, depthWrite: false, blending: THREE.AdditiveBlending })
   poolMaterial.userData.inkGroundLight = true
+  // the lamps light the streets themselves (faustLampHook): the pools show only in a look that wants them (FAUST_NIGHT.looks),
+  // read as it draws, so a copy made in that look is visible
+  Object.defineProperty(poolMaterial, 'visible', { configurable: true, set() {}, get: () => (FAUST_NIGHT.looks[activeLook] || FAUST_NIGHT.looks.other).pools })
   F.poolMaterial = poolMaterial
-  F.localLights = [0, 1].map(() => { const light = new THREE.PointLight(0xffb15c, 45, 22, 1.6); root.add(light); return light })
   const smogMaterial = new THREE.SpriteMaterial({ map, color: 0x778ca8, opacity: 0.12, transparent: true, depthWrite: false })
   for (const [x, z] of [[-360, -200], [320, -80], [-120, 320], [500, 450], [-600, 500]]) {
     const smog = new THREE.Sprite(smogMaterial); smog.position.set(x, 13, z); smog.scale.set(600, 32, 1); root.add(smog)
   }
 }
-function faustAtmosphereFrame() {
-  const F = faustState
-  if (!F?.localLights) return
-  const p = camera.position, X = Math.floor((p.x + ARENA) / 96) * 96 - ARENA, Z = Math.floor((p.z + ARENA) / 96) * 96 - ARENA
-  F.localLights.forEach((light, i) => { light.position.set(X + 8.6, 7.8, Z + (i ? 76 : 20)); light.updateMatrix(); light.updateMatrixWorld(true) })
-}
+function faustAtmosphereFrame() { faustLampGrid() }
 function faustFarLights() {
   const F = faustState, lights = faustBatch(F.S * F.S * 48), warnings = []
   const cv = document.createElement('canvas'); cv.width = 64; cv.height = 32
@@ -2566,8 +2813,8 @@ function faustBuildWorld() {
   if (!faustState) faustReset()
   faustState.selection = null; faustState.visualJob = null; faustState.materials = faustMaterials(); faustSkyline(); faustMonument(); faustAtmosphere(); faustFarLights()
   const hemi = scene.children.find(o => o.isHemisphereLight)
-  if (hemi) { hemi.intensity = 0.16; hemi.color.setHex(0x7083a1); hemi.groundColor.setHex(0x06090f) }
-  if (sunLight) { sunLight.color.setHex(0xb8d3ff); sunLight.intensity = 2.5; sunLight.shadow.camera.far = 1800; sunLight.shadow.bias = -0.0003; sunLight.shadow.normalBias = 0.12; sunLight.shadow.camera.updateProjectionMatrix() }
+  if (hemi) { const H = FAUST_NIGHT.hemi; hemi.intensity = H.intensity; hemi.color.setHex(H.sky); hemi.groundColor.setHex(H.ground) }
+  if (sunLight) { sunLight.color.setHex(0xb8d3ff); sunLight.intensity = FAUST_NIGHT.moon; sunLight.shadow.camera.far = 1800; sunLight.shadow.bias = -0.0003; sunLight.shadow.normalBias = 0.12; sunLight.shadow.camera.updateProjectionMatrix() }
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ color: 0x303741, roughness: 1 }))
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.025; ground.receiveShadow = true; worldGroup.add(ground)
   for (const c of faustState.chunks.values()) c.visual = null
@@ -2582,7 +2829,11 @@ const FAUSTLAND_API = { plan: faustPlan, roadRoute: faustNav, budget: FAUST,
   get seed() { return LV.grow?.seed },
   airBand: FAUST.airBand, cruiseY: FAUST.cruiseY, globeBounds: FAUST.globe,
   headPlacement: FAUST.head, replaceHead: faustReplaceHead, get headMesh() { return faustState?.headMesh || null }, get headModel() { return faustHeadModel },
-  cellAt: (x, z) => [Math.floor((x + ARENA) / 96), Math.floor((z + ARENA) / 96)] }
+  cellAt: (x, z) => [Math.floor((x + ARENA) / 96), Math.floor((z + ARENA) / 96)],
+  // the night's light (FAUST_NIGHT): every cell's lamps from its plan (sites, lamps), the grid's stats, and its uniforms (a
+  // look may scale faustLampLight or zero faustLampArea.w for its own frames)
+  night: { config: FAUST_NIGHT, sites: faustLampSites, lamps: faustLamps, get stats() { return faustLamp.stats }, uniforms: faustLampUniforms,
+    build: () => faustLampGrid(Infinity) } }
 // ---------------------------------------------------------------- end Faustland
 
 // Seed controls are deliberately independent of browser storage and transport.
@@ -7838,6 +8089,7 @@ function capFabric(material) {
   material.userData.capCloth = true
   material.roughness = 0.92
   material.onBeforeCompile = shader => {
+    faustLampHook(shader)
     shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 capPoint;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\ncapPoint = position;')
     shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 capPoint;')
@@ -8775,7 +9027,7 @@ function inkPrepare(root) {
           strokes = mix(strokes, coverage, unresolved);
           float paving = step(max(n.x, n.z), n.y) * (1.0 - step(0.2, inkPoint.y));
           tone = mix(tone, 0.004, strokes * middle * (1.0 - paving));
-          if (paving > 0.5) tone = min(tone, base < 0.06 ? 0.30 : base < 0.20 ? 0.52 : 0.90);
+          if (paving > 0.5) tone = min(tone, base < 0.06 ? 0.30 : base < 0.20 ? 0.52 : 0.90) * (light < 0.20 ? 0.4 : 1.0);
 
           if (!inkScreenLines) tone = mix(tone, 0.006, rim);
           ${sky && !globe ? `
@@ -8810,7 +9062,7 @@ function inkPrepare(root) {
           float grey = inkLuma(outgoingLight);
           float red = step(outgoingLight.g * 2.0 + 0.08, outgoingLight.r);
           float warm = step(outgoingLight.b * 1.4 + 0.08, outgoingLight.r) * step(outgoingLight.b * 1.2, outgoingLight.g);
-          outgoingLight = ${groundLight ? 'vec3(grey)' : 'mix(vec3(grey), outgoingLight, max(red, warm))'};
+          ${groundLight ? 'discard' : 'outgoingLight = mix(vec3(grey), outgoingLight, max(red, warm))'};
         `
         if (lit) shader.fragmentShader = shader.fragmentShader
           .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n vec3 inkSurfaceNormal = normal;')
@@ -8832,7 +9084,8 @@ function inkPrepare(root) {
         shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `${normalOutput}\nif (inkEnabled) { ${shade} }\n#include <opaque_fragment>`)
         if (!sky) shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', `#include <fog_fragment>
           if (inkEnabled) {
-            float edgeFade = smoothstep(inkExtent - 288.0, inkExtent - 96.0, max(abs(inkWorldPoint.x), abs(inkWorldPoint.z)));
+            float edgeFade = smoothstep(inkExtent - 288.0, inkExtent - 96.0, max(abs(inkWorldPoint.x), abs(inkWorldPoint.z)))
+              * smoothstep(90.0, 260.0, distance(inkWorldPoint.xz, cameraPosition.xz));
             gl_FragColor.rgb *= 1.0 - edgeFade;
           }`)
       }
@@ -9106,7 +9359,8 @@ GAME.look = { table: LOOKS, stats: lookStats, set(name) { if (!Object.hasOwn(LOO
 // and anti-aliasing. Every state it swaps is restored in finally, so Plain and Ink never see any of it.
 // Tiers (settings.quality): msaa = HDR samples, used below 1.5 device pixels a pixel (else, and at 0, FXAA); ao, ssr =
 // samples per pixel, shafts = samples per cone (0: the pass is off); bloom = mip levels, from half (1) or quarter (2)
-// resolution; lamps = real spot lights at the nearest street lamps; tex = texture size; scale = render scale (LOOKS'
+// resolution; lamps = how many of the nearest street lamps draw light shafts (their light is the lamp grid's, card #28);
+// tex = texture size; scale = render scale (LOOKS'
 // scale hook). Low has no AO, reflections, shafts or composite: the HDR frame goes straight to bloom and the grade.
 const REAL_TIERS = {
   high:   { msaa: 4, ao: 12, ssr: 28, shafts: 6, bloom: 6, bloomFrom: 1, lamps: 8, tex: 1024, scale: 1 },
@@ -9117,11 +9371,12 @@ const REAL_TIERS = {
 const realOverride = {}
 // The grade: exposure, bloom (strength, threshold), saturation, split toning (shadows, highlights), vignette, grain,
 // and how much AO, reflections and shafts the composite adds.
-const REAL_GRADE = { exposure: 1.4, bloom: 0.5, threshold: 0.9, saturation: 0.8, shadows: [0.9, 1.0, 1.12],
+const REAL_GRADE = { exposure: 2.0, bloom: 0.5, threshold: 0.9, saturation: 0.8, shadows: [0.9, 1.0, 1.12],
   highlights: [1.07, 1.0, 0.9], vignette: 0.5, grain: 0.018, ao: 0.9, ssr: 1, shafts: 1 }
-// The night: moon direction and light, ambient, fog (colour, density at street level, scale height in m), street lamps.
+// The night: moon direction and light, ambient, fog (colour, density at street level, scale height in m). The street lamps
+// are FAUST_NIGHT's (card #28).
 const REAL_SKY = { moon: [-28, 18, 14], moonColor: 0xb8d3ff, moonLight: 1.4, hemi: 0.06, fog: 0x1a1e27, fogDensity: 0.003,
-  fogHeight: 90, lamp: 0xffa54f, lampCandela: 500, lampRange: 30 }
+  fogHeight: 90 }
 // Texture arrays: one layer per material, colour + occlusion and normal + roughness, WebP named by content hash (pin
 // rule 9). REAL_MEAN is each colour map's mean linear albedo: a surface's own tint sets its mean, the map its detail.
 const REAL_LAYERS = ['stone', 'brick', 'concrete', 'asphalt', 'setts', 'granite']
@@ -9358,6 +9613,8 @@ function realCityMaterial(kind, R) {
   const tints = REAL_TINTS.map(([hex, k]) => { const c = new THREE.Color(hex)
     return `if (all(lessThan(abs(c - vec3(${c.r.toFixed(6)}, ${c.g.toFixed(6)}, ${c.b.toFixed(6)})), vec3(0.0015)))) return ${REAL_KIND[k]}.0;` }).join('\n  ')
   m.onBeforeCompile = shader => {
+    faustLampHook(shader, 'pbr')      // every street lamp near the camera, as in the other looks (card #28)
+    shader.vertexShader = faustShopTintGlsl() + shader.vertexShader
     Object.assign(shader.uniforms, { realAlbedo: R.uniforms.albedo, realNormal: R.uniforms.normal, realTime: R.uniforms.time })
     shader.defines = { ...shader.defines, [define]: 1 }
     const swap = (src, from, to) => { if (!src.includes(from)) throw new Error('realistic: no shader anchor ' + from); return src.replace(from, to) }
@@ -9380,6 +9637,7 @@ float realKindOf(vec3 c) {
       vRealN = normalize(mat3(modelMatrix) * objectNormal);
       #if defined(REAL_ORNAMENT)
         vRealKind = realKindOf(color.rgb);
+        if (faustShopTint(color.rgb)) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
       #else
         vRealKind = ${REAL_KIND.asphalt}.0;
       #endif`)
@@ -9495,6 +9753,8 @@ function realBoxes(g) {
 function realRigMaterial(orig) {
   const m = orig.clone(), key = orig.customProgramCacheKey()
   m.onBeforeCompile = shader => {
+    faustLampHook(shader, 'pbr')
+    faustHeroHook(shader)      // the player reads at night (card #28)
     shader.fragmentShader = shader.fragmentShader.replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
       float realPlate = smoothstep(0.4, 0.6, metalnessFactor);
       roughnessFactor = mix(mix(0.5, 0.86, smoothstep(0.25, 0.55, roughnessFactor)), 0.42, realPlate);
@@ -9587,23 +9847,18 @@ function realEnvironment(R) {
   pm.dispose(); env.traverse(n => { n.geometry?.dispose(); n.material?.dispose() }); windows.dispose()
   return target
 }
-// Spot lights at the nearest street lamps (the city's two per cell on the avenue); further lamps keep their pools.
+// The n nearest street lamps (every road's, faustLampSites), for the light shafts' cones. Their light is the lamp grid's
+// (faustLampHook, through three's own direct light in this look's materials), as in every look: no spot lights.
 function realPlaceLamps(R, cam, n) {
-  if (R.lamps.length !== n) {
-    for (const l of R.lamps) R.lampGroup.remove(l, l.target)
-    R.lamps = Array.from({ length: n }, () => { const l = new THREE.SpotLight(REAL_SKY.lamp, 0, REAL_SKY.lampRange, 1.1, 0.7, 2); R.lampGroup.add(l, l.target); return l })
-  }
   const F = faustState, p = cam.position, f = cam.getWorldDirection(R.v3), list = R.lampList; list.length = 0
-  if (F) for (const c of F.chunks.values()) if (c.visual) for (const q of [20, 76]) {
-    const x = c.ci * 96 - ARENA + 8.6, z = c.cj * 96 - ARENA + q, dx = x - p.x, dz = z - p.z
-    list.push([(dx * dx + dz * dz + (8.5 - p.y) ** 2) * (dx * f.x + dz * f.z > -8 ? 1 : 4), x, z])
+  if (F) for (const c of F.chunks.values()) if (c.visual) {
+    const sites = faustLamp.sites.get(c.key) || faustLamps(c.plan)
+    for (let q = 0; q < sites.length; q += 4) {
+      const x = sites[q], z = sites[q + 2], dx = x - p.x, dz = z - p.z
+      list.push([(dx * dx + dz * dz + (8.5 - p.y) ** 2) * (dx * f.x + dz * f.z > -8 ? 1 : 4), x, z])
+    }
   }
   list.sort((a, b) => a[0] - b[0])
-  R.lamps.forEach((l, i) => {
-    const e = list[i]; l.intensity = e ? REAL_SKY.lampCandela : 0
-    if (e) { l.position.set(e[1], 8.42, e[2]); l.target.position.set(e[1], 0, e[2]) }
-    l.updateMatrixWorld(); l.target.updateMatrixWorld()
-  })
   R.litLamps = list.slice(0, n)
 }
 // The globe under Realistic: Plain's material with its self-light (emissive and the fixed flood term) cut to a third,
@@ -17896,6 +18151,7 @@ let slKit = null, slKitJob = null
 const slHalf = v => THREE.DataUtils.toHalfFloat(v)
 function slSkinPatch(tex, blend) {
   return shader => {
+    faustLampHook(shader)      // the street lamps' light, as every lit material takes it (card #28)
     shader.uniforms.slAnim = { value: tex }
     shader.vertexShader = shader.vertexShader
       .replace('#include <skinning_pars_vertex>', `uniform highp sampler2D slAnim;
