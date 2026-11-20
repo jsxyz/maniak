@@ -8064,6 +8064,11 @@ const background = (() => {
   // frame by frame: what ran before each frame and what its draw linked (the last 900 frames)
   const frameLog = []
   let open = { steps: [], programs: [], parts: [] }, lastFrameT = 0, secT = 0
+  // the GPU process's work (shared with every tab): links, uploads of 1 MB or more, long frames; and the last frame's counts
+  const gpuLog = [], gpuNone = { links: 0, shaders: 0, upKB: 0, sync: 0 }
+  let gpuOpen = { ...gpuNone }, gpuLast = { ...gpuNone }, frameNo = 0
+  const gpuEvent = e => { gpuLog.push({ t: Math.round(performance.now()), i: frameNo + 1, ...e }); if (gpuLog.length > 3000) gpuLog.shift() }
+  const UPLOAD_KB = 4096
   let scheduled = false, order = 0, current = null
   // a check that throws ends its own job (reported once), never the pump
   const alive = j => { try { return !j.valid || !!j.valid() } catch (e) { if (typeof frameFailed === 'function') frameFailed('background ' + j.key, e); return false } }
@@ -8095,6 +8100,7 @@ const background = (() => {
     const rush = typeof startingGame !== 'undefined' && startingGame
     const start = performance.now(), cap = rush ? 30 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
     let steps = 0
+    if (!rush && (gpuLast.links || gpuLast.upKB > UPLOAD_KB)) { stats.rests = (stats.rests || 0) + 1; gpuLast = gpuNone; return }
     while (performance.now() - start < cap || !steps) {
       const list = [...jobs.values()].sort((a, b) => b.priority - a.priority || a.order - b.order)
       let next = null
@@ -8115,6 +8121,7 @@ const background = (() => {
         } else if (r.value === 'frame' || r.value === 'wait') deferred.add(j)
       } catch (e) { finish(j, false, e) }
       const stepMs = performance.now() - t, linked = (renderer?.info.programs?.length || 0) - progs0; current = null
+      if (linked > 0 && !rush) { stats.last = j.key; stats.steps++; open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + ' +' + linked + 'p'); break }
       if ((stepMs >= 1 || linked > 0) && open.steps.length < 40) open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + (linked > 0 ? ' +' + linked + 'p' : ''))
       if (stepMs >= 50) { stats.long.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs)); if (stats.long.length > 12) stats.long.shift() }
       stats.last = j.key; stats.maxStepMs = Math.max(stats.maxStepMs, stepMs); stats.steps++; steps++
@@ -8146,11 +8153,25 @@ const background = (() => {
     },
     frameEnd(i, draw, phase) {
       const t = performance.now()
-      frameLog.push({ i, t: Math.round(t), ms: lastFrameT ? Math.round(t - lastFrameT) : 0, draw: Math.round(draw), phase, parts: open.parts, steps: open.steps, programs: open.programs })
+      const ms = lastFrameT ? Math.round(t - lastFrameT) : 0
+      gpuOpen.upKB = Math.round(gpuOpen.upKB)
+      frameLog.push({ i, t: Math.round(t), ms, draw: Math.round(draw), phase, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen })
+      if (ms >= 50) gpuLog.push({ t: Math.round(t), i, kind: 'frame', ms, parts: open.parts.slice(0, 4), links: gpuOpen.links, upKB: gpuOpen.upKB })
+      gpuLast = gpuOpen; gpuOpen = { ...gpuNone }; frameNo = i
       if (frameLog.length > 900) frameLog.shift()
       open = { steps: [], programs: [], parts: [] }; lastFrameT = t; secT = 0
     },
     frames(n = 300) { return frameLog.slice(-n) },
+    gpuEvents(n = 3000) { return gpuLog.slice(-n) },
+    // from the GL wrappers: kind 'link' | 'shader' | 'up' (n bytes) | 'sync' (a query that waits on the GPU process)
+    gpu(kind, n = 1, what = '') {
+      const job = current ? current.key + (current.phase ? '/' + current.phase : '') : 'draw'
+      if (kind === 'up') { gpuOpen.upKB += n / 1024; if (n >= 1048576) gpuEvent({ kind: 'upload', MB: +(n / 1048576).toFixed(1), what, job }) }
+      else if (kind === 'link') { gpuOpen.links++; gpuEvent({ kind: 'link', job }) }
+      else if (kind === 'shader') gpuOpen.shaders++
+      else if (kind === 'sync') { gpuOpen.sync++; if (gpuOpen.sync <= 3) gpuEvent({ kind: 'sync', what, job }) }
+    },
+    get gpuLast() { return gpuLast },
   }
 })()
 GAME.background = background
@@ -8185,7 +8206,7 @@ function* compileObjects(root, cam = camera, target = scene, setup = null, lit =
   const lights = lit || sceneLights(target)
   const ownWalk = Object.hasOwn(target, 'traverseVisible'), walk = target.traverseVisible
   // Programs already built resolve at once: issue about 2 ms of compiles a step, then await them together.
-  let batch = [], t0 = performance.now()
+  let batch = [], t0 = performance.now(), made = 0
   for (const o of objects) {
     const kind = [o.type, !!o.instanceColor, o.receiveShadow, o.geometry?.attributes.color?.itemSize, !!o.geometry?.attributes.skinIndex].join('/')
     const key = (Array.isArray(o.material) ? o.material : [o.material]).map(m => m?.uuid + ':' + m?.version).join(',') + '/' + kind
@@ -8200,14 +8221,17 @@ function* compileObjects(root, cam = camera, target = scene, setup = null, lit =
       if (!warmedPrograms.has(state)) {
         warmedPrograms.add(state)
         o.traverse = fn => fn(o); target.traverseVisible = fn => { for (const l of lights) fn(l) }
+        const before = renderer.info.programs.length
         batch.push(renderer.compileAsync(o, cam, target))
+        made += renderer.info.programs.length - before
       }
     } finally {
       o.traverse = visit
       if (ownWalk) target.traverseVisible = walk; else delete target.traverseVisible
       undo()
     }
-    if (performance.now() - t0 > 2) { yield Promise.all(batch); batch = []; t0 = performance.now() }
+    // the GPU process is every tab's: its links go one call at a time in play, at most 4 programs at once under the overlay
+    if (made && (!startingGame || made >= 4) || performance.now() - t0 > 2) { yield Promise.all(batch); batch = []; made = 0; t0 = performance.now() }
   }
   if (batch.length) yield Promise.all(batch)
   // a context lost meanwhile: its programs went with it
@@ -14787,7 +14811,8 @@ function lookNote(pending) {
 let lookWatching = false
 function* lookWatchSteps() {
   for (;;) {
-    background.mark('idle'); yield new Promise(r => setTimeout(r, 1000))
+    const long = background.frames(120).some(f => f.ms >= 50)
+    background.mark('idle'); yield new Promise(r => setTimeout(r, long ? 5000 : 1000))
     if (lookPending || landingBusy() || startingGame) continue
     yield* warmSceneSteps(activeLook || 'plain')
   }
@@ -16610,6 +16635,22 @@ function initGraphicsLifecycle() {
       if (!handle || !epochs.has(handle) || epochs.get(handle) === graphics.lost) drop(handle)
     }
   }
+  // card #53: count the GPU process's work by frame (links, shader compiles, uploaded bytes, waiting queries)
+  {
+    const px = s => s ? (s.videoWidth || s.displayWidth || s.width || 0) * (s.videoHeight || s.displayHeight || s.height || 0) * 4 : 0
+    const size = { bufferData: a => typeof a[1] === 'number' ? a[1] : a[1]?.byteLength || 0,
+      bufferSubData: a => a[4] ? a[4] * (a[2]?.BYTES_PER_ELEMENT || 1) : a[2]?.byteLength || 0,
+      texImage2D: a => a.length >= 9 ? a[3] * a[4] * 4 : px(a[5]), texSubImage2D: a => a.length >= 9 ? a[4] * a[5] * 4 : px(a[6]),
+      texImage3D: a => a[3] * a[4] * a[5] * 4, texSubImage3D: a => a[5] * a[6] * a[7] * 4,
+      compressedTexImage2D: a => a[6]?.byteLength || 0, compressedTexSubImage2D: a => a[7]?.byteLength || 0 }
+    for (const [name, bytes] of Object.entries(size)) if (gl[name]) { const f = gl[name].bind(gl); gl[name] = (...a) => { try { background.gpu('up', bytes(a), name) } catch (e) {} return f(...a) } }
+    const link = gl.linkProgram.bind(gl), compile = gl.compileShader.bind(gl)
+    gl.linkProgram = p => { background.gpu('link'); return link(p) }
+    gl.compileShader = s => { background.gpu('shader'); return compile(s) }
+    const COMPLETION = 0x91B1
+    for (const name of ['getProgramParameter', 'getShaderParameter', 'getProgramInfoLog', 'getShaderInfoLog', 'readPixels', 'getError', 'clientWaitSync']) if (gl[name]) {
+      const f = gl[name].bind(gl); gl[name] = (...a) => { if (a[1] !== COMPLETION) background.gpu('sync', 1, name); return f(...a) } }
+  }
   canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); graphicsLost() })
   canvas.addEventListener('webglcontextrestored', graphicsRestored)
   el('#graphics-reload').onclick = () => location.reload()
@@ -16650,6 +16691,7 @@ function buildWorld() {
     if (renderer.getContext().isContextLost()) { graphicsLost(); return }
     if (graphics.state === 'lost') return
     try {
+      renderer.debug.checkShaderErrors = phase !== 'playing'      // in play: no four waiting queries at each program's first draw
       if ((landingBusy() || startingGame) && s === scene) { loadingScene ||= new THREE.Scene(); loadingScene.background = scene.background; render(loadingScene, cam); return }
       if (graphics.rebuild && s === scene) rebuildGraphics()
       const programsBefore = renderer.info.programs.length
@@ -17124,7 +17166,7 @@ function* avatarSteps(id, cid, cap, body) {
   }
   if (built) {
     let proto = BUILT_CACHE.get(key)
-    if (!proto) BUILT_CACHE.set(key, proto = bodyFor(M, id, cid, key, C))
+    if (!proto) { proto = yield* bodySteps(M, id, cid, key, C); BUILT_CACHE.set(key, proto) }
     mesh = proto.clone()
     ownMaterials(mesh)
   } else if (M.kind === 'rig' && M.proto) {
@@ -17136,7 +17178,7 @@ function* avatarSteps(id, cid, cap, body) {
     mesh.add(inst)
     rig = rigParts(inst, M)
   } else if (M.proto) {
-    const inst = body || bodyFor(M, id, cid, key, C)
+    const inst = body || (yield* bodySteps(M, id, cid, key, C))
     mixer = new THREE.AnimationMixer(inst)
     actions = {}
     for (const p of [...prof, prof.sprint, prof.crouch].filter(Boolean)) {
@@ -17179,7 +17221,10 @@ function* avatarSteps(id, cid, cap, body) {
   const F = COSTUMES[C.costume]?.form
   if (F) { const a = avatars.get(id); a.form = 0; wear(a); formMap(a, F) }
   // Build LOD buffers at spawn, never on distance crossings.
-  if (camera && id >= 0) { avatarDetail(id, true); avatarDetail(id, false) }
+  if (camera && id >= 0) {
+    if (avatars.get(id).model && !rig && !detailCache.has(key)) { yield* farSteps(id, cid, prof, C); yield }      // the far body, in steps
+    avatarDetail(id, true); avatarDetail(id, false)
+  }
   if (mixer && id >= 0) {      // probes ready before any slam
     mesh.traverse(m => { if (m.isSkinnedMesh) for (const d of avatars.get(id).detail || []) if (d.mesh === m) for (const g of [d.near, d.far]) g?.attributes.skinIndex && skinPick(g, m.skeleton.bones.length) })
     avatars.get(id).probes = skinProbes(mesh.children[0])
@@ -24349,7 +24394,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
   // frames: the last n frames, each {i, t, ms, draw, phase, steps, programs} (frame by frame; no aggregate)
-  background: (n = 300) => ({ frames: GAME.background.frames(n), jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
+  background: (n = 300) => ({ frames: GAME.background.frames(n), gpu: GAME.background.gpuEvents(), rests: GAME.background.stats.rests || 0, jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
     phase, startingGame, worldPreparing, guestLoading: !!guestLoading, look: activeLook, wanted: settings.look }),
   room() {
     const all = [...players.values()]
@@ -24735,7 +24780,7 @@ function startHost() {
     { const sb = el('#set-bots'); if (sb && sb.value !== '') BOT_COUNT = clamp(+sb.value | 0, 0, regulars()) }      // card #59 fix: the Freaks slider, as it stands
     background.mark('bots'); for (const i of foesWanted()) { addBot(i); yield }
     markStart('bots')
-    if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('draw0'); background.sec(null); draw(0, now()); yield }
+    if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('avatar'); { const c = players.get(0); if (c) yield* avatarSteps(0, looksCid(c), c.cap | 0) } yield; background.mark('draw0'); background.sec(null); draw(0, now()); yield }
     loadingText('Preparing the view…')
     background.mark('effects'); warmEffects()
     yield* warmWithin(3000, 'plain')
@@ -32957,6 +33002,7 @@ function draw(dt, t) {
     pkl = snapPk
   }
 
+  background.sec('others')
   const obl = easeHolds(objectsDrawn(others), t), holdOf = (id, p) => partsHoldOf(id, p) || (sits.has(id) ? 'sit' : lifts.has(id) ? 'lift' : p.web > 0 ? 'swing' : (diving(p) ? 'dive' : flightOf(p, avatars.get(id)?.hold)))
   lifts.clear(); sits.clear(); carries.clear()
   partsDrawPrep(me, others)          // card #55
@@ -32964,7 +33010,9 @@ function draw(dt, t) {
   for (const [s, p] of objSeats) sits.set(p, [s >> 3, s & 7])
   if (isHost) for (const o of objs) o.riders?.forEach((p, i) => { if (p !== undefined) sits.set(p, [o.id, i]) })
   else { const s = seatOf(me); sits.delete(myId); if (s || me.ride) sits.set(myId, s ? [s[0].id, s[1]] : me.ride) }
+  background.sec('holds')
   const meMesh = avatarFor(myId, looksCid(me), me.cap | 0)
+  background.sec('me avatar')
   bodyState(myId, me, t)
   meMesh.visible = rigShown(myId, me.dead) && !helloDue
   const meP = drawnPose(me), meD = carrierShift(me, meP ? { ...me, x: meP[0], y: meP[1], z: meP[2] } : me)
@@ -32976,6 +33024,7 @@ function draw(dt, t) {
   meMesh.rotation.y = GAME.view.faceYaw(myId, me, animOf(me), myHold || firstPerson || carries.has(myId), t, dt, input.fire || input.alt, myTicks)
   if (!drawSeat(meMesh, me, sits.get(myId), obl) && !drawCeiling(meMesh, meD, myHold === 'ceiling', dt, myTicks)) drawTurned(meMesh, meD, animOf(me) === 4 && GAME.participantOf(me)?.wallRun, dt, myTicks)
   setAnim(myId, crouchOf(myId, me.cid, animOf(me), me.springT > SPRING_TAP, myHold), dt, t, myHold, false, myTicks, [me.x - meD.x, me.y - meD.y, me.z - meD.z])
+  background.sec('me pose')
   const myArmed = GAME.view.passengerAim(myId, me, t, sits.get(myId)?.[1])
   poseSeatAim(myId, myArmed && me, t)
   drawHealth(myId, me.hp)
