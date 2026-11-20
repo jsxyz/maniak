@@ -16624,6 +16624,7 @@ function buildWorld() {
       if (graphics.rebuild && s === scene) rebuildGraphics()
       const programsBefore = renderer.info.programs.length
       lookRender(render, s, cam)
+      if (motionJob && s === scene) try { motionFrame() } catch (e) { motionJob.done('motion failed: ' + (e?.message || e)) }
       if (capJobs.length && s === scene) try { capAfterDraw() } catch (e) { for (const j of [...capJobs]) j.done('capture failed: ' + (e?.message || e)) }       // card #75: the canvas is only valid in this task
       if (renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) background.noteProgram(p.name || String(p.cacheKey).split(',')[0] || '?')
       if (phase === 'playing' && renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) {
@@ -24090,9 +24091,104 @@ const autoApi = {
     })
   },
 }
+// card #75, the motion recorder (the lead's request): await gameHooks.motion({ ms: 5000, radius: 40, jump: 0.3, vib: 0.004, rest: 0.2, flip: 0.5 })
+// records EVERY rendered frame for ms (no sampling, no screenshots) and returns the frames, not summaries:
+//   frames  per frame: i, t (ms from the start), dt (ms since the last frame), ticks (physics ticks run since the last frame), alpha (the interpolation
+//           alpha the draw used), drawnT and tickAt (the clocks), the camera's position: { cols, rows }
+//   series  per thing within radius of the host (the camera, the Maniak, other players and bots, street-life people, cyclists, dogs, prams, traffic,
+//           parked and given cars, loose and grabbed props), per frame: i, t, its drawn position (dx dy dz: what the draw used), its sim position
+//           (px py pz: the physics body; for street life its pose at the sim clock, tickAt) and velocity (vx vy vz), flags (1 asleep, 2 held, 4 seated)
+//   flagged every frame where something went wrong, each with its frame, time and a sentence saying what: jump (the drawn position moved more
+//           than its speed explains, by more than `jump` m), vel-flip (a velocity component changed sign, both sides over `flip` m/s: from the body,
+//           or from the drawn steps where there is none), reverse (the drawn step turned back on the one before), asleep-motion (the drawn position
+//           moved while the body sleeps or is held), rest-motion (drawn steps over `vib` m while its speed is under `rest` m/s), drawn-still (speed
+//           over 1 m/s and the drawn position did not move), gap (drawn over 0.3 m from its sim position), state (asleep, held or seated changed)
+// Nothing is averaged. The last result is gameHooks.motion.last. The series are capped at 30000 rows, the nearest things first.
+let motionJob = null
+function captureMotion(o = {}) {
+  if (motionJob) return Promise.resolve({ ok: false, error: 'a motion recording is already running' })
+  if (!isHost || serving || !selfChar()) return Promise.resolve({ ok: false, error: 'host only, in the game' })
+  const num = (v, d, lo, hi) => clamp(Number.isFinite(+v) && v !== null && v !== undefined ? +v : d, lo, hi)
+  const J = { ms: num(o.ms, 5000, 100, 60000), radius: num(o.radius, 40, 2, 400), jump: num(o.jump, 0.3, 0.02, 5), vib: num(o.vib, 0.004, 0.0005, 0.5), rest: num(o.rest, 0.2, 0, 3), flip: num(o.flip, 0.5, 0.05, 10),
+    t0: now(), last: null, n: 0, frames: [], tracks: new Map(), ticks0: pageLife.hostAttempts }
+  return new Promise(resolve => {
+    J.done = err => { if (motionJob === J) motionJob = null; clearTimeout(J.timer); const r = motionResult(J, err); captureMotion.last = r; resolve(r) }
+    J.timer = setTimeout(() => J.done('no frames for ' + Math.round(J.ms / 1000 + 20) + ' s: tab hidden?'), J.ms + 20000)
+    motionJob = J
+  })
+}
+// one rendered frame, after the look has drawn it: the camera and every thing near the host
+function motionFrame() {
+  const J = motionJob, t = now(), me = selfChar()
+  if (t - J.t0 > J.ms) return J.done()
+  const i = J.n++, c = camera.position, ticks = pageLife.hostAttempts, r3 = v => Math.round(v * 1000) / 1000
+  J.frames.push([i, r3(t - J.t0), J.last === null ? 0 : r3(t - J.last), J.lastTicks === undefined ? 0 : ticks - J.lastTicks, r3(drawAlpha), Math.round(drawnT()), Math.round(tickAt), r3(c.x), r3(c.y), r3(c.z)])
+  J.last = t; J.lastTicks = ticks
+  const NAN = NaN, put = (key, kind, name, d, p, v, flags) => {
+    let T = J.tracks.get(key); if (!T) J.tracks.set(key, T = { key, kind, name, rows: [], d2: Math.hypot(d[0] - me.x, d[2] - me.z) })
+    T.rows.push([i, t - J.t0, d[0], d[1], d[2], p ? p[0] : NAN, p ? p[1] : NAN, p ? p[2] : NAN, v ? v[0] : NAN, v ? v[1] : NAN, v ? v[2] : NAN, flags | 0])
+  }
+  put('camera', 'camera', 'camera', [c.x, c.y, c.z], null, null, 0)
+  const near = (x, z) => Math.hypot(x - me.x, z - me.z) <= J.radius
+  for (const [id, p] of players) {
+    if (!p.body || !near(p.x, p.z)) continue
+    put('player ' + id, id === 0 ? 'host player' : p.bot ? (p.bot.enforcer ? 'enforcer' : 'bot') : 'player', p.bot?.name || roster.get(id)?.name || 'player ' + id,
+      drawnPose(p) || [p.x, p.y, p.z], [p.x, p.y, p.z], [p.vx || 0, p.vy || 0, p.vz || 0], seatOf(p) ? 4 : 0)
+  }
+  for (const ob of objs) {
+    if (!ob.body || !near(ob.x, ob.z)) continue
+    let v = null; try { const q = ob.body.getLinearVelocity(); v = [q.x(), q.y(), q.z()] } catch (e) {}
+    put('object ' + ob.id, ob.V ? (ob.traffic ? 'traffic car' : ob.parked ? 'parked car' : 'car') : 'prop', ob.K?.name || 'object',
+      drawnPose(ob) || [ob.x, ob.y, ob.z], [ob.x, ob.y, ob.z], v, (ob.body.isActive() ? 0 : 1) | (ob.heldBy !== undefined ? 2 : 0))
+  }
+  // street life: drawn where the game draws it (the wall clock on the host), sim where the tick clock puts it
+  const SL = GAME.streetLife
+  if (SL?.around) {
+    const sim = new Map(); for (const a of SL.around(me.x, me.z, J.radius, slNow())) sim.set(a.id, a)
+    for (const a of SL.around(me.x, me.z, J.radius, now())) { const s = sim.get(a.id); put('street ' + a.id, a.kind || 'street life', a.kind || 'street life', [a.x, a.y ?? 0, a.z], s ? [s.x, s.y ?? 0, s.z] : null, null, 0) }
+  }
+}
+// the flagged frames, and the series: no aggregates
+function motionResult(J, err) {
+  const objects = [], watched = [], r3 = v => Math.round(v * 1000) / 1000, series = {}
+  let room = 30000
+  for (const T of [...J.tracks.values()].sort((a, b) => a.d2 - b.d2)) {
+    const R = T.rows, ev = [], label = T.kind + ' ' + T.name + ' (' + T.key + ')'; let prev = null, step = null, vprev = null, more = 0
+    const add = (r, type, what, extra) => { const e = { i: r[0], t: r3(r[1]), type, what: 't ' + r3(r[1] / 1000) + ' s frame ' + r[0] + ' ' + label + ': ' + what, ...extra }; if (ev.length < 150) ev.push(e); else more++ }
+    for (const r of R) {
+      if (prev && r[0] === prev[0] + 1) {
+        const dts = Math.max((r[1] - prev[1]) / 1000, 1e-4), sx = r[2] - prev[2], sy = r[3] - prev[3], sz = r[4] - prev[4], len = Math.hypot(sx, sy, sz)
+        const has = r[8] === r[8], speed = has ? Math.hypot(r[8], r[9], r[10]) : null, expected = has ? speed * dts : step ? step.len : 0, held = r[11] & 3
+        const pl = r[5] === r[5] && prev[5] === prev[5] ? Math.hypot(r[5] - prev[5], r[6] - prev[6], r[7] - prev[7]) : null
+        if (len > expected + J.jump) add(r, 'jump', 'drawn jumped ' + r3(len) + ' m (' + r3(expected) + ' m expected from its speed)' + (pl !== null ? ' while the body moved ' + r3(pl) + ' m' : ''), { step: r3(len), expected: r3(expected), body: pl === null ? null : r3(pl), dy: r3(sy) })
+        // velocity sign flips: the body's, else the drawn step's
+        const v = has ? [r[8], r[9], r[10]] : [sx / dts, sy / dts, sz / dts]
+        if (vprev) for (const [k, ax] of [[0, 'x'], [1, 'y'], [2, 'z']]) if (Math.abs(v[k]) >= J.flip && Math.abs(vprev[k]) >= J.flip && v[k] * vprev[k] < 0)
+          add(r, 'vel-flip', 'velocity ' + ax + ' flipped ' + (vprev[k] >= 0 ? '+' : '') + r3(vprev[k]) + ' to ' + (v[k] >= 0 ? '+' : '') + r3(v[k]) + ' m/s' + (pl !== null ? ', body moved ' + r3(pl) + ' m' : ''), { axis: ax, from: r3(vprev[k]), to: r3(v[k]) })
+        vprev = v
+        if (step && len >= 0.005 && step.len >= 0.005 && sx * step.x + sy * step.y + sz * step.z < 0) add(r, 'reverse', 'drawn step turned back: ' + r3(len) + ' m after ' + r3(step.len) + ' m the other way', { step: r3(len), before: r3(step.len) })
+        if ((r[11] & 3) && len >= 0.001) add(r, 'asleep-motion', 'drawn moved ' + r3(len) + ' m while ' + (r[11] & 2 ? 'held' : 'asleep'), { step: r3(len) })
+        if (!held && (has ? speed < J.rest : len / dts < J.rest) && len >= J.vib) add(r, 'rest-motion', 'drawn moved ' + r3(len) + ' m at ' + (has ? 'speed ' + r3(speed) + ' m/s' : 'rest'), { step: r3(len), speed: has ? r3(speed) : null })
+        if (!held && has && speed > 1 && len < 0.001) add(r, 'drawn-still', 'speed ' + r3(speed) + ' m/s but the drawn position did not move', { speed: r3(speed) })
+        if (r[5] === r[5]) { const g = Math.hypot(r[2] - r[5], r[3] - r[6], r[4] - r[7]); if (g > 0.3) add(r, 'gap', 'drawn ' + r3(g) + ' m from its sim position', { gap: r3(g) }) }
+        if (r[11] !== prev[11]) add(r, 'state', 'flags ' + prev[11] + ' to ' + r[11] + ' (1 asleep, 2 held, 4 seated)', { from: prev[11], to: r[11] })
+        step = { x: sx, y: sy, z: sz, len }
+      } else { step = null; vprev = null }
+      prev = r
+    }
+    watched.push({ key: T.key, kind: T.kind, name: T.name, frames: [R[0][0], R.at(-1)[0], R.length] })
+    if (ev.length) objects.push({ key: T.key, kind: T.kind, name: T.name, flagged: ev, ...more ? { more } : {} })
+    if (room > 0) { const rows = R.slice(0, room); room -= rows.length; series[T.key] = rows.map(r => r.map((v, k) => k < 1 || k === 11 ? v : v === v ? r3(v) : null)) }
+  }
+  return { ok: !err, ...err ? { error: err } : {}, ms: Math.round(J.frames.at(-1)?.[1] || 0), radius: J.radius, count: J.n,
+    frames: { cols: ['i', 't', 'dt', 'ticks', 'alpha', 'drawnT', 'tickAt', 'camx', 'camy', 'camz'], rows: J.frames },
+    flagged: objects.flatMap(o => o.flagged).sort((a, b) => a.i - b.i), objects, watched, series, seriesCols: ['i', 't', 'dx', 'dy', 'dz', 'px', 'py', 'pz', 'vx', 'vy', 'vz', 'flags'] }
+}
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   // card #75: a sequence of frames and their debug rows in one call (a promise): { n, every, width, quality }
   capture: captureFrames,
+  // card #75: frame by frame, what moved wrongly near the host: await gameHooks.motion({ ms: 5000, radius: 40 }); the last result is gameHooks.motion.last
+  motion: captureMotion,
   // No argument: current seed. A uint32 sets the next room, or restarts this host's city. Blank rolls one.
   seed(value) { return arguments.length ? faustSetSeed(value) : phase === 'menu' ? faustParseSeed(el('#host-seed')?.value ?? faustRequestedSeed) : levelGen?.seed },
   // card #46: the city's changes saved now, where this server keeps them (the dedicated server asks before it stops); true once stored
@@ -30989,6 +31085,19 @@ function testGive(a) {
   sysMsg('§7A §f' + K.name.toLowerCase() + ' §7' + d + ' m ahead')
 }
 Object.assign(GAME.commands, { give: { args: '[kind]', help: 'host only, test: a loose object ahead (crate, block, ball, van, truck, bus, door, car, squad)', run: testGive } })
+// card #75: /motion [seconds] [radius]: record the frames (gameHooks.motion) and list the flagged ones; all of it in gameHooks.motion.last
+const motionCommand = a => {
+  if (!isHost || serving || !selfChar()) return sysMsg('§cOnly the host, with a character.')
+  const w = String(a || '').trim().split(/\s+/).filter(Boolean).map(Number), secs = Number.isFinite(w[0]) ? w[0] : 5, radius = Number.isFinite(w[1]) ? w[1] : 40
+  sysMsg('§7motion: recording §f' + secs + ' s§7 within §f' + radius + ' m§7 ...')
+  captureMotion({ ms: secs * 1000, radius }).then(r => {
+    if (!r.ok) return sysMsg('§cmotion: ' + r.error)
+    sysMsg('§7motion: §f' + r.count + ' §7frames recorded, §f' + r.flagged.length + ' §7flagged' + (r.flagged.length ? ':' : ''))
+    for (const e of r.flagged.slice(0, 10)) sysMsg('§8· §f' + e.what)
+    if (r.flagged.length > 10) sysMsg('§7... ' + (r.flagged.length - 10) + ' more in §fgameHooks.motion.last.flagged')
+  })
+}
+Object.assign(GAME.commands, { motion: { args: '[seconds] [radius]', help: 'host only, test tooling: record every frame and list the glitched ones (jumps, velocity flips, motion at rest)', run: motionCommand } })
 // card #75: /go <x> <z> | <thing> [walk|run|sprint], on foot by the bots' way; any real key or click stops it
 const goCommand = a => {
   if (!isHost || serving || !selfChar()) return sysMsg('§cOnly the host, with a character.')
