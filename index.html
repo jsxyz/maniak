@@ -697,6 +697,8 @@ const CHARS = [
     spring: { full: 1.15, k: 3.4, hop: 6.6 }, leapSmash: true, smash: { speed: 18, r: 2.4, depth: 0.35 },
     poise: { at: 12, armour: 2, push: 6, stagger: 0.35, fade: 0.6, window: 2, chain: 3, immune: 1.5 },
     swing: { range: 60, pace: 24 }, hurl: { speed: 20, dmg: 0, reach: 1.5 },
+    // card #55: he lifts anything up to a car's mass, and his hands take part in the interaction system (PARTS)
+    lift: 12, grab: true,
     chain: { full: 1.1, speed: 20, boost: 38, range: 16, extra: 44, reel: 12 },
     shape: { torso: [1.34, 1, 1.24], arm: [1.36, 1, 1.3], hand: [1.24, 1, 1.2], leg: [1.16, 1, 1.12], boot: [1.1, 1, 1.06] },
     skin: { head: 0x141416, torso: 0x1c1c20, arm: 0x1c1c20, hand: 0x2b2a2e, leg: 0x232327, boot: 0x5a5960 } },
@@ -810,6 +812,9 @@ const GUNS = [
   { name:'Bat',          rate:0.95, dmg:16, spread:0.40, pellets:3, range: 2.8, knock: 9.0, color:0x8a6442, melee:true, punch:'swing', grip:'bat', model:'Bat' },
   { name:'Pipe',         rate:1.05, dmg:18, spread:0.36, pellets:3, range: 2.9, knock:10.0, color:0x5f6266, melee:true, punch:'swing', grip:'bat', model:'Pipe' },
   { name:'Rifle',        rate:0.60, dmg: 6, spread:0.030, range:70, knock: 1.2, color:0x3a3d38, scar:'hole', burst:3, burstGap:0.1, grip:'rifle' },
+  // card #55: his punt (the kick, on what he drops from his hands), and a body or thing he sent flying hitting someone
+  { name:'Punt', rate:0.6, dmg:34, range:2.2, knock:0, color:0xe8e2d4, special:true, melee:true, held:false },
+  { name:'Flung', rate:0.6, dmg:26, range:1, knock:10, color:0xe8e2d4, special:true, melee:true, held:false },
 ].map(G => ({ ...GUN_ROW, ...G }))
 // POWERS: dur s, then scales of move jump rate give take fuel jet reach lift (jet 0 grounds; reach 0 spares melee)
 // drop:false: by `apply` only. look: an EFFECT_LOOKS overlay
@@ -1013,7 +1018,7 @@ const ASSETS =
 // decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
 // neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.f6e96404.glb', maniak_moves: 'maniak_moves.a48768e9.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
+const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.c94c09ac.glb', maniak_moves: 'maniak_moves.a48768e9.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -1468,6 +1473,8 @@ const SOUNDS = {
   Pipe: { say: 'a steel pipe swung hard: a heavy whoosh and a ringing metal clang', seed: 0 },
   Rifle: { say: 'a three-round rifle burst: three tight, hard cracks', seed: 0 },
 
+  Punt: { say: 'a big boot punting something heavy: a deep leathery thump and a rush of air after it', seed: 0 },
+  Flung: { say: 'a body slamming into another at speed: a heavy, meaty collision', seed: 0 },
   Cinderblock: { say: 'a heavy concrete block thuds into flesh or cracks masonry with a cascade of chips', seed: 0 },
   // ---- you, never placed
   hit: { say: 'the hit confirmation: a short, bright tick above the gunfire, the same every time, since players learn it', seed: 0 },
@@ -4282,6 +4289,7 @@ function applyIntent(c, inp, dt) {
     if (c.dead <= 0) GAME.death.up(c, team)
     return
   }
+  if (partsHeldIntent(c, inp, dt)) return          // card #55: held in someone's hands
   groundCheck(c)
   c.air = !c.grounded
   c.smashCam = Math.max(0, (c.smashCam || 0) - dt)
@@ -4450,6 +4458,7 @@ function applyIntent(c, inp, dt) {
       else { mx = dx * k; vy = dy * k; mz = dz * k; c.flung = how === 'air' }
     }
   }
+  const pf = partsFlightV(c, mx, vy, mz); if (pf) [mx, vy, mz] = pf          // card #55: punted or thrown, it flies
   if (!c.tie) {                // on a web, Bullet swings it
     velVec.setValue(mx, vy, mz)
     c.body.setLinearVelocity(velVec)
@@ -6263,6 +6272,7 @@ function carryStep(c, inp, dt) {
   const s = seatOf(c)
   if (s && (c.dead > 0 || inp.use && c.useT <= 0)) { c.useT = USE_S; return leave(c, ...s) }
   if (s) return
+  if (partsStep(c, inp, dt)) return          // card #55: his hands (grab, pull, throw, punt, drop)
   const o = objs.find(o => o.heldBy === c.id)
   if (o && (c.dead > 0 || inp.use && c.useT <= 0)) { c.useT = USE_S; return release(c, o, 0) }
   if (o && !o.K.carry && !(o.K.mass <= liftOf(c))) return release(c, o, 0)
@@ -6306,7 +6316,7 @@ function holdObjects() {
     const c = whoIs(o.heldBy)
     if (!c) { holdBy(o, null); continue }
     syncFromBody(c)
-    putObject(o, [...handOf(c, o), 0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2), 0, 0, 0, 0, 0, 0])
+    putObject(o, [...(partsHand(c, o) || handOf(c, o)), 0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2), 0, 0, 0, 0, 0, 0])
   }
 }
 // one btVehicleTuning for all: addWheel copies it
@@ -6583,6 +6593,7 @@ function stepPhysics(dt) {
   for (const o of objs) if (o.V && o.body.isActive()) { const v = o.body.getLinearVelocity(); o.v0 = [v.x(), v.y(), v.z()] }
   world.stepSimulation(dt, 0)            // 0 substeps: exactly one step of dt
   holdObjects()
+  partsHoldChars()
   stepObjects()
 }
 
@@ -12964,6 +12975,7 @@ function rigAnimate(a, want, dt, t) {
   else if (a.chainState?.[0] >= 3 && (airborne || want === 4 || hold === 'swing')) { name = K.climb; fade = 0.15 }
   else if (a.chainState?.[0] >= 3 && !(want === 1 || v > 0.6)) { name = K.idle; fade = 0.15 }
   else if (a.moveState === 2) name = K.leap
+  else if (hold === 'held') name = K.fall          // card #55: dangling in someone's hands
   else if (hold === 'sit') name = a.seat === 0 ? K.drive : K.sit
   else if (hold === 'swing' || hold === 'climb' || hold === 'ceiling' || want === 4) name = K.climb
   else if (hold === 'dive' || want === 6) name = K.dive
@@ -13051,6 +13063,7 @@ function rigAnimate(a, want, dt, t) {
   // the haymaker eases in over its first 60 ms (90 ms from a strike he was throwing)
   if (hayOn) R.over = { clip: hayClip, t0: 0, at: t - a.hayAge * 1000, clock: hayT, from: R.over?.clock !== undefined ? R.over.from : rigFrom(M, R.over, t) }
   if (a.chainState?.[0] === 1) R.over = null
+  partsRig(a, R, M, t)          // card #55: his hands' clips
   // card #51: standing (on the idle), his strikes take his hips and legs too; R.stand eases there and back
   R.stand = (R.stand ?? 0) + ((R.name === K.idle ? 1 : 0) - (R.stand ?? 0)) * Math.min(1, dt * 12)
   if (R.over && a.dying < 0) {
@@ -15724,17 +15737,17 @@ const marksHit = f => f[7] === 1 || f[7] === 3 || f[7] === 7 && f[5]
 const keys = {}
 // Legacy input adapter: absent fields stay absent; consume edges only after a simulated tick.
 const INPUT_SCHEMA = {
-  bit: { j: 1, fire: 2, sh: 4, alt: 8, sw: 16, sprint: 64, descend: 128, use: 32 },
+  bit: { j: 1, fire: 2, sh: 4, alt: 8, sw: 16, sprint: 64, descend: 128, use: 32, grip: 256 },
   empty: () => ({ f: 0, r: 0, j: false, fire: false, yaw: 0, pitch: 0 }),
   predict(input, aim, A) {
-    return { f: input.f, r: input.r, j: input.j, fire: input.fire, alt: input.alt, use: input.use, sprint: input.sprint, descend: input.descend,
+    return { f: input.f, r: input.r, j: input.j, fire: input.fire, alt: input.alt, use: input.use, grip: input.grip, sprint: input.sprint, descend: input.descend,
              yaw: (aim ? r4 : r2)(A.yaw), pitch: (aim ? r4 : r2)(A.pitch), ...input.descend && { d: r2(A.d || 0) } }
   },
   encode(inp, input, haveT, renderT, A) {
     const B = INPUT_SCHEMA.bit
     return [inp.f, inp.r,
             (inp.j ? B.j : 0) | (inp.fire ? B.fire : 0) |
-            (input.sh ? B.sh : 0) | (input.alt ? B.alt : 0) | (input.sw ? B.sw : 0) | (inp.sprint ? B.sprint : 0) | (input.descend ? B.descend : 0) | (input.use ? B.use : 0),
+            (input.sh ? B.sh : 0) | (input.alt ? B.alt : 0) | (input.sw ? B.sw : 0) | (inp.sprint ? B.sprint : 0) | (input.descend ? B.descend : 0) | (input.use ? B.use : 0) | (input.grip ? B.grip : 0),
             inp.yaw, inp.pitch, haveT ? r2(renderT) : 0, ...(inp.fire || input.alt || inp.descend ? [r2(A.d || 0)] : [])]
   },
   decode(t, seq) {
@@ -15744,7 +15757,7 @@ const INPUT_SCHEMA = {
     const nf = x => Number.isFinite(x = +x) ? x : 0
     return { s: seq, f: nf(t[0]), r: nf(t[1]), yaw: nf(t[3]), pitch: nf(t[4]), rt: nf(t[5]), d: nf(t[6]),
              j: !!(bits & B.j), fire: !!(bits & B.fire),
-             sh: !!(bits & B.sh), alt: !!(bits & B.alt), sw: !!(bits & B.sw), sprint: !!(bits & B.sprint), descend: !!(bits & B.descend), use: !!(bits & B.use) }
+             sh: !!(bits & B.sh), alt: !!(bits & B.alt), sw: !!(bits & B.sw), sprint: !!(bits & B.sprint), descend: !!(bits & B.descend), use: !!(bits & B.use), grip: !!(bits & B.grip) }
   },
   consume(input) { input.sw = input.sh = input.use = false; jumpTapped = false },
   key: { forward: 'KeyW', back: 'KeyS', right: 'KeyD', left: 'KeyA', jump: 'Space',
@@ -15799,6 +15812,7 @@ const INPUT_SCHEMA = {
     hold('btn-jump', () => { keys[INPUT_SCHEMA.key.jump] = true; jumpTapped = true }, () => { keys[INPUT_SCHEMA.key.jump] = false })
     hold('btn-descend', () => { descendHeld = true }, () => { descendHeld = false })
     hold('btn-alt', () => { input.alt = true }, () => { input.alt = false })
+    hold('btn-use', () => { useDown = true }, () => { useDown = false })          // card #55: held, a pull (its tap still uses)
   },
   touchTaps(tap) {
     tap('btn-swap', () => { tapSwap = true })
@@ -15829,6 +15843,7 @@ const INPUT_SCHEMA = {
       input.sw ||= tapSwap; tapSwap = false
       input.sh ||= tapShift; tapShift = false
       input.use ||= tapUse; tapUse = false
+      input.grip = useDown          // card #55: the use button held
       return
     }
     input.f = (keys[INPUT_SCHEMA.key.forward] ? 1 : 0) - (keys[INPUT_SCHEMA.key.back] ? 1 : 0)
@@ -15843,6 +15858,7 @@ const INPUT_SCHEMA = {
     shiftHeld = !!keys[INPUT_SCHEMA.key.shift]
     input.use ||= !!keys[INPUT_SCHEMA.key.use] && !useHeld
     useHeld = !!keys[INPUT_SCHEMA.key.use]
+    input.grip = useHeld          // card #55: E held
   }
 }
 const input = INPUT_SCHEMA.empty()
@@ -15872,7 +15888,7 @@ function resetInput() {
   for (const k in keys) keys[k] = false
   const { yaw, pitch } = input
   Object.assign(input, INPUT_SCHEMA.empty(), { yaw, pitch, alt: false, view: null, aimed: null, aimAt: 0 })
-  shiftHeld = swapHeld = wheelSwap = useHeld = tapUse = sprintHeld = false
+  shiftHeld = swapHeld = wheelSwap = useHeld = tapUse = sprintHeld = useDown = false
   tapSwap = tapShift = descendHeld = sprintOn = tabOpen = jumpTapped = false
   document.body.classList.remove('sprinting')
   resetTouch()
@@ -15935,7 +15951,7 @@ function initInput() {
 function sampleInput() { INPUT_SCHEMA.sample() }
 
 let shiftHeld = false, swapHeld = false, wheelSwap = false
-let useHeld = false, tapUse = false
+let useHeld = false, tapUse = false, useDown = false
 let sprintOn = false, sprintHeld = false
 const sprintToggle = () => { sprintOn = !sprintOn; document.body.classList.toggle('sprinting', sprintOn) }
 let tapSwap = false, tapShift = false, descendHeld = false        // set by the touch buttons
@@ -16896,7 +16912,7 @@ function keyHelp(c) {
   const space = C.jet?.flier ? 'Space fly/rise · Q down' : C.chain ? 'Space tap: jump, hold and release: leap-smash · Q hold and release: chain · hold Q: reel in · Space: let go'
     : 'Space jump' + (C.swing ? ' · Q zip' : '')
   return 'WASD move · Shift sprint · ' + space + '<br>' +
-    'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker' : 'your attack') + ' · E use, enter a car or lift' +
+    'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
     (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + '<br>' +
     'T chat · Tab scores · V view · M sound · B radio · F3 debug · Esc menu'
 }
@@ -17997,8 +18013,9 @@ function objectsAt(t) {
 
 const objectsDrawn = (others = []) => (objDrawn.clear(), isHost ? objs.map(drawnObj) : objectsAt(renderT).map(o => {
   const by = objHeld.get(o.id), c = by !== undefined && others.find(p => p.id === by), C = c && GAME.rows.of(c.cid), e = objEase.get(o.id)
-  if (C && o.K.carry) {
-    const p = handOf({ ...c, r: C.r, h: C.h }, { K: o.K, R: objR(o.K) })
+  const ph = C && partsDrawHand(o, c, C)          // card #55: in his grip, or on its way to his boot
+  if (C && (o.K.carry || ph)) {
+    const p = ph || handOf({ ...c, r: C.r, h: C.h }, { K: o.K, R: objR(o.K) })
     objEase.set(o.id, { at: p })
     return { ...o, held: true, x: p[0], y: p[1], z: p[2], q: [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)] }
   }
@@ -18659,7 +18676,7 @@ function reconcile(a) {
   }
 
   // riding a vehicle another drives: only the objects replay
-  if (predicted.ride) {
+  if (predicted.ride || predicted.grabBy !== undefined) {
     reconcileErr = replaySteps = 0
     if (objErr <= REWIND_EPS) return
     restore()
@@ -18798,7 +18815,7 @@ function remoteAt(t) {
                yaw: q[F.yaw] + dy * k, vx: p[F.vx], vz: p[F.vz], hp: p[F.hp], dead: p[F.dead], cid: p[F.cid], kills: p[F.kills] | 0,
                prot: p[F.prot] || 0, anim: p[F.anim] >= 0 && p[F.anim] < 7 ? p[F.anim] | 0 : 0, pow: p[F.pow] || 0, markT: p[F.markT] || 0, web: p[F.web] || 0, jl: p[F.jLock] || 0,
                cap: p[F.cap] || 0, gun: p[F.gun] | 0, move: p[F.move] || 0, springT: p[F.leapCharge] || 0, hayAge: p[F.hay] >= q[F.hay] ? lerp(q[F.hay] || 0, p[F.hay] || 0, k) : p[F.hay] || 0, chainNet: chainBetween(q[F.chain], p[F.chain], k),
-               prof: p[F.prof] | 0, sprof: p[F.sprof] | 0, vy: p[F.vy], mark: effId(p[F.mark]) })
+               prof: p[F.prof] | 0, sprof: p[F.sprof] | 0, vy: p[F.vy], mark: effId(p[F.mark]), grab: p[F.grab] | 0, act: p[F.act] || 0 })
   }
   // a rider: in its seat of the vehicle as drawn, not its own rows
   if (objSeats.size) {
@@ -19108,12 +19125,12 @@ function dashStrikes(list, credit) {
 function objectStrikes(o, c, credit) {
   const W = o.K.weakens, e = W && weakFx(c, o.K)
   if (e) { c.mark = e; c.markT = Math.max(c.markT, W.struck) }
-  const by = players.get(o.thrownBy), D = by && hurlOf(by)?.dmg
+  const by = players.get(o.thrownBy), D = by && (o.puntDmg ?? hurlOf(by)?.dmg)
   if (!D || c.prot > 0) return
   const was = hookHitOn && [c.hp, c.mark, c.markT]
   c.hp -= stat(c, 'take', stat(by, 'give', D))
-  if (was && !hookHit(by, c, 'Hurl', was)) return
-  if (c.hp <= 0 && downed(c) && credit) credit(by.id, by)(c, { name: 'Hurl' })
+  if (was && !hookHit(by, c, o.puntDmg ? 'Punt' : 'Hurl', was)) return
+  if (c.hp <= 0 && downed(c) && credit) credit(by.id, by)(c, o.puntDmg ? GUNS[gunNamed('Punt')] : { name: 'Hurl' })
 }
 
 // a host tick's rules, in its order around the engine's own steps (see hostTick); t: the tick's dt, all (players), cur (their
@@ -19274,6 +19291,9 @@ const PLAYER_STATE = stateSchema([
   ['chain', c => chainPack(c), (c, v) => { c.chainNet = chainRead(v) }],
   ['hay', c => r2(c.hayAge || 0), (c, v) => { c.hayAge = Number.isFinite(v) ? clamp(v, 0, 2) : 0 }],
   ['leapCharge', c => r2(c.springT || 0)],
+  // card #55: held by (id + 1), or -1 flying from a punt or throw; his hands' act (code × 4 + age s)
+  ['grab', c => partsPack(c), (c, v) => partsOwn(c, v | 0)],
+  ['act', c => partsAct(c)],
 ])
 GAME.schema = PLAYER_STATE
 
@@ -19321,6 +19341,767 @@ GAME.lifecycle = {
     setEvent(typeof d.ev === 'string' && EVENTS.find(E => E.name === d.ev) || null)
     if (helloDue && phase === 'playing') { hello(); prepareRows(GAME.rows.visitors()) }
   },
+}
+
+// ---------------------------------------------------------------- the interaction system (card #55)
+// What the Maniak can do to a thing in the world is data on the thing. A PARTS kind names the verbs it allows and their
+// rules; a verb asks every kind's finder for the instances in his reach, takes the nearest one that allows it, and acts
+// through the instance's source, which is also where its state lives (there is no second store):
+//   object    the engine's objs: object rows, held by the engine's heldBy / objHeld
+//   char      players and bots: their row's `grab` field (who holds them, or that they fly)
+//   street    #26's people: street-life records 8 (held) and 9 (flung), played alike on every client (#45 has 6 and 7)
+//   city      fixed seeded parts (panes, lamps, posts, signals): #46's records, GAME.destruction
+//   attached  a part of a moving object (a car door, #57): the object's part channel, o.pm (a mask of bits), o.pl (a list
+//             of ints the kind owns), o.pv (their version), host-set and synced ('pp'), carried over when the car burns out
+// His verbs: grab (E: the nearest thing in reach), pull (E held GRAB.pull s: rip the nearest part that tears off, or lift a
+// vehicle whole; a tap still gets into a car), punt (click while holding: it drops from his hands and he kicks it as it
+// falls), throw (right-click while holding), drop (E while holding). Content is a PARTS row (and for an attached part, an
+// adapter): GAME.parts.kind(name, row, adapter).
+const GRAB = {
+  reach: 1.7,                 // m between his edge and the thing's
+  pull: 0.3,                  // s: E held this long is a pull
+  // a held body struggles free after slip s (street people: slipStreet), mash s sooner for each press it makes; then it
+  // can't be grabbed for regrab s (or while #42 says it is steady)
+  slip: 1.5, slipStreet: 6, mash: 0.25, regrab: 3,
+  // the punt: from his hands to his boot in drop s, the kick, then he's back to himself at done s. A thing of mass m
+  // leaves at speed × min(1, √(mass / m)), pitch rad over his aim (at most top), tumbling at spin rad/s; it hits for dmg
+  // (the Punt row's) at the kick and, flying faster than fly.min m/s, for the Flung row's on whoever it meets
+  punt: { drop: 0.24, done: 0.62, speed: 36, mass: 1, pitch: 0.42, top: 1.15, spin: 13 },
+  throw: { done: 0.4, speed: 24, mass: 2, spin: 5 },
+  fly: { r: 0.45, min: 6, s: 5 },
+  // the grab itself and a pull: their clips' length (s)
+  grabS: 0.28, rip: 0.45,
+}
+// grip: how his hands take it. chest (two hands at its sides, before his chest), overhead (both hands up under it, the
+// engine's lift), scruff (a person: a fist in the collar, a fist at the belt, held up before him). mass: when the source
+// has none of its own (a person 1). Every kind here allows grab, throw and punt
+const PARTS = {
+  object: { of: 'object', grab: { grip: 'chest' }, throw: {}, punt: {} },             // any OBJECTS row he can lift, by default
+  Crate: { of: 'object', grab: { grip: 'overhead' }, throw: {}, punt: {} },
+  vehicle: { of: 'object', grab: { grip: 'overhead', pull: true }, throw: {}, punt: {} },  // lifted by a pull: a tap gets in
+  person: { of: 'char', mass: 1, grab: { grip: 'scruff' }, throw: {}, punt: {} },
+  passerby: { of: 'street', mass: 1, grab: { grip: 'scruff' }, throw: {}, punt: {} },
+  dog: { of: 'street', mass: 0.4, grab: { grip: 'chest' }, throw: {}, punt: {} },
+  pram: { of: 'street', mass: 1.4, grab: { grip: 'chest' }, throw: {}, punt: {} },
+}
+const PART_ADAPTERS = {}, partsHeard = { grab: [], rip: [], throw: [], punt: [], land: [] }
+const partsEmit = (type, ...a) => { for (const fn of partsHeard[type] || []) try { fn(...a) } catch (e) { console.warn('parts listener', e) } }
+const PUNT_G = () => gunNamed('Punt'), FLUNG_G = () => gunNamed('Flung')
+// the kind of an object: its row by name, a vehicle (or its wreck), else `object`; null if he can't lift it
+function partsObjectKind(c, o) {
+  if (o.K.carry) return 'object'
+  if (!(o.K.mass <= liftOf(c))) return null
+  return partsKindOf(o)
+}
+const partsKindOf = o => o.K.carry ? 'object' : PARTS[o.K.name] ? o.K.name : o.V || o.K.shape === 'hull' ? 'vehicle' : 'object'
+const partsGrip = (kind, R = 0) => { const g = PARTS[kind]?.grab?.grip || 'chest'; return g === 'chest' && R > 0.42 ? 'overhead' : g }
+
+// ---- what a character holds: one shape for every source. { kind, src, ref, R, mass } or null
+function partsHeld(c) {
+  const o = objs.find(o => (o.heldBy ?? (isHost ? undefined : objHeld.get(o.id))) === c.id && !o.K.carry) || objs.find(o => o.heldBy === c.id)
+  if (o) return { kind: partsObjectKind(c, o) || 'object', src: 'object', ref: o, R: o.R || objR(o.K), mass: o.K.mass }
+  if (isHost) {
+    for (const h of players.values()) if (h.grabBy === c.id) return { kind: 'person', src: 'char', ref: h, R: h.r, mass: PARTS.person.mass }
+    const s = c.parts?.st
+    if (s) return { kind: s.kind, src: 'street', ref: s, R: s.R, mass: PARTS[s.kind].mass }
+    return null
+  }
+  // a guest: from the host's rows and records
+  const F = GAME.schema.col
+  for (const [id, tr] of tracks) if (id !== myId && (tr.at(-1)?.p?.[F.grab] | 0) === c.id + 1) return { kind: 'person', src: 'char', ref: { id }, R: 0.4, mass: 1 }
+  const g = partsStreetHeldBy(c.id)
+  if (g) return { kind: g.what ? 'pram' : g.kindName, src: 'street', ref: { rec: g }, R: g.R, mass: PARTS[g.what ? 'pram' : g.kindName].mass }
+  return null
+}
+
+// ---- the finders: instances in his reach for a verb, nearest first. { kind, src, ref, gap, R, mass, at }
+function partsNear(c, verb, reach = GRAB.reach) {
+  const out = []
+  for (const o of objs) {
+    if (o.heldBy !== undefined || o.thrownBy !== undefined && o.puntDmg || o.fuse !== undefined) continue
+    const kind = partsObjectKind(c, o), P = PARTS[kind]
+    if (!partsAllows(P, verb)) continue
+    if (o.V && o.riders.some(r => r !== undefined)) continue
+    const gap = objGap(c, o)
+    if (gap <= (o.K.carry?.reach ?? reach) + (o.V ? 0.6 : 0) && inSight(c, o)) out.push({ kind: verb === 'pull' ? 'vehicle' : kind, src: 'object', ref: o, gap, R: o.R || objR(o.K), mass: o.K.mass })
+  }
+  if (isHost && verb === 'grab') {
+    for (const h of players.values()) {
+      if (h === c || h.dead > 0 || h.prot > 0 || seatOf(h) || h.grabBy !== undefined || h.noGrab > 0 || h.punted || partsHeld(h)) continue
+      const gap = Math.hypot(h.x - c.x, h.z - c.z) - c.r - h.r
+      if (gap > reach || Math.abs(h.y - c.y) > c.h + h.h + 0.4) continue
+      if (castRay(c.x, c.y + c.h * 0.55, c.z, ...partsUnit(h.x - c.x, h.y - c.y, h.z - c.z), Math.hypot(h.x - c.x, h.y - c.y, h.z - c.z)) < 1) continue
+      out.push({ kind: 'person', src: 'char', ref: h, gap, R: h.r, mass: PARTS.person.mass })
+    }
+    if (slState && LV.faust) slAround(c.x, c.z, reach + 2.5, tickAt || now(), (ag, p) => {
+      if (p.down || p.hidden || p.scale < 0.6 || ag.kind === SL_K.exit || ag.kind === SL_K.cyclist && p.rec) return
+      if (p.rec && p.rec.kind !== 2 && p.rec.kind !== 5) return
+      const dog = ag.kind === SL_K.stray, R = dog ? 0.3 : 0.32
+      const gap = Math.hypot(p.x - c.x, p.z - c.z) - c.r - R
+      if (gap <= reach && Math.abs(c.y - c.h - c.r) < 1.2) out.push({ kind: dog ? 'dog' : 'passerby', src: 'street', ref: { ag, pose: { ...p }, what: 0 }, gap, R, mass: PARTS[dog ? 'dog' : 'passerby'].mass })
+      if (ag.kind === SL_K.pram && !(GAME.streetLife?.gone?.(ag.id))) {
+        const px = p.x + Math.sin(p.yaw) * STREET.pramBack, pz = p.z + Math.cos(p.yaw) * STREET.pramBack, g2 = Math.hypot(px - c.x, pz - c.z) - c.r - 0.45
+        if (g2 <= reach) out.push({ kind: 'pram', src: 'street', ref: { ag, pose: { ...p }, what: 1 }, gap: g2, R: 0.45, mass: PARTS.pram.mass })
+      }
+    })
+  }
+  // attached parts (#57's car doors): each registered adapter lists its own
+  if (verb === 'pull') for (const [kind, A] of Object.entries(PART_ADAPTERS)) if (A.near && partsAllows(PARTS[kind], 'pull')) {
+    let list = []; try { list = A.near(c, reach) || [] } catch (e) { console.warn('parts near', kind, e) }
+    for (const inst of list) out.push({ kind, src: 'attached', ...inst, gap: inst.gap ?? 0 })
+  }
+  return out.sort((a, b) => a.gap - b.gap)
+}
+// a kind allows a verb: grab (not one that takes a pull), pull (a pull lifts it, or it tears off), throw, punt
+const partsAllows = (P, verb) => !!P && (verb === 'grab' ? !!P.grab && !P.grab.pull : verb === 'pull' ? !!(P.grab?.pull || P.rip) : !!P[verb])
+const partsUnit = (x, y, z) => { const n = Math.hypot(x, y, z) || 1; return [x / n, y / n, z / n] }
+
+// ---- where a held thing sits, from its holder's place and heading (and on every client from the holder as drawn)
+function partsHoldAt(x, y, z, yaw, C, grip, R, out = [0, 0, 0]) {
+  // his arms reach about 0.74 m from the shoulder (his clips' hands): a small thing sits close before his chest, a person's
+  // collar in his right fist (its centre 0.6 m out, its feet off the ground)
+  const fx = -Math.sin(yaw), fz = -Math.cos(yaw), k = C.r / 0.48
+  const f = (grip === 'scruff' ? 0.6 : 0.42 + R * 0.3) * k, up = (grip === 'scruff' ? 0.24 : 0.32) * k
+  out[0] = x + fx * f; out[1] = y + up; out[2] = z + fz * f
+  return out
+}
+// the punt: the thing falls from his hands to his boot, out in front at shin height
+function partsKickAt(c, R, out = [0, 0, 0]) {
+  const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw), f = 0.55 + R * 0.8
+  out[0] = c.x + fx * f; out[1] = c.y - c.h - c.r + 0.42 + R * 0.5; out[2] = c.z + fz * f
+  return out
+}
+// the launch for how ('punt' | 'throw') of a thing of mass m: [vx, vy, vz] and its spin axis
+function partsLaunch(c, how, m) {
+  const P = how === 'punt' ? GRAB.punt : GRAB.throw, [yaw, pitch] = aimAngles(c, 40)
+  const up = how === 'punt' ? clamp(pitch + P.pitch, 0.18, P.top) : clamp(pitch + 0.12, -0.3, 1.2)
+  const s = P.speed * Math.min(1, Math.sqrt(P.mass / Math.max(0.05, m))), [dx, dy, dz] = aimDir(yaw, up)
+  return { v: [dx * s + (c.vx || 0) * 0.5, dy * s, dz * s + (c.vz || 0) * 0.5], speed: s, spin: [dz, 0, -dx], yaw }
+}
+
+// ---- the verbs, each tick, in carryStep: E, the punt, the throw, the drop. Bots keep the engine's own carry
+function partsStep(c, inp, dt) {
+  if (!GAME.participantOf(c)?.grab) return false
+  const S = c.parts ||= { act: 0, age: 0, done: false, useWas: false, press: -1 }
+  // use: E's press (one tick); grip: E held (card #55's level bit)
+  const fire = inp.pf ?? inp.fire, alt = inp.pa ?? inp.alt, useEdge = !!inp.use, gripping = !!(inp.grip || inp.use)
+  c.noGrab = Math.max(0, (c.noGrab || 0) - dt)
+  const held = partsHeld(c)
+  if (c.dead > 0) { if (held) partsLetGo(c, held, 'drop'); S.act = 0; S.press = -1; return true }
+  if (S.act) {
+    S.age += dt
+    const A = S.act, P = A === 1 ? GRAB.punt : A === 2 ? GRAB.throw : null
+    if (P && !S.done && S.age >= (A === 1 ? P.drop : 0.12)) { S.done = true; if (held) partsLetGo(c, held, A === 1 ? 'punt' : 'throw') }
+    if (A === 3 && S.age >= GRAB.rip && !S.done) { S.done = true; partsPullDone(c, S) }
+    c.threw = true
+    if (S.age >= (P ? P.done : A === 3 ? GRAB.rip + 0.2 : GRAB.grabS)) { S.act = 0; S.age = 0 }
+    else if (A !== 4) return true
+  }
+  if (held) {
+    c.threw = !!(fire || alt)
+    if (useEdge && c.useT <= 0) { c.useT = USE_S; partsLetGo(c, held, 'drop') }
+    else if (fire && c.useT <= 0) { Object.assign(S, { act: 1, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S }
+    else if (alt && c.useT <= 0) { Object.assign(S, { act: 2, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S }
+    return true
+  }
+  // E: a press grabs the nearest thing at once; by a car with a free seat it waits for the release (a tap: in) or GRAB.pull
+  // s (held: a pull, the nearest part torn off or the vehicle lifted)
+  const seat = s => s.V && !s.fuse && s.riders.some((r, i) => r === undefined && fits(c, s, i)) && objGap(c, s) <= 1.5 && inSight(c, s)
+  if (useEdge && c.useT <= 0) {
+    const g = partsNear(c, 'grab')[0], car = objs.filter(seat).sort((a, b) => objGap(c, a) - objGap(c, b))[0]
+    if (g && (!car || g.gap < objGap(c, car))) { c.useT = USE_S; partsTake(c, g); return true }
+    S.press = 0; S.car = car || null
+    return true
+  }
+  if (S.press >= 0) {
+    if (gripping) {
+      S.press += dt
+      if (S.press >= GRAB.pull && !S.pulled) {
+        S.pulled = true
+        const p = partsNear(c, 'pull')[0]
+        if (p) { S.press = -1; S.pulled = false; Object.assign(S, { act: 3, age: 0, done: false, pull: p }); c.useT = USE_S; return true }
+      }
+      return true
+    }
+    S.press = -1; S.pulled = false
+    if (S.car && objs.includes(S.car) && seat(S.car)) { c.useT = USE_S; sit(c, S.car, S.car.riders.findIndex((r, i) => r === undefined && fits(c, S.car, i))) }
+    else if (isHost && objs.some(p => p.V && p.riders.includes(undefined) && objGap(c, p) <= 1.5)) { c.useT = USE_S; tell(c.id, '§7' + GAME.participant(c.id, c.cid).name + " doesn't fit") }
+    return true
+  }
+  return true
+}
+// a pull's end: an attached part torn off (its adapter's detach, then the part it gives in his hands), or a vehicle lifted
+function partsPullDone(c, S) {
+  const p = S.pull
+  if (!p) return
+  if (p.src === 'object') { if (objs.includes(p.ref) && p.ref.heldBy === undefined && canLift(c, p.ref)) { liftUp(p.ref, c); partsEmit('grab', c, p) } return }
+  if (p.src !== 'attached' || !isHost) return
+  const A = PART_ADAPTERS[p.kind], R = PARTS[p.kind]?.rip, k = R && OBJECTS.findIndex(K => K.name === R.gives)
+  if (!A?.detach || !(k >= 0)) return
+  let at = null; try { at = A.detach(p, c) } catch (e) { console.warn('parts detach', p.kind, e); return }
+  if (at === false) return
+  const id = partsFreeId(), o = id >= 0 && addObject(k, Array.isArray(at) ? at : partsHoldAt(c.x, c.y, c.z, c.yaw, c, 'chest', 0.5), id)
+  if (!o) return
+  partsEmit('rip', o, p, c)
+  if (canLift(c, o)) liftUp(o, c)
+}
+// a new object's id (host): the lowest free one from 16, clear of the traffic's own reservations
+function partsFreeId() {
+  if (objs.length >= OBJ_MAX) return -1
+  const used = new Set(objs.map(o => o.id)), held = trafficState?.departures?.filter(v => v.until > trafficClock()).map(v => v.id) || []
+  for (let id = 16; id < OBJ_MAX; id++) if (!used.has(id) && !held.includes(id)) return id
+  return -1
+}
+// take an instance in his hands
+function partsTake(c, g) {
+  const S = c.parts
+  Object.assign(S, { act: 4, age: 0, done: true, grip: partsGrip(g.kind, g.R), R: g.R })
+  if (g.src === 'object') { liftUp(g.ref, c); partsEmit('grab', c, g); return }
+  if (!isHost) return
+  if (g.src === 'char') {
+    const h = g.ref
+    if (GAME.poise?.stagger && !(GAME.poise.stagger(h, c, 12) > 0)) return          // #42: he shrugs it off
+    if (h.body && A.getPointer(h.body.getBroadphaseHandle())) world.removeRigidBody(h.body)
+    moveReset(h); untie(h); h.springT = 0; h.dashOn = false
+    h.grabBy = c.id; h.grabT = 0; h.grabWas = null; h.punted = null
+    partsEmit('grab', c, g)
+    return
+  }
+  if (g.src === 'street') {
+    const { ag, pose, what } = g.ref, T = Math.round(tickAt || now())
+    const r = slAddRec([8, ag.id, T, slR2(pose.x), slR2(pose.z), c.id, slR2(pose.yaw), what])
+    if (!r) return
+    S.st = { ag, rec: r, kind: g.kind, R: g.R, t: 0, what }
+    slPanic(pose.x, pose.z, T)
+    partsEmit('grab', c, g)
+  }
+}
+// let it go: dropped, thrown or punted, from where it is now
+function partsLetGo(c, held, how) {
+  const S = c.parts
+  if (held.src === 'object') {
+    const o = held.ref
+    if (how === 'drop') { release(c, o, 0); return }
+    const L = partsLaunch(c, how, o.K.mass), at = how === 'punt' ? partsKickAt(c, held.R) : handOf(c, o, true), k = Math.min(1, 1.6 / Math.sqrt(o.K.mass))
+    holdBy(o, null)
+    const P = how === 'punt' ? GRAB.punt : GRAB.throw
+    putObject(o, [...at, ...o.q, ...L.v, ...L.spin.map(v => v * P.spin * k)])
+    Object.assign(o, { thrownBy: c.id, thrownT: 0, struck: new Set([c.id]) })
+    if (how === 'punt') { o.puntDmg = GUNS[PUNT_G()].dmg * clamp(Math.sqrt(o.K.mass), 0.7, 2); partsKickFx(c, at) }
+    else o.puntDmg = GUNS[FLUNG_G()].dmg * 0.6 * clamp(Math.sqrt(o.K.mass), 0.7, 2)
+    partsEmit(how, c, held, o)
+    return
+  }
+  if (!isHost) return
+  // people go on the host, in the tick's beforePhysics (partsHostRelease), where the kill credit is
+  ;(c.parts.due ||= []).push([held, how])
+}
+// the kick, seen and heard: the Punt row's record, his boot to the thing (the struck avatar glows, cameras near it kick)
+function partsKickFx(c, at) {
+  if (!isHost) return
+  const y = c.y - c.h - c.r + 0.35, fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw)
+  const f = [r2(c.x + fx * 0.3), r2(y), r2(c.z + fz * 0.3), r2(at[0]), r2(at[1]), r2(at[2]), PUNT_G(), 1, c.id]
+  tracers.push(f); GAME.audio.fx([f])
+}
+
+// ---- the host: people let go, held, flying; street people's flights
+const partsFlights = []
+function partsHostRelease(all, credit) {
+  for (const c of all) {
+    const due = c.parts?.due
+    if (!due?.length) continue
+    c.parts.due = []
+    for (const [held, how] of due) partsLetGoHost(c, held, how, credit)
+  }
+}
+function partsLetGoHost(c, held, how, credit) {
+  const T = Math.round(tickAt || now())
+  if (held.src === 'char') {
+    const h = held.ref
+    if (h.grabBy !== c.id) return
+    const at = how === 'punt' ? partsKickAt(c, h.r) : partsHoldAt(c.x, c.y, c.z, c.yaw, c, 'scruff', h.r)
+    const L = how === 'drop' ? { v: [-Math.sin(c.yaw) * 2, 1.5, -Math.cos(c.yaw) * 2], speed: 0 } : partsLaunch(c, how, PARTS.person.mass)
+    partsFree(h, at, L.v)
+    if (how === 'drop') return
+    const G = GUNS[how === 'punt' ? PUNT_G() : FLUNG_G()], n = L.speed || 1
+    if (how === 'punt') partsKickFx(c, at)
+    const was = h.hp
+    strike(c, h, how === 'punt' ? G : { ...G, dmg: G.dmg * 0.5 }, L.v[0] / n, L.v[1] / n, L.v[2] / n)
+    h.knT = 0; h.knUp = 0; h.knx = h.knz = 0                                       // the arc is the punt's own
+    const k = GAME.poise?.stagger ? GAME.poise.stagger(h, c, L.speed) : Infinity
+    h.punted = { by: c.id, t: 0, struck: new Set([c.id, h.id]), how, up: k > 0 }
+    if (downed(h) && credit) credit(c.id, c)(h, G)
+    partsEmit(how, c, held, h, was - h.hp)
+    return
+  }
+  if (held.src === 'street') {
+    const s = c.parts.st
+    if (!s) return
+    c.parts.st = null
+    const R = s.R, at = how === 'punt' ? partsKickAt(c, R) : partsHoldAt(c.x, c.y, c.z, c.yaw, c, partsGrip(s.kind), R)
+    const L = how === 'drop' ? { v: [0, 0, 0], speed: 0, yaw: c.yaw } : partsLaunch(c, how, PARTS[s.kind].mass)
+    const H = partsCentre(s.ag, s.what); at[1] = Math.max(at[1], H + 0.05)
+    const r = partsFling(s.ag, at, L.v, T, s.what, c.id, H)
+    if (how === 'punt') partsKickFx(c, at)
+    if (r && how !== 'drop') partsFlights.push({ ag: s.ag, rec: r, by: c.id, struck: new Set([c.id]), how, wall: r.wall })
+    partsEmit(how, c, held, s.ag)
+  }
+}
+// back into the world at p with velocity v
+function partsFree(h, p, v) {
+  h.grabBy = undefined; h.grabT = 0; h.noGrab = GRAB.regrab
+  if (h.body && !A.getPointer(h.body.getBroadphaseHandle())) { h.body.clearForces(); world.addRigidBody(h.body, ...COLLIDE.capsule) }
+  // never inside a wall: back along the line from his holder's centre
+  const d = staticRay(p[0], p[1], p[2], 0, -1, 0, h.h + h.r + 0.05)
+  const y = d < h.h + h.r ? p[1] + (h.h + h.r - d) + 0.02 : p[1]
+  restoreChar(h, p[0], y, p[2], ...v)
+}
+// a street person's flight from at with velocity v: where it meets the level (a wall: it drops there; the ground: it lands),
+// the run after it gets up, as record 9
+function partsFling(ag, at, v, T, what, by, H) {
+  const [x0, y0, z0] = at, dt = 1 / 60, g = GRAV, hit = [], R = 0.3
+  let t = 0, px = x0, py = y0, pz = z0, tw = 0, wall = null
+  for (let i = 0; i < 480; i++) {
+    const t1 = t + dt, nx = x0 + v[0] * t1, ny = y0 + v[1] * t1 + 0.5 * g * t1 * t1, nz = z0 + v[2] * t1
+    if (ny <= H) {                       // the ground (street life's floor is y 0): the centre H over it
+      const a = 0.5 * g, b = v[1], cc = y0 - H, disc = b * b - 4 * a * cc
+      tw = disc >= 0 ? (-b - Math.sqrt(disc)) / (2 * a) : t1; px = x0 + v[0] * tw; pz = z0 + v[2] * tw; py = H; break
+    }
+    const dx = nx - px, dy = ny - py, dz = nz - pz, L = Math.hypot(dx, dy, dz) || 1e-6
+    const d = staticRay(px, py, pz, dx / L, dy / L, dz / L, L + R, hit)
+    if (d < L + R && hit.length >= 6) {
+      if (hit[4] > 0.6) { tw = t + dt * Math.max(0, d - R) / L; px += dx / L * Math.max(0, d - R); pz += dz / L * Math.max(0, d - R); py = hit[1] + H; break }
+      tw = t + dt * Math.max(0, d - R) / L; px += dx / L * Math.max(0, d - R); py += dy / L * Math.max(0, d - R); pz += dz / L * Math.max(0, d - R)
+      wall = [hit[0], hit[1], hit[2], hit[3], hit[5]]; px += hit[3] * 0.05; pz += hit[5] * 0.05; break
+    }
+    t = t1; px = nx; py = ny; pz = nz; tw = t
+  }
+  const fall = Math.max(0, py - H), tl = tw + Math.sqrt(2 * fall / -g)
+  const n = Math.hypot(v[0], v[2]) || 1, [x2, z2] = slRunTo(px, pz, v[0] / n + (slRnd(ag.id, T) - 0.5) * 0.8, v[2] / n + (slRnd(T, ag.id) - 0.5) * 0.8, 22)
+  const yaw = Math.atan2(v[0], v[2])
+  const r = slAddRec([9, ag.id, T, slR2(x0), slR2(z0), slR2(y0), slR2(v[0]), slR2(v[1]), slR2(v[2]), Math.round(tw * 1000), Math.round(tl * 1000),
+    slR2(px), slR2(pz), slR2(x2), slR2(z2), slR2(yaw), what | 0, by])
+  if (r) r.wall = wall
+  return r
+}
+// after the physics step (host): held bodies in their holders' hands, struggling free; flying bodies hitting what they meet
+function partsHoldChars() {
+  if (!isHost) return
+  for (const h of players.values()) {
+    if (h.grabBy === undefined) continue
+    const c = players.get(h.grabBy)
+    if (!c || c.dead > 0 || h.dead > 0 || seatOf(c) || h.grabT >= (h.grabSlip ?? GRAB.slip)) {
+      const at = c ? partsHoldAt(c.x, c.y, c.z, c.yaw, c, 'scruff', h.r) : [h.x, h.y, h.z]
+      partsFree(h, at, c ? [Math.sin(c.yaw) * 3, 2, Math.cos(c.yaw) * 3] : [0, 0, 0])    // he slips out, back toward his holder's side
+      if (c?.parts) c.parts.act = 0
+      continue
+    }
+    const p = partsCharAt(c, h)
+    teleportBody(h.body, ...p, null, [c.vx || 0, c.vy || 0, c.vz || 0])
+    Object.assign(h, { x: p[0], y: p[1], z: p[2], vx: c.vx || 0, vy: c.vy || 0, vz: c.vz || 0, yaw: c.yaw + Math.PI, grounded: false })
+  }
+  // street people: the struggle, and a holder gone
+  for (const c of players.values()) {
+    const s = c.parts?.st
+    if (!s) continue
+    s.t += TICK
+    if (c.dead > 0 || seatOf(c) || s.t >= GRAB.slipStreet) partsLetGoHost(c, { src: 'street', kind: s.kind }, 'drop')
+  }
+}
+// applyIntent's first word for a body that is held: it does nothing but struggle (each fresh press of jump, attack or use
+// brings the slip nearer)
+function partsHeldIntent(c, inp, dt) {
+  if (c.grabBy === undefined) return false
+  const w = c.grabWas || {}, fresh = ['j', 'fire', 'alt', 'use'].some(k => inp[k] && !w[k])
+  c.grabWas = { j: inp.j, fire: inp.fire, alt: inp.alt, use: inp.use }
+  c.grabT = (c.grabT || 0) + dt + (fresh ? GRAB.mash : 0)
+  c.grounded = false; c.air = true
+  return true
+}
+// the velocity a punted or thrown body flies with: its own (Bullet's gravity on it), no steering until it lands
+function partsFlightV(c, mx, vy, mz) {
+  const P = c.punted
+  if (!P) return null
+  P.t += TICK
+  if (P.t > 0.15 && c.grounded || P.t > GRAB.fly.s) { c.punted = null; return null }
+  return [c.vx, c.vy, c.vz]
+}
+// the host's tick, after physics: flying bodies and things meet people
+function partsAfter(all, dt, credit) {
+  const T = tickAt || now(), FG = GUNS[FLUNG_G()]
+  for (const h of all) {
+    const P = h.punted
+    if (!P) continue
+    const by = players.get(P.by), sp = Math.hypot(h.vx, h.vy, h.vz)
+    if (!by || sp < GRAB.fly.min) continue
+    for (const v of all) {
+      if (P.struck.has(v.id) || v.dead > 0 || v.prot > 0 || seatOf(v) || v.grabBy !== undefined) continue
+      if (Math.hypot(v.x - h.x, v.z - h.z) > h.r + v.r + GRAB.fly.r || Math.abs(v.y - h.y) > h.h + v.h + 0.3) continue
+      P.struck.add(v.id)
+      strike(by, v, { ...FG, dmg: FG.dmg * clamp(sp / 25, 0.5, 1.3) }, h.vx / sp, 0.3, h.vz / sp)
+      if (downed(v) && credit) credit(by.id, by)(v, FG)
+    }
+    if (slState && LV.faust && h.y - h.h - h.r < 2.2) slAround(h.x, h.z, 2, T, (ag, p) => {
+      if (p.down || P.struck.has('s' + ag.id) || Math.hypot(p.x - h.x, p.z - h.z) > h.r + 0.6) return
+      P.struck.add('s' + ag.id); slKnock(ag, p, h.vx, h.vz, sp * 0.3, by, T)
+    })
+  }
+  // street people in flight: what they meet on the way, the glass they go through, a pram's blast where it comes down
+  for (let i = partsFlights.length - 1; i >= 0; i--) {
+    const F = partsFlights[i], r = F.rec, tau = (T - r.t) / 1000, by = players.get(F.by)
+    if (tau > r.tl / 1000 + 0.05) {
+      if (r.what && F.how !== 'drop') GAME.streetLife?.pramBoom?.(r.id, { x: r.x1, z: r.z1, by: F.by })
+      partsEmit('land', r)
+      partsFlights.splice(i, 1); continue
+    }
+    if (F.wall && tau >= r.tw / 1000) {
+      const [x, y, z, nx, nz] = F.wall; F.wall = null
+      try { GAME.destruction?.breakAt?.(x, y, z, nx, nz, 2) } catch (e) {}
+      if (r.what && F.how !== 'drop' && GAME.streetLife?.pramBoom?.(r.id, { x, z, by: F.by })) { partsFlights.splice(i, 1); continue }
+    }
+    const p = partsFlyAt(r, Math.min(tau, r.tw / 1000), partsTmp, partsCentre(F.ag, r.what)), sp = Math.hypot(r.vx, r.vz)
+    if (!by || sp < GRAB.fly.min || tau > r.tw / 1000) continue
+    for (const v of all) {
+      if (v.id === F.by || F.struck.has(v.id) || v.dead > 0 || v.prot > 0 || seatOf(v)) continue
+      if (Math.hypot(v.x - p.x, v.z - p.z) > v.r + 0.35 + GRAB.fly.r || Math.abs(v.y - p.y) > v.h + v.r + 0.5) continue
+      F.struck.add(v.id)
+      strike(by, v, { ...FG, dmg: FG.dmg * clamp(sp / 25, 0.5, 1.3) }, r.vx / sp, 0.3, r.vz / sp)
+      if (downed(v) && credit) credit(by.id, by)(v, FG)
+      if (r.what && GAME.streetLife?.pramBoom?.(r.id, { x: p.x, z: p.z, by: F.by })) F.boomed = true
+    }
+    if (p.y < 2.6) slAround(p.x, p.z, 2, T, (ag, q) => {
+      if (ag.id === r.id || q.down || F.struck.has('s' + ag.id) || Math.hypot(q.x - p.x, q.z - p.z) > 0.9) return
+      F.struck.add('s' + ag.id); slKnock(ag, q, r.vx, r.vz, sp * 0.3, by, T)
+    })
+  }
+  for (const o of objs) if (o.thrownBy === undefined && o.puntDmg !== undefined) o.puntDmg = undefined
+}
+const partsTmp = { x: 0, y: 0, z: 0 }
+const partsCentre = (ag, what) => what ? 0.45 : ag?.kind === SL_K.stray ? 0.3 : 0.9
+
+// ---- street people under records 8 and 9, on every client
+// record fields: 8 [8, id, t, x, z, by, yaw, what]; 9 [9, id, t, x0, z0, y0, vx, vy, vz, tw ms, tl ms, x1, z1, x2, z2, yaw, what, by]
+function partsRecParse(r, a) {
+  if (r.kind === 8) { r.by = a[5] | 0; r.yaw = a[6]; r.what = a[7] | 0; if (!slState?.byId.get(r.id)?.some(q => q.kind === 9 && q.t >= r.t)) partsGrabbed.set(r.id, r) }
+  else if (r.kind === 9) { [r.x0, r.z0, r.y0, r.vx, r.vy, r.vz, r.tw, r.tl, r.x1, r.z1, r.x2, r.z2, r.yaw, r.what, r.by] = a.slice(3, 18); r.what |= 0
+    const g = partsGrabbed.get(r.id); if (g && g.t <= r.t) { r.from = g; partsGrabbed.delete(r.id) } }
+}
+const partsRecOk = a => (a[0] === 8 && a.length === 8 || a[0] === 9 && a.length === 18) && a.every(Number.isFinite)
+const partsGrabbed = new Map()
+function partsStreetHeldBy(id) {
+  const T = slNow()
+  for (const r of partsGrabbed.values()) if (r.by === id && r.t <= T && T - r.t < STREET.backS * 1000) {
+    const ag = partsAgent(r.id)
+    return { ...r, R: r.what ? 0.45 : ag?.kind === SL_K.stray ? 0.3 : 0.32, kindName: ag?.kind === SL_K.stray ? 'dog' : 'passerby' }
+  }
+  return null
+}
+function partsAgent(id) {
+  const st = slState
+  if (!st) return null
+  for (const c of st.cells.values()) for (const ag of c.agents) if (ag.id === id) return ag
+  for (const L of st.lines?.values?.() || []) for (const ag of L.riders || []) if (ag.id === id) { ag.line = L; return ag }
+  return null
+}
+// where a holder is drawn here (or simulated, off screen or on a server): x, y, z, yaw
+const partsDrawn = new Map()
+function partsHolder(id, out) {
+  const d = partsDrawn.get(id)
+  if (d && now() - d.at < 500) { out.x = d.x; out.y = d.y; out.z = d.z; out.yaw = d.yaw; return out }
+  const c = isHost ? players.get(id) : id === myId ? predicted : null
+  if (c) { out.x = c.x; out.y = c.y; out.z = c.z; out.yaw = c.yaw; return out }
+  return null
+}
+const partsHolderTmp = { x: 0, y: 0, z: 0, yaw: 0 }
+// a flight's centre at tau s
+function partsFlyAt(r, tau, o, H = 0.9) {
+  const tw = r.tw / 1000, tl = r.tl / 1000
+  if (tau <= tw) { o.x = r.x0 + r.vx * tau; o.y = r.y0 + r.vy * tau + 0.5 * GRAV * tau * tau; o.z = r.z0 + r.vz * tau; return o }
+  const wx = r.x0 + r.vx * tw, wy = r.y0 + r.vy * tw + 0.5 * GRAV * tw * tw, wz = r.z0 + r.vz * tw, u = tau - tw, f = tl > tw ? Math.min(1, u / (tl - tw)) : 1
+  o.x = wx + (r.x1 - wx) * f; o.z = wz + (r.z1 - wz) * f; o.y = Math.max(H, wy + 0.5 * GRAV * u * u)
+  return o
+}
+// the pose under record 8 or 9 (slDetached hands them here); after landing, a knock-down's lie, get-up and run
+function partsStreetPose(ag, r, t, o) {
+  const dog = ag.kind === SL_K.stray, tau = (t - r.t) / 1000, H = dog ? 0.3 : 0.9
+  o.down = true; o.v = 0
+  // the pram taken from its mother: she runs off as from a dodge; the pram is drawn by partsPram
+  if (r.what) {
+    const d = { kind: 5, t: r.from?.t ?? r.t, x: r.from?.x ?? r.x0 ?? r.x, z: r.from?.z ?? r.z0 ?? r.z, dir: 1, id: r.id, key: r.key }
+    o.rec = d; slDetached(ag, d, t, o); o.rec = r; o.down = true; return
+  }
+  if (r.kind === 8) {
+    const h = partsHolder(r.by, partsHolderTmp)
+    if (!h) { o.x = r.x; o.z = r.z; o.y = 0; o.yaw = r.yaw; o.clip = dog ? 'flinch' : 'cower'; o.ct = tau; o.pramAt = ag.kind === SL_K.pram ? [r.x, r.z, r.yaw] : null; return }
+    const C = { r: 0.48, h: 0.5 }, p = partsCarryAt(r.by, h.x, h.y, h.z, h.yaw, C, dog ? 'chest' : 'scruff', dog ? 0.3 : 0.32, [0, 0, 0])
+    o.x = p[0]; o.z = p[2]; o.y = Math.max(0, p[1] - H); o.yaw = h.yaw + (dog ? Math.PI / 2 : 0)
+    o.clip = dog ? 'flinch' : 'cower'; o.ct = dog ? 0.25 : tau; o.pitch = dog ? 0 : -0.15
+    if (ag.kind === SL_K.pram) o.pramAt = [r.x, r.z, r.yaw]
+    if (ag.kind === SL_K.cyclist) { o.bikeDown = [r.x, r.z, r.yaw]; o.wheel = 0 }
+    return
+  }
+  const tl = r.tl / 1000
+  if (ag.kind === SL_K.pram) o.pramAt = r.from ? [r.from.x, r.from.z, r.from.yaw] : null
+  if (ag.kind === SL_K.cyclist) { o.bikeDown = r.from ? [r.from.x, r.from.z, r.from.yaw] : [r.x0, r.z0, r.yaw]; o.wheel = 0 }
+  if (tau < tl) {
+    const c = partsFlyAt(r, tau, partsTmp, H), spin = Math.hypot(r.vx, r.vy, r.vz) > 3 ? GRAB.punt.spin * 0.45 : 0
+    const th = (dog ? -1 : 1) * spin * tau, s = Math.sin(th), k = Math.cos(th)
+    o.yaw = r.yaw; o.pitch = th
+    // the root is at the feet: put the turning body's centre on the flight
+    o.x = c.x - Math.sin(r.yaw) * H * s; o.z = c.z - Math.cos(r.yaw) * H * s; o.y = c.y - H * k
+    o.clip = dog ? 'flinch' : 'knockback'; o.ct = dog ? 0.3 : 0.25 + Math.min(0.5, tau * 0.4)
+    return
+  }
+  // landed: as a knock-down from where it came down
+  const land = r.land ||= { kind: 1, id: r.id, key: r.key, t: r.t + (r.tl - STREET.knockS * 1000 * 0.4), x: r.x1, z: r.z1, x1: r.x1, z1: r.z1, x2: r.x2, z2: r.z2 }
+  o.rec = land; slDetached(ag, land, t, o); o.rec = r
+  if (ag.kind === SL_K.cyclist) o.bikeDown = r.from ? [r.from.x, r.from.z, r.from.yaw] : [r.x0, r.z0, r.yaw]
+  if (ag.kind === SL_K.pram) o.pramAt = r.from ? [r.from.x, r.from.z, r.from.yaw] : null
+}
+// a pram not with its mother (parked where she was grabbed, or itself held or flying): drawn here; true if it was
+const partsPramPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, held: false, flying: false }
+function partsPramAt(ag, p, T) {
+  const r = p.rec
+  if (!r || (r.kind !== 8 && r.kind !== 9)) return null
+  const o = partsPramPose
+  o.pitch = 0; o.held = false; o.flying = false
+  if (!r.what) { if (!p.pramAt) return null; const f = STREET.pramBack; o.x = p.pramAt[0] + Math.sin(p.pramAt[2]) * f; o.z = p.pramAt[1] + Math.cos(p.pramAt[2]) * f; o.y = 0; o.yaw = p.pramAt[2]; return o }
+  const tau = (T - r.t) / 1000
+  if (r.kind === 8) {
+    const h = partsHolder(r.by, partsHolderTmp); if (!h) return null
+    const q = partsCarryAt(r.by, h.x, h.y, h.z, h.yaw, { r: 0.48, h: 0.5 }, 'chest', 0.45, [0, 0, 0])
+    o.x = q[0]; o.y = q[1] - 0.5; o.z = q[2]; o.yaw = h.yaw + Math.PI / 2; o.held = true; return o
+  }
+  const c = partsFlyAt(r, Math.min(tau, r.tl / 1000), partsTmp, 0.45)
+  o.x = c.x; o.y = Math.max(0, c.y - 0.45); o.z = c.z; o.yaw = r.yaw + Math.PI / 2; o.flying = tau < r.tl / 1000
+  o.pitch = o.flying ? tau * GRAB.punt.spin * 0.5 : Math.PI / 2 * 0.9
+  if (!o.flying) o.y = 0.3
+  return o
+}
+// slFrame's pram: drawn here when it isn't with its mother
+function partsPram(kit, ag, p, d, T) {
+  const P = partsPramAt(ag, p, T)
+  if (!P) return false
+  if (GAME.streetLife?.gone?.(ag.id, T)) return true
+  const lod = d < 18 ? '' : '_lod1', s = p.scale || 1
+  slSet(kit.parts['pram_body' + lod], P.x, P.y, P.z, P.yaw, s, 0, P.pitch)
+  for (const [nm, ax, r] of [['pram_wheel_f', 0.335, 0.215], ['pram_wheel_r', -0.335, 0.255]]) for (const side of [-1, 1]) {
+    const ox = side * 0.285, c = Math.cos(P.yaw), sn = Math.sin(P.yaw), cp = Math.cos(P.pitch), sp = Math.sin(P.pitch)
+    const ly = r * cp - ax * sp, lz = r * sp + ax * cp
+    slSet(kit.parts[nm + lod], P.x + c * ox + sn * lz, P.y + ly, P.z - sn * ox + c * lz, P.yaw + (side < 0 ? Math.PI : 0), s, 0, side < 0 ? -P.pitch : P.pitch)
+  }
+  return true
+}
+
+// ---- the wire: his row's grab field (who holds him + 1; -1 flying from a punt or throw), and his act (what his hands are
+// doing: 1 punt, 2 throw, 3 pull, 4 grab, as code × 4 + its age in s)
+const partsPack = c => c.grabBy !== undefined ? c.grabBy + 1 : c.punted ? -1 : 0
+const partsAct = c => { const S = c.parts; return S?.act ? S.act * 4 + Math.min(3.99, r2(S.age)) : S?.press > 0.12 ? 3 * 4 + 0.001 : 0 }
+// a guest's own row: held, it isn't predicted (as a rider isn't); let go, its prediction restarts from the host's row
+function partsOwn(c, v) {
+  const by = v > 0 ? v - 1 : undefined, was = c.grabBy
+  c.grabBy = by
+  c.puntedNet = v === -1
+  if (by !== undefined && was === undefined) { if (c.body && A.getPointer(c.body.getBroadphaseHandle())) world.removeRigidBody(c.body); moveReset(c) }
+  if (by === undefined && was !== undefined) { if (c.body && !A.getPointer(c.body.getBroadphaseHandle())) { c.body.clearForces(); world.addRigidBody(c.body, ...COLLIDE.capsule) }; predLost = true }
+}
+
+// ---- drawing: what each avatar's hands are doing, held bodies in their holders' hands, tumbling flights
+// the hold an avatar draws with, before the engine's own (sit, lift, ...): 'held' in someone's hands, 'grip' holding
+function partsHoldOf(id, p) {
+  const a = avatars.get(id), rig = !!a?.rig
+  if ((p.grab | 0) > 0) return rig ? 'held' : null
+  const H = partsHoldsDrawn.get(id)
+  return !H ? null : rig && H.grip !== 'overhead' ? 'grip' : 'lift'
+}
+const partsHoldsDrawn = new Map()       // holder id -> { R, grip, at } this frame
+// before the avatars are drawn: who holds what (from the rows and records here)
+function partsDrawPrep(me, others) {
+  partsHoldsDrawn.clear()
+  const all = [me && { ...me, id: myId, grab: isHost ? partsPack(me) : me.grabBy !== undefined ? me.grabBy + 1 : me.puntedNet ? -1 : 0 }, ...others].filter(Boolean)
+  for (const p of all) { const a = avatars.get(p.id); if (a) { a.partsId = p.id; a.partsAct = p.id === myId ? partsAct(me) : p.act || 0 } }
+  for (const p of all) if ((p.grab | 0) > 0) partsHoldsDrawn.set(p.grab - 1, { R: 0.4, grip: 'scruff', who: p.id })
+  for (const o of objs) { const by = o.heldBy ?? objHeld.get(o.id); if (by !== undefined && !o.K.carry) partsHoldsDrawn.set(by, { R: o.R || objR(o.K), grip: partsGrip(partsKindOf(o), o.R || objR(o.K)), obj: o }) }
+  for (const r of partsGrabbed.values()) { const T = slNow(); if (r.t <= T && T - r.t < STREET.backS * 1000) { const ag = partsAgent(r.id)
+    partsHoldsDrawn.set(r.by, { R: r.what ? 0.45 : ag?.kind === SL_K.stray ? 0.3 : 0.32, grip: r.what || ag?.kind === SL_K.stray ? 'chest' : 'scruff', street: r }) } }
+}
+// after: each held avatar in its holder's hands (as the holder is drawn), each flying one turning over
+function partsDraw(me, others, t, dt, meD) {
+  const T = now()
+  for (const [id, a] of avatars) if (a?.mesh?.visible) partsDrawn.set(id, { x: a.mesh.position.x, y: a.mesh.position.y, z: a.mesh.position.z, yaw: id === myId ? me.yaw : others.find(o => o.id === id)?.yaw ?? 0, at: T })
+  const all = [me && { ...me, id: myId, grab: isHost ? partsPack(me) : me.grabBy !== undefined ? me.grabBy + 1 : me.puntedNet ? -1 : 0 }, ...others].filter(Boolean)
+  for (const p of all) {
+    const a = avatars.get(p.id)
+    if (!a?.mesh) continue
+    const g = p.grab | 0
+    if (g > 0) {
+      const H = partsDrawn.get(g - 1)
+      if (!H) continue
+      const C = GAME.participant(g - 1, 0) || { r: 0.48, h: 0.5 }, q = partsCarryAt(g - 1, H.x, H.y, H.z, H.yaw, C, 'scruff', a.spec?.r ?? 0.4)
+      a.mesh.position.set(q[0], q[1], q[2]); a.mesh.rotation.x = 0
+      const hm = avatars.get(g - 1)?.mesh
+      if (hm) a.mesh.rotation.y = hm.rotation.y + Math.PI
+      if (p.id === myId) { if (meD) { meD.x = q[0]; meD.y = q[1]; meD.z = q[2] } if (predicted && !isHost) { predicted.x = q[0]; predicted.y = q[1]; predicted.z = q[2] } }
+      a.partsSpin = 0
+    } else if (g === -1) {
+      a.partsSpin = (a.partsSpin || 0) + dt * GRAB.punt.spin * 0.5
+      a.mesh.rotation.x = a.partsSpin
+    } else if (a.partsSpin) { a.partsSpin = 0; a.mesh.rotation.x = 0 }
+  }
+}
+// the rig: his hands' clips over the legs' (a grab, the hold, a pull, a throw, the punt: assets/maniak_grab.*), and held,
+// the dangling body's
+const PARTS_CLIPS = { grab: 'maniak_grab', hold: 'maniak_hold', scruff: 'maniak_hold_scruff', over: 'maniak_hold_over', pull: 'maniak_pull', throw: 'maniak_throw', punt: 'maniak_punt' }
+function partsRig(a, R, M, t) {
+  if (a.spec.model !== 'maniak') return
+  const act = a.partsAct || 0, code = Math.floor(act / 4), age = act - code * 4, hold = partsHoldsDrawn.get(a.partsId)
+  if (hold && !code) {
+    const clip = rigClip(M, hold.grip === 'scruff' ? PARTS_CLIPS.scruff : hold.grip === 'overhead' ? PARTS_CLIPS.over : PARTS_CLIPS.hold)
+    if (clip) rigPose(R, clip, (t / 1000) % clip.duration, 1, RIG_UPPER)
+  }
+  const name = code === 1 ? PARTS_CLIPS.punt : code === 2 ? PARTS_CLIPS.throw : code === 3 ? PARTS_CLIPS.pull : code === 4 ? PARTS_CLIPS.grab : null
+  const clip = name && rigClip(M, name)
+  if (clip && age < clip.duration) R.over = { clip, t0: 0, at: t - age * 1000, clock: age, full: code === 1 || code === 3 || !(a.v > 0.6), parts: true }
+  else if (R.over?.parts) R.over = null
+}
+
+// ---- hand points: what each holder's hands are doing (act code and age), the point a held thing is at for it
+function partsActOf(id) {
+  const c = isHost ? players.get(id) : id === myId ? predicted : null
+  if (c) { const S = c.parts; return S?.act ? [S.act, S.age] : [0, 0] }
+  const v = avatars.get(id)?.partsAct || 0, k = Math.floor(v / 4)
+  return [k, v - k * 4]
+}
+// a held thing's centre for its holder at (x, y, z, yaw): in his grip, or on its way to his boot as he punts it
+function partsCarryAt(id, x, y, z, yaw, C, grip, R, out = [0, 0, 0]) {
+  const [k, age] = partsActOf(id)
+  if (k === 1 && age < GRAB.punt.drop) {
+    const a = partsHoldAt(x, y, z, yaw, C, grip, R, [0, 0, 0]), fx = -Math.sin(yaw), fz = -Math.cos(yaw), f = 0.55 + R * 0.8
+    const b = [x + fx * f, y - C.h - C.r + 0.42 + R * 0.5, z + fz * f], u = age / GRAB.punt.drop, e = u * u
+    for (let i = 0; i < 3; i++) out[i] = a[i] + (b[i] - a[i]) * e
+    return out
+  }
+  return partsHoldAt(x, y, z, yaw, C, grip, R, out)
+}
+// the engine's holdObjects: an object in a chest grip, or punted from any grip, sits here (else the engine's own handOf)
+function partsHand(c, o) {
+  if (o.K.carry || !GAME.participantOf(c)?.grab) return null
+  const grip = partsGrip(partsObjectKind(c, o) || 'object', o.R || objR(o.K)), [k] = partsActOf(c.id)
+  if (grip === 'overhead' && k !== 1) return null
+  return partsCarryAt(c.id, c.x, c.y, c.z, c.yaw, c, grip === 'overhead' ? 'chest' : grip, o.R || objR(o.K))
+}
+// a guest draws another's held object at that holder's drawn hands, as the engine does carried ones
+function partsDrawHand(o, p, C) {
+  if (o.K.carry || !C?.grab) return null
+  const grip = partsGrip(partsKindOf(o), objR(o.K)), [k] = partsActOf(p.id)
+  if (grip === 'overhead' && k !== 1) return null
+  return partsCarryAt(p.id, p.x, p.y, p.z, p.yaw, C, grip === 'overhead' ? 'chest' : grip, objR(o.K))
+}
+// a held person follows the drop too (host)
+function partsCharAt(c, h) { return partsCarryAt(c.id, c.x, c.y, c.z, c.yaw, c, 'scruff', h.r) }
+
+// ---- the host: while his hands are full (or busy), click and right-click are his hands', not his fists' or the chain's
+function partsMask(cur) {
+  for (const [id, inp] of cur) {
+    const c = players.get(id)
+    if (!c?.parts || !(c.parts.act && c.parts.act !== 4 || partsHeld(c))) continue
+    if (inp.fire || inp.alt || inp.descend) cur.set(id, { ...inp, fire: false, alt: false, descend: false, pf: inp.fire, pa: inp.alt })
+  }
+}
+// the status line's "what can be used here": a seat, or something to grab (it names no attack)
+let partsUseAt = 0, partsUseWas = ''
+function partsUseLabel(me) {
+  if (!me || me.dead > 0) return ''
+  const T = now()
+  if (T - partsUseAt < 200) return partsUseWas
+  partsUseAt = T
+  if (partsHeld(me)) return partsUseWas = 'drop'
+  const g = partsNear(me, 'grab')[0], car = objs.find(p => takeable(me, p) && p.V && !canLift(me, p) || p.V && objGap(me, p) <= 1.5 && p.riders.includes(undefined))
+  return partsUseWas = g && (!car || g.gap < objGap(me, car)) ? 'grab' : car ? 'use' : g ? 'grab' : ''
+}
+
+// ---- an object's own part channel (#57's car doors, holes and dents): o.pm a mask of bits, o.pl a list of ints (at most
+// PART_LIST of them, the oldest dropped), o.pv their version. Host-set; in the snapshot as 'pp' (each change in the next 3,
+// and all of them every 2 s for joiners), [id, pv, pm, n, ...pl] an object; dropped with the object; a wreck keeps its car's
+const PART_LIST = 16 * 8, partsNet = new Map(), partsOut = new Map()
+let partsAllAt = 0
+const partsMaskOf = o => o.pm ?? partsNet.get(o.id)?.pm ?? 0
+const partsListOf = o => o.pl ?? partsNet.get(o.id)?.pl ?? []
+const partsVersion = o => o.pv ?? partsNet.get(o.id)?.pv ?? 0
+function partsChanged(o) { o.pv = (o.pv || 0) + 1; partsOut.set(o.id, 0) }
+function partsWireOut() {
+  if (!isHost || !conns.size) return {}
+  const T = tickAt || now(), out = [], all = T - partsAllAt >= 2000
+  if (all) partsAllAt = T
+  for (const o of objs) {
+    if (!o.pv) continue
+    const n = partsOut.get(o.id)
+    if (!all && (n === undefined || n >= 3)) continue
+    const L = o.pl || []
+    out.push(o.id, o.pv, o.pm | 0, L.length, ...L)
+    if (n !== undefined) n >= 2 ? partsOut.delete(o.id) : partsOut.set(o.id, n + 1)
+  }
+  return out.length ? { pp: out } : {}
+}
+function partsWireIn(d) {
+  if (isHost || !Array.isArray(d.pp) || d.pp.length > 4 * 4096) return
+  const a = d.pp, T = now()
+  for (let i = 0; i + 3 < a.length;) {
+    const [id, pv, pm, n] = a.slice(i, i + 4)
+    if (![id, pv, pm, n].every(Number.isInteger) || n < 0 || n > PART_LIST || i + 4 + n > a.length) return
+    const pl = a.slice(i + 4, i + 4 + n); i += 4 + n
+    if (!pl.every(Number.isFinite)) continue
+    const e = partsNet.get(id)
+    if (!e || pv > e.pv) { partsNet.set(id, { pv, pm, pl, at: T }); const o = objs.find(o => o.id === id); if (o) { o.pm = pm; o.pl = pl; o.pv = pv } }
+    else e.at = T
+  }
+  for (const [id, e] of partsNet) if (T - e.at > 15000) partsNet.delete(id)
+}
+
+// ---- the API: content is data plus, for an attached part, an adapter
+GAME.parts = {
+  rows: PARTS, rules: GRAB,
+  // a kind: its row (of, grab, throw, punt, rip: { pull, gives }, break, dent, through, mass) and, for an attached part, its
+  // adapter: near(c, reach) -> [{ ref, at, gap, R, mass, ... }], detach(inst, c) -> the torn part's place [x, y, z] (or false:
+  // it holds), drawn(o, mask) for its own drawing
+  kind(name, row, adapter) { PARTS[name] = { ...PARTS[name], ...row }; if (adapter) PART_ADAPTERS[name] = adapter; return PARTS[name] },
+  near: (c, verb) => partsNear(c, verb), held: c => partsHeld(c),
+  // the part channel
+  mask: o => partsMaskOf(o), list: o => partsListOf(o), version: o => partsVersion(o),
+  setMask(o, bits) { if (!isHost) return false; o.pm = bits | 0; partsChanged(o); return true },
+  push(o, ints) { if (!isHost || !Array.isArray(ints) || !ints.every(Number.isFinite)) return false; const L = (o.pl ||= []); L.push(...ints.map(v => Math.round(v))); if (L.length > PART_LIST) L.splice(0, L.length - PART_LIST); partsChanged(o); return true },
+  // listeners: grab (c, inst), rip (o, inst, c: the torn part's object on the host before its first snapshot), throw and
+  // punt (c, held, thing), land (a street flight's record)
+  on(type, fn) { (partsHeard[type] ||= []).push(fn) },
+  // #45: a pram away from its mother (held, flying, parked where she was grabbed), or null
+  pramPose(id, T = slNow()) { const ag = partsAgent(id); if (!ag) return null; const p = slPose(ag, T, SL_POSE()); const P = partsPramAt(ag, p, T); return P && { ...P } },
+  // tests: a character's verbs by hand (host)
+  test: {
+    grab: (c, verb = 'grab') => { const g = partsNear(c, verb)[0]; if (g) partsTake(c, g); return g || null },
+    flights: () => partsFlights.map(F => ({ id: F.rec.id, how: F.how, struck: [...F.struck] })),
+    // a loose object of an OBJECTS row (host), its id
+    spawn(name, x, y, z, yaw = 0) { if (!isHost) return null; const k = OBJECTS.findIndex(K => K.name === name), id = partsFreeId(); const o = k >= 0 && id >= 0 && addObject(k, [x, y, z], id, yaw); return o ? o.id : null },
+    // a character's hands and state here (host: any player; guest: its own)
+    state(id) { const c = isHost ? players.get(id) : id === myId ? predicted : null; if (!c) return null; const h = partsHeld(c)
+      return { act: c.parts?.act || 0, age: +(c.parts?.age || 0).toFixed(3), held: h && { kind: h.kind, src: h.src, id: h.ref?.id ?? h.ref?.ag?.id ?? h.ref?.rec?.id }, grabBy: c.grabBy, punted: !!(c.punted || c.puntedNet), x: c.x, y: c.y, z: c.z, hp: c.hp } },
+    near: (id, verb = 'grab') => { const c = isHost ? players.get(id) : predicted; return c ? partsNear(c, verb).map(g => ({ kind: g.kind, src: g.src, gap: +g.gap.toFixed(2), id: g.ref?.id ?? g.ref?.ag?.id })) : [] },
+    // a street person's pose here at room time T (or now)
+    pose(agentId, T = slNow()) { const ag = partsAgent(agentId); if (!ag) return null; const p = slPose(ag, T, SL_POSE()); return { x: p.x, y: p.y, z: p.z, yaw: p.yaw, clip: p.clip, down: p.down, kind: p.rec?.kind ?? 0, pitch: p.pitch } },
+    label: () => partsUseLabel(selfChar()),
+  },
+}
+// his clips: their own file, after the engine's and #48's (and #51's)
+RIG_FILES.maniak_grab = 'maniak_grab.9845e572.glb'
+MODELS.maniak.anims = [...[MODELS.maniak.anims].flat(), RIG_FILES.maniak_grab]
+// the host's phases: hands masked before intent; people let go before physics (where the kill credit is); flights after
+{
+  const P = HOST_PHASES, bi = P.beforeIntent, bp = P.beforePhysics, ap = P.afterPhysics
+  P.beforeIntent = t => { partsMask(t.cur); bi(t) }
+  P.beforePhysics = t => { bp(t); partsHostRelease(t.all, t.credit) }
+  P.afterPhysics = t => { ap(t); partsAfter(t.all, t.dt, t.credit) }
+  const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems
+  L.snapshot = () => ({ ...snap(), ...partsWireOut() })
+  L.takeItems = function (d) { take.call(this, d); partsWireIn(d) }
 }
 
 // ---------------------------------------------------------------- street life (card #26)
@@ -19551,6 +20332,7 @@ function slJunctionCorners(jx, jz, near) {
 // ---- a cell's people, built once from its plan and kept while it is near
 let slState = null
 function slReset() {
+  partsGrabbed.clear(); partsFlights.length = 0          // card #55
   const F = faustState
   slState = { seed: F.seed, S: F.S, cells: new Map(), lines: new Map(), plans: new Map(), rec: new Map(), byId: new Map(), panics: [], out: [], recSeq: 0, lastOut: -1e9, frame: 0,
     exits: new Map(), exitN: 0, tracerSeen: new WeakSet(), stats: { cells: 0, records: 0, bytesOut: 0, wireN: 0, hostMs: 0, frameMs: 0, people: 0 } }
@@ -19796,6 +20578,7 @@ function slAddRec(a, local) {
   if (r.kind === 2) r.r = a[5]
   if (r.kind === 4) { r.x1 = r.x; r.z1 = r.z; r.x2 = a[5]; r.z2 = a[6]; r.body = a[7] | 0; st.exits.set(key, { ag: { id: r.id, kind: SL_K.exit, body: r.body % 3, tint: [0.9, 0.9, 0.9], r } }) }
   if (r.kind === 5) r.dir = a[5] < 0 ? -1 : 1
+  if (r.kind === 8 || r.kind === 9) partsRecParse(r, a)          // card #55
   st.rec.set(key, r)
   if (r.kind !== 2) { const L = st.byId.get(r.id) || st.byId.set(r.id, []).get(r.id); L.push(r); L.sort((p, q) => p.t - q.t) }
   else st.panics.push(r)
@@ -19807,6 +20590,7 @@ function slPrune(t) {
   const st = slState
   for (const [k, r] of st.rec) if (t - r.t > STREET.keepMs) {
     st.rec.delete(k); st.exits.delete(k)
+    if (r.kind === 8 && partsGrabbed.get(r.id) === r) partsGrabbed.delete(r.id)
     if (r.kind === 2) st.panics.splice(st.panics.indexOf(r), 1)
     else if (r.kind === 6 || r.kind === 7) slBabyForget(r)
     else { const L = st.byId.get(r.id); if (L) { L.splice(L.indexOf(r), 1); if (!L.length) st.byId.delete(r.id) } }
@@ -19918,6 +20702,7 @@ function slClip(ag, o, t) {
 }
 // the pose under a record
 function slDetached(ag, r, t, o) {
+  if (r.kind === 8 || r.kind === 9) return partsStreetPose(ag, r, t, o)          // card #55: held, flung
   const tau = (t - r.t) / 1000, H = ag.body >= 3 ? 1.66 : 1.78, S = STREET
   const dog = ag.kind === SL_K.stray
   if (r.kind === 1 || r.kind === 4) {
@@ -20170,7 +20955,7 @@ function slWireOut() {
 }
 function slWireIn(d) {
   if (isHost || !slState || !Array.isArray(d.sl) || d.sl.length > 400) return
-  for (const a of d.sl) if (Array.isArray(a) && a.length >= 5 && a.length <= 12 && a.every(Number.isFinite) && a[0] >= 1 && a[0] <= 5) slAddRec(a, true)
+  for (const a of d.sl) if (Array.isArray(a) && a.length >= 5 && a.every(Number.isFinite) && (a.length <= 12 && a[0] >= 1 && a[0] <= 5 || partsRecOk(a))) slAddRec(a, true)
 }
 
 // ---- drawing: each model's clips baked into a bone texture (a 3x4 matrix per joint per frame, root space), skinned on the
@@ -20366,7 +21151,7 @@ function slFrame(t, dt) {
       const d = Math.hypot(p.x - cx, p.z - cz)
       if (ag.kind === SL_K.stray) { if (d < D.dog) slDrawSkinned(kit.dog, p, d, ag.tint, ag.companion ? 0.9 : 0.95); continue }
       slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++
-      if (ag.kind === SL_K.pram && d < D.pram && !slPramGone(ag, T)) {
+      if (ag.kind === SL_K.pram && d < D.pram && !slPramGone(ag, T) && !partsPram(kit, ag, p, d, T)) {
         const lod = d < 18 ? '' : '_lod1', s = p.scale, f = STREET.pramBack, x = p.x + Math.sin(p.yaw) * f * s, z = p.z + Math.cos(p.yaw) * f * s
         slSet(kit.parts['pram_body' + lod], x, 0, z, p.yaw, s); slBabySeen(ag, p, x, z, d, T)
         const roll = (p.s || 0) / 0.215, roll2 = (p.s || 0) / 0.255
@@ -20394,7 +21179,7 @@ function slFrame(t, dt) {
   // cyclists
   for (const L of slLinesNear(cx, cz, D.bike)) for (const ag of L.riders) {
     if (slRnd(ag.id, 77) >= qn && !st.byId.has(ag.id)) continue
-    ag.line = L; const p = slPose(ag, T, slPoseA); p.bikeDown = p.rec?.kind === 1 ? p.bikeDown : null
+    ag.line = L; const p = slPose(ag, T, slPoseA); p.bikeDown = p.rec?.kind === 1 || p.rec?.kind === 8 || p.rec?.kind === 9 ? p.bikeDown : null
     if (p.bikeDown) { const [bx, bz, by] = p.bikeDown, d = Math.hypot(bx - cx, bz - cz)
       if (near(bx, bz, D.bike) && seen(bx, 0.4, bz, 1.6)) slBikeDown(kit, d < 16 ? '' : '_lod1', bx, bz, by) }
     if (p.hidden || !near(p.x, p.z, D.bike) || !seen(p.x, 1, p.z, 2.4)) continue
@@ -22826,7 +23611,7 @@ function stepSim(t) {
       const _p1 = now()
       predictObjects(predicted, (Math.max(rtt, 0) + 100) / 1000)
       easeOffsets()
-      tickChars(predicted.ride ? [] : [predicted], () => inp, TICK)
+      tickChars(predicted.ride || predicted.grabBy !== undefined ? [] : [predicted], () => inp, TICK)
       lookStep(predicted, input)
       sampleTick(myId, predicted, predJump, input.fire || input.alt); predJump = false
       msPhys = msPhys * 0.9 + (now() - _p1) * 0.1
@@ -23013,7 +23798,7 @@ function draw(dt, t) {
     if (!me) { frameFailed('draw', new Error('the host has no player 0')); return }
     others = [...players].filter(([id]) => id !== 0)
       .map(([id, c]) => ({ id, ...(P => P ? { x: P[0], y: P[1], z: P[2], sim: c } : { x: c.x, y: c.y, z: c.z })(drawnPose(c)), yaw: c.yaw, wy: c.wy, vx: c.vx, vz: c.vz, dead: c.dead,
-                           cid: c.cid, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: chainPack(c), hayAge: c.hayAge || 0, springT: c.springT || 0,
+                           cid: c.cid, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: chainPack(c), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
                            gun: c.gun, pitch: c.pitch, hp: c.hp, kills: c.kills | 0, mark: c.mark, markT: c.markT, vy: c.vy, jl: c.jLock }))
     pkl = GAME.view.pickups()
   } else {
@@ -23031,8 +23816,9 @@ function draw(dt, t) {
     pkl = snapPk
   }
 
-  const obl = easeHolds(objectsDrawn(others), t), holdOf = (id, p) => sits.has(id) ? 'sit' : lifts.has(id) ? 'lift' : p.web > 0 ? 'swing' : (diving(p) ? 'dive' : flightOf(p, avatars.get(id)?.hold))
+  const obl = easeHolds(objectsDrawn(others), t), holdOf = (id, p) => partsHoldOf(id, p) || (sits.has(id) ? 'sit' : lifts.has(id) ? 'lift' : p.web > 0 ? 'swing' : (diving(p) ? 'dive' : flightOf(p, avatars.get(id)?.hold)))
   lifts.clear(); sits.clear(); carries.clear()
+  partsDrawPrep(me, others)          // card #55
   for (const o of obl) (o.K.carry ? carries : lifts).add(o.heldBy ?? objHeld.get(o.id) ?? o.liftBy)
   for (const [s, p] of objSeats) sits.set(p, [s >> 3, s & 7])
   if (isHost) for (const o of objs) o.riders?.forEach((p, i) => { if (p !== undefined) sits.set(p, [o.id, i]) })
@@ -23078,6 +23864,7 @@ function draw(dt, t) {
     drawAura(o.id, o.anim || 0, dt)
     drawHeld(o.id, (!sits.has(o.id) || armed) && o, t)        // cosmetic, never a capsule
   }
+  partsDraw(me, others, t, dt, meD)          // card #55: held bodies in their holders' hands, flights tumbling
   for (const id of [...avatars.keys()]) if (id >= 0 && !live.has(id)) dropAvatar(id)
   if (!offPlay()) clearPrepared(true)
 
@@ -23317,7 +24104,7 @@ function drawHud(me, others, t) {
   const clock = matchLeft > 0
     ? '  ·  ' + mmss(matchLeft)
     : ''
-  const use = liftOf(me) > 0 ? 'lift' : objs.some(p => takeable(me, p)) ? 'use' : ''
+  const use = partsUseLabel(me)          // card #55: grab, use or drop
   // the status line names no attack (#39): the name, what can be used here, the clock; the keys are in the menu
   hud('hud', el('#hud'), 'textContent', IS_TOUCH
     ? nm + (cycles ? '  ·  WPN next' : '') + (use ? '  ·  USE ' + use : '') + clock
