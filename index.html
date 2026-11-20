@@ -18919,6 +18919,14 @@ const CAPE_RUN_BEND = [0.25, 0.85, 1], CAPE_RUN_WIDTH = [1, 0.58, 0.45], CAPE_RU
 // half-width (out of the cloth, over its lower two thirds, growing to the hem) running down it at CAPE_FLUTTER_RATE rad/s.
 // Both come in with the ripple (5 to 9 m/s); the cloth's points against his body carry them too
 const CAPE_CURL = 0.25, CAPE_FLUTTER = 0.12, CAPE_FLUTTER_RATE = 20
+// (#63, frame by frame: at a sprint the cape popped where his body met it, taking the whole push in one frame, and his
+// forearm cut its side at the top of his back-swing) at speed its contacts are soft. Its spring pulls it no more than
+// CAPE_SOFT_IN (rad) inside its last contact with his body, so it settles back onto him rather than slamming into him each
+// stride; each solve takes CAPE_SOFT_F of the lift that would clear him, never letting the cloth more than CAPE_SOFT into
+// its skin (M.capeSkin, 2.5 cm off him); a push leaves the cloth with its speed; and the arms may gather it to
+// CAPE_RUN_GATHER of its width (rather than CAPE_GATHER), so the forearm passes outside it. It comes in with the ripple
+// (5 to 9 m/s): standing, walking, his run and dying are as they were
+const CAPE_SOFT = 0.02, CAPE_SOFT_F = 0.25, CAPE_SOFT_IN = 0.04, CAPE_RUN_GATHER = 0.37
 const capeP = new THREE.Vector3(), capeX = new THREE.Vector3(), capeY = new THREE.Vector3(), capeM = new THREE.Matrix4(), capeR = new THREE.Quaternion(), capeL3 = new THREE.Matrix3()
 // once per model: the cloth's points, each its bones, its bind position in each bone's frame, the weights, and the share
 // of it each cape bone carries (a turn of cape bone k moves it by share[k]); and each cape bone's axes in its parent's
@@ -19219,7 +19227,9 @@ function rigCape(a, R, dt) {
     const share = (bend[k] ?? 1) + ((CAPE_RUN_BEND[k] ?? 1) - (bend[k] ?? 1)) * run, amp = (0.04 + 0.03 * k) + ((CAPE_RUN_RIPPLE[k] ?? 0.1) - (0.04 + 0.03 * k)) * run
     const want = dying ? 0 : lift * share + Math.sin(R.capePh - k * 1.1 + a.cid) * amp * ripple + plumb * (k ? 1 : 0.85)
     wants[k] = want
-    R.capeW[k] += ((want - R.capeT[k]) * 40 - R.capeW[k] * 9) * h; R.capeT[k] += R.capeW[k] * h
+    // (at speed, no further into him than CAPE_SOFT_IN past its last contact)
+    const wantS = run && lo[k] > -Infinity && !dying ? want + (Math.max(want, lo[k] - CAPE_SOFT_IN) - want) * run : want
+    R.capeW[k] += ((wantS - R.capeT[k]) * 40 - R.capeW[k] * 9) * h; R.capeT[k] += R.capeW[k] * h
     if (R.capeT[k] < lo[k]) { R.capeT[k] = lo[k]; R.capeW[k] = Math.max(R.capeW[k], 0) }
     if (R.capeT[k] > hi[k]) { R.capeT[k] = hi[k]; R.capeW[k] = Math.min(R.capeW[k], 0) }
     if (seated && R.capeT[k] > CAPE_SEAT) { R.capeT[k] = CAPE_SEAT; R.capeW[k] = Math.min(R.capeW[k], 0) }
@@ -19263,7 +19273,7 @@ function rigCape(a, R, dt) {
         }
         // (and at speed narrower than his shoulders, eased in and out: the arms' gather is at once)
         const top = 1 + ((CAPE_RUN_WIDTH[k] ?? 1) - 1) * shape, wide = R.capeG[k] > top ? Math.max(top, R.capeG[k] - 1.5 * hs) : Math.min(top, R.capeG[k] + 1.2 * hs)
-        const g = Math.max(CAPE_GATHER, gather < R.capeG[k] ? Math.min(gather, wide) : Math.min(gather, wide))
+        const g = Math.max(CAPE_GATHER + (CAPE_RUN_GATHER - CAPE_GATHER) * run, Math.min(gather, wide))
         if (Math.abs(g - R.capeG[k]) > 0.002) { R.capeG[k] = g; capePose(R, k); capeSkinPts(S); moved = true }
       }
       // the top rows off his shoulders: the least move back of the first bone that clears them; let down at 0.3 m/s
@@ -19295,9 +19305,15 @@ function rigCape(a, R, dt) {
         // (dying or on the ground, it folds at CAPE_FOLD rad/s at most: falling, the road can come up a long way in a frame)
         let lift = capeLift(R, S, k, H, L, skin, floor, down, up, ground, dying)
         if (dying || ground) lift = Math.max(-CAPE_FOLD * hs, Math.min(CAPE_FOLD * hs, lift))
+        else if (run && lift > 0) {      // (at speed, soft: a share of it, no less than keeps it within CAPE_SOFT of its skin)
+          const stuck = capeStuck, need = capeSearch(S, k, H, L, skin - CAPE_SOFT * run, floor, 0, down, up, top, false, false)
+          capeStuck = stuck
+          lift = Math.max(need, lift * (1 - (1 - CAPE_SOFT_F) * run))
+        }
         if (lift) {
           R.capeT[k] += lift
-          if (lift > 0) { lo[k] = R.capeT[k]; hi[k] = Math.max(hi[k], lo[k]); R.capeW[k] = Math.max(R.capeW[k], 0) }
+          // (at speed the cloth keeps the push's speed, so when his body stops pushing it carries on and the spring slows it)
+          if (lift > 0) { lo[k] = R.capeT[k]; hi[k] = Math.max(hi[k], lo[k]); R.capeW[k] = Math.max(R.capeW[k], run && !dying && !ground ? run * lift / hs : 0) }
           else { hi[k] = R.capeT[k]; lo[k] = Math.min(lo[k], hi[k]); R.capeW[k] = Math.min(R.capeW[k], 0) }
           capePose(R, k); capeSkinPts(S); moved = true
         }
@@ -19328,21 +19344,25 @@ function rigCape(a, R, dt) {
 // and back across a run cycle seen from behind. At load each cape vertex is marked (capeMark: x its weight on the cape
 // bones, y the same on the lining), and the material's shader gives the cloth no grazing rise in its reflectance (F90 down
 // to F0), keeps a quarter of the cape's specular (the lining a tenth) and darkens the lining a quarter. The hook goes with the material's clones (each avatar dresses a
-// clone); Ink wraps it as it wraps any; Realistic draws him with its own material, which this leaves alone.
+// clone); Ink wraps it as it wraps any; Realistic's rig material (realRigMaterial) runs the same after its own hooks.
 const capeShaded = new WeakSet()
+// the cape's shading in a material's shader (capeShadeMaterial's hook, and Realistic's rig material, realRigMaterial,
+// after its own): its lining a quarter darker, no grazing rise in its reflectance, and its specular (all of it: the
+// lights', the lamps', Realistic's environment and its hero rim, which lights any edge-on surface) cut to a quarter, the
+// lining's to a tenth, after every hook's lighting. Constant factors in [0, 1] only (no pow, division or normalize)
+function capeShadeShader(shader) {
+  shader.vertexShader = 'attribute vec2 capeMark;\nvarying vec2 vCapeMark;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vCapeMark = capeMark;')
+  shader.fragmentShader = 'varying vec2 vCapeMark;\n' + shader.fragmentShader
+    .replace('#include <map_fragment>', '#include <map_fragment>\n  diffuseColor.rgb *= 1.0 - 0.25 * vCapeMark.y;')
+    .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n  material.specularF90 = mix(material.specularF90, material.specularColor.g, vCapeMark.x);')
+    .replace('#include <aomap_fragment>', '{ float capeSpec = 1.0 - 0.75 * vCapeMark.x - 0.15 * vCapeMark.y;\n    reflectedLight.directSpecular *= capeSpec; reflectedLight.indirectSpecular *= capeSpec; }\n  #include <aomap_fragment>')
+}
 function capeShadeMaterial(m) {
   if (!m?.isMeshStandardMaterial || capeShaded.has(m)) return m
   capeShaded.add(m)
   const prev = m.onBeforeCompile, key = m.customProgramCacheKey()
-  m.onBeforeCompile = function (shader, r) {
-    prev.call(this, shader, r)
-    shader.vertexShader = 'attribute vec2 capeMark;\nvarying vec2 vCapeMark;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vCapeMark = capeMark;')
-    shader.fragmentShader = 'varying vec2 vCapeMark;\n' + shader.fragmentShader
-      .replace('#include <map_fragment>', '#include <map_fragment>\n  diffuseColor.rgb *= 1.0 - 0.25 * vCapeMark.y;')
-      .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n  material.specularF90 = mix(material.specularF90, material.specularColor.g, vCapeMark.x);')
-      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n  { float capeSpec = 1.0 - 0.75 * vCapeMark.x - 0.15 * vCapeMark.y;\n    reflectedLight.directSpecular *= capeSpec; reflectedLight.indirectSpecular *= capeSpec; }')
-  }
-  m.customProgramCacheKey = () => key + '|cape-shade-2'
+  m.onBeforeCompile = function (shader, r) { prev.call(this, shader, r); capeShadeShader(shader) }
+  m.customProgramCacheKey = () => key + '|cape-shade-3'
   m.clone = function () { return capeShadeMaterial(Object.getPrototypeOf(this).clone.call(this)) }
   m.needsUpdate = true
   return m
