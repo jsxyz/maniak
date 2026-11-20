@@ -12910,6 +12910,16 @@ function warmSetup(name, target, R, normal = false) {
     return () => { for (let i = undo.length; i--;) { const [o, k, v] = undo[i]; o[k] = v } renderer.setRenderTarget(oldTarget) }
   }
 }
+// While playing: what the scene gained since the last pass is warmed in the drawn look, about once a second, at the
+// lowest priority; what is already warm costs only the walk (the memo in compileObjects).
+let lookWatching = false
+function* lookWatchSteps() {
+  for (;;) {
+    yield new Promise(r => setTimeout(r, 1000))
+    if (lookPending || worldPreparing || startingGame) continue
+    yield* warmSceneSteps(activeLook || 'plain')
+  }
+}
 function* warmSceneSteps(name, roots = null) {
   if (renderHeadless || !renderer || !camera || !scene.fog) return
   const all = roots || [scene, faustState?.skyScene, fxWarmed].filter(Boolean), R = realState
@@ -12975,6 +12985,8 @@ function requestLook(name) {
             realStats.textureMB = +(2 * tier.tex * tier.tex * 4 * REAL_LAYERS.length * 4 / 3 / 1048576).toFixed(1); realStats.ready = true
           } catch (e) { R.failed = true; realStats.error = String(e.message || e) }
         }
+        // the effect pools as Realistic's draw patches them (realSwap), so their programs are warmed below
+        if (R.ready) for (const o of [...effectPool, ...boxPool, ...orbPool]) if (o.material && (o.fxKind === 'box' || o.fxKind === 'orb' || !o.fxKind)) realFxPatch(o.material)
         const T = realTargets(R, w, h, tier)
         for (const t of T.all) { renderer.initRenderTarget(t); yield 'frame' }
         for (const m of Object.values(R.pass)) {
@@ -13024,6 +13036,11 @@ function applyLook() {
   settings.look = name
   if (!renderer || !scene || !worldGroup) return
   if (activeLook === null) activeLook = 'plain'
+  if (!lookWatching && phase === 'playing' && !serving && !renderHeadless) {
+    lookWatching = true
+    background.run('look-watch', lookWatchSteps, { priority: -1, gpu: true, valid: () => phase === 'playing' })
+      .catch(e => frameFailed('look watch', e)).finally(() => { lookWatching = false })
+  }
   if (worldPreparing || startingGame) return
   if (lookPending?.name !== name || activeLook !== name || lookPreparedKey !== lookKey(name)) requestLook(name).catch(e => frameFailed('look preparation', e))
 }
@@ -17338,7 +17355,12 @@ function periodSetup(gltf) {
     F.wheels[kind + lod] = m
   }
   F.ready = true
-  if (renderer?.compileAsync && scene) { const probe = new THREE.Group(); probe.add(new THREE.Mesh(geo.sedan_lod2, base), F.wheels.ww1); renderer.compileAsync(probe, camera, scene).catch(() => {}).finally(() => probe.remove(F.wheels.ww1)) }
+  if (renderer?.compileAsync && scene) {
+    // a body and the instanced wheels, in the drawn look and pass, shadow depth included (the look watch takes later looks)
+    const probe = new THREE.Group(), body = new THREE.Mesh(geo.sedan_lod2, base); body.castShadow = body.receiveShadow = true; probe.add(body, F.wheels.ww1)
+    background.run('period warm', function* () { try { yield* warmSceneSteps(activeLook || 'plain', [probe]) } finally { probe.remove(F.wheels.ww1) } }, { gpu: true })
+      .catch(e => frameFailed('vehicle preparation', e))
+  }
 }
 // a paint scheme's material: the palette with its four paint cells filled
 function periodPaint(paint) {
