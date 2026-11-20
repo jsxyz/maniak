@@ -12912,6 +12912,30 @@ function warmSetup(name, target, R, normal = false) {
 }
 // While playing: what the scene gained since the last pass is warmed in the drawn look, about once a second, at the
 // lowest priority; what is already warm costs only the walk (the memo in compileObjects).
+// A warm-up given ms of the job's time: then the rest is handed to its own background job (key), and false returned.
+function* warmWithin(ms, name) {
+  const gen = warmSceneSteps(name), end = performance.now() + ms
+  let input
+  for (;;) {
+    const r = gen.next(input)
+    if (r.done) return true
+    if (performance.now() > end) {
+      const first = r.value
+      background.run('warm-rest:' + name, function* () {
+        let x = first?.then ? yield first : undefined
+        for (let s = gen.next(x); !s.done; s = gen.next(x)) x = yield s.value
+      }, { gpu: true, priority: 1 }).catch(e => frameFailed('warm-up', e))
+      return false
+    }
+    input = yield r.value
+  }
+}
+// what the chat says while a chosen look is prepared during play, and when it is drawn
+function lookNote(pending) {
+  if (!pending || pending.told || !activeLook || activeLook === pending.name) return
+  pending.told = true
+  sysMsg('§7Preparing the ' + LOOKS[pending.name].label + ' look; ' + LOOKS[activeLook].label + ' until it is ready' + (softGL() ? ' (software graphics: this can take a while)' : '') + '…')
+}
 let lookWatching = false
 function* lookWatchSteps() {
   for (;;) {
@@ -12962,7 +12986,7 @@ function requestLook(name) {
   if (lookPending?.key === key) return lookPending.promise
   background.cancel('look')
   const pending = lookPending = { key, name, serial: ++lookSerial }
-  if (phase === 'playing' && activeLook && activeLook !== name) sysMsg('§7Preparing the ' + LOOKS[name].label + ' look…')
+  if (phase === 'playing') lookNote(pending)
   pending.promise = background.run('look', function* () {
     let success = false
     try {
@@ -13012,6 +13036,7 @@ function requestLook(name) {
       activeLook = name; inkUniforms.inkEnabled.value = name === 'ink'
       lookPreparedKey = key; lookPending = null; success = true
       if (previous !== name) LOOKS[previous]?.teardown?.(renderer, scene)
+      if (pending.told && phase === 'playing') sysMsg('§7The ' + LOOKS[name].label + ' look is ready.')
       applySettings()
     } finally {
       if (!success && activeLook !== name) {
@@ -22460,15 +22485,20 @@ function startHost() {
     if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('draw0'); draw(0, now()); yield }
     loadingText('Preparing the view…')
     background.mark('effects'); warmEffects()
-    yield* warmSceneSteps('plain')
+    yield* warmWithin(3000, 'plain')
     worldPreparing = false
-    if (!serving) { background.mark('look'); yield requestLook(settings.look); yield* warmSceneSteps(activeLook || 'plain'); background.mark('open'); yield 'frame' }
+    if (!serving) {
+      background.mark('look')
+      if (activeLook === settings.look) yield* warmWithin(2000, activeLook)
+      else requestLook(settings.look).catch(e => frameFailed('look preparation', e))
+      background.mark('open'); yield 'frame'
+    }
     if (startLog) startLog.warmProgs = renderer?.info.programs.length
     background.stats.lateCount = 0; background.stats.late.length = 0
     el('#stage-menu').style.display = 'none'; el('#stage-host').style.display = ''
     setStatus('Waiting for players…'); openHostPeer(0)
     startingGame = false; document.body.classList.remove('starting')
-    if (!serving) { connected = true; beginPlay() }
+    if (!serving) { connected = true; beginPlay(); lookNote(lookPending) }
   }, { priority: 3, valid: () => phase === 'connecting' }).then(ok => {
     if (!ok) { startingGame = false; document.body.classList.remove('starting') }
   }).catch(e => {
@@ -22765,9 +22795,9 @@ function guestLoad(lv, gen) {
     yield* loadLevelSteps(lv, gen)
     loadingText('Preparing the view…')
     warmEffects()
-    yield* warmSceneSteps('plain')
-    yield requestLook(settings.look)
-    yield* warmSceneSteps(activeLook || 'plain')
+    yield* warmWithin(3000, 'plain')
+    if (activeLook === settings.look) yield* warmWithin(2000, activeLook)
+    else requestLook(settings.look).catch(e => frameFailed('look preparation', e))
   }, { priority: 3, valid: () => !isHost && phase === 'playing' })
   job.catch(e => frameFailed('guest level', e)).finally(() => {
     if (guestLoading !== job) return
