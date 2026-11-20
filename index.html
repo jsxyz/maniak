@@ -26166,6 +26166,8 @@ function dsPaneAt(x, y, z, nx, nz) {
   const P = dsPlan(ci, cj)
   for (const [fc, inside] of [[face, false], [face ^ 1, true]]) {
     const near = off => inside ? off <= 0.1 && off >= -DS_INSIDE : Math.abs(off) <= 0.1
+    // a ground window's glass is on #38's podium ring, 0.25 m out from the mass (the collider a blow stops on)
+    const nearGround = off => inside ? off <= 0.1 && off >= -DS_INSIDE - 0.4 : off <= 0.15 && off >= -0.4
     for (let li = 0; li < P.lots.length; li++) {
       for (const b of P.lots[li].mass) {
         const f = dsFace(b, fc), along = f.axis ? z : x, across = f.axis ? x : z
@@ -26179,7 +26181,7 @@ function dsPaneAt(x, y, z, nx, nz) {
       if (y < 4) for (const w of dsGround(P, li)) {
         if (w.face !== fc) continue
         const axis = fc < 2 ? 0 : 1, side = fc % 2 ? -1 : 1, along = axis ? z : x, across = axis ? x : z
-        if (!near((across - w.plane) * side) || along <= w.a0 || along >= w.a1 || y <= w.y0 || y >= w.y1) continue
+        if (!nearGround((across - w.plane) * side) || along <= w.a0 || along >= w.a1 || y <= w.y0 || y >= w.y1) continue
         const pane = dsPane(dsKey(ci * F.S + cj, dsSlot(P.lots[li], ci, cj), 0, fc, w.bay))
         if (pane) return { ...pane, along, inside }
       }
