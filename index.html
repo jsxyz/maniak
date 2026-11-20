@@ -4766,6 +4766,7 @@ function faustRoadsFrame() {
     V.set(k, v)
     background.run('roadlook:' + k, function* () {
       const g = yield* faustRoadCellLook(plan, k)
+      { const bytes = geometryBytes({ traverse: fn => fn({ geometry: g }) }); while (!background.uploadSlot(bytes)) yield 'frame' }
       v.mesh = new THREE.Mesh(g, F.materials.stone); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
     }, { valid: () => faustState === F && F.roadLooks === V && V.get(k) === v }).catch(e => frameFailed('roads', e))
   }
@@ -6456,6 +6457,13 @@ function faustDecoCathedral(g, lot) {
   g.box(faustBox(x, tip + 1.2, z, 0.1, 1.2, 0.1), D.steel); g.box(faustBox(x, tip + 1.7, z, 0.6, 0.08, 0.08), D.steel)
   g.box(faustBox(x, tip + 2.6, z, 0.2, 0.3, 0.2), D.brass, 0.9)
 }
+// card #53: the bytes a root's geometry uploads at its first draw (each attribute and index once)
+function geometryBytes(root) {
+  const seen = new Set(); let n = 0
+  root.traverse(o => { const g = o.geometry; if (!g || seen.has(g)) return; seen.add(g)
+    for (const a of [...Object.values(g.attributes || {}), g.index].filter(Boolean)) n += a.array?.byteLength || 0 })
+  return n
+}
 function* faustVisualSteps(c) {
   const facade = faustBatch(3072), ornament = faustBatch(26624), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
@@ -6602,6 +6610,8 @@ function* faustVisualSteps(c) {
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
     pool.rotation.x = -Math.PI / 2; pool.position.set(X + 8.6, 0.065, Z + q); root.add(pool)
   }
+  { const bytes = geometryBytes(root); while (!background.uploadSlot(bytes)) yield 'frame' }      // card #53: a frame's uploads bounded
+  background.gpu('cell')
   root.userData.cell = [c.ci, c.cj]; c.visual = root; worldGroup.add(root); still(root)
   faustSkyCell(c, false)
   craterRegrow({ a0: X, a1: X + 96, b0: Z, b1: Z + 96 })
@@ -8073,6 +8083,11 @@ const background = (() => {
   // the GPU process's work (shared with every tab): links, uploads of 1 MB or more, long frames; and the last frame's counts
   const gpuLog = [], gpuNone = { links: 0, shaders: 0, upKB: 0, sync: 0 }
   let gpuOpen = { ...gpuNone }, gpuLast = { ...gpuNone }, frameNo = 0
+  // per second, the last 20 minutes; and the new geometry admitted to this frame's draw (uploadSlot)
+  const secLog = [], accMap = new Map()
+  let secOpen = null, planKB = 0, accT = 0
+  // the fence gate: the last frame with GPU work, and the last frame whose fence has signalled
+  let gateFrame = 0, signaledFrame = 0, fenceOn = false
   const gpuEvent = e => { gpuLog.push({ t: Math.round(performance.now()), i: frameNo + 1, ...e }); if (gpuLog.length > 3000) gpuLog.shift() }
   const UPLOAD_KB = 4096
   let scheduled = false, order = 0, current = null
@@ -8107,6 +8122,7 @@ const background = (() => {
     const start = performance.now(), cap = rush ? 30 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
     let steps = 0
     if (!rush && (gpuLast.links || gpuLast.upKB > UPLOAD_KB)) { stats.rests = (stats.rests || 0) + 1; gpuLast = gpuNone; return }
+    if (fenceOn && signaledFrame < gateFrame && frameNo - gateFrame < 600) { stats.gated = (stats.gated || 0) + 1; return }
     while (performance.now() - start < cap || !steps) {
       const list = [...jobs.values()].sort((a, b) => b.priority - a.priority || a.order - b.order)
       let next = null
@@ -8152,6 +8168,9 @@ const background = (() => {
     wake: schedule,
     noteProgram(name) { if (open.programs.length < 40) open.programs.push(name) },
     // the frame's sections: sec(name) closes the section since the last call (null starts afresh); 3 ms or more is kept
+    // calls summed over a loop: acc(null) starts, acc(name) adds the time since the last, accFlush(prefix) files them as parts
+    acc(name) { const t = performance.now(); if (name) accMap.set(name, (accMap.get(name) || 0) + t - accT); else accMap.clear(); accT = t },
+    accFlush(prefix) { for (const [k, v] of accMap) if (v >= 3 && open.parts.length < 40) open.parts.push((current ? current.key + '/' : '') + prefix + '/' + k + ' ' + Math.round(v)); accMap.clear() },
     sec(name) {
       const t = performance.now()
       if (name && secT && t - secT >= 3 && open.parts.length < 40) open.parts.push((current ? current.key + '/' : '') + name + ' ' + Math.round(t - secT))
@@ -8164,18 +8183,30 @@ const background = (() => {
       frameLog.push({ i, t: Math.round(t), ms, draw: Math.round(draw), phase, q, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen })
       if (q >= 3 && !(gpuLog.at(-1)?.kind === 'queue' && gpuLog.at(-1).q >= q)) gpuLog.push({ t: Math.round(t), i, kind: 'queue', q })
       if (ms >= 50) gpuLog.push({ t: Math.round(t), i, kind: 'frame', ms, parts: open.parts.slice(0, 4), links: gpuOpen.links, upKB: gpuOpen.upKB })
-      gpuLast = gpuOpen; gpuOpen = { ...gpuNone }; frameNo = i
+      { const s = Math.floor(t / 1000)
+        if (secOpen?.s !== s) { secOpen = { s, frames: 0, maxMs: 0, links: 0, upKB: 0, uploads: 0, sync: 0, caps: 0, q: 0, cells: 0 }; secLog.push(secOpen); if (secLog.length > 1200) secLog.shift() }
+        const S = secOpen; S.frames++; S.maxMs = Math.max(S.maxMs, ms); S.links += gpuOpen.links; S.upKB += gpuOpen.upKB; S.uploads += gpuOpen.uploads || 0
+        S.sync += gpuOpen.sync; S.caps += gpuOpen.caps || 0; S.q = Math.max(S.q, q); S.cells += gpuOpen.cells || 0 }
+      if (gpuOpen.links || gpuOpen.upKB >= 256 || gpuOpen.cells) gateFrame = i
+      gpuLast = gpuOpen; gpuOpen = { ...gpuNone }; frameNo = i; planKB = 0
       if (frameLog.length > 900) frameLog.shift()
       open = { steps: [], programs: [], parts: [] }; lastFrameT = t; secT = 0
     },
     frames(n = 300) { return frameLog.slice(-n) },
     gpuEvents(n = 3000) { return gpuLog.slice(-n) },
+    seconds(n = 1200) { return secLog.slice(-n) },
+    // new geometry of `bytes` may join this frame's draw: at most UPLOAD_KB a frame, the first always (yield 'frame' while false)
+    signaled(i) { fenceOn = true; if (i > signaledFrame) signaledFrame = i },
+    get gate() { return { frame: gateFrame, signaled: signaledFrame, open: !fenceOn || signaledFrame >= gateFrame } },
+    uploadSlot(bytes) { const kb = bytes / 1024; if (planKB && planKB + kb > UPLOAD_KB) return false; planKB += kb; return true },
     // from the GL wrappers: kind 'link' | 'shader' | 'up' (n bytes) | 'sync' (a query that waits on the GPU process)
     gpu(kind, n = 1, what = '') {
       const job = current ? current.key + (current.phase ? '/' + current.phase : '') : 'draw'
-      if (kind === 'up') { gpuOpen.upKB += n / 1024; if (n >= 1048576) gpuEvent({ kind: 'upload', MB: +(n / 1048576).toFixed(1), what, job }) }
+      if (kind === 'up') { gpuOpen.upKB += n / 1024; gpuOpen.uploads = (gpuOpen.uploads || 0) + 1; if (n >= 1048576) gpuEvent({ kind: 'upload', MB: +(n / 1048576).toFixed(1), what, job }) }
       else if (kind === 'link') { gpuOpen.links++; gpuEvent({ kind: 'link', job }) }
       else if (kind === 'shader') gpuOpen.shaders++
+      else if (kind === 'capture') { gpuOpen.caps = (gpuOpen.caps || 0) + 1; gpuEvent({ kind: 'capture', what, job }) }
+      else if (kind === 'cell') gpuOpen.cells = (gpuOpen.cells || 0) + 1
       else if (kind === 'sync') { gpuOpen.sync++; if (gpuOpen.sync <= 3) gpuEvent({ kind: 'sync', what, job }) }
     },
     get gpuLast() { return gpuLast },
@@ -23746,6 +23777,7 @@ function capAfterDraw() {
     capCanvas ||= document.createElement('canvas')
     if (capCanvas.width !== w || capCanvas.height !== h) { capCanvas.width = w; capCanvas.height = h }
     const g = capCanvas.getContext('2d'); g.drawImage(cv, 0, 0, w, h)
+    try { background.gpu('capture', 1, w + 'x' + h) } catch (e) {}
     const r = v => Math.round(v * 100) / 100, hd = headingOf(input.yaw)
     capDir ||= new THREE.Vector3()
     job.frames.push({ url: capCanvas.toDataURL('image/jpeg', job.q), row: { t: Math.round(now() - job.t0), fps: Math.round(fps), w, h,
@@ -24459,7 +24491,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
   // frames: the last n frames, each {i, t, ms, draw, phase, steps, programs} (frame by frame; no aggregate)
   fps(n) { if (n !== undefined) fpsCap = +n >= 5 && +n <= 240 ? +n : 0; return fpsCap },
-  background: (n = 300) => ({ fps: fpsCap, frames: GAME.background.frames(n), gpu: GAME.background.gpuEvents(), rests: GAME.background.stats.rests || 0, jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
+  background: (n = 300) => ({ fps: fpsCap, origin: performance.timeOrigin, seconds: GAME.background.seconds(), gate: GAME.background.gate, gated: GAME.background.stats.gated || 0, frames: GAME.background.frames(n), gpu: GAME.background.gpuEvents(), rests: GAME.background.stats.rests || 0, jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
     phase, startingGame, worldPreparing, guestLoading: !!guestLoading, look: activeLook, wanted: settings.look }),
   room() {
     const all = [...players.values()]
@@ -24848,7 +24880,7 @@ function startHost() {
     { const sb = el('#set-bots'); if (sb && sb.value !== '') BOT_COUNT = clamp(+sb.value | 0, 0, regulars()) }      // card #59 fix: the Freaks slider, as it stands
     background.mark('bots'); for (const i of foesWanted()) { addBot(i); yield }
     markStart('bots')
-    if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('avatar'); { const c = players.get(0); if (c) yield* avatarSteps(0, looksCid(c), c.cap | 0) } yield; background.mark('draw0'); background.sec(null); draw(0, now()); yield }
+    if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('avatar'); { const c = players.get(0); if (c) yield* avatarSteps(0, looksCid(c), c.cap | 0) } yield; for (const [id, c] of [...players]) if (id !== 0 && players.get(id) === c) { yield* avatarSteps(id, looksCid(c), c.cap | 0); yield } background.mark('draw0'); background.sec(null); draw(0, now()); yield }
     loadingText('Preparing the view…')
     background.mark('effects'); warmEffects()
     yield* warmWithin(3000, 'plain')
@@ -33267,33 +33299,46 @@ function draw(dt, t) {
   background.sec('players')
   cullFrom(camera)
   const live = new Set([myId])
+  background.acc(null)
   for (const o of others) {
     live.add(o.id)
     const m = avatarFor(o.id, o.cid, o.cap | 0)
+    background.acc('avatarFor')
     bodyState(o.id, o, t)
+    background.acc('bodyState')
     m.visible = rigShown(o.id, o.dead)
     ghost(m, o.prot || 0)
     m.position.set(o.x, o.y, o.z)
     const C = GAME.participant(o.id, o.cid)
     o.ceil = o.anim === 4 && C.climb && !C.wallRun && ceilAbove(o.x, o.y, o.z, C.r, 0.1)
+    background.acc('ceil')
     const hold = holdOf(o.id, o) || o.ceil && 'ceiling'
     avatars.get(o.id).moveState = o.move; avatars.get(o.id).moveCharge = clamp(((o.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1); avatars.get(o.id).chainState = o.chainNet; avatars.get(o.id).hayAge = o.hayAge || 0
     const ticks = isHost ? tickSamples.get(o.id) || [] : undefined
     m.rotation.y = GAME.view.faceYaw(o.id, o, o.anim || 0, hold || carries.has(o.id), t, dt, false, ticks)
+    background.acc('faceYaw')
     if (o.anim === 4 && C.wallRun && o.wy === undefined) o.wy = wallYawAt(o.x, o.y, o.z, C.h + C.r + 0.4)
     if (!drawSeat(m, o, sits.get(o.id), obl) && !drawCeiling(m, o, hold === 'ceiling', dt, ticks)) drawTurned(m, o, o.anim === 4 && C.wallRun, dt, ticks)
+    background.acc('turned')
     const still = !posed(m.position)
     setAnim(o.id, crouchOf(o.id, o.cid, o.anim || 0, o.move === 1, hold), dt, t, hold, still, ticks, o.sim && [o.sim.x - o.x, o.sim.y - o.y, o.sim.z - o.z])
+    background.acc('setAnim')
     const armed = GAME.view.passengerAim(o.id, o, t, sits.get(o.id)?.[1])
     poseSeatAim(o.id, armed && o, t)
+    background.acc('seatAim')
     drawHealth(o.id, o.hp)
     drawEffect(o.id, o.markT > 0 ? o.mark : 0)
     drawStruck(o.id, t)
     drawAura(o.id, o.anim || 0, dt)
+    background.acc('effects')
     drawHeld(o.id, (!sits.has(o.id) || armed) && o, t)        // cosmetic, never a capsule
+    background.acc('held')
     bodyDraw(o.id, o, t, dt)
+    background.acc('bodyDraw')
     perfDraw(o.id, (!sits.has(o.id) || armed) && o, t)        // card #59: a street performer's cup and its demand
+    background.acc('perfDraw')
   }
+  background.accFlush('av')
   background.sec('avatars')
   partsDraw(me, others, t, dt, meD)          // card #55: held bodies in their holders' hands, flights tumbling
   for (const id of [...avatars.keys()]) if (id >= 0 && !live.has(id)) dropAvatar(id)
@@ -34789,7 +34834,7 @@ function gpuQueueTick(i) {
   const gl = renderer?.getContext()
   if (!gl?.fenceSync || gl.isContextLost()) { gpuQ.list.length = 0; return 0 }
   if (gpuQ.epoch !== graphics.lost) { gpuQ.list.length = 0; gpuQ.epoch = graphics.lost }
-  while (gpuQ.list.length && gl.getSyncParameter(gpuQ.list[0][1], gl.SYNC_STATUS) === gl.SIGNALED) gl.deleteSync(gpuQ.list.shift()[1])
+  while (gpuQ.list.length && gl.getSyncParameter(gpuQ.list[0][1], gl.SYNC_STATUS) === gl.SIGNALED) { const [k, s] = gpuQ.list.shift(); gl.deleteSync(s); background.signaled(k) }
   if (gpuQ.list.length < 60) { const s = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); if (s) gpuQ.list.push([i, s]) }
   return gpuQ.list.length > 1 ? i - gpuQ.list[0][0] : 0
 }
