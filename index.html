@@ -23100,6 +23100,27 @@ function autoOpenInput(o, W) {
   const f = fs < -0.5 ? 1 : desired < 0.3 ? fs > 0.5 ? -1 : 0 : fs > desired + 0.2 ? -1 : clamp((desired - fs) * 0.45, 0, 0.7)
   return { f, r: trafficSteer(o, err, dist, Math.abs(fs)), j: desired < 0.3 }
 }
+// why a car waits, from what the traffic AI looks at: the junction ahead (signal, lock), the lane's distance, what stands in the way
+function autoWhy(o, a, inp) {
+  const fw = rotq(o.q, [0, 0, -1]), e = a?.edge, why = []
+  if (e) {
+    const along = (o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, left = e.length - along, p = trafficPoint(e, clamp(along, 12, e.length - 12))
+    if (trafficJunction(e.to) && left < 40) {
+      const sig = trafficSignalled(e.to) ? trafficSignal(e.to.x, e.to.z, e.dx ? 'x' : 'z') : 'no signal', owner = trafficState.locks.get(e.to.key)
+      why.push('junction ' + Math.round(left) + ' m ahead: ' + sig + (owner !== undefined && owner !== o.id ? ', taken by car ' + owner : ''))
+    }
+    why.push('lane ' + Math.round(Math.hypot(o.x - p.x, o.z - p.z)) + ' m off')
+  }
+  let near = null
+  for (const p of objs) {
+    if (p === o || p.heldBy !== undefined) continue
+    const dx = p.x - o.x, dz = p.z - o.z, f = dx * fw[0] + dz * fw[2], side = dx * -fw[2] + dz * fw[0]
+    if (f > 0 && f < 38 && Math.abs(side) < o.V.w / 2 + (p.R || 1.5) + 0.35 && (!near || f < near.f)) near = { f, name: p.K?.name }
+  }
+  if (near) why.push((near.name || 'an object') + ' ' + Math.round(near.f) + ' m ahead in the way')
+  why.push('throttle ' + inp.f.toFixed(2) + ', brake ' + (inp.j ? 'on' : 'off'))
+  return why.join('; ')
+}
 AUTO_STEPS.drive = (R, a) => {
   const me = selfChar()
   if (!LV.faust || !isHost || !me) throw new Error('drive: Faustland host only')
@@ -23159,15 +23180,16 @@ AUTO_STEPS.drive = (R, a) => {
     if (st.phase === 'open') inp = autoOpenInput(o, st.w)
     else { o.traffic = st.a; try { inp = trafficThink(o, dt, [...players.values()].filter(c => !c.bot && c.owner === undefined)) } finally { o.traffic = null } }
     const left = Math.hypot(gx - o.x, gz - o.z), v = speedOf(o)
-    if (st.phase === 'open' ? st.w.goal && Math.hypot(st.w.x - o.x, st.w.z - o.z) < 6 && v < 0.6 : (st.a.arrived && !(st.goalOpen && left > 12)) || left < 6 && v < 0.6) { hold(); sub.out = { arrived: true, x: Math.round(o.x), z: Math.round(o.z), left: Math.round(left * 10) / 10, ms: Math.round(t - st.t0), what }; input.j = true; return true }
+    if (st.phase === 'open' ? st.w.goal && Math.hypot(st.w.x - o.x, st.w.z - o.z) < 10 && v < 0.6 : (st.a.arrived && !(st.goalOpen && left > 12)) || left < 6 && v < 0.6) { hold(); sub.out = { arrived: true, x: Math.round(o.x), z: Math.round(o.z), left: Math.round(left * 10) / 10, ms: Math.round(t - st.t0), what }; input.j = true; return true }
     if (st.phase === 'drive' && st.a.arrived && st.goalOpen && left > 12) {          // the road ended short of a goal on open ground: across it the rest of the way
       hold(); st.a = null; st.w = { x: gx, z: gz, goal: true }; st.phase = 'open'; st.tried = t; st.openT0 = t
       autoSay('§7drive: off the road, §f' + Math.round(left) + ' m §7over open ground')
       return false
     }
     input.f = inp.f; input.r = inp.r; input.j = inp.j
-    st.still = v < 0.3 ? st.still + dt : 0
-    if (st.still > 25) throw new Error('stuck at ' + Math.round(o.x) + ' ' + Math.round(o.z) + ' (waiting 25 s), ' + Math.round(left) + ' m from ' + what)
+    if (!st.px || Math.hypot(o.x - st.px, o.z - st.pz) > 2) { st.px = o.x; st.pz = o.z; st.pt = t; st.said = 0 }          // 2 m moved in 15 s, or it is stuck
+    else if (v < 0.6 && t - st.pt > 6000 * (st.said + 1) && st.said < 2) { st.said++; autoSay('§7drive: waiting: ' + autoWhy(o, st.phase === 'open' ? null : st.a, inp)) }
+    if (t - st.pt > 15000) throw new Error('stuck at ' + Math.round(o.x) + ' ' + Math.round(o.z) + ', ' + Math.round(left) + ' m from ' + what + ' (' + autoWhy(o, st.phase === 'open' ? null : st.a, inp) + ')')
     if (t > st.deadline) throw new Error('timeout at ' + Math.round(o.x) + ' ' + Math.round(o.z) + ', ' + Math.round(left) + ' m from ' + what)
     return false
   } }
