@@ -32558,7 +32558,8 @@ const drawnT = () => tickAt - (1 - drawAlpha) * TICK * 1000
 const drawNow = () => isHost ? (tickAt ? drawnT() : now()) : renderT || now()
 // a host-simulated character's chain, drawn between its last two ticks as its body is
 const drawnChain = (c, id) => { const cur = chainPack(c); if (!cur || drawAlpha >= 1) return cur
-  const m = chainBetween(prevChain.get(id), cur, drawAlpha); return m && chainRead(m) ? m : cur }
+  const q = prevChain.get(id); if (!q || Math.hypot(cur[4] - q[4], cur[5] - q[5], cur[6] - q[6]) >= 3) return cur
+  const m = chainBetween(q[0] === cur[0] ? q : [cur[0], ...q.slice(1)], cur, drawAlpha); return m && chainRead(m) ? m : cur }
 // where e is drawn: between its last two ticks (null: at its tick, or it jumped or was put somewhere)
 function drawnPose(e) {
   const p = drawAlpha < 1 && prevPose.get(e)
@@ -32978,12 +32979,18 @@ function frameFailed(where, e) {
   try { console.error('[SKs] frame failed in ' + where, e) } catch (err) {}
 }
 
-let drawT0 = 0, frameT = 0
+// a frame whose script starts more than FRAME_LATE vsync intervals after its vsync missed it (a long task): a late frame
+const FRAME_LATE = 1.5
+let drawT0 = 0, frameT = 0, frameTl = 0
 function frameBody() {
   if (document.hidden || serving) return   // the ticker owns the sim then
   // the frame's vsync time: performance.now() here is when the script got round to it, up to a few ms late and never
   // the same twice, and drawn time (t - D) moved everything drawn by that jitter times its speed
-  const tl = document.timeline?.currentTime, t = Number.isFinite(tl) && tl >= last && now() - tl < 100 ? tl : now()
+  // a late frame (a long task held it past FRAME_LATE): the vsync time is when it was due, not when it shows; then the
+  // script's own time, so the hitch is one step rather than a frame held and a jump after
+  const tl = document.timeline?.currentTime, P = tl - frameTl, late = now() - tl
+  const t = Number.isFinite(tl) && tl >= last && late >= 0 && late < FRAME_LATE * (P > 4 && P < 50 ? P : 1000 / 60) ? tl : now()
+  if (Number.isFinite(tl)) frameTl = tl
   frameT = t
   const _s0 = now()
   let dt = 0
