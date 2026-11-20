@@ -5068,7 +5068,8 @@ function faustRingsFrame() {
     }
     for (let n = 0; n < cells.length; n++) {
       const c = faustRingPlan(F, plan, cells[n][1], cells[n][2])
-      for (const [b, tint] of c.far) put('far', b.ex, b.ey, b.ez, b.cx, b.cy, b.cz, tint)
+      const um = new Map(); for (const q of c.buildings) if (q.kind === 'urban') um.set(q.box, q.id)
+      for (const [b, tint] of c.far) { const id = um.get(b); if (id !== undefined && pools.far.n < caps.far) idx.set(id + '/far', pools.far.n); put('far', b.ex, b.ey, b.ez, b.cx, b.cy, b.cz, tint) }
       const bm = new Map(); for (const q of c.buildings) if (q.kind === 'house') bm.set(q.box, q.id)
       for (const [b, tint] of c.body) { const id = bm.get(b); if (id !== undefined && pools.body.n < caps.body) idx.set(id + '/body', pools.body.n); put('body', b.ex, b.ey, b.ez, b.cx, b.cy, b.cz, tint) }
       for (const [x, y, z, ex, h, ez, alongZ, tint] of c.roof) alongZ ? put('roof', ez, h, ex, x, y, z, tint, true) : put('roof', ex, h, ez, x, y, z, tint)
@@ -5424,6 +5425,66 @@ function faustRingInterior(b) {
   out.hash = inHash({ ...out, floors: out.floors.map(f => ({ ...f, boxes: f.boxes.length, hash: inHash(f.boxes) })) })
   return out
 }
+// ---- the outskirts' mid-rise (card #78 phase 2): #38's storeys through an adapter. A ring building has a walls box, a seed and a door
+// (faustRingCell); faustStorey wants a lot's building (faustInterior's: masses, storeys on a 4 m grid, a stair core, a door on +z).
+// faustRingUrbanB makes that, with the door on +z, and faustRingUrbanStorey turns the result half a turn about the building's middle
+// when the ring building's door is on -z. 4 m storeys, as the facade's windows (dsWindow) are laid out, so rooms sit behind them.
+function faustRingUrbanB(b) {
+  const K = FAUST_IN, T = K.wall, S = K.stair, box = b.box, sg = b.door.face[1] > 0 ? 1 : -1
+  const rng = genRng((b.seed ^ 0x78b1d7) >>> 0), pick = list => list[rng() * list.length | 0]
+  const H = inCm(box.cy + box.ey), x = box.cx, z = box.cz, w = box.ex, d = box.ez
+  const m = { x0: inCm(x - w), x1: inCm(x + w), z0: inCm(z - d), z1: inCm(z + d), y0: 0, y1: H }
+  const n = Math.max(1, Math.floor(H / K.storey)), storeys = []
+  for (let k = 0; k < n; k++) storeys.push({ k, y: k * K.storey, plate: inRect(m.x0 + T, m.x1 - T, m.z0 + T, m.z1 - T), mass: 0 })
+  const sw = 2 * S.width + S.well, sl = 2 * S.landing + S.run, cw = sw + 2 * K.part, cl = sl + 2 * K.part
+  const core = inRect(x - cw / 2, x + cw / 2, z - cl / 2, z + cl / 2, { lift: false, stairX: inCm(x - cw / 2 + K.part) })
+  // flats over a hallway with a unit either side, or offices over a lobby (by the seed)
+  const flats = rng() < 0.55
+  const ground = flats ? 'hall' : pick(['lobby', 'lobby', 'lobby', 'shop', 'bar', 'diner'])
+  const unit = flats ? pick(['shop', 'shop', 'bar', 'diner']) : null, unit2 = flats ? pick(['shop', 'shop', 'bar', 'diner']) : null
+  const door = { x: inCm(x), z: inCm(z + d), w: K.door[0], h: K.door[1], out: [inCm(x), 0, inCm(z + d + 2.2)], in: [inCm(x), 0, inCm(z + d - T - 1.2)] }
+  return { version: 1, id: b.id, ci: 0, cj: 0, li: 0, slot: 0, chunk: 0, seed: b.seed, style: flats ? 'tenement' : 'core', gothic: false, stop: false,
+    x, z, w, d, H, ground, unit, unit2, upper: flats ? 'flat' : 'office', door, core, storeys, masses: [m], solids: [], piers: [], roof: { y: H, exit: false }, cache: new Map(), sg }
+}
+// a storey of the ring mid-rise, in its building's place (turned half a turn about the middle when its door is on -z)
+function faustRingUrbanStorey(B, k) {
+  let S = B.cache.get(k)
+  if (S) return S
+  S = faustStorey(B, k)
+  if (B.sg < 0) {
+    const X = v => inCm(2 * B.x - v), Z = v => inCm(2 * B.z - v), flip = f => f === undefined ? f : (f & 4) | (f & 8) | (f & 1 ? 2 : 0) | (f & 2 ? 1 : 0) | (f & 16 ? 32 : 0) | (f & 32 ? 16 : 0)
+    S = { ...S, boxes: S.boxes.map(q => ({ ...q, cx: X(q.cx), cz: Z(q.cz), f: flip(q.f) })),
+      ramps: S.ramps.map(r => ({ ...r, x0: X(r.x1), x1: X(r.x0), z0: Z(r.z1), z1: Z(r.z0), up: -r.up })),
+      lights: S.lights.map(l => [X(l[0]), l[1], Z(l[2]), ...l.slice(3)]), rooms: S.rooms.map(r => ({ ...r, x0: X(r.x1), x1: X(r.x0), z0: Z(r.z1), z1: Z(r.z0) })),
+      plate: { ...S.plate, x0: X(S.plate.x1), x1: X(S.plate.x0), z0: Z(S.plate.z1), z1: Z(S.plate.z0) }, nodes: S.nodes.map(q => ({ ...q, x: X(q.x), z: Z(q.z) })), edges: S.edges }
+  }
+  B.cache.set(k, S)
+  return S
+}
+// the mid-rise as a whole: its walls with the door's gap and the roof slab (pieces in the building's own axes: u from the middle
+// along x, y, v from the door wall's outside inward; with the faces each draws, local bits 1 +u, 2 -u, 4 +y, 8 -y, 16 +v deeper, 32 -v
+// toward the door), their colliders, the door in the world, and the building's storeys (made on demand, faustRingUrbanStorey)
+function faustRingUrbanInterior(b) {
+  const K = FAUST_IN, T = K.wall, B = faustRingUrbanB(b), box = b.box, sg = B.sg, ex = box.ex, ez = box.ez, H = B.H, cx = box.cx, cz = box.cz
+  const dw = K.door[0], dh = K.door[1], Hs = inCm(H - K.slab), pieces = [], walls = []
+  const d0 = -dw / 2, d1 = dw / 2
+  const zr = (v0, v1) => sg > 0 ? [cz + ez - v1, cz + ez - v0] : [cz - ez + v0, cz - ez + v1]
+  const piece = (u0, u1, y0, y1, v0, v1, mask) => {
+    pieces.push([inCm(u0), inCm(u1), inCm(y0), inCm(y1), inCm(v0), inCm(v1), mask])
+    const [z0, z1] = zr(v0, v1)
+    walls.push({ cx: inCm(cx + (u0 + u1) / 2), cy: inCm((y0 + y1) / 2), cz: inCm((z0 + z1) / 2), ex: inCm((u1 - u0) / 2), ey: inCm((y1 - y0) / 2), ez: inCm((z1 - z0) / 2) })
+  }
+  piece(-ex, d0, 0, Hs, 0, T, 1 | 2 | 32); piece(d1, ex, 0, Hs, 0, T, 1 | 2 | 32); piece(d0, d1, dh, Hs, 0, T, 32 | 8)       // the door wall and its lintel
+  piece(-ex, ex, 0, Hs, 2 * ez - T, 2 * ez, 16 | 1 | 2)                                                                  // the back wall
+  piece(-ex, -ex + T, 0, Hs, T, 2 * ez - T, 2); piece(ex - T, ex, 0, Hs, T, 2 * ez - T, 1)                               // the side walls
+  piece(-ex, ex, Hs, H, 0, 2 * ez, 4 | 1 | 2 | 16 | 32)                                                                  // the roof slab
+  const Z = v => sg > 0 ? v : inCm(2 * cz - v)
+  const door = { x: B.door.x, z: Z(B.door.z), w: dw, h: dh, face: b.door.face, out: [B.door.out[0], 0, Z(B.door.out[2])], in: [B.door.in[0], 0, Z(B.door.in[2])] }
+  const out = { version: 1, id: b.id, kind: 'urban', seed: b.seed, B, sg, halfD: inCm(ez), storeys: B.storeys.length, height: H, door, pieces, colliders: walls,
+    rect: { x0: inCm(cx - ex), x1: inCm(cx + ex), z0: inCm(cz - ez), z1: inCm(cz + ez), y1: H } }
+  out.hash = inHash({ id: out.id, ground: B.ground, upper: B.upper, unit: B.unit, unit2: B.unit2, storeys: out.storeys, pieces, core: B.core })
+  return out
+}
 // ---- the outskirts' houses and shacks opening (card #78), after faustRingInterior's plans above
 // A ring house's or shack's solid box (faustRingsTick's colliders) is swapped for its walls with the door's gap, its floors and its
 // fittings when a participant comes within FAUST_RIN.open of its door: the plan and its meshes are made in a background job
@@ -5431,7 +5492,7 @@ function faustRingInterior(b) {
 // wall instances in the pool hidden along with its door pane, the walls' replacement and the floors shown). The replacement walls are
 // cut from the hidden instances' own matrices and tints (a shack's two courses, leaning and turned, included), so the outside looks
 // as it did; a shack's inside is turned with it. It closes past FAUST_RIN.close with nobody in it, after 3 s, and back to the box.
-function faustRingInState(F) { return F.ringIn ||= { open: new Map(), pending: new Set(), n: 0, scan: 0, shut: new Map(), stats: { opened: 0, closed: 0, maxOpenMs: 0, maxSwapMs: 0, failed: 0 } } }
+function faustRingInState(F) { return F.ringIn ||= { open: new Map(), pending: new Set(), queue: [], n: 0, scan: 0, shut: new Map(), stats: { opened: 0, closed: 0, maxOpenMs: 0, maxSwapMs: 0, failed: 0 } } }
 // a plan cell's drawn parts that belong to an enterable building, by index in cell.part: Map(index -> 'id/role'): a house's door pane;
 // a shack's lower and upper wall courses and its door pane. Found from the plan's own numbers (faustRingCell), memoised on the cell
 function faustRingInRoles(c) {
@@ -5453,7 +5514,8 @@ function faustRingInRoles(c) {
   }
   return m
 }
-const faustRingInWalls = b => b.kind === 'house' ? [['body', 'body']] : [['lo', 'body'], ['hi', 'body']]
+const faustRingInWalls = b => b.kind === 'house' ? [['body', 'body']] : b.kind === 'urban' ? [['far', 'far']] : [['lo', 'body'], ['hi', 'body']]
+const faustRingInRole = b => b.kind === 'house' ? 'body' : b.kind === 'urban' ? 'far' : 'lo'
 // a building's wall instances in the pool now: [{ m (16 floats), c (3) }], or null while the pool doesn't have them
 function faustRingInRead(F, b) {
   const out = []
@@ -5572,6 +5634,7 @@ function faustRingInSwap(F, Z, b, P, groups, shell) {
   return true
 }
 function faustRingInClose(F, Z, O, gone) {
+  if (O.urban) return faustRingUrbanClose(F, Z, O, gone)
   Z.open.delete(O.id)
   if (O.rec && statics.includes(O.rec)) dropChunk(O.rec)
   faustIn.ramps = faustIn.ramps.filter(r => !O.ramps.includes(r))
@@ -5616,7 +5679,7 @@ function faustRingInTick(participants) {
   const F = faustState
   if (!F || !LV.faust || !world || !F.rings || !faustRoadsReady(F)) return
   const Z = faustRingInState(F), K = FAUST_RIN, C = FAUST_RINGS.cell, now_ = performance.now()
-  const pts = participants.filter(c => c && c.x === c.x && !c.bot).map(c => [c.x, c.z, Math.hypot(c.vx || 0, c.vz || 0)])
+  const pts = participants.filter(c => c && c.x === c.x && !c.bot).map(c => [c.x, c.z, Math.hypot(c.vx || 0, c.vz || 0), c.y - (c.h || 0) - (c.r || 0)])
   // who is near: a scan every 6th tick of the cells within reach of a participant (a car at speed opens only what it stops at)
   if (++Z.scan % 6 === 0 && Z.pending.size < 2 && Z.open.size < 24) for (const [x, z, v] of pts) {
     const R = v > 10 ? 6 : K.open
@@ -5624,11 +5687,11 @@ function faustRingInTick(participants) {
       const cell = F.ringPlans?.get(i + ' ' + j)
       if (!cell?.buildings.length || !F.rings.cells.has(i + ' ' + j)) continue
       for (const b of cell.buildings) {
-        if (b.kind === 'urban' || Z.open.has(b.id) || Z.pending.has(b.id)) continue
+        if (Z.open.has(b.id) || Z.pending.has(b.id)) continue
         const dx = b.door.x - x, dz = b.door.z - z
         // its walls must be in the pool (drawn) or the opened building would show a hole where it stood: headless, no pool is made
-        if (dx * dx + dz * dz > R * R || !(renderHeadless || F.ringIdx?.has(b.id + '/' + (b.kind === 'house' ? 'body' : 'lo'))) || !faustRingInFind(F, b)) continue
-        faustRingInJob(F, Z, b)
+        if (dx * dx + dz * dz > R * R || !(renderHeadless || F.ringIdx?.has(b.id + '/' + faustRingInRole(b))) || !faustRingInFind(F, b)) continue
+        if (b.kind === 'urban') faustRingUrbanJob(F, Z, b); else faustRingInJob(F, Z, b)
         if (Z.pending.size >= 2) break
       }
     }
@@ -5637,8 +5700,11 @@ function faustRingInTick(participants) {
     if (O.c.dropped) { faustRingInClose(F, Z, O, true); continue }
     const r = O.P.rect, near = pts.some(([x, z]) => { const dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1); return dx * dx + dz * dz < K.close * K.close })
     if (near) O.seen = now_
-    else if (now_ - O.seen > 3000) faustRingInClose(F, Z, O)
+    else if (now_ - O.seen > 3000) { faustRingInClose(F, Z, O); continue }
+    if (O.urban && near) faustRingUrbanWants(F, Z, O, pts, now_)
   }
+  // the mid-rises' storeys' colliders: 2.5 ms a tick
+  for (const t1 = performance.now(); Z.queue.length && performance.now() - t1 < 2.5;) { const j = Z.queue[0]; if (!Z.open.has(j.O.id) || j.O.storeys.get(j.k)?.dead || j.steps.next().done) Z.queue.shift() }
 }
 // the state is the level's: a new city takes its meshes away
 function faustRingInReset() {
@@ -5655,11 +5721,169 @@ function faustRingDoors(c) {
   if (!plan) return out
   const i0 = Math.floor(c.x / C), j0 = Math.floor(c.z / C)
   for (let i = i0 - 1; i <= i0 + 1; i++) for (let j = j0 - 1; j <= j0 + 1; j++) for (const b of faustRingPlan(F, plan, i, j).buildings) {
-    if (b.kind === 'urban') continue
     const [nx, nz] = b.door.face
     out.push({ x: b.door.x, z: b.door.z, y0: 0, what: 'door of a ' + b.kind + ' (' + b.id + ')', spot: { x: b.door.x + nx * 3, z: b.door.z + nz * 3, face: [-nx, -nz] } })
   }
   return out
+}
+// ---- the mid-rise opening (card #78 phase 2): the walls with the door's gap and the roof as one instance of the far skyline's own
+// material, drawn with the opened building's own instance matrix and tint from a geometry cut in that instance's unit-box coordinates
+// (so its windows, which the far material lays out from the instance's box, fall exactly as they did); the storeys (#38's, through
+// faustRingUrbanStorey) made on demand round whoever is inside, as the city's interiors do: the ground storey, and k-1..k+1.
+function faustRingUrbanShell(F, P, wall) {
+  const m = wall.m, sg = P.sg, ex = Math.hypot(m[0], m[1], m[2]), ey = Math.hypot(m[4], m[5], m[6]), ez = Math.hypot(m[8], m[9], m[10]), cx = m[12], cy = m[13], cz = m[14]
+  const pos = [], nor = [], idx = []
+  // a local face (bit) to the unit box's axis and sign
+  const AX = { 1: [0, 1], 2: [0, -1], 4: [1, 1], 8: [1, -1], 16: [2, -sg], 32: [2, sg] }
+  for (const [u0, u1, y0, y1, v0, v1, mask] of P.pieces) {
+    const lo = [u0 / ex, (y0 - cy) / ey, 0], hi = [u1 / ex, (y1 - cy) / ey, 0], zz = [sg * (P.halfD - v0) / ez, sg * (P.halfD - v1) / ez].sort((p, q) => p - q)
+    lo[2] = zz[0]; hi[2] = zz[1]
+    for (const bit of [1, 2, 4, 8, 16, 32]) if (mask & bit) {
+      const [axis, sign] = AX[bit], a = (axis + 1) % 3, d = (axis + 2) % 3, o = pos.length / 3, n = [0, 0, 0]; n[axis] = sign
+      for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) {
+        const p = [0, 0, 0]; p[axis] = sign > 0 ? hi[axis] : lo[axis]; p[a] = i ? hi[a] : lo[a]; p[d] = j ? hi[d] : lo[d]
+        pos.push(...p); nor.push(...n)
+      }
+      if (sign > 0) idx.push(o, o + 1, o + 3, o, o + 3, o + 2); else idx.push(o, o + 2, o + 3, o, o + 3, o + 1)
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3))
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3 * 2), 2)); g.setIndex(idx)
+  const mesh = new THREE.InstancedMesh(g, F.materials.far, 1)
+  mesh.instanceMatrix.array.set(m); mesh.instanceMatrix.needsUpdate = true
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(Float32Array.from(wall.c), 3)
+  mesh.computeBoundingSphere(); mesh.castShadow = false; mesh.receiveShadow = false; mesh.userData.ringIn = P.id
+  return mesh
+}
+// a storey's colliders, a few at a time (the same steps as the city interiors'), the record dropChunk takes
+function* faustRingUrbanSteps(O, k) {
+  const S = faustRingUrbanStorey(O.P.B, k), tris = [], rec = { cell: 'ring in', src: [], bodies: [], ray: null, crowns: [], crown: null, partial: true }
+  O.partial.set(k, rec)
+  for (const r of S.ramps) rec.bodies.push(inRamp(r, tris))
+  const boxes = S.boxes.filter(b => b.c).map(b => faustBox(b.cx, b.cy, b.cz, b.ex, b.ey, b.ez)).sort((p, q) => q.ex * q.ez / q.ey - p.ex * p.ez / p.ey)
+  const v = new A.btVector3(0, 0, 0)
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i]; v.setValue(b.ex, b.ey, b.ez)
+    const B = makeBody(new A.btBoxShape(v), 0, b.cx, b.cy, b.cz); B.body.setFriction(0.9); world.addRigidBody(B.body, ...COLLIDE.static); rec.bodies.push(B)
+    if (i % 4 === 3) yield
+  }
+  A.destroy(v)
+  rec.src = boxes; rec.ray = rayMesh(boxes, tris); rec.partial = false
+  statics.push(rec); O.partial.delete(k)
+  const st = O.storeys.get(k)
+  if (st) { st.rec = rec; st.ramps = S.ramps.map(r => ({ ...r, id: O.id, k })); faustIn.ramps.push(...st.ramps) }
+  else { for (const b of rec.bodies) dropBody(b); dropChunk(rec) }
+}
+function faustRingUrbanDrop(O, k, gone) {
+  const st = O.storeys.get(k)
+  if (!st) return
+  O.storeys.delete(k)
+  const j = O.Z.queue.findIndex(q => q.O === O && q.k === k)
+  if (j >= 0) O.Z.queue.splice(j, 1)
+  const part = O.partial.get(k)
+  if (part) { if (!gone) for (const b of part.bodies) dropBody(b); O.partial.delete(k) }
+  if (st.rec && statics.includes(st.rec)) dropChunk(st.rec)
+  if (st.ramps) faustIn.ramps = faustIn.ramps.filter(r => !st.ramps.includes(r))
+  if (st.group) { faustIn.root?.remove(st.group); st.group.traverse(n => n.geometry?.dispose()); st.group = null }
+  st.dead = true
+}
+// the storey's mesh, made in the background (inDrawSteps over the cached, turned storey)
+function faustRingUrbanDraw(F, Z, O, k) {
+  if (renderHeadless || !camera || !F.materials) return
+  const st = O.storeys.get(k)
+  background.run('ringin-d:' + O.id + '/' + k, function* () {
+    if (st.dead) return
+    faustRingUrbanStorey(O.P.B, k); yield
+    if (st.dead) return
+    const D = { B: { id: O.id, door: O.P.door, cache: O.P.B.cache }, storeys: new Map() }
+    yield* inDrawSteps(D, k)
+    const g = D.storeys.get(k)
+    if (st.dead || !g) { if (g) { faustIn.root?.remove(g); g.traverse(n => n.geometry?.dispose()) } return }
+    st.group = g
+  }, { priority: 3, valid: () => F.ringIn === Z && Z.open.get(O.id) === O && !st.dead }).catch(e => frameFailed('ring interiors', e))
+}
+// the storeys an open mid-rise wants: its ground storey, and k-1..k+1 round each participant inside it
+function faustRingUrbanWants(F, Z, O, pts, now_) {
+  const r = O.P.rect, n = O.P.storeys, want = new Set([0]), stand = new Set()
+  for (const [x, z, , y] of pts) {
+    if (!(x > r.x0 - 0.3 && x < r.x1 + 0.3 && z > r.z0 - 0.3 && z < r.z1 + 0.3 && y > -1 && y < r.y1 + 1)) continue
+    const k = Math.min(n - 1, Math.max(0, Math.floor((y + 0.5) / 4)))
+    stand.add(k)
+    for (let q = k - 1; q <= k + 1; q++) if (q >= 0 && q < n) want.add(q)
+  }
+  for (const k of want) {
+    let st = O.storeys.get(k)
+    if (!st) {
+      st = { rec: null, group: null, ramps: null, keep: now_ }; O.storeys.set(k, st)
+      Z.queue.push({ O, k, steps: faustRingUrbanSteps(O, k) })
+      faustRingUrbanDraw(F, Z, O, k)
+    }
+    st.keep = now_
+    // the storey someone stands in is built at once
+    if (stand.has(k) && !st.rec) { const j = Z.queue.findIndex(q => q.O === O && q.k === k); if (j >= 0) { const q = Z.queue[j]; Z.queue.splice(j, 1); while (!q.steps.next().done); } }
+  }
+  for (const [k, st] of [...O.storeys]) if (!want.has(k) && now_ - st.keep > 2000) faustRingUrbanDrop(O, k)
+}
+// the swap: the walls and the roof in as colliders, the box out, the instance hidden, the walls' mesh and the ground storey shown
+function faustRingUrbanSwap(F, Z, b, P, group0, shell) {
+  const t0 = performance.now(), hit = faustRingInFind(F, b), walls = faustRingInRead(F, b)
+  if (!hit || !walls) return false
+  const { c, body, box } = hit
+  const O = { id: b.id, b, P, c, box, body, Z, shell, groups: null, yaw: 0, seen: performance.now(), hid: null, rec: null, ramps: [], storeys: new Map(), partial: new Map(), urban: true }
+  if (!body.out) world.removeRigidBody(body.body)
+  body.out = true; body.shut = 1
+  ;(Z.shut.get(c) || Z.shut.set(c, new Set()).get(c)).add(box)
+  faustRingInRays(Z, c)
+  O.rec = inBodies(P.colliders.map(q => faustBox(q.cx, q.cy, q.cz, q.ex, q.ey, q.ez)), [])
+  if (shell) { worldGroup.add(shell); still(shell) }
+  Z.open.set(b.id, O)
+  const st = { rec: null, group: group0, ramps: null, keep: performance.now() }
+  O.storeys.set(0, st)
+  Z.queue.push({ O, k: 0, steps: faustRingUrbanSteps(O, 0) })
+  faustRingInHide(F, O, true)
+  Z.stats.opened++; Z.stats.maxSwapMs = Math.max(Z.stats.maxSwapMs, performance.now() - t0)
+  return true
+}
+function faustRingUrbanClose(F, Z, O, gone) {
+  Z.open.delete(O.id)
+  for (const k of [...O.storeys.keys()]) faustRingUrbanDrop(O, k, gone)
+  for (const [k, part] of [...O.partial]) { if (!gone) for (const b of part.bodies) dropBody(b); O.partial.delete(k) }
+  Z.queue = Z.queue.filter(q => q.O !== O)
+  if (O.rec && statics.includes(O.rec)) dropChunk(O.rec)
+  faustRingInHide(F, O, false)
+  if (O.shell) { O.shell.parent?.remove(O.shell); O.shell.geometry.dispose(); O.shell.dispose(); O.shell = null }
+  if (!gone && !O.c.dropped) {
+    const shut = Z.shut.get(O.c)
+    shut?.delete(O.box); if (shut && !shut.size) Z.shut.delete(O.c)
+    O.body.shut = 0
+    if (!O.c.away && world) { O.body.out = false; world.addRigidBody(O.body.body, ...COLLIDE.static) }
+    faustRingInRays(Z, O.c)
+  }
+  Z.stats.closed++
+}
+// the plan, the ground storey's mesh, the walls' and the swap, in the background
+function faustRingUrbanJob(F, Z, b) {
+  const w = world
+  Z.pending.add(b.id)
+  background.run('ringin:' + b.id, function* () {
+    const t0 = performance.now()
+    const P = faustRingUrbanInterior(b)
+    yield
+    faustRingUrbanStorey(P.B, 0); yield
+    let group0 = null, shell = null
+    if (!renderHeadless && camera && F.materials && F.ringShapes) {
+      if (!faustIn.root) { faustIn.root = new THREE.Group(); faustIn.root.name = 'interiors'; scene.add(faustIn.root) }
+      const D = { B: { id: b.id, door: P.door, cache: P.B.cache }, storeys: new Map() }
+      yield* inDrawSteps(D, 0)
+      group0 = D.storeys.get(0)
+      const walls = faustRingInRead(F, b)
+      if (walls) shell = faustRingUrbanShell(F, P, walls[0])
+      yield
+    }
+    if (faustState === F && world === w && F.ringIn === Z && !Z.open.has(b.id) && faustRingUrbanSwap(F, Z, b, P, group0, shell)) Z.stats.maxOpenMs = Math.max(Z.stats.maxOpenMs, performance.now() - t0)
+    else { if (group0) { faustIn.root?.remove(group0); group0.traverse(n => n.geometry?.dispose()) } if (shell) { shell.geometry.dispose(); shell.dispose() } Z.stats.failed++ }
+  }, { priority: 3, valid: () => faustState === F && F.ringIn === Z && world === w }).catch(e => frameFailed('ring interiors', e)).finally(() => Z.pending.delete(b.id))
 }
 
 // Pure road routing for v1 bots: cardinal street corners, no per-chunk Recast allocation.
@@ -7070,7 +7294,7 @@ const FAUSTLAND_API = { interior: faustInterior, storey: faustStorey, plan: faus
   ring: { cell: (i, j) => { const F = faustState, plan = F && faustRoadsReady(F); return plan ? faustRingPlan(F, plan, i, j) : null },
     at: (x, z) => [Math.floor(x / FAUST_RINGS.cell), Math.floor(z / FAUST_RINGS.cell)], size: () => FAUST_RINGS.cell,
     // card #78: a house's or shack's interior plan (pure in the building), the open ones' ids, and the counters
-    interior: id => { const b = FAUSTLAND_API.ring.building(id); return b && b.kind !== 'urban' ? faustRingInterior(b) : null },
+    interior: id => { const b = FAUSTLAND_API.ring.building(id); return b ? b.kind === 'urban' ? faustRingUrbanInterior(b) : faustRingInterior(b) : null },
     interiors: () => ({ open: [...faustState?.ringIn?.open.keys() || []], stats: faustState?.ringIn?.stats || null }),
     building: id => { const [, i, j, n] = String(id).split(' ').map(Number), F = faustState, plan = F && faustRoadsReady(F); return plan ? faustRingPlan(F, plan, i, j).buildings[n] || null : null } },
   get state() { return faustState },
