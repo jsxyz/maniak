@@ -5754,7 +5754,7 @@ const inStorey = (B, k) => { let S = B.cache.get(k); if (!S) B.cache.set(k, S = 
 function inAt(x, y, z) {
   if (!faustState || !LV.faust) return null
   const ci = Math.floor((x + ARENA) / 96), cj = Math.floor((z + ARENA) / 96), c = faustState.chunks.get(faustKey(ci, cj))
-  if (!c) return null
+  if (!c || ci < 0 || cj < 0 || ci >= LV.grow.S || cj >= LV.grow.S) return null      // card #18: no buildings past the grid
   const lots = c.plan.lots
   for (let li = 0; li < lots.length; li++) {
     const l = lots[li]
@@ -5771,7 +5771,7 @@ function inDoorsNear(x, z, r) {
   const out = [], F = faustState
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
     const ci = Math.floor((x + ARENA) / 96) + i, cj = Math.floor((z + ARENA) / 96) + j, c = F?.chunks.get(faustKey(ci, cj))
-    if (!c) continue
+    if (!c || ci < 0 || cj < 0 || ci >= LV.grow.S || cj >= LV.grow.S) continue
     c.plan.lots.forEach((l, li) => {
       const dx = (l.district === 'industrial' ? l.x - 0.6 * l.w : l.x) - x, dz = l.z + l.d - z
       if (dx * dx + dz * dz < r * r) out.push(ci + ' ' + cj + ' ' + li)
@@ -10482,7 +10482,7 @@ function trafficHidden(x, z, people) {
 function trafficSpawn(people) {
   const T = trafficState, count = [...T.cars.values()].filter(o => o.trafficAmbient).length
   if (count >= TRAFFIC.cap || objs.length >= OBJ_MAX - 8 || !people.length) return
-  const p = people[(T.serial++) % people.length], district = faustGet(...FAUSTLAND_API.cellAt(p.x,p.z)).plan.district
+  const p = people[(T.serial++) % people.length], district = faustGet(...FAUSTLAND_API.cellAt(p.x,p.z).map(v => clamp(v, 0, LV.grow.S - 1))).plan.district      // card #18: the nearest grid cell's, outside it
   const anchors=[];for(const c of people)if(anchors.every(a=>Math.hypot(a.x-c.x,a.z-c.z)>TRAFFIC.radius*1.5))anchors.push(c)
   const density=Math.min(TRAFFIC.density[district]||8,Math.max(1,Math.floor(TRAFFIC.cap/anchors.length)))
   if ([...T.cars.values()].filter(o => o.traffic?.ambient && Math.hypot(o.x - p.x, o.z - p.z) < TRAFFIC.radius + 80).length >= density) return
