@@ -27985,11 +27985,23 @@ function slLinesNear(x, z, R) {
   return out
 }
 // a straight run from (x, z) toward (dx, dz) for up to d m, stopped short of any lot's building (its ring's inside)
+// the vehicles within reach of a run, as [x, z, forward x, forward z, half length, half width] (card #67)
+function slCarBoxes(x, z, d) {
+  const out = []
+  for (const o of objs) {
+    if (!o.V || Math.abs(o.x - x) > d + 6 || Math.abs(o.z - z) > d + 6) continue
+    const f = rotq(o.q, [0, 0, -1]), n = Math.hypot(f[0], f[2]) || 1
+    out.push([o.x, o.z, f[0] / n, f[2] / n, (o.V.l || 4.8) / 2 + 0.4, (o.V.w || 1.9) / 2 + 0.4])
+  }
+  return out
+}
+const slInBox = (b, x, z) => { const dx = x - b[0], dz = z - b[1]; return Math.abs(dx * b[2] + dz * b[3]) < b[4] && Math.abs(dx * -b[3] + dz * b[2]) < b[5] }
 function slRunTo(x, z, dx, dz, d) {
   const n = Math.hypot(dx, dz) || 1; dx /= n; dz /= n
-  const st = slState, A = st.S * 48
+  const st = slState, A = st.S * 48, cars = slCarBoxes(x, z, d).filter(b => !slInBox(b, x, z))
   for (let k = 0; k <= d; k += 0.4) {
     const px = x + dx * k, pz = z + dz * k
+    if (cars.some(b => slInBox(b, px, pz))) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
     if (Math.abs(px) > A - 2 || Math.abs(pz) > A - 2) return [x + dx * Math.max(0, k - 0.4), z + dz * Math.max(0, k - 0.4)]
     const cell = slCell(Math.floor((px + A) / 96), Math.floor((pz + A) / 96))
     for (const g of cell.rings) if (slInside(g.body, px, pz, SL_CLEAR.r + 0.1)) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
@@ -27997,10 +28009,11 @@ function slRunTo(x, z, dx, dz, d) {
   return [x + dx * d, z + dz * d]
 }
 const slR2 = v => Math.round(v * 100) / 100
-function slKnock(ag, p, ux, uz, power, by, T) {
+const slFling = v => clamp(0.25 * v * 0.45 + 0.1 * (v * 0.45) ** 2, 0.3, 12)          // m thrown by an impact at v m/s (card #67)
+function slKnock(ag, p, ux, uz, power, by, T, fling) {
   if (ag.kind === SL_K.pram) slPramHit(ag, p, by, T)          // card #45: its baby turns on the attacker; a hit pram burns or blows
   if (!slKnockable(ag, p)) return slDodge(ag, p, ux, uz, T)
-  const n = Math.hypot(ux, uz) || 1, d = Math.max(1, Math.min(7, 0.8 + power))
+  const n = Math.hypot(ux, uz) || 1, d = fling ?? Math.max(1, Math.min(7, 0.8 + power))
   const [x1, z1] = slRunTo(p.x, p.z, ux / n, uz / n, d)
   // up, then away from whoever did it, into the nearest doorway
   const [x2, z2] = slRunTo(x1, z1, ux / n + (slRnd(ag.id, T) - 0.5) * 0.8, uz / n + (slRnd(T, ag.id) - 0.5) * 0.8, 22)
@@ -28077,9 +28090,12 @@ function slHostTick() {
   for (const o of objs) {
     if (!o.V || !o.body) continue
     const v = o.body.getLinearVelocity(), vx = v.x(), vz = v.z(), sp = Math.hypot(vx, vz)
-    if (sp < 0.3 || !who.some(c => Math.abs(c.x - o.x) < 120 && Math.abs(c.z - o.z) < 120)) continue
+    if (!who.some(c => Math.abs(c.x - o.x) < 120 && Math.abs(c.z - o.z) < 120)) continue
+    const still = sp < 0.3          // card #67: a stopped or parked car is solid to anyone running (people at 2.5 m/s or more)
     if (sp >= 1.5) slFlocksNear(o.x, o.z, STREET.carR, f => slScatter(f, o.x, o.z, T))
-    const fx = vx / sp, fz = vz / sp, hl = (o.V.l || 4.8) / 2 + 0.3, hw = (o.V.w || 1.9) / 2 + 0.3
+    let fx = vx / sp, fz = vz / sp
+    if (still) { const f = rotq(o.q, [0, 0, -1]), n = Math.hypot(f[0], f[2]) || 1; fx = f[0] / n; fz = f[2] / n }
+    const hl = (o.V.l || 4.8) / 2 + 0.3, hw = (o.V.w || 1.9) / 2 + 0.3
     slAround(o.x, o.z, hl + 2, T, (ag, p) => {
       if (p.down || ag.kind === SL_K.exit && p.rec?.t > T - 500) return
       const dx = p.x - o.x, dz = p.z - o.z, al = dx * fx + dz * fz, ac = dx * -fz + dz * fx
@@ -28090,8 +28106,35 @@ function slHostTick() {
       }
       if (!hit) return
       const side = ac >= 0 ? 1 : -1
+      if (still) {
+        if (p.v < 2.5) return
+        const pf = hl - Math.abs(al), ps = hw - Math.abs(ac), sa = al >= 0 ? 1 : -1          // out by the shallower way: its end or its side
+        return ps <= pf ? slKnock(ag, p, -fz * side, fx * side, 1.5, null, T, ps + 0.6) : slKnock(ag, p, fx * sa, fz * sa, 1.5, null, T, pf + 0.6)
+      }
       if (sp < 1.5) return slDodge(ag, p, fx + -fz * side * 0.6, fz + fx * side * 0.6, T)          // card #67: creeping contact, step clear
-      slKnock(ag, p, fx + -fz * side * 0.6, fz + fx * side * 0.6, sp * 0.45, players.get(o.riders?.[0]), T)
+      slKnock(ag, p, fx + -fz * side * 0.6, fz + fx * side * 0.6, sp * 0.45, players.get(o.riders?.[0]), T, slFling(sp))
+    })
+  }
+  // card #67: nobody stays inside a character running at them (the Maniak, another player, a freak, an enforcer): from 3.5 m/s it
+  // knocks them down as a car does (the hit rules' slKnock), tested along the path since the last 20 Hz tick, feet below 1.2 m
+  for (const c of who) {
+    const prev = c.slAt; c.slAt = [c.x, c.z, T]
+    if (!prev || c.dead > 0 || seatOf(c) || !(T > prev[2]) || T - prev[2] > 400 || c.y - (c.h || 0.5) - (c.r || 0.4) > 1.2) continue
+    const dt = (T - prev[2]) / 1000, mx = c.x - prev[0], mz = c.z - prev[1], L = Math.hypot(mx, mz), sp = L / dt
+    if (sp > 80) continue
+    // below 3 m/s (the step-aside's own pace) only riders can close that fast: others are the step-aside's
+    const slow = sp < 3.0, riders = (x, z, R, T, fn) => { for (const Ln of slLinesNear(x, z, R)) for (const ag of Ln.riders) {
+      ag.line = Ln; slPose(ag, T, slAroundPose); if (!slAroundPose.hidden && Math.abs(slAroundPose.x - x) < R && Math.abs(slAroundPose.z - z) < R) fn(ag, slAroundPose, null) } }
+    ;(slow ? riders : slAround)((c.x + prev[0]) / 2, (c.z + prev[1]) / 2, L / 2 + 2.5, T, (ag, p) => {
+      if (p.down || ag.kind === SL_K.exit && p.rec?.t > T - 500) return
+      const gap = (qx, qz) => { const u = L > 1e-6 ? clamp(((qx - prev[0]) * mx + (qz - prev[1]) * mz) / (L * L), 0, 1) : 0; return Math.hypot(prev[0] + mx * u - qx, prev[1] + mz * u - qz) }
+      let hit = gap(p.x, p.z) < (c.r || 0.45) + (ag.kind === SL_K.cyclist ? 0.4 : 0.32)
+      if (ag.kind === SL_K.pram && !slPramGone(ag, T)) hit ||= gap(p.x + Math.sin(p.yaw) * STREET.pramBack, p.z + Math.cos(p.yaw) * STREET.pramBack) < (c.r || 0.45) + 0.5
+      if (!hit) return
+      const vx = mx / dt - Math.sin(p.yaw) * (p.v || 0), vz = mz / dt - Math.cos(p.yaw) * (p.v || 0), rel = Math.hypot(vx, vz)          // the character's speed on the person
+      if (rel < 3.0) return
+      const sgn = sp >= (p.v || 0) ? 1 : -1, fx = sgn * vx / rel, fz = sgn * vz / rel, side = (p.x - c.x) * -fz + (p.z - c.z) * fx >= 0 ? 1 : -1
+      slKnock(ag, p, fx + -fz * side * 0.6, fz + fx * side * 0.6, rel * 0.3, c, T, slFling(rel))
     })
   }
   st.stats.hostMs = st.stats.hostMs * 0.9 + (performance.now() - t0) * 0.1
