@@ -28520,7 +28520,7 @@ const blackbox = (() => {
   B.objects = (row, cam) => {
     const seen = B.seen ||= new WeakMap(), c = new THREE.Vector3(), f = row.t, hits = []
     scene.traverseVisible(n => {
-      if (!(n.isMesh || n.isPoints || n.isSprite)) return
+      if (!(n.isMesh || n.isPoints || n.isSprite) || n.isInstancedMesh) return      // an instanced set's sphere centre moves as instances come and go
       const s = n.boundingSphere || n.geometry?.boundingSphere
       if (!s) return
       c.copy(s.center).applyMatrix4(n.matrixWorld)
@@ -28544,13 +28544,16 @@ const blackbox = (() => {
   B.frameNo = 0
   B.frame = () => {
     const t = performance.now(), c = selfChar(), o = c && (seatOf(c)?.[0] || rideOf(c)), cam = camera.position, L = B.last
+    const progs = B.progs ||= new Set(), fresh = (renderer.info.programs || []).filter(q => !progs.has(q))
+    for (const q of fresh) progs.add(q)
     const v = o && objPool.find(m => m.userData.oid === o.id), bv = o?.body ? o.body.getLinearVelocity() : null
     const row = { t: Math.round(t), dt: L ? Math.round(t - L.t) : 0, calls: lookStats.calls, tri: lookStats.triangles, prog: renderer.info.programs?.length ?? 0,
       cam: [cam.x, cam.y, cam.z].map(x => +x.toFixed(2)), fov: +camera.fov.toFixed(1), steer: o ? +(o.steer || 0).toFixed(3) : null,
       speed: bv ? +Math.hypot(bv.x(), bv.z()).toFixed(1) : null, look: v ? v.children.map(k => +k.visible).join('') : '', shown: v ? +v.visible : null, wheels: wheelN, flag: [] }
     if (L && o) {
       const jump = Math.hypot(cam.x - L.cam[0], cam.y - L.cam[1], cam.z - L.cam[2])
-      if (row.prog !== L.prog) row.flag.push('programs ' + L.prog + '>' + row.prog)
+      if (fresh.length) row.flag.push('programs ' + L.prog + '>' + row.prog + ' new: ' + fresh.map(q => q.name).join(', '))
+      else if (row.prog !== L.prog) row.flag.push('programs ' + L.prog + '>' + row.prog)
       if (jump > 2 + (row.speed || 0) * Math.max(row.dt, 16) / 1000 * 1.5) row.flag.push('camera jumped ' + jump.toFixed(1) + ' m')
       if (L.tri > 2000 && Math.abs(row.tri - L.tri) > 0.3 * L.tri) row.flag.push('triangles ' + L.tri + '>' + row.tri)
       if (L.calls > 50 && Math.abs(row.calls - L.calls) > 0.3 * L.calls) row.flag.push('calls ' + L.calls + '>' + row.calls)
