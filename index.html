@@ -3161,7 +3161,7 @@ function faustFeatMesh(P) {
 // inner core, chosen from the seed alone, in a fixed order: the first LANDMARKS.theatre of them, by hash, hold a theatre. Never
 // a plaza, the diagonal's cells, the transit towers' cells, a cell the monorail runs through or has a pavilion on, nor a lot the
 // plan drops; the plan sets lot.landmark and the plan content version carries it. Memoised per (seed, S).
-const FAUST_LANDMARKS = { theatre: 2 }
+const FAUST_LANDMARKS = { theatre: 2, cathedral: 1 }
 let faustLandmarkMemo = null
 function faustLandmarks(seed, S) {
   seed >>>= 0
@@ -3169,14 +3169,16 @@ function faustLandmarks(seed, S) {
   const rail = faustRail(seed, S), list = []
   for (let gx = -S / 2; gx < S / 2; gx++) for (let gz = -S / 2; gz < S / 2; gz++) {
     const c = faustCell(seed, gx, gz)
-    if (c.district !== 'core' || c.layout !== 1 || c.plaza || c.diagonal || c.distance > 480 ** 2) continue
+    const kind = c.district === 'core' && c.distance <= 480 ** 2 ? 'theatre' : c.district === 'civic' ? 'cathedral' : null
+    if (!kind || c.layout !== 1 || c.plaza || c.diagonal) continue
     const x = c.X + 48, z = c.Z + 48
     if ((gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 || Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z)) || rail.byCell.has(faustKey(gx + S / 2, gz + S / 2))) continue
-    list.push({ k: gx + ' ' + gz, h: faustMix(seed ^ 0x6c616e64, gx, gz) })
+    list.push({ k: gx + ' ' + gz, kind, h: faustMix(seed ^ 0x6c616e64, gx, gz) })
   }
   list.sort((a, b) => a.h - b.h || (a.k < b.k ? -1 : 1))
   const map = new Map()
-  list.slice(0, FAUST_LANDMARKS.theatre).forEach(e => map.set(e.k, 'theatre'))
+  const left = { ...FAUST_LANDMARKS }
+  for (const e of list) if (left[e.kind]-- > 0) map.set(e.k, e.kind)
   faustLandmarkMemo = { seed, S, map }
   return map
 }
@@ -3218,6 +3220,8 @@ function faustPlan(seed, ci, cj, S = 20) {
     const w = layout === 1 ? 29 : 10 + (rng() * 3 | 0), d = layout < 4 ? 28 : 10 + (rng() * 3 | 0)
     let gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
     if (landmark === 'theatre') gothic = false       // card #69: a theatre is never the Gothic kind (the rng draws stay as they were)
+    const cath = landmark === 'cathedral' && !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0)
+    if (cath) H = 46
     if (diagonal && Math.abs(z - x - 384) < w + d + 18 || Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z))) continue
     const stop = (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 && i === 0
     if (stop) H = 560 + (districtHash % 4) * 16
@@ -3227,9 +3231,11 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (h1) mass.push(faustBox(x, h0 + h1 / 2, z, w * 0.73, h1 / 2, d * 0.73), faustBox(x, h0 + h1 + (H - h0 - h1) / 2, z, w * 0.42, (H - h0 - h1) / 2, d * 0.42))
     else if (style === 'industrial') mass.push(faustBox(x - w * 0.6, H + 18, z - d * 0.6, 1.6, 18, 1.6), faustBox(x + w * 0.4, H + 4, z, 4, 4, 6))
     else mass.push(faustBox(x + w * 0.3, H + 2, z, 3, 2, 4), faustBox(x - w * 0.4, H + 5, z - d * 0.3, 2.6, 3, 2.6))
-    const skyMass = h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, w * 0.73, (H - h0) / 2, d * 0.73)] : mass.slice(0, 2)
+    // card #69: the cathedral's body (24 m), its nave (to 30 m, 22 m wide) and the crossing lantern (to 46 m)
+    if (cath) mass.splice(0, mass.length, faustBox(x, 12, z, w, 12, d), faustBox(x, 27, z, 11, 3, d - 2.2), faustBox(x, 38, z, 8, 8, 8))
+    const skyMass = cath ? mass.slice(0, 2) : h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, w * 0.73, (H - h0) / 2, d * 0.73)] : mass.slice(0, 2)
     const lot = { x, z, w, d, height: H, gothic, district: style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + i, gz) }
-    if (landmark && !stop) lot.landmark = landmark
+    if (landmark && !stop && (landmark !== 'cathedral' || cath)) lot.landmark = landmark
     lots.push(lot); boxes.push(...mass)
     // The strong façade piers also stop the block and chain, including in a server with no rendered city.
     if (style !== 'industrial' && style !== 'tenement') {
@@ -3249,7 +3255,7 @@ function faustPlan(seed, ci, cj, S = 20) {
         tower: { id, x, z, roofY: H, district }, platform, cruiseY: FAUST.cruiseY, airBand: FAUST.airBand.slice(),
         approach: [x + 30, H + 10, z] })
     }
-    if (H > 36 && i === 0) screens.push({ x, y: 20, z: z + d + 0.12, w: 16, h: 9, yaw: 0, ground: null })
+    if (H > 36 && i === 0 && !cath) screens.push({ x, y: 20, z: z + d + 0.12, w: 16, h: 9, yaw: 0, ground: null })
   }
   for (const q of faustLampOffsets(diagonal)) boxes.push(faustBox(X + 11.4, 4.5, Z + q, 0.14, 4.5, 0.14, { slim: true }))
   // card #69: a plaza's monument and furniture, and their colliders
@@ -3272,7 +3278,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 7, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props }
+  const content = { version: 9, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -3498,7 +3504,7 @@ function faustInterior(plan, li) {
     piers.push([b.cx - b.ex, b.cx + b.ex, door ? 4.6 : b.cy - b.ey, b.cy + b.ey, b.cz - b.ez, b.cz + b.ez].map(inCm))
   })
   const B = { version: 2, id: plan.ci + ' ' + plan.cj + ' ' + li, ci: plan.ci, cj: plan.cj, li, slot, chunk: plan.ci * plan.S + plan.cj, seed: lot.seed, style, gothic, stop: !!stop,
-    x, z, w, d, H, ground, unit, unit2, upper, door, core, storeys, masses, solids, piers, roof: { y: H, exit: !stop } }
+    x, z, w, d, H, ground, unit, unit2, upper, door, core, storeys, masses, solids, piers, roof: { y: H, exit: !stop }, ...lot.landmark === 'cathedral' ? { landmark: 'cathedral' } : {} }
   B.hash = inHash(B)
   return B
 }
@@ -3528,6 +3534,7 @@ const inDistrict = (cx, cz) => { const g = [Math.floor(cx / 96), Math.floor(cz /
   return d2 < 230400 ? 0 : g[0] < -2 && g[1] < 4 && d2 < 1e6 ? 1 : d2 > 1102500 || g[1] < -7 ? 3 : 2 }
 function inWindows(B, k) {
   const s = B.storeys[k], out = [], count = [0, 0, 0, 0]
+  if (k > 0 && B.landmark === 'cathedral') return out      // card #69: a stone church has no office windows above its ground storey
   const push = (face, plane, a0, a1, y0, y1) => { const bay = count[face]++
     out.push({ key: inWindowKey(B, k, face, bay), face, bay, plane: inCm(plane), a0: inCm(a0), a1: inCm(a1), y0: inCm(y0), y1: inCm(y1) }) }
   if (k === 0) {
@@ -6090,6 +6097,7 @@ function faustFin(g, cx, cz, r, y0, y1, cap, foot, tint) {
 function faustDecoTower(g, lot) {
   const { x, z, height: H, gothic, mass, seed } = lot, D = FAUST_DECO
   if (mass.length < 3) return
+  if (lot.landmark === 'cathedral') return          // card #69: faustDecoCathedral builds its own crossing and spire
   const [m0, m1, m2] = mass, kind = (seed >>> 7) % 3, spire = gothic ? 2.2 : 1
   // corner fins: the base's from over the belt course, the middle's and the top's from their own ledges
   for (const [m, r, y0, y1, cap] of [[m0, 1.1, 5.4, m0.cy + m0.ey + 1.5, 4], [m1, 0.95, m1.cy - m1.ey, m1.cy + m1.ey + 2, 5], [m2, 0.8, m2.cy - m2.ey, H + 6.7, 6]])
@@ -6213,7 +6221,7 @@ function faustDecoShed(g, lot) {
 // chevrons flush on its face (from 5.4 m up, over the marquee). Pure in the lot.
 function faustDecoRelief(g, lot) {
   const { x, z, d, height: H, mass } = lot, D = FAUST_DECO
-  if (mass.length < 3) return
+  if (mass.length < 3 || lot.landmark === 'cathedral') return
   for (const m of [mass[0], mass[1]]) {
     const top = m.cy + m.ey, y = top + 0.45
     // the wall: four slabs 0.2 m thick, 0.7 m high, 0.9 m inside the faces (the cornice ring is 0.7 m in at its inner edge)
@@ -6298,6 +6306,111 @@ function faustDecoTheatre(g, lot) {
     g.box(faustBox(px, 1.45, z + d + 0.63, 1.0, 0.4, 0.02), L, 0.7)
     g.box(faustBox(px, 2.35, z + d + 0.45, 1.2, 0.12, 0.35), D.brass, 0.6)
   }
+}
+// card #69: a cathedral (lot.landmark === 'cathedral', a one-lot civic block the plan gives three masses: a 24 m body, a 22 m wide
+// nave to 30 m and a crossing lantern to 46 m). A stone skin 0.12 m proud over all three hides the office window grid; lancet windows
+// (a dark pointed head, a lit glass pane in amber, red or blue) in a rhythm on the body, the nave and the lantern; a steep gabled
+// roof over the nave; twin bell towers flush on the front corners (0.5 m off the wall) standing clear of the nave and taller than
+// its ridge; a rose window and nested pointed archivolt in front of the door's pier; five flying buttresses a side (a chunky pier
+// with a pinnacle, a stepped arm down from the nave wall); and one tall spire on four legs over the lantern, which leaves the stair's
+// roof hatch open. Pure in the lot. Body-height parts (the skin, the tower feet) stay within 0.5 m of a wall.
+function faustGable(g, x, y, z0, z1, hw, rise, tint) {
+  const L0 = [x - hw, y, z0], L1 = [x - hw, y, z1], R0 = [x + hw, y, z0], R1 = [x + hw, y, z1], T0 = [x, y + rise, z0], T1 = [x, y + rise, z1]
+  g.tri(L0, L1, T1, tint); g.tri(L0, T1, T0, tint); g.tri(R1, R0, T0, tint); g.tri(R1, T0, T1, tint)
+  g.tri(L1, R1, T1, tint); g.tri(R0, L0, T0, tint)
+}
+function faustDecoCathedral(g, lot) {
+  if (lot.landmark !== 'cathedral' || lot.mass.length < 3) return
+  const { x, z, w, d, height: H, mass } = lot, D = FAUST_DECO, [m0, m1, m2] = mass, S = 0x8d949c, T = 0xc0c5c7, K = 0x080e18, SK = 0x5c6671, G = 0x1b222b
+  const face = z + d, h0 = m0.cy + m0.ey, h1 = m1.cy + m1.ey
+  // the skin: thin slabs over the four faces of each mass (the body's from over the belt course at 5.1 m)
+  for (const [m, y0] of [[m0, 5.1], [m1, m1.cy - m1.ey], [m2, m2.cy - m2.ey]]) {
+    const y1 = m.cy + m.ey, ym = (y0 + y1) / 2, hy = (y1 - y0) / 2
+    g.box(faustBox(m.cx, ym, m.cz + m.ez + 0.06, m.ex, hy, 0.06), SK); g.box(faustBox(m.cx, ym, m.cz - m.ez - 0.06, m.ex, hy, 0.06), SK)
+    g.box(faustBox(m.cx + m.ex + 0.06, ym, m.cz, 0.06, hy, m.ez), SK); g.box(faustBox(m.cx - m.ex - 0.06, ym, m.cz, 0.06, hy, m.ez), SK)
+  }
+  // a lancet at (fx, fz) on a wall facing +/- along z (ax 0, its width along x) or along x (ax 1): a dark backing, a lit pane, a lit point
+  let n = 0
+  const COL = [D.brass, 0xb3392d, 0x2f6fb5, D.brass, D.brass]
+  const lancet = (fx, fz, ax, y0, hw, hh) => {
+    const i = n++, lit = i % 3 !== 1, c = lit ? COL[i % 5] : G, e = ax ? [0.02, hw] : [hw, 0.02], f = ax ? [0.03, hw - 0.12] : [hw - 0.12, 0.03], p = ax ? [0.03, hw * 0.45] : [hw * 0.45, 0.03]
+    g.box(faustBox(fx, y0 + hh, fz, e[0] + (ax ? 0 : 0.12), hh, e[1] + (ax ? 0.12 : 0)), K)
+    g.box(faustBox(fx, y0 + hh, fz, f[0], hh - 0.12, f[1]), c, lit ? 0.55 : 0)
+    g.box(faustBox(fx, y0 + 2 * hh + 0.3, fz, p[0], 0.4, p[1]), c, lit ? 0.55 : 0)
+  }
+  for (const sd of [-1, 1]) {
+    for (const o of [-21, -14, -7, 0, 7, 14]) lancet(x + sd * (m0.ex + 0.14), z + o, 1, 7, 0.6, 3)
+    for (let o = -22; o <= 22; o += 5.5) lancet(x + sd * (m1.ex + 0.14), z + o, 1, 25, 0.55, 1.9)
+    for (const o of [-8.5, 8.5]) lancet(x + o, face + 0.14, 0, 7, 0.6, 3)
+    lancet(x + sd * 13.5, face + 0.14, 0, 7, 0.6, 3)
+    for (const o of [-3, 3]) { lancet(x + o, m2.cz + m2.ez + 0.14, 0, 32, 0.8, 5.5); lancet(x + o, m2.cz - m2.ez - 0.14, 0, 32, 0.8, 5.5)
+      lancet(m2.cx + m2.ex + 0.14, z + o, 1, 32, 0.8, 5.5); lancet(m2.cx - m2.ex - 0.14, z + o, 1, 32, 0.8, 5.5) }
+  }
+  for (let o = -18; o <= 18; o += 6) lancet(x + o, z - d - 0.14, 0, 7, 0.6, 3)
+  // the nave's roof: 50 degrees, slate, with a ridge cap
+  faustGable(g, x, h1, m1.cz - m1.ez, m1.cz + m1.ez, m1.ex + 0.25, 13.3, 0x515963)
+  g.box(faustBox(x, h1 + 13.45, m1.cz, 0.18, 0.18, m1.ez), 0x8b939b)
+  // the towers: a shaft to the lantern's height with rows of lancets, a lit belfry, a pyramid cap, corner pinnacles
+  const Ht = H
+  for (const sx of [-1, 1]) {
+    const cx = x + sx * 22, zc = face - 3.75
+    g.box(faustBox(cx, Ht / 2, zc, 4, Ht / 2, 4.25), S)
+    for (let y = 8, row = 0; y < Ht - 6; y += 10, row++) for (const o of [-1.4, 1.4]) {
+      const lit = faustMix(lot.seed >>> 0, row * 8 + (o > 0 ? 1 : 0) + (sx > 0 ? 4 : 0), 0x6c61) % 3 === 0, fx = cx + o, fz = face + 0.55
+      g.box(faustBox(fx, y + 1.5, fz, 0.45, 1.5, 0.03), lit ? D.brass : K, lit ? 0.35 : 0)
+      g.tri([fx - 0.45, y + 3, fz], [fx + 0.45, y + 3, fz], [fx, y + 4.3, fz], lit ? D.brass : K)
+    }
+    g.box(faustBox(cx, Ht + 0.3, zc, 4.3, 0.3, 4.55), T)
+    g.box(faustBox(cx, Ht + 3.9, zc, 3.2, 3.6, 3.45), S)
+    for (const o of [-1, 1]) {
+      g.box(faustBox(cx + o * 1.0, Ht + 3.6, face + 0.3, 0.55, 2.0, 0.03), D.brass, 0.5)
+      g.box(faustBox(cx + o * 3.25, Ht + 3.6, zc, 0.03, 2.0, 0.6), D.brass, 0.5)
+    }
+    g.box(faustBox(cx, Ht + 7.6, zc, 3.5, 0.3, 3.75), T)
+    faustPyramid(g, cx, Ht + 7.9, zc, 3.4, 3.65, 11, D.crown)
+    for (const a of [-1, 1]) for (const b of [-1, 1]) {
+      g.box(faustBox(cx + a * 3.2, Ht + 8.5, zc + b * 3.45, 0.35, 0.7, 0.35), T)
+      faustPyramid(g, cx + a * 3.2, Ht + 9.2, zc + b * 3.45, 0.4, 0.4, 2, D.crown)
+    }
+  }
+  // the rose window and the archivolt, in front of the door's pier (its face is at 1.13 m)
+  const fr = face + 1.2, ry = 16.5, N = 24
+  for (let i = 0; i < N; i++) {
+    const a = i / N * Math.PI * 2, b = (i + 1) / N * Math.PI * 2, c = Math.cos, s = Math.sin
+    const p = (r, t) => [x + r * c(t), ry + r * s(t), fr]
+    g.tri(p(0, 0), p(3.6, a), p(3.6, b), K)
+    g.tri(p(3.6, a), p(4.3, a), p(4.3, b), T); g.tri(p(3.6, a), p(4.3, b), p(3.6, b), T)
+    if (i % 2 === 0) g.tri(p(0.5, a), p(3.6, a + 0.12), p(3.6, a - 0.12), 0x283342)
+  }
+  for (let i = 0; i < 12; i++) { const a = (i + 0.5) / 12 * Math.PI * 2; g.box(faustBox(x + 2.5 * Math.cos(a), ry + 2.5 * Math.sin(a), fr + 0.02, 0.4, 0.4, 0.03), COL[i % 3 === 1 ? 1 : i % 3 === 2 ? 2 : 0], 0.55) }
+  g.box(faustBox(x, ry, fr + 0.02, 0.55, 0.55, 0.03), D.brass, 0.7)
+  for (const sd of [-1, 1]) {
+    g.box(faustBox(x + sd * 4.8, 1.15, face + 0.16, 0.25, 1.15, 0.16), T)          // flush on the wall below 2.3 m (within 0.36 m of it)
+    g.box(faustBox(x + sd * 4.8, 5.05, face + 0.65, 0.25, 2.75, 0.65), T)           // and standing out to the arch's plane above it
+    g.tri([x + sd * 4.55, 7.8, fr], [x + sd * 5.05, 7.8, fr], [x + sd * 0.4, 12.6, fr], T); g.tri([x + sd * 4.55, 7.8, fr], [x + sd * 0.4, 12.6, fr], [x + sd * 0.4, 11.9, fr], T)
+  }
+  // the flying buttresses: a chunky pier on the body's roof with a pinnacle, and an arm of five steps down from the nave wall
+  const ledge = h0 + 0.45
+  for (const sd of [-1, 1]) for (const zo of [-21, -13, -5, 5, 13]) {
+    const px = x + sd * 22, pz = z + zo
+    g.box(faustBox(px, ledge + 3.4, pz, 0.6, 3.4, 0.65), T)
+    faustPyramid(g, px, ledge + 6.8, pz, 0.8, 0.85, 3, D.crown)
+    const x0 = m1.ex + 0.1, x1 = 22 - 0.6, step = (x1 - x0) / 5
+    for (let i = 0; i < 5; i++) g.box(faustBox(x + sd * (x0 + step * (i + 0.5)), h1 - 0.9 - i * 0.5, pz, step / 2 + 0.02, 0.45, 0.5), S)
+  }
+  // the spire: four legs from the lantern's corners to a slab 6 m up (the stair's hatch stays open), then a collar, a diamond shaft, a lit
+  // brass ring, a slimmer shaft with its cap, and a cross
+  const yb = H + 6.7, sp = 50
+  for (const a of [-1, 1]) for (const b of [-1, 1]) g.box(faustBox(x + a * 7.2, H + 3.3, z + b * 7.2, 0.6, 3.3, 0.6), T)
+  g.box(faustBox(x, H + 6.35, z, 8.6, 0.35, 8.6), D.band)
+  g.box(faustBox(x, yb + 0.6, z, 3.4, 0.6, 3.4), T)
+  g.box(faustBox(x, yb + 1.3, z, 3.5, 0.08, 3.5), D.brass, 0.6)
+  faustFin(g, x, z, 2.6, yb + 1.2, yb + sp * 0.3, 0, 0, D.crown)
+  g.box(faustBox(x, yb + sp * 0.3 + 0.2, z, 2.0, 0.2, 2.0), D.brass, 0.5)
+  faustFin(g, x, z, 1.7, yb + sp * 0.3 + 0.4, yb + sp * 0.55, sp * 0.45, 0, D.crown)
+  const tip = yb + sp
+  g.box(faustBox(x, tip + 1.2, z, 0.1, 1.2, 0.1), D.steel); g.box(faustBox(x, tip + 1.7, z, 0.6, 0.08, 0.08), D.steel)
+  g.box(faustBox(x, tip + 2.6, z, 0.2, 0.3, 0.2), D.brass, 0.9)
 }
 function* faustVisualSteps(c) {
   const facade = faustBatch(3072), ornament = faustBatch(26624), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
@@ -6421,6 +6534,7 @@ function* faustVisualSteps(c) {
     // card #69: the tower's Art Deco crown, setback pylons and corner fins
     faustDecoTower(ornament, lot)
     faustDecoRelief(ornament, lot)
+    faustDecoCathedral(ornament, lot)
     yield
   }
   // Slender paired lamps on the avenue, merged with all other street detail.
