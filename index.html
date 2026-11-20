@@ -28075,6 +28075,10 @@ function slClip(ag, o, t) {
     default: o.clip = o.mode === 1 ? 'idle' : 'walk'; o.ct = o.mode === 1 ? t / 1000 + (ag.id % 7) : o.s / (0.57 * H)
   }
 }
+// card #72: a start from v0 to v (m/s) at a constant rate over SL_PUSH s: the distance covered after tr s, and the speed then
+const SL_PUSH = 0.25
+const slPushOff = (tr, v0, v) => tr < SL_PUSH ? v0 * tr + (v - v0) * tr * tr / (2 * SL_PUSH) : v * tr - (v - v0) * SL_PUSH / 2
+const slPushV = (tr, v0, v) => tr < SL_PUSH ? v0 + (v - v0) * tr / SL_PUSH : v
 // the pose under a record
 function slDetached(ag, r, t, o) {
   if (r.kind === 8 || r.kind === 9) return partsStreetPose(ag, r, t, o)          // card #55: held, flung
@@ -28096,10 +28100,11 @@ function slDetached(ag, r, t, o) {
     else if (tau < k2) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = dog ? 'flinch' : 'getup'; o.ct = tau - k1; o.down = true
       if (dog) { const f = 1 - (tau - k1) / S.getupS; o.roll = Math.PI / 2 * f; o.y = 0.22 * Math.sin(o.roll) } }
     else {
-      const d = Math.hypot(r.x2 - r.x1, r.z2 - r.z1), run = (tau - k2) * S.run, f = d > 0.01 ? Math.min(1, run / d) : 1
+      // card #72: after getting up they push off into the run; out of a doorway (an exit) they come already running
+      const d = Math.hypot(r.x2 - r.x1, r.z2 - r.z1), tr = tau - k2, run = r.kind === 1 ? slPushOff(tr, 0, S.run) : tr * S.run, f = d > 0.01 ? Math.min(1, run / d) : 1
       o.x = r.x1 + (r.x2 - r.x1) * f; o.z = r.z1 + (r.z2 - r.z1) * f; o.yaw = Math.atan2(r.x2 - r.x1, r.z2 - r.z1)
-      o.clip = dog ? 'run' : 'flee'; o.ct = run / (dog ? 1.55 : 3.25 * H); o.v = S.run
-      const end = d / S.run
+      o.clip = dog ? 'run' : 'flee'; o.ct = run / (dog ? 1.55 : 3.25 * H); o.v = r.kind === 1 ? slPushV(tr, 0, S.run) : S.run
+      const end = d / S.run + (r.kind === 1 ? SL_PUSH / 2 : 0)
       if (tau - k2 > end) { const g = (tau - k2 - end) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
     }
     if (ag.kind === SL_K.cyclist) {          // card #63: the bike falls over and slides from under him to where it lies
@@ -28122,10 +28127,12 @@ function slDetached(ag, r, t, o) {
   // close to the trouble, a person first cowers where they stand, then runs
   const cow = r.kind === 2 && !dog && ag.kind !== SL_K.pram && Math.hypot(ax - r.x, az - r.z) < 6 ? 1.3 : 0
   if (tau < cow) { o.x = ax; o.z = az; o.yaw = Math.atan2(r.x - o.x, r.z - o.z); o.clip = 'cower'; o.ct = tau; o.v = 0; o.s = 0; return }
-  const v = ag.kind === SL_K.pram ? 3 : dog ? 5.5 : S.run, run = Math.min(tau - cow, S.fleeS) * v
+  // card #72: they push off from the speed they had (standing, or after cowering, 0; walking, their walking speed), not the
+  // whole run in the first frame
+  const v = ag.kind === SL_K.pram ? 3 : dog ? 5.5 : S.run, tr = Math.min(tau - cow, S.fleeS), v0 = cow ? 0 : clamp(at.v || 0, 0, v), run = slPushOff(tr, v0, v)
   if (run < d0) { const f = run / d0; o.x = ax + (q0.x - ax) * f; o.z = az + (q0.z - az) * f; o.yaw = Math.atan2(q0.x - ax, q0.z - az) }
   else { slAlong(R, s0 + dir * (run - d0), o); if (dir < 0) o.yaw = slWrap(o.yaw + Math.PI) }
-  o.v = tau < S.fleeS ? v : 0
+  o.v = tau < S.fleeS ? slPushV(tr, v0, v) : 0
   if (tau - cow > S.fleeS) { const g = (tau - cow - S.fleeS) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
   o.s = run
   if (ag.kind === SL_K.pram) { o.clip = 'push'; o.ct = run / (0.57 * H) * 0.55 }
@@ -28553,7 +28560,7 @@ function slDrawSkinned(kitm, p, d, tint, scale = 1) {
 // The pushers are what this client draws (the avatars; the drawn objects), the same on host and guest, the local player
 // included. Cosmetic: records, obstacles() and the host's hit tests keep the schedule's poses, and nothing pushes a
 // player. A walked dog keeps its owner's offset, so the lead holds.
-const SL_NUDGE = { char: 1.1, clear: 0.5, look: 1, lookMax: 10, hold: 0.35, out: 3, outCar: 4.5, back: 0.9, max: 2.6 }
+const SL_NUDGE = { char: 1.1, clear: 0.5, look: 1, lookMax: 10, hold: 0.35, out: 3, outCar: 4.5, back: 0.9, max: 2.6, moving: 0.15, offFrames: 30, acc: 14 }
 const slExtents = new WeakMap()
 function slCarExtent(K) {
   let e = slExtents.get(K)
@@ -28562,7 +28569,16 @@ function slCarExtent(K) {
 }
 function slPushers(obl, dt, near, R) {
   const st = slState, P = [], seen = st.carSeen || (st.carSeen = new Map()), h = Math.max(dt || 0, 1e-3), N = SL_NUDGE
-  for (const [id, a] of avatars) { const m = a.mesh; if (id >= 0 && m?.visible && near(m.position.x, m.position.z, R)) P.push({ car: false, x: m.position.x, z: m.position.z, r: N.char }) }
+  // a character: where it is drawn and its velocity from frame to frame (card #67: the step-aside clears the way it comes)
+  const cs = st.charSeen || (st.charSeen = new Map())
+  for (const [id, a] of avatars) {
+    const m = a.mesh; if (!(id >= 0 && m?.visible && near(m.position.x, m.position.z, R))) continue
+    const x = m.position.x, z = m.position.z
+    let s = cs.get(id); if (!s || s.f !== st.frame - 1 || Math.abs(x - s.x) + Math.abs(z - s.z) > 4) s = { x, z, vx: 0, vz: 0 }
+    const k = Math.min(1, h * 8), vx = s.vx + ((x - s.x) / h - s.vx) * k, vz = s.vz + ((z - s.z) / h - s.vz) * k
+    cs.set(id, { x, z, vx, vz, f: st.frame })
+    P.push({ car: false, x, z, r: N.char, vx, vz })
+  }
   for (const o of obl || []) {
     if (!vehicleOf(o.K) || !near(o.x, o.z, R)) continue
     // heading and speed from where it is drawn, frame to frame: the same on a guest, whose drawn states carry no velocity
@@ -28577,34 +28593,83 @@ function slPushers(obl, dt, near, R) {
   }
   if (st.frame % 120 === 0) {
     for (const [id, s] of seen) if (st.frame - s.f > 60) seen.delete(id)
+    for (const [id, s] of cs) if (st.frame - s.f > 60) cs.delete(id)
     if (st.nudge) for (const [id, n] of st.nudge) if (st.frame - n.f > 60) st.nudge.delete(id)
   }
   return P
 }
+// the step-aside's building test: (x, z) in a building of the cell (with a person's clearance)
+function slInBody(cell, x, z) { for (const g of cell.rings) if (slInside(g.body, x, z, SL_CLEAR.r)) return true; return false }
+// an offset that runs out (down, held, flung, or its owner's gone): back to nothing at step m a frame, not in one frame
+function slNudgeFade(map, id, n, p, step) {
+  if (!n) return null
+  const e = Math.hypot(n.x, n.z)
+  if (e <= step || slState.frame - n.f > SL_NUDGE.offFrames) { map.delete(id); return null }
+  const f = 1 - step / e; n.x *= f; n.z *= f; n.f = slState.frame; p.x += n.x; p.z += n.z; return n
+}
 function slNudge(ag, p, pushers, cell, dt) {
-  const st = slState, map = st.nudge || (st.nudge = new Map()), N = SL_NUDGE
+  const st = slState, map = st.nudge || (st.nudge = new Map()), N = SL_NUDGE, h = Math.min(Math.max(dt || 0, 0), 0.1)
+  // card #63: down, held or flung, no step-aside: an offset it had runs out over a few frames (it was dropped in one: a jump of
+  // up to 2.6 m back onto the route when someone who had stepped aside was knocked down); running under a record (a panic, a
+  // dodge, the run after getting up) it steps aside as on its schedule
+  const off = p.down || p.rec && (p.rec.kind === 8 || p.rec.kind === 9)
   if (ag.companion) {            // a walked dog: its owner's offset from this frame (the owner comes first in its cell)
     const o = map.get(ag.companion.id)
-    if (!o || o.f !== st.frame || p.down || p.rec) return null
-    p.x += o.x; p.z += o.z; return o
+    let n = map.get(ag.id)
+    if (o && o.f === st.frame && !off) {
+      if (!n) map.set(ag.id, n = { x: 0, z: 0, f: 0 })
+      n.x = o.x; n.z = o.z; n.f = st.frame; p.x += n.x; p.z += n.z; return n
+    }
+    return slNudgeFade(map, ag.id, n, p, N.outCar * h)
   }
   let n = map.get(ag.id)
-  if (p.down || p.rec) { if (n) map.delete(ag.id); return null }
-  if (n && n.f !== st.frame - 1) n.x = n.z = 0            // not drawn last frame: from the route
+  if (off) return slNudgeFade(map, ag.id, n, p, N.outCar * h)
+  if (n && st.frame - n.f > N.offFrames) n.x = n.z = n.vx = n.vz = 0            // not drawn for a second: from the route
   const ox = n ? n.x : 0, oz = n ? n.z : 0, qx = p.x + ox, qz = p.z + oz
-  let tx = ox, tz = oz, near = false, car = false
+  // its own velocity (on its schedule or its record's run), and a pram's pram
+  const pv = p.v || 0, pvx = pv ? Math.sin(p.yaw || 0) * pv : 0, pvz = pv ? Math.cos(p.yaw || 0) * pv : 0, pram = ag.kind === SL_K.pram
+  const bx = pram ? Math.sin(p.yaw) * STREET.pramBack : 0, bz = pram ? Math.cos(p.yaw) * STREET.pramBack : 0
+  let tx = ox, tz = oz, near = false, car = false, fast = 0
   for (const c of pushers) {
-    const dx = qx - c.x, dz = qz - c.z, B = c.r + N.hold
-    if (dx > B || dx < -B || dz > B || dz < -B) continue
+    const dx = qx - c.x, dz = qz - c.z
     if (!c.car) {
-      const d2 = dx * dx + dz * dz
-      if (d2 >= B * B) continue
+      const rvx = (c.vx || 0) - pvx, rvz = (c.vz || 0) - pvz, rv = Math.hypot(rvx, rvz), moving = rv > N.moving
+      const ahead = c.r + (moving ? Math.min(rv * N.look, N.lookMax) : 0), B = ahead + N.hold + (pram ? STREET.pramBack : 0)
+      if (dx > B || dx < -B || dz > B || dz < -B) continue
+      if (moving) {
+        // card #67: coming at them (or they at him), they step across the way he comes, early, to the nearer side of it (the
+        // other when that one's spot is in a building or past the reach), not pushed ahead of him until the offset runs out
+        const fx = rvx / rv, fz = rvz / rv
+        let inner = false, outer = false, lo = Infinity, hi = -Infinity
+        for (let k = 0; k < (pram ? 2 : 1); k++) {
+          const ex = dx + (k ? bx : 0), ez = dz + (k ? bz : 0), al = ex * fx + ez * fz, ac = ez * fx - ex * fz
+          if (al < -c.r - N.hold || al > ahead + N.hold || Math.abs(ac) > c.r + N.hold) continue
+          outer = true
+          if (al < -c.r || al > ahead || Math.abs(ac) >= c.r) continue
+          inner = true; if (ac < lo) lo = ac; if (ac > hi) hi = ac
+        }
+        if (!outer) continue
+        near = true; if (rv > fast) fast = rv
+        if (!inner) continue                                     // in the band: hold
+        // the shift across his way that clears every part: to +c.r past its lowest, or -c.r past its highest
+        const up = c.r - lo, down = -c.r - hi, mid = (lo + hi) / 2
+        let s = mid > 1e-3 ? up : mid < -1e-3 ? down : slRnd(ag.id, 64) < 0.5 ? down : up
+        const other = s === up ? down : up
+        const open = d => { const sx = tx - fz * d, sz = tz + fx * d; return Math.hypot(sx, sz) <= N.max && !slInBody(cell, p.x + sx, p.z + sz) }
+        if (!open(s) && open(other)) s = other
+        tx -= fz * s; tz += fx * s
+        continue
+      }
+      const d2 = dx * dx + dz * dz, R = c.r + N.hold
+      if (d2 >= R * R) continue
       near = true
       if (d2 >= c.r * c.r) continue                         // in the band: hold
       const d = Math.sqrt(d2)
       if (d < 1e-3) { const a = slRnd(ag.id, 63) * 6.283; tx += Math.sin(a) * c.r; tz += Math.cos(a) * c.r }     // dead centre: a side of its own
       else { const k = (c.r - d) / d; tx += dx * k; tz += dz * k }
     } else {
+      const B = c.r + N.hold
+      if (dx > B || dx < -B || dz > B || dz < -B) continue
       const al = dx * c.fx + dz * c.fz, ac = dz * c.fx - dx * c.fz
       if (al < -c.back - N.hold || al > c.ahead + N.hold || Math.abs(ac) > c.w + N.hold) continue
       near = true; car = true
@@ -28615,12 +28680,25 @@ function slNudge(ag, p, pushers, cell, dt) {
   }
   if (!near) tx = tz = 0
   const L = Math.hypot(tx, tz); if (L > N.max) { tx *= N.max / L; tz *= N.max / L }
-  const ex = tx - ox, ez = tz - oz, e = Math.hypot(ex, ez), step = (near ? car ? N.outCar : N.out : N.back) * Math.min(Math.max(dt || 0, 0), 0.1)
-  let nx = ox, nz = oz
-  if (e > 1e-4) { const f = Math.min(1, step / e); nx += ex * f; nz += ez * f }
-  if ((nx !== ox || nz !== oz) && cell.rings.some(g => slInside(g.body, p.x + nx, p.z + nz, SL_CLEAR.r))) { nx = ox; nz = oz }      // never into a building: hold
+  // toward the target at most as fast as vmax (at least the closing speed: card #67, a 3.4 m/s walker outpaced the 3 m/s step),
+  // speeding up and slowing down at N.acc with the speed it had last frame (card #72: never full speed in one frame)
+  const vmax = near ? Math.max(car ? N.outCar : N.out, fast) : N.back, step = vmax * h, ex = tx - ox, ez = tz - oz, e = Math.hypot(ex, ez)
+  let vx = n?.vx || 0, vz = n?.vz || 0
+  const k = e > 1e-4 ? Math.min(vmax, Math.sqrt(2 * N.acc * e)) / e : 0, dvx = ex * k - vx, dvz = ez * k - vz, dv = Math.hypot(dvx, dvz), am = N.acc * h
+  if (dv > am) { vx += dvx * am / dv; vz += dvz * am / dv } else { vx += dvx; vz += dvz }
+  let nx = ox + vx * h, nz = oz + vz * h
+  if (e > 1e-4 && (vx * ex + vz * ez) * h >= e * e) { nx = tx; nz = tz }            // there this frame
+  else if (e <= 1e-4 && Math.hypot(vx, vz) < am) { nx = ox; nz = oz }               // at rest on it
+  // never into a building: along its wall (the step's x or z part), else held, else back toward the route
+  if ((nx !== ox || nz !== oz) && slInBody(cell, p.x + nx, p.z + nz)) {
+    if (!slInBody(cell, p.x + nx, p.z + oz)) nz = oz
+    else if (!slInBody(cell, p.x + ox, p.z + nz)) nx = ox
+    else if (!slInBody(cell, p.x + ox, p.z + oz)) { nx = ox; nz = oz }
+    else { const g = Math.hypot(ox, oz), f = g > step ? 1 - step / g : 0; nx = ox * f; nz = oz * f }
+  }
   if (!near && Math.abs(nx) < 1e-3 && Math.abs(nz) < 1e-3) { if (n) map.delete(ag.id); return null }
-  if (!n) map.set(ag.id, n = { x: 0, z: 0, f: 0 })
+  if (!n) map.set(ag.id, n = { x: 0, z: 0, f: 0, vx: 0, vz: 0 })
+  if (h > 0) { n.vx = (nx - ox) / h; n.vz = (nz - oz) / h }
   n.x = nx; n.z = nz; n.f = st.frame
   p.x += nx; p.z += nz
   return n
