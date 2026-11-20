@@ -6368,10 +6368,10 @@ const background = (() => {
     stats,
     get pending() { return [...jobs.keys()] },
     // each pending job: key/phase:steps, w while it waits on a promise
-    get jobs() { return [...jobs.values()].map(j => j.key + (j.phase ? '/' + j.phase : '') + ':' + (j.n || 0) + (j.waiting ? 'w' : '')) },
+    get jobs() { return [...jobs.values()].map(j => j.key + (j.phase ? '/' + j.phase : '') + ':' + (j.n || 0) + (j.waiting ? 'w' : '') + ' ' + Math.round((performance.now() - j.t0) / 1000) + 's') },
     run(key, steps, { valid, priority = 0, gpu = false } = {}) {
       if (jobs.has(key)) return jobs.get(key).promise
-      const j = { key, steps, valid, priority, gpu, order: ++order }
+      const j = { key, steps, valid, priority, gpu, order: ++order, t0: performance.now() }
       j.promise = new Promise((resolve, reject) => Object.assign(j, { resolve, reject }))
       jobs.set(key, j); schedule(); return j.promise
     },
@@ -22150,6 +22150,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   // a stream every viewer plays on the level's screens: an https URL, or null to stop
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
+  background: () => ({ jobs: GAME.background.jobs, steps: GAME.background.stats.steps, maxStepMs: Math.round(GAME.background.stats.maxStepMs), long: [...GAME.background.stats.long],
+    phase, startingGame, worldPreparing, guestLoading: !!guestLoading, look: activeLook, wanted: settings.look }),
   room() {
     const all = [...players.values()]
     return { ready: phase === 'menu' && !el('#serve-btn').disabled, hosting: isHost, serving, open: isHost && roomOpen, code: isHost ? roomCodeStr : '',
