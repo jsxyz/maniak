@@ -124,7 +124,7 @@ Each event is one JSON object, the same on stdout and to a webhook:
 | `match.start` | `level`, `mode` (always `ffa`, kept for consumers that read it), `fragLimit`, `minutes` |
 | `match.end` | `reason` (`frags`, `time`, `restart`, `stop`), `winner` (or null), `standings` with `kills` each |
 | `player.join` | `player` |
-| `player.leave` | `player`, `reason` (`left`, `kicked`, `timeout`, `dropped`) |
+| `player.leave` | `player`, `reason`: `left` (it went), `kicked`, `timeout` (the host heard nothing from it for 12 s once it plays, or for 60 s while it is still loading), `dropped` (its link failed). A guest let go is told why on its screen before the link closes |
 | `player.rename` | `player`, `was` |
 | `kill` | `killer`, `victim`, `weapon`; `via`, the team-mate who struck for its owner |
 | `death` | `victim`, `weapon`: a death nobody is credited with |

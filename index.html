@@ -22156,13 +22156,13 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
 // host (id 0) simulates all; each guest links only to it; chat is relayed
 let phase = 'menu'
 let isHost = false, connected = false, peer = null
-let kickedBy = null
+let kickedBy = null, droppedWhy = null          // droppedWhy: the host let this page go, and said why
 // the host's effects this tick, sent once as the snapshot's fx
 let tracers = []
 const LINK_DEAD_MS = 8000        // guest: host silence
 const ICE_GRACE_MS = 4000        // 'disconnected' can recover; 'failed' cannot
 const GUEST_DEAD_MS = 12000      // host: guest silence
-const GUEST_LOAD_MS = 180000     // host: a joiner's silence before its first input, while its level builds
+const GUEST_LOAD_MS = 60000      // host: a joiner's silence before its first input, while its level builds (it was 3 min)
 let lastRecvAt = 0
 const lastSeen = new Map()
 let myId = 0, myCid = START, myName = ''
@@ -22443,7 +22443,7 @@ function watchLink(c, id) {
   const gone = why => {
     clearTimeout(grace)
     if (id === null) endSession('Disconnected', why, true)
-    else { const cc = conns.get(id); if (cc) { if (hooked['player.leave']) hookGone.set(id, 'dropped'); try { cc.close() } catch (e) {} } }
+    else dropGuest(id, 'dropped', 'The link to this game failed.')
   }
   pc.addEventListener('iceconnectionstatechange', () => {
     const st = pc.iceConnectionState
@@ -22666,7 +22666,7 @@ function startServer() {
 
 function beginServing() {
   phase = 'playing'
-  kickedBy = null
+  kickedBy = null; droppedWhy = null
   setStatus('Serving. Join from another machine with the room code.', 'ok')
 }
 
@@ -22817,6 +22817,7 @@ function startJoin(code) {
     c.on('close', () => {
       const froze = now() - last
       if (kickedBy) endSession('Kicked', kickedBy + ' removed you from the game.', true)
+      else if (droppedWhy) endSession('Disconnected', droppedWhy, true)
       // a page frozen longer than the host waits for word from it: that is why the host let it go
       else if (froze > GUEST_DEAD_MS) endSession('Disconnected', 'This page froze for ' + Math.round(froze / 1000) + ' s, longer than the host waits for word from it, so the host dropped it.' +
         (softGL() ? ' This browser draws without graphics acceleration, which is too slow for this game here.' : ''), true)
@@ -22894,6 +22895,9 @@ const GUEST_MSGS = {
   // card #59: a street performer's demand, by the host (its line by number: PERF_LINES)
   pd: { apply: d => { perfHeard(d) } },
   kicked: { apply: d => { kickedBy = String(d.by || 'the host').slice(0, 16) } },
+  // the host let this page go, and why: shown, back to the menu (if the link's close never arrives, anyway)
+  dropped: { apply: d => { droppedWhy = String(d.why || 'The host let this game go.').slice(0, 240)
+    setTimeout(() => { if (droppedWhy && !isHost && phase === 'playing') endSession('Disconnected', droppedWhy, true) }, 600) } },
   full: { apply: d => { endSession('Room full', 'The room takes ' + (d.n | 0) + ' players.', false) } },
   hostgone: { apply: () => { endSession('Host left', 'The host closed the game.', true) } },
   bcast: { validate: d => typeof d.u === 'string' && Number.isInteger(d.n) && d.n >= 0 && bcastOk(d.u) ? d : null, apply: d => { bcastHear(d.u, d.n) } },
@@ -23138,7 +23142,7 @@ function initEndModal() {
   el('#end-rejoin').onclick = () => {
     const code = roomCodeStr
     resetToMenu()
-    kickedBy = null
+    kickedBy = null; droppedWhy = null
     startJoin(code)
   }
 }
@@ -23148,7 +23152,7 @@ function beginPlay() {
   if (!startingGame) document.body.classList.remove('starting')
   played = true; jitTip()
   lastRecvAt = now()
-  kickedBy = null
+  kickedBy = null; droppedWhy = null
   el('#ui').style.display = 'none'
   document.body.classList.add('playing')
   if (navigator.userActivation?.isActive !== false) lockPointer()      // in the click that entered; else the first click in the game
@@ -30303,10 +30307,20 @@ function stopBg() {
   last = now()            // no catch-up for the hidden gap
 }
 
+// the host lets guest id go (silent past its limit; its link failed): the reason its leave is logged with, and the guest told
+// why before the link closes, as a kick is told
+function dropGuest(id, reason, why) {
+  const c = conns.get(id)
+  if (!c) return
+  hookGone.set(id, reason)
+  if (c.open) { try { c.send(JSON.stringify({ k: 'dropped', why })) } catch (e) {} setTimeout(() => { try { c.close() } catch (e) {} }, 150) }
+  else try { c.close() } catch (e) {}
+}
 function checkLiveness(t, own) {
   if (!connected) return
   if (!isHost) {
-    if (own) { lastRecvAt = t; return }
+    // its own stall is forgiven once in 30 s, not every frame: a page that stalls every frame still notices a silent host
+    if (own && t - (checkLiveness.gforgave || 0) > 30000) { checkLiveness.gforgave = t; lastRecvAt = t; return }
     if (lastRecvAt && t - lastRecvAt > LINK_DEAD_MS) {
       endSession('Disconnected', 'The host stopped responding.', true)
     }
@@ -30318,7 +30332,9 @@ function checkLiveness(t, own) {
   for (const [id, seen] of [...lastSeen]) {
     if (t - seen <= GUEST_DEAD_MS || !inputSeq.has(id) && t - seen <= GUEST_LOAD_MS) continue
     const c = conns.get(id)
-    if (c) { if (hooked['player.leave']) hookGone.set(id, 'timeout'); try { c.close() } catch (e) {} }   // close handler does the cleanup
+    // one rule: silent past its limit (12 s once it plays, 60 s while it loads), reason timeout; the close handler cleans up
+    if (c) { const limit = inputSeq.has(id) ? GUEST_DEAD_MS : GUEST_LOAD_MS
+      dropGuest(id, 'timeout', 'The host heard nothing from this game for ' + Math.round((t - seen) / 1000) + ' s (it waits ' + limit / 1000 + ' s' + (inputSeq.has(id) ? '' : ' while a game loads') + '), so it let it go.') }
     lastSeen.delete(id)
   }
 }
