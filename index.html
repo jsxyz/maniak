@@ -29152,6 +29152,13 @@ const testTools = (() => {
     squad: () => objs.filter(o => squadIds.has(o.id) && o.squadKind !== 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'squad car (' + (o.V ? o.squadState || 'driving' : 'wrecked') + ')' })),
     roadblock: () => objs.filter(o => squadIds.has(o.id) && o.squadKind === 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'roadblock car' })),
     pram: street('pram'), cyclist: street('cyclist'), ped: street('ped'),
+    // card #18: the highways (stage 2), a point every 100 m: on the deck, in the right-hand lanes, facing the way they run
+    highway: () => roadSpots(r => r.kind === 'radial', p => p[1] > 2), ring: () => roadSpots(r => r.kind === 'ring'),
+    ramp: () => roadSpots(r => r.kind === 'ramp', null, true), bridge: () => roadSpots(r => r.kind === 'radial', p => p[1] >= 27),
+    interchange: () => { const plan = faustState && faustRoadsReady(faustState)
+      return (plan?.roads || []).filter(r => r.kind === 'radial' && r.cross >= 0).map(r => { const C = r.pts[r.cross], b = r.pts[Math.max(0, r.cross - 6)], f = [C[0] - b[0], C[2] - b[2]], L = Math.hypot(...f) || 1
+        return { x: C[0], z: C[2], y0: C[1], what: 'interchange: the ring (24 m) over the ' + r.id + ' highway (12 m)',
+          spot: { x: b[0] + r.side[Math.max(0, r.cross - 6)][0] * 6, z: b[2] + r.side[Math.max(0, r.cross - 6)][1] * 6, face: [f[0] / L, f[1] / L], up: 4 } } }) },
     door: c => { if (!LV.faust || !LV.grow || !faustState) return []           // #38: the front door of a lot's building, on the step out
       const S = LV.grow.S, ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96)
       for (let r = 1; r <= 3; r++) {
@@ -29163,7 +29170,20 @@ const testTools = (() => {
       }
       return [] },
   }
-  const ALIAS = { stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
+  // card #18: a road's points as /near things (every 5th, 100 m apart; a ramp's middle only)
+  const roadSpots = (ok, at = null, middle = false) => {
+    const plan = faustState && faustRoadsReady(faustState), out = []
+    for (const r of plan?.roads || []) if (ok(r)) {
+      const P = r.pts, ks = middle ? [P.length >> 1] : P.map((_, k) => k).filter(k => k % 5 === 0)
+      for (const k of ks) { const p = P[k], q = P[Math.min(k + 1, P.length - 1)], s = r.side[k], f = [q[0] - p[0], q[2] - p[2]], L = Math.hypot(...f) || 1
+        if (at && !at(p)) continue
+        const o = r.kind === 'ramp' ? 0 : 6
+        out.push({ x: p[0], z: p[2], y0: p[1], what: (r.kind === 'ramp' ? 'ramp ' : r.kind === 'ring' ? 'ring road ' : 'highway ') + r.id + ', deck ' + Math.round(p[1]) + ' m' + (p[1] >= 27 ? ' (bridge)' : ''),
+          spot: { x: p[0] + s[0] * o, z: p[2] + s[1] * o, face: [f[0] / L, f[1] / L], up: 4 } }) }
+    }
+    return out
+  }
+  const ALIAS = { highways: 'highway', viaduct: 'highway', motorway: 'highway', overpass: 'interchange', junction: 'interchange', stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
   const things = () => Object.keys(NEAR).filter(k => k !== 'brokenwindow').join(', ') + ', window broken'
   const tp = a => {
     const c = me(true); if (!c) return
