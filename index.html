@@ -8850,23 +8850,34 @@ function craterBuild(list, done) {
   for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) if (over(rs[i], rs[j])) {
     const p = rs[i], q = rs.splice(j, 1)[0]
     rs[i] = { a0: Math.min(p.a0, q.a0), a1: Math.max(p.a1, q.a1), b0: Math.min(p.b0, q.b0), b1: Math.max(p.b1, q.b1), cr: p.cr.concat(q.cr).sort((a, b) => a - b) }; i = -1; break }
-  const out = [], gs = new Map(), asks = [], old = crb.regions, regrow = crb.regrow, lv = LV
+  const out = [], gs = new Map(), asks = [], old = crb.regions, regrow = crb.regrow, lv = LV, made = [], all = []
   crb.regions = new Map(); crb.regrow = null
   for (const { cr, ...rect } of rs) {
     const key = 'crater ' + Object.values(rect).join(' '), c = cr.map(i => list[i]), g = craterGround(rect, c[0].y)
     if (!g) continue
-    const y = top(g), deep = y - Math.max(...c.map(c => c.depth)) - 0.05, was = old.get(key), R = { key, rect, y, n: c.length, tris: was?.tris, render: was?.render }
-    BOXES.forEach(b => { if (!b.paint && over(sq(b), rect) && top(b) <= y + 0.01 && top(b) > deep) gs.set(b, [...gs.get(b) || [], rect]) })
+    const y = top(g), deep = y - Math.max(...c.map(c => c.depth)) - 0.05, was = old.get(key), R = { key, rect, y, n: c.length, tris: was?.tris, render: was?.render, subs: [] }; all.push(R)
+    BOXES.forEach(b => { if (!b.paint && over(sq(b), rect) && top(b) <= y + 0.01 && top(b) > deep) gs.set(b, [...gs.get(b) || [], R]) })
     crb.regions.set(key, R)
-    for (const [k, o] of old) if (k !== key && o.rect.a0 >= rect.a0 && o.rect.a1 <= rect.a1 && o.rect.b0 >= rect.b0 && o.rect.b1 <= rect.b1) { old.delete(k); out.push({ key: k, gone: [o.render] }) }
+    for (const [k, o] of old) if (k !== key && o.rect.a0 >= rect.a0 && o.rect.a1 <= rect.a1 && o.rect.b0 >= rect.b0 && o.rect.b1 <= rect.b1) { old.delete(k); R.subs.push([k, o]) }
     if (was?.n === R.n && !regrow?.some(g => over(g, rect))) { if (!craterRegions.has(key)) out.push(R) } else asks.push([R, c])
   }
-  for (const [b, rects] of gs) { const key = craterSourceKey(b), s = sq(b), t = [], w = b.ex >= ARENA && b.ez >= ARENA ? 96 : Infinity, cut = JSON.stringify(rects)
-    if (craterRegions.get(key)?.cut === cut) continue          // already cut so
-    for (let a = s.a0; a < s.a1; a += w) for (let c = s.b0; c < s.b1; c += w) t.push({ a0: a, a1: Math.min(a + w, s.a1), b0: c, b1: Math.min(c + w, s.b1) })
-    out.push({ key, source: b, cut, boxes: t.flatMap(r => subtractRects(r, rects)).map(p => ({ cx: (p.a0 + p.a1) / 2, cy: b.cy, cz: (p.b0 + p.b1) / 2, ex: (p.a1 - p.a0) / 2, ey: b.ey, ez: (p.b1 - p.b0) / 2 })) }) }
+  // The ground is cut only where a bowl will be: a region whose cut failed keeps its old bowl and the regions it would
+  // have merged, and the ground under them stays cut just so. Cut more, and the hole goes to the void (#52).
+  const bowl = k => craterRegions.get(k)?.tris?.length > 0
+  const cutBy = R => !R.failed ? [R.rect] : [...bowl(R.key) ? [R.rect] : [], ...R.subs.filter(([k]) => bowl(k)).map(([, o]) => o.rect)]
+  const finish = () => {
+    for (const R of all) for (const [k, o] of R.subs) if (R.failed) crb.regions.set(k, o); else out.push({ key: k, gone: [o.render] })
+    const replaces = []
+    for (const [b, Rs] of gs) { const rects = Rs.flatMap(cutBy), key = craterSourceKey(b), s = sq(b), t = [], w = b.ex >= ARENA && b.ez >= ARENA ? 96 : Infinity, cut = JSON.stringify(rects)
+      if (!rects.length && !craterRegions.has(key)) continue        // never cut, and nothing to cut it by
+      replaces.push(b)
+      if (craterRegions.get(key)?.cut === cut) continue          // already cut so
+      for (let a = s.a0; a < s.a1; a += w) for (let c = s.b0; c < s.b1; c += w) t.push({ a0: a, a1: Math.min(a + w, s.a1), b0: c, b1: Math.min(c + w, s.b1) })
+      out.push({ key, source: b, cut, boxes: t.flatMap(r => subtractRects(r, rects)).map(p => ({ cx: (p.a0 + p.a1) / 2, cy: b.cy, cz: (p.b0 + p.b1) / 2, ex: (p.a1 - p.a0) / 2, ey: b.ey, ez: (p.b1 - p.b0) / 2 })) }) }
+    out.push(...made); done({ regions: out, replaces })
+  }
   const ask = k => LV !== lv ? 0 : k < asks.length ? craterWork(...asks[k], d => { const R = asks[k][0]      // sequential: each on the ground the last left
-    if (d) { R.gone = [R.render]; Object.assign(R, d); out.push(R) } else crb.regions.delete(R.key); ask(k + 1) }) : done({ regions: out, replaces: [...gs.keys()] })
+    if (d) { R.gone = [R.render]; Object.assign(R, d); made.push(R) } else { R.failed = true; crb.regions.delete(R.key) } ask(k + 1) }) : finish()
   ask(0)
 }
 function craterEnsure() { const p = GAME.crater.spec() && CRATER_BUILDER.ensure(); if (p) p.catch(e => console.error(e)) }
@@ -19836,7 +19847,9 @@ function openHost() {
   bots.max = regulars()
   bots.value = BOT_COUNT
   out.textContent = String(BOT_COUNT)
-  bots.oninput = () => { out.textContent = bots.value }
+  bots.dataset.shown = '1'
+  // card #59 fix: what the slider shows is what the room starts with (outside play, its value is taken as it moves)
+  bots.oninput = () => { out.textContent = bots.value; if (phase !== 'playing') BOT_COUNT = clamp(+bots.value | 0, 0, regulars()) }
   bots.onchange = () => GAME.match.bots(+bots.value)
   const re = el('#set-rate'), ro = el('#set-rate-v')
   const rateText = () => settings.rate ? settings.rate + ' / s' : 'Auto, ' + snapHz(players.size) + ' / s'
@@ -21598,6 +21611,7 @@ function startHost() {
     background.mark('match'); GAME.lifecycle.matchStart()
     loadingText('Bringing the streets to life…')
     for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && c.owner === undefined) { dropBot(c); yield }
+    { const sb = el('#set-bots'); if (sb?.dataset.shown) BOT_COUNT = clamp(+sb.value | 0, 0, regulars()) }      // card #59 fix: the slider as shown
     background.mark('bots'); for (const i of foesWanted()) { addBot(i); yield }
     markStart('bots')
     if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('draw0'); draw(0, now()); yield }
