@@ -697,6 +697,9 @@ const FAUST_HEAD = { variant: 'stone', software: false }
 const CHARS = [
   { name: 'The Maniak', side: 'maniak', primary: 'Haymaker', r: 0.48, h: 0.50, model: 'maniak', speed: 7.4, jump: 8.6, hp: 150, color: 0xe8e2d4,
     role: 'Billionaire vigilante · fists, haymaker, leap-smash and chain',
+    // card #30: his sprint, 11.5 m/s (it was his speed, 7.4): past the city's traffic (7-11 m/s cruise) and every freak
+    // (7.6 at most), far short of a car (59). Walking, 4.44; whirling the chain, he walks
+    sprintSpd: 11.5,
     spring: { full: 1.15, k: 3.4 }, leapSmash: true, smash: { speed: 18, r: 2.4, depth: 0.35 },
     swing: { range: 60, pace: 24 }, hurl: { speed: 20, dmg: 0, reach: 1.5 },
     chain: { full: 1.1, speed: 20, boost: 38, range: 16, extra: 44, reel: 12 },
@@ -952,7 +955,7 @@ const ASSETS =
 // decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
 // neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.e1b7f042.glb', civ_f_coat: 'civ_f_coat.7a3d0837.glb', civ_f_dress: 'civ_f_dress.c14a98d8.glb', civ_freak: 'civ_freak.f5f89315.glb', civ_m_coat: 'civ_m_coat.6ea1934e.glb', civ_m_suit: 'civ_m_suit.e7777903.glb', civ_m_worker: 'civ_m_worker.6058eb0b.glb', maniak: 'maniak.dae0434f.glb', props: 'props.c509eb59.glb' }
+const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.e1b7f042.glb', civ_f_coat: 'civ_f_coat.7a3d0837.glb', civ_f_dress: 'civ_f_dress.c14a98d8.glb', civ_freak: 'civ_freak.f5f89315.glb', civ_m_coat: 'civ_m_coat.6ea1934e.glb', civ_m_suit: 'civ_m_suit.e7777903.glb', civ_m_worker: 'civ_m_worker.6058eb0b.glb', maniak: 'maniak.dae0434f.glb', maniak_moves: 'maniak_moves.cae276a8.glb', props: 'props.c509eb59.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -976,11 +979,15 @@ const MODELS = {
   // speed in statures/s, for stride matching; punches: a GUNS row's punch kind to [clip, start s] (several: a combo), drawn
   // over the legs' clip (slam: the whole body); lods: m from the camera where LOD1 and LOD2 begin; cape: its bones, on a spring
   maniak: {
-    kind: 'rig', file: RIG_FILES.maniak, anims: RIG_FILES.anims, yaw: Math.PI, gripReach: 0.85,
-    clips: { idle: 'idle', walk: 'walk', run: 'run', sprint: 'sprint', fall: 'fall', crouch: 'smash_charge', crouchRun: 'crouch_walk',
+    kind: 'rig', file: RIG_FILES.maniak, anims: [RIG_FILES.anims, RIG_FILES.maniak_moves], yaw: Math.PI, gripReach: 0.85,
+    clips: { idle: 'idle', walk: 'walk', run: 'run', sprint: 'maniak_sprint', fall: 'fall', crouch: 'smash_charge', crouchRun: 'crouch_walk',
       climb: 'chain_hang', dive: 'smash_air', fly: 'fall', drive: 'drive', sit: 'sit', lift: 'smash_air', death: 'death',
       leap: 'smash_air', land: 'smash_land', hits: ['hit_chest', 'hit_head'], aim: 'pistol_idle', shoot: 'pistol_shoot' },
-    pace: { walk: 0.62, run: 1.55, sprint: 3.25, crouch: 0.41 },
+    pace: { walk: 0.62, run: 1.55, sprint: 5.867, crouch: 0.41 },
+    // card #30: his sprint is his own clip (assets/maniak_moves.*, the second clip file), its planted feet carried back at
+    // 5.867 statures/s at rate 1 (11.5 m/s), so the stride meets the road. gaits: run and sprint part where their rates meet
+    // (sprintAt statures/s, +- band), each rate held to its range; plants: the sprint's footfalls (cycle phase, left, right)
+    gaits: { sprintAt: 3.016, band: 0.06, rates: { run: [0.55, 2.1], sprint: [0.48, 1.6] } }, plants: [0, 0.5],
     punches: { jab: [['jab', 0.12], ['cross', 0.18], ['hook', 0.04]], rise: [['haymaker', 0.36]], slam: [['smash_land', 0]] },
     lods: [12, 28], cape: ['cape_01', 'cape_02', 'cape_03'], capeK: 0.11, capeMax: 1.25, deathShow: 2.2,
   },
@@ -1351,6 +1358,7 @@ const SOUNDS = {
   'Chain whirl': { say: 'a fast overhead metal chain whirl: rushing air and accelerating steel rattles', seed: 0 },
   'Chain throw': { say: 'a heavy concrete block thrown hard: a strong rush of air and chain clatter', seed: 0 },
   'Chain catch': { say: 'concrete catches masonry and a steel chain snaps taut with a metallic clack', seed: 0 },
+  'Move stomp': { say: 'one heavy sprinting footfall: a big boot slamming down on pavement, a deep short thud', seed: 0 },
   'Haymaker charge': { say: 'a short breath of effort and a rising heavy swing', seed: 0 },
   Shiv: { say: 'a fast, thin blade slash: a hiss of air and a scrape', seed: 0 },
   Sledge: { say: 'a sledgehammer swung through the air into a dull iron thud', seed: 0 },
@@ -3152,7 +3160,19 @@ function webPoint(v) {
 const CHAIN_N = 17, CHAIN_RADIUS = 0.36, CHAIN_SKIN = 0.05
 const chainHit = [], chainViews = new Map(), chainMask = () => RAY_GROUP | G_OBJ
 const chainSpec = c => GAME.participantOf(c)?.chain
-const chainHand = c => [c.x + Math.cos(c.yaw) * 0.46, c.y + 0.5, c.z - Math.sin(c.yaw) * 0.46]
+// The whirl (card #30): the block circles a centre over his right shoulder and his fist circles inside it, running a
+// little ahead of the block, so the chain runs from the fist out to the block all the way round. One geometry for the
+// host's chain and every drawing of it. right, back, up: the centre from his capsule's, by his aim; reach, lift, tilt: the
+// block's circle; fist (+ fistGrow at full charge): the fist's circle; lead (+ leadGrow): the fist's lead on the block, rad
+const WHIRL = { right: 0.3, back: 0.2, up: 1.06, reach: 1.05, lift: 0.14, tilt: 0.12, fist: 0.22, fistGrow: 0.08, lead: 0.55, leadGrow: 0.35 }
+const whirlCentre = (x, y, z, yaw) => [x + Math.cos(yaw) * WHIRL.right + Math.sin(yaw) * WHIRL.back, y + WHIRL.up, z - Math.sin(yaw) * WHIRL.right + Math.cos(yaw) * WHIRL.back]
+const whirlFist = (C, block, charge) => { const a = Math.atan2(block[2] - C[2], block[0] - C[0]) + WHIRL.lead + WHIRL.leadGrow * charge, r = WHIRL.fist + WHIRL.fistGrow * charge
+  return [C[0] + Math.cos(a) * r, C[1], C[2] + Math.sin(a) * r] }
+// where the chain leaves him: the whirling fist, else his right shoulder
+const chainHand = c => c.chain?.phase === 1 && c.chain.p ? whirlFist(whirlCentre(c.x, c.y, c.z, c.yaw), c.chain.p, c.chain.charge) : [c.x + Math.cos(c.yaw) * 0.46, c.y + 0.5, c.z - Math.sin(c.yaw) * 0.46]
+// holding the chain on foot (whirling it, or reeling a loose block in) he walks, never sprints. Input and tie only, so a
+// guest predicts it as the host moves him
+const whirling = (c, inp) => !!inp.descend && !c.tie && !!chainSpec(c)
 const chainGap = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]))
 function chainClear(c) {
   if (isHost && c.chain?.phase === 3) chainImpact(c,c.chain.surface,c.chain.normal,c.chain.impactSpeed,1,c.chain.lodgeId)
@@ -3180,7 +3200,7 @@ function chainBegin(c) {
   const p = chainHand(c), g = makeBody(new A.btSphereShape(CHAIN_RADIUS), 0, ...p)
   // A swept kinematic body. Its first character contact is resolved by the host through strike(), never by a guest.
   world.addRigidBody(g.body, ...COLLIDE.hub)
-  Object.assign(g, { phase: 1, charge: 0, age: 0, len: 1.2, p, v: [0, 0, 0], nodes: [], prev: [], angle: 0, reeling: false })
+  Object.assign(g, { phase: 1, charge: 0, age: 0, len: 1.2, p, v: [0, 0, 0], nodes: [], prev: [], angle: Math.atan2(-Math.sin(c.yaw), Math.cos(c.yaw)), reeling: false })
   c.chain = g
 }
 function chainPlace(g, p) {
@@ -3247,7 +3267,8 @@ function chainIntent(c, inp, dt) {
   if (g.phase === 1) {
     if (inp.descend) {
       g.charge = Math.min(1, g.charge + dt / S.full); g.angle += (9 + 29 * g.charge) * dt
-      const hand = chainHand(c), orbit = [c.x + Math.cos(g.angle) * 1.05, c.y + 1.2 + Math.sin(g.angle) * 0.12, c.z + Math.sin(g.angle) * 1.05]
+      const hand = chainHand(c), C = whirlCentre(c.x, c.y, c.z, c.yaw)
+      const orbit = [C[0] + Math.cos(g.angle) * WHIRL.reach, C[1] + WHIRL.lift + Math.sin(g.angle) * WHIRL.tilt, C[2] + Math.sin(g.angle) * WHIRL.reach]
       const radial = chainSweep(g, hand, orbit), end = radial ? radial.p : orbit
       const swept = chainSweep(g, g.p, end)
       chainPlace(g, swept ? swept.p : end)
@@ -3686,7 +3707,7 @@ function applyIntent(c, inp, dt) {
 
   // a shove: decaying floor on speed along the throw; across it untouched
   if (c.knUp) { vy = Math.max(vy, 0) + c.knUp; c.knUp = 0 }
-  const spd = c.dashing ? stat(c, 'move', GUNS[c.dashing].speed) : stat(c, 'move', J && !c.grounded ? (inp.sprint ? J.sprint ?? c.speed : c.speed) : (inp.sprint ? GAME.participantOf(c).sprintSpd ?? c.speed : GAME.participantOf(c).run ?? c.speed * RUN))
+  const spd = c.dashing ? stat(c, 'move', GUNS[c.dashing].speed) : stat(c, 'move', J && !c.grounded ? (inp.sprint ? J.sprint ?? c.speed : c.speed) : (inp.sprint && !whirling(c, inp) ? GAME.participantOf(c).sprintSpd ?? c.speed : GAME.participantOf(c).run ?? c.speed * RUN))
   const S = GAME.participantOf(c)?.shove, ram = S && (!S.sprint || inp.sprint), M = ram ? S.mass : 1
   if (c.ramM !== M) { c.ramM = M; c.body.setMassProps(M, zeroVec) }
   if (ram) c.vehT = 0
@@ -4882,6 +4903,16 @@ function lookStep(me, inp) {
   const o = !s && rideOf(me)
   if (o) chaseStep(o, inp)
 }
+// card #30: at a sprint the view widens (SPRINT_FOV deg, less in first person), easing in over about 0.2 s and out as he
+// slows; the footfalls (rigFootfall) thump it
+const SPRINT_FOV = { third: 9, first: 4 }, sprintCam = { k: 0, at: 0 }
+function sprintKick(me, first) {
+  const C = GAME.participantOf(me), run = C ? C.run ?? C.speed * RUN : 0, top = C?.sprintSpd, t = now(), dt = Math.min(0.1, Math.max(0, (t - sprintCam.at) / 1000))
+  sprintCam.at = t
+  const want = top > run && !(me.dead > 0) && me.grounded !== false ? clamp((Math.hypot(me.vx || 0, me.vz || 0) - run) / (top - run), 0, 1) : 0
+  sprintCam.k += (want - sprintCam.k) * (1 - Math.exp(-dt / 0.2))
+  return sprintCam.k * (first ? SPRINT_FOV.first : SPRINT_FOV.third)
+}
 const camHold = { r: 0, from: 0, to: 0, at: 0 }
 let heldF = 1
 function updateCamera(me, inp, cam, firstPerson) {
@@ -4889,7 +4920,8 @@ function updateCamera(me, inp, cam, firstPerson) {
   if (seat) return vehicleCamera(seat[0], me, inp, cam, firstPerson)
   const rd = !(me.dead > 0) && rideOf(me)
   if (rd) return vehicleCamera(rd, me, inp, cam, firstPerson)
-  if (cam.fov !== settings.fov) { cam.fov = settings.fov; if (cam.updateProjectionMatrix) cam.updateProjectionMatrix() }
+  const wantFov = Math.min(FOV_MAX, settings.fov + sprintKick(me, firstPerson))
+  if (cam.fov !== wantFov) { cam.fov = wantFov; if (cam.updateProjectionMatrix) cam.updateProjectionMatrix() }
   if (firstPerson) {
     const [dx, dy, dz] = aimDir(inp.yaw, inp.pitch), eyeY = eyeOf(me)
     cam.position.set(me.x, eyeY, me.z)
@@ -11406,7 +11438,7 @@ function rigAnimate(a, want, dt, t) {
   const airborne = want === 2 || want === 3 || a.moveState === 2
   if (want === 'crouch' || want === 'crouchRun' || a.moveState === 2) R.charged = t
   if (a.dying >= 0) { name = K.death; once = true; fade = 0.1 }
-  else if (a.chainState?.[0] === 1) { name = 'block_whirl'; rate = 0.8 + a.chainState[1] * 2.6; fade = 0.1 }
+  else if (a.chainState?.[0] === 1 && !(want === 1 || v > 0.6)) { name = 'block_whirl'; fade = 0.15 }      // whirling on the spot; walking, the legs walk (rigMovePose whirls)
   else if (a.chainState?.[0] === 2 && a.chainState[2] < 0.5) { name = 'block_throw'; once = true; fade = 0.05 }
   else if (a.chainState?.[0] === 3) { name = a.chainState[10] ? 'chain_reel' : 'chain_hang'; fade = 0.1 }
   else if (a.chainState?.[0] >= 4) { name = 'chain_reel'; fade = 0.1 }
@@ -11419,9 +11451,10 @@ function rigAnimate(a, want, dt, t) {
   else if (want === 'crouchRun') { name = K.crouchRun; rate = clamp(v / (M.pace.crouch * H), 0.6, 1.6) }
   else if (airborne) name = t - (R.charged ?? -Infinity) < 2500 ? K.leap : K.fall           // a charged jump flies arms-high
   else if (want === 1 || v > 0.6) {
-    const P = M.pace, walk = P.walk * H, run = P.run * H, sprint = P.sprint * H
-    R.gait = v < (R.gait === 'walk' ? 1.12 : 0.9) * (walk + run) / 2 ? 'walk' : v < (R.gait === 'sprint' ? 0.9 : 1.12) * (run + sprint) / 2 ? 'run' : 'sprint'
-    name = K[R.gait]; rate = clamp(v / (P[R.gait] * H), 0.55, 1.6)
+    const P = M.pace, Gt = M.gaits, walk = P.walk * H, run = P.run * H, sprint = P.sprint * H, at = Gt?.sprintAt ? Gt.sprintAt * H : (run + sprint) / 2
+    R.gait = v < (R.gait === 'walk' ? 1.12 : 0.9) * (walk + run) / 2 ? 'walk' : v < (R.gait === 'sprint' ? (Gt?.band ? 1 - Gt.band : 0.9) : (Gt?.band ? 1 + Gt.band : 1.12)) * at ? 'run' : 'sprint'
+    const [lo, hi] = Gt?.rates?.[R.gait] || [0.55, 1.6]
+    name = K[R.gait]; rate = clamp(v / (P[R.gait] * H), lo, hi)
   }
   // landing from a charged jump or a dive: the two-arm smash over everything
   if (R.wasAir && !airborne && t - (R.charged ?? -Infinity) < 4000 && want !== 'crouch') { R.charged = -Infinity; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
@@ -11442,6 +11475,12 @@ function rigAnimate(a, want, dt, t) {
   // a struck avatar's hit-stop, as the engine asks for it; far ones update every other frame
   const step = t < (a.holdTo || 0) ? 0 : dt
   if (R.lod < 2 || R.frame % 2 === 0) R.mixer.update(R.lod < 2 ? step : step * 2)
+  // the sprint's footfalls (card #30): each plant, at its phase of the clip, thumps and kicks up dust
+  if (M.plants && R.name === K.sprint && R.base && step > 0) {
+    const d = R.base.getClip().duration, ph = (R.base.time % d + d) % d / d, was = R.plantPh, gone = was === undefined ? 0 : (ph - was + 1) % 1
+    if (gone > 0 && gone < 0.5) M.plants.forEach((p, k) => { if ((p - was + 1) % 1 <= gone) rigFootfall(a, R, k % 2 ? 'r' : 'l') })
+    R.plantPh = ph
+  } else R.plantPh = undefined
   // arms held over the legs' clip: a lifted object overhead, a held gun's stance
   const HG = GUNS[a.heldGun], upper = hold === 'lift' ? rigClip(M, K.lift) : a.held?.visible && !(a.dying >= 0) ? rigClip(M, M.aims?.[HG?.grip] ?? M.aims?.[HG?.name] ?? K.aim) : null
   if (upper) rigPose(R, upper, (t / 1000) % upper.duration, 1, RIG_UPPER)
@@ -11481,9 +11520,19 @@ function rigAnimate(a, want, dt, t) {
   rigMovePose(a, R, want, t)
   rigCape(a, R, dt)
 }
+// a sprinting footfall (card #30): the ball of the foot hits the road. Your own thumps your camera; a near one kicks up dust
+function rigFootfall(a, R, side) {
+  const b = R.bones.get('ball_' + side)
+  if (!b || !a.mesh.visible) return
+  b.getWorldPosition(rigV)
+  const mine = a === avatars.get(myId), floor = a.mesh.position.y - a.spec.h - a.spec.r
+  if (mine) kick(0.05, rigV.x, rigV.y, rigV.z, 9, 150)
+  if (R.lod < 2) { rigF.set(0, 0, 1).applyQuaternion(a.mesh.quaternion); burst('dust', rigV.x, floor + 0.06, rigV.z, rigF.x, 0.9, rigF.z, 0xc9c0ae, 0.42) }
+  moveSound('stomp', mine ? { id: myId } : { x: rigV.x, y: rigV.y, z: rigV.z }, 0.55)
+}
 // Readable silhouettes over the authored clips: the heavy wind-up leans back, charge deepens, and the leap locks both
 // fists high overhead. The two-bone solve works in character space, preserving the sculpted limb lengths.
-const MOVE_BONES = ['spine_01','spine_02','spine_03','upperarm_r','lowerarm_r','upperarm_l','lowerarm_l',
+const MOVE_BONES = ['pelvis','spine_01','spine_02','spine_03','neck_01','Head','clavicle_r','upperarm_r','lowerarm_r','hand_r','upperarm_l','lowerarm_l','hand_l',
   'thigh_l','thigh_r','calf_l','calf_r','foot_l','foot_r','cape_01','cape_02','cape_03']
 function restoreMovePose(R) {
   if (!R.moveSaved?.active) return
@@ -11493,7 +11542,8 @@ function restoreMovePose(R) {
 function rigMovePose(a, R, want, t) {
   if (a.spec.model !== 'maniak' || a.dying >= 0) return
   const charge = a.moveState === 1 ? clamp(a.moveCharge || 0, 0, 1) : -1, air = a.moveState === 2, age = a.hayAge || 0
-  if (charge < 0 && !air && !(age > 0 && age < 0.9)) {
+  const whirl = Array.isArray(a.chainState) && a.chainState[0] === 1 ? clamp(a.chainState[1] || 0, 0, 1) : -1
+  if (whirl < 0 && charge < 0 && !air && !(age > 0 && age < 0.9)) {
     if(R.name==='idle'){const l=R.bones.get('foot_l'),r=R.bones.get('foot_r');l?.getWorldPosition(rigV);r?.getWorldPosition(rigU);R.moveFoot=Math.min(rigV.y,rigU.y)-a.mesh.position.y}
     return
   }
@@ -11531,8 +11581,42 @@ function rigMovePose(a, R, want, t) {
     rotate(lower,from.subVectors(hand,el),to.subVectors(target,el))
   }
   const feet = () => {R.bones.get('foot_l')?.getWorldPosition(leftFoot);R.bones.get('foot_r')?.getWorldPosition(rightFoot);return Math.min(leftFoot.y,rightFoot.y)}
-  const planted = !air && want !== 2 && want !== 3 && want !== 6, floor = a.mesh.position.y + (R.moveFoot ?? -a.spec.h-a.spec.r+0.10)
-  if (charge >= 0) {
+  const moving = want === 1 || (a.v || 0) > 0.6, planted = !air && want !== 2 && want !== 3 && want !== 6 && !(whirl >= 0 && moving), floor = a.mesh.position.y + (R.moveFoot ?? -a.spec.h-a.spec.r+0.10)
+  if (whirl >= 0) {
+    // card #30, the whirl: his fist circles over his head inside the block's circle and a little ahead of it (whirlFist,
+    // as the host's chain), elbow out, the fist gripping the chain's end; his left arm is out for balance. He leans off the
+    // block as it comes round, his chest turning after the fist and his head holding on his aim; standing, he sinks into
+    // his knees as it charges (walking, his legs walk). It eases in over the whirl's first 0.15 s
+    const g = a.chainState, p = a.mesh.position, yaw = a.mesh.rotation.y, C = whirlCentre(p.x, p.y, p.z, yaw), block = g.slice(4, 7)
+    const W = S.w ||= Array.from({ length: 5 }, () => new THREE.Vector3()), [fistW, local, cur, want2, axisW] = W
+    const ease = THREE.MathUtils.smoothstep(g[2] || 0, 0, 0.15), sway = ease * (1 - 0.4 * whirl)
+    fistW.set(...whirlFist(C, block, whirl))
+    local.set(...block); R.inst.worldToLocal(local); const round = Math.atan2(local.x, local.z)       // the block's bearing: 0 ahead, + to his left
+    local.copy(fistW); R.inst.worldToLocal(local); const lead = Math.atan2(local.x, local.z)
+    if (!moving) { const k = ease * (0.35 + 0.65 * whirl)
+      for (const side of ['l','r']) { turn('thigh_'+side,[1,0,0],-0.16*k); turn('calf_'+side,[1,0,0],0.30*k); turn('foot_'+side,[1,0,0],-0.13*k) } }
+    else { turn('spine_01',[1,0,0],-0.14*ease); turn('spine_02',[1,0,0],-0.08*ease) }      // walking, upright under the block, not leaning into a run
+    turn('spine_01',[0,1,0],-0.05*sway*Math.sin(lead)); turn('spine_02',[0,1,0],0.10*sway*Math.sin(lead)); turn('spine_03',[0,1,0],0.08*sway*Math.sin(lead))
+    turn('spine_02',[1,0,0],-0.05*ease*whirl); turn('Head',[0,1,0],-0.13*sway*Math.sin(lead))
+    turn('clavicle_r',[0,0,1],-0.28*ease)      // the whirling shoulder shrugged up, so the fist rides over his head
+    // off the block: the top tips away from it, a steadier lean as it speeds up
+    local.set(-Math.cos(round), 0, Math.sin(round)); R.inst.rotateOnAxis(local.normalize(), (0.06 - 0.02 * whirl) * ease)
+    R.inst.rotateX(-0.04 * whirl * ease)
+    R.inst.updateMatrixWorld(true); R.inst.getWorldQuaternion(rootQ)
+    const keep = ['upperarm_r','lowerarm_r','hand_r','upperarm_l','lowerarm_l'].map(n => R.bones.get(n)).filter(Boolean), was = keep.map(b => b.quaternion.clone())
+    // the fist on its circle, turned to send the chain out to the block (between the forearm's line and the block's): the
+    // turn swings the grip about the wrist, so solve, turn and solve again for the grip's new offset
+    const grip = R.grip ??= R.inst.getObjectByName('grip_r') || null, hb = R.bones.get('hand_r'), lb = R.bones.get('lowerarm_r')
+    for (let pass = 0; pass < 3; pass++) {
+      local.copy(fistW)
+      if (pass && grip && hb) { grip.getWorldPosition(cur); hb.getWorldPosition(want2); local.sub(cur.sub(want2)) }
+      R.inst.worldToLocal(local); arm('r', local.toArray(), [-1.15, 1.85, -0.2])
+      if (hb && lb) { hb.getWorldPosition(want2); lb.getWorldPosition(axisW); cur.subVectors(want2, axisW).normalize(); axisW.set(...block).sub(want2).normalize()
+        want2.copy(cur).lerp(axisW, 0.6); cur.set(0, 1, 0).applyQuaternion(hb.getWorldQuaternion(parentQ)); rotate(hb, cur, want2) }
+    }
+    arm('l', [0.62, 1.24 + 0.05 * Math.sin(round), 0.02], [0.95, 0.95, -0.55])
+    if (ease < 1) keep.forEach((b, i) => b.quaternion.copy(was[i].slerp(b.quaternion, ease)))
+  } else if (charge >= 0) {
     const idle = rigClip(R.M,'idle'); if (idle) rigPose(R,idle,0.4,0.75*(1-charge),null)
     for(const side of ['l','r']) {turn('thigh_'+side,[1,0,0],-0.20*charge);turn('calf_'+side,[1,0,0],0.34*charge);turn('foot_'+side,[1,0,0],-0.14*charge)}
     turn('spine_01',[1,0,0],0.12*charge)
@@ -13083,7 +13167,7 @@ function drawTornado(t) {
 const CHAIN_SCALE = 1.5, CHAIN_PITCH = 0.047 * CHAIN_SCALE, CHAIN_LINK_MAX = 1000
 const chainMatrix = new THREE.Object3D(), chainDir = new THREE.Vector3(), chainUp = new THREE.Vector3(0, 1, 0)
 const chainTwist = new THREE.Quaternion().setFromAxisAngle(chainUp, Math.PI / 2)
-let chainArt = null, chainArtLoad = null, moveMeter = null
+let chainArt = null, chainArtLoad = null
 function chainAssets() {
   if (chainArt) return chainArt
   const near = new THREE.TorusGeometry(0.018, 0.0038, 4, 10); near.scale(0.75, 1.5, 1)
@@ -13199,7 +13283,6 @@ function drawChains(me, others, t) {
     const view = avatars.get(id)
     if (view && t-(view.strainHeard||0)>230) {moveSound('charge',p,0.2+q*0.3,q);view.strainHeard=t}
   }
-  moveChargeMeter(me)
 }
 // When looking steeply up from below a tethered body, the cape can be much closer than the capsule pivot.
 // Use its posed joints for the near fade; the forward swing view keeps the ordinary solid silhouette.
@@ -13212,20 +13295,6 @@ function moveCameraFade(me,cam) {
   for(const b of R.cape){b.getWorldPosition(rigV);nearest=Math.min(nearest,rigV.distanceTo(camera.position))}
   const fade=THREE.MathUtils.smoothstep(nearest-.45,CAM.fadeNear,CAM.fadeFar)
   cam.fade=Math.min(cam.fade,1-below*(1-fade*fade));if(cam.fade<.01)cam.fade=0
-}
-function moveChargeMeter(me) {
-  if (!moveMeter) {
-    moveMeter = document.createElement('div'); moveMeter.id = 'move-charge'
-    moveMeter.style.cssText = 'position:fixed;left:50%;bottom:100px;transform:translateX(-50%);padding:7px 12px;background:#111d;border:1px solid #cfc8b6;color:#eee7d7;font:700 13px monospace;pointer-events:none;z-index:5;text-align:center;min-width:200px'
-    document.body.appendChild(moveMeter)
-  }
-  const g = isHost ? chainPack(me) : me.chainNet, spring = me.springT || 0, S = GAME.participantOf(me)?.spring
-  const q = g?.[0] === 1 ? g[1] : S && spring > 0 ? Math.min(1, spring / S.full) : -1
-  const text = q >= 0 ? (g?.[0] === 1 ? 'CHAIN' : 'LEAP-SMASH') + '  ' + Math.round(q * 100) + '%  ·  RELEASE' : g?.[0] === 3 ? 'HOLD Q TO REEL · SPACE TO LET GO' : ''
-  moveMeter.hidden = !text || me.dead > 0 || phase !== 'playing'
-  if (moveMeter.textContent !== text) moveMeter.textContent = text
-  if (q >= 0) moveMeter.style.background = 'linear-gradient(90deg,#605b48 ' + Math.round(q * 100) + '%,#111d 0%)'
-  else moveMeter.style.background = '#111d'
 }
 // Move sounds come only from the effects provider; with none loaded, the moves are silent.
 function moveSound(kind, p, level = 1, charge = 0) {
@@ -16427,7 +16496,6 @@ function clearSession() {
   inQ.clear(); inAck.clear()
   for (const c of players.values()) moveReset(c)
   if (predicted) moveReset(predicted)
-  if (moveMeter) moveMeter.hidden = true
   players.clear(); roster.clear()
   try { if (peer) peer.destroy() } catch (e) {}
   peer = null
@@ -19171,7 +19239,7 @@ function faceYaw(id, c, anim, own, t, dt, firing, ticks) {
   const G = GUNS[a.shotGun], C = GUNS[a.chargeGun], n = ticks ? ticks.length : 1
   for (let i = 0; i < n; i++) {
     const s = i < n - 1 ? ticks[i] : c, an = s === c ? anim : s.anim, at = ticks ? tickAt - (n - 1 - i) * TICK * 1000 : t, y = a.face ?? s.yaw, mine = own || an > 3
-    const attack = (s === c ? firing : s.fire) || at - a.shotAt < Math.max(FACE_MS, G?.punchMs ?? G?.rate * 1000) || at - a.chargeAt < (C?.windup ?? 0) * 1000
+    const attack = a.chainState?.[0] === 1 || (s === c ? firing : s.fire) || at - a.shotAt < Math.max(FACE_MS, G?.punchMs ?? G?.rate * 1000) || at - a.chargeAt < (C?.windup ?? 0) * 1000
     const flyWant = an === 5 && Math.hypot(s.vx, s.vz) > FLY_V * 0.6 ? Math.atan2(-s.vx, -s.vz) : null
     const want = attack ? s.yaw : mine && flyWant === null ? s.yaw : flyWant ?? (an === 0 ? s.yaw : an === 1 && Math.hypot(s.vx, s.vz) > 0.8 ? Math.atan2(-s.vx, -s.vz) : y), k = (ticks ? TICK : dt) * FACE_RATE * (mine ? 4 : attack ? 2 : 1)
     a.face = y + clamp(Math.atan2(Math.sin(want - y), Math.cos(want - y)), -k, k)
