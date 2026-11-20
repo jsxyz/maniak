@@ -348,6 +348,11 @@
   #evtitle{font-size:clamp(30px,8vmin,64px);line-height:1;text-align:center;text-transform:uppercase}
   #evtitle:empty{display:none}
   body.hl #evtitle{color:var(--yel);text-shadow:3px 3px 0 var(--red),6px 6px 0 var(--deep)}
+/* Recovery stays visible even when the drawing context is gone. */
+#graphics-notice { position:fixed; z-index:2000; left:50%; top:12px; transform:translateX(-50%); max-width:90vw;
+  padding:14px 18px; background:#111e; color:#fff; border:1px solid #b9b7ae; text-align:center; pointer-events:auto }
+#graphics-notice[hidden], #graphics-reload[hidden] { display:none }
+#graphics-reload { display:block; margin:10px auto 0 }
 </style>
 
 <div id="ui"><div id="panel">
@@ -418,6 +423,7 @@
 </div></div>
 
 <div id="hud"></div>
+<div id="graphics-notice" role="status" aria-live="polite" hidden><span id="graphics-message"></span><button id="graphics-reload" hidden>Reload game</button></div>
 <div id="reticle"></div>
 <div id="hitmark"></div>
 <div id="hp"><canvas id="radar" width="150" height="150"></canvas><div id="teamstrip"></div><div id="hpbar"><div id="hpfill" style="width:100%"></div></div><div id="fuelbar"><div id="fuelfill"></div></div><div id="sprinting">SPRINT</div></div>
@@ -9911,7 +9917,7 @@ void main() {
 let realState = null
 const realStats = { passes: 0, calls: 0, triangles: 0, targetMB: 0, textureMB: 0, cpuMs: 0, tier: '', ready: false, error: '' }
 function realInit() {
-  const R = realState = { ready: false, failed: false, size: 0, swaps: new WeakMap(), owned: [], lamps: [], lampList: [], litLamps: [],
+  const R = { ready: false, failed: false, size: 0, swaps: new WeakMap(), owned: [], lamps: [], lampList: [], litLamps: [],
     lampGroup: new THREE.Group(), v3: new THREE.Vector3(), v2: new THREE.Vector2(), t: null, tier: null, frame: 0,
     moonDir: new THREE.Vector3(...REAL_SKY.moon).normalize(),
     uniforms: { albedo: { value: null }, normal: { value: null }, time: { value: 0 } } }
@@ -9953,7 +9959,8 @@ function realInit() {
   Object.assign(R.pass.final.uniforms, { tColor: { value: null }, tBloom: { value: null }, uExposure: { value: 1 }, uBloom: { value: 0 }, uBloomN: { value: 1 }, uSat: { value: 1 },
     uVignette: { value: 0 }, uGrain: { value: 0 }, uTime: { value: 0 }, uShadows: { value: new THREE.Vector3() }, uHighlights: { value: new THREE.Vector3() } })
   Object.assign(R.pass.fxaa.uniforms, { tColor: { value: null } })
-  return R
+  // Publish only a complete look: a context loss during the environment bake may throw.
+  return realState = R
 }
 // The tier in force: the quality's row, MSAA only below 1.5 device pixels a pixel (above it the buffer is already
 // supersampled, and FXAA is cheaper), and any test override
@@ -10087,6 +10094,120 @@ function realTeardown() {
 function realScale(quality) { return (REAL_TIERS[quality] || REAL_TIERS.high).scale }
 GAME.realistic = { tiers: REAL_TIERS, grade: REAL_GRADE, sky: REAL_SKY, stats: realStats, override: realOverride, get state() { return realState } }
 
+// A lost GPU can leave the last picture on screen while the room still runs. Keep
+// recovery outside the GL canvas, and never let a failed draw stop the engine clock.
+const graphics = { state: 'ready', lost: 0, restored: 0, rebuild: false, timer: 0 }
+const pageLife = { events: {}, recent: [], discarded: !!document.wasDiscarded, resumes: 0, steps: 0, frames: 0, hostAttempts: 0, hostTicks: 0, gap: 0 }
+function lifeEvent(name) {
+  pageLife.events[name] = (pageLife.events[name] || 0) + 1
+  pageLife.recent.push(name); if (pageLife.recent.length > 8) pageLife.recent.shift()
+}
+function graphicsNotice(failed = false) {
+  const box = el('#graphics-notice')
+  box.hidden = false
+  el('#graphics-message').textContent = failed
+    ? 'Graphics did not recover. Reload to keep playing.' : 'Graphics interrupted. Restoring…'
+  el('#graphics-reload').hidden = !failed
+}
+function graphicsLost() {
+  if (graphics.state === 'lost') return
+  graphics.state = 'lost'; graphics.lost++; graphics.rebuild = true
+  resetInput(); graphicsNotice()
+  clearTimeout(graphics.timer)
+  graphics.timer = setTimeout(() => { if (graphics.state !== 'ready') graphicsNotice(true) }, 8000)
+}
+function graphicsRestored() {
+  graphics.restored++; graphics.state = 'restoring'; graphics.rebuild = true
+  resetInput()
+  // three has reset its GL caches before this listener. The next frame rebuilds
+  // the game's generated targets, after the context-restored event has finished.
+}
+function rebuildGraphics() {
+  renderer.setRenderTarget(null); renderer.resetState()
+  inkDispose()
+  if (realState) {
+    // These targets contain rendered pixels, not image data. In particular the
+    // once-baked night environment must be drawn again, not just allocated again.
+    realDisposeTargets(realState)
+    realState.env?.dispose()
+    realState.env = realEnvironment(realState)
+  }
+  // Geometry, rig/bone maps, lamp data and the city's texture arrays retain their
+  // CPU sources. three uploads them lazily into its new context caches.
+  renderer.shadowMap.needsUpdate = true
+  onViewportChange()
+  graphics.rebuild = false
+}
+function pageResumed() {
+  if (document.hidden) return
+  pageLife.resumes++; pageLife.steps = pageLife.frames = pageLife.hostAttempts = pageLife.hostTicks = 0
+  pageLife.gap = Math.round(now() - last)
+  resetInput()
+  if (serving) startBg(); else stopBg()
+  last = now(); acc = 0
+  // stopBg resets last too; do not mistake the suspended interval for remote
+  // silence on the next tick, when its gap can no longer be measured from last.
+  checkLiveness(last, true)
+  if (renderer?.getContext().isContextLost()) graphicsLost()
+  GAME.audio.apply()
+}
+// three's async compiler polls currentProgram in its mutable GL cache. Loss or
+// disposal can erase that entry while a poll is pending, leaving its Promise
+// unresolved. Capture this context's programs and finish cancelled warmups cleanly.
+function compileForContext(root, cam, target) {
+  const epoch = graphics.lost, gl = renderer.getContext()
+  if (gl.isContextLost()) return Promise.resolve(root)
+  return new Promise((resolve, reject) => {
+    let pending
+    try { pending = [...renderer.compile(root, cam, target)].map(m => [m, renderer.properties.get(m).currentProgram]) }
+    catch (e) { if (gl.isContextLost()) resolve(root); else reject(e); return }
+    const poll = () => {
+      if (epoch !== graphics.lost || gl.isContextLost()) { resolve(root); return }
+      try {
+        pending = pending.filter(([m, program]) => program && renderer.properties.get(m).currentProgram === program && !program.isReady())
+        if (pending.length) setTimeout(poll, 10); else resolve(root)
+      } catch (e) { reject(e) }
+    }
+    // Defer even without parallel shader compilation, as the original does.
+    setTimeout(poll, 10)
+  })
+}
+function initGraphicsLifecycle() {
+  const canvas = renderer.domElement
+  renderer.compileAsync = compileForContext
+  // three's retained disposal listeners can outlive their GL context. A handle
+  // from a lost context is already freed; deleting it in the restored context
+  // is invalid. Track creation epochs without polling the driver on cleanup.
+  const gl = renderer.getContext(), epochs = new WeakMap()
+  for (const kind of ['Buffer', 'Texture', 'Framebuffer', 'Renderbuffer', 'Program', 'Shader', 'VertexArray']) {
+    const create = gl['create' + kind].bind(gl), drop = gl['delete' + kind].bind(gl)
+    gl['create' + kind] = (...args) => {
+      const handle = create(...args)
+      if (handle) epochs.set(handle, graphics.lost)
+      return handle
+    }
+    gl['delete' + kind] = handle => {
+      if (!handle || !epochs.has(handle) || epochs.get(handle) === graphics.lost) drop(handle)
+    }
+  }
+  canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); graphicsLost() })
+  canvas.addEventListener('webglcontextrestored', graphicsRestored)
+  el('#graphics-reload').onclick = () => location.reload()
+  for (const type of ['pagehide', 'pageshow']) addEventListener(type, e => {
+    lifeEvent(type + (e.persisted ? ':cached' : ''))
+    if (type === 'pageshow') pageResumed()
+  })
+  for (const type of ['freeze', 'resume']) document.addEventListener(type, () => {
+    lifeEvent(type)
+    if (type === 'resume') pageResumed()
+  })
+  document.addEventListener('visibilitychange', () => {
+    lifeEvent(document.hidden ? 'hidden' : 'visible')
+    if (!document.hidden) pageResumed()
+  })
+  if (pageLife.discarded) lifeEvent('discarded')
+}
+
 function buildWorld() {
   setHeadless(renderHeadless)
 
@@ -10103,7 +10224,22 @@ function buildWorld() {
   skipStill(worldGroup); skipStill(objGroup)
   scene.onBeforeRender = (r, s, cam) => { cullView(cam); if (inkUniforms.inkEnabled.value) inkPrepare(s) }
   const render = renderer.render.bind(renderer)
-  renderer.render = (s, cam) => { try { lookRender(render, s, cam) } finally { for (const o of culled.splice(0)) o.visible = true } }
+  renderer.render = (s, cam) => {
+    // The engine requests its next frame AFTER render returns. A lost-context
+    // exception here can kill that loop, taking foreground simulation with it.
+    if (renderer.getContext().isContextLost()) { graphicsLost(); return }
+    if (graphics.state === 'lost') return
+    try {
+      if (graphics.rebuild && s === scene) rebuildGraphics()
+      lookRender(render, s, cam)
+      if (graphics.state === 'restoring' && s === scene && !graphics.rebuild) {
+        graphics.state = 'ready'; clearTimeout(graphics.timer); el('#graphics-notice').hidden = true
+      }
+    } catch (e) {
+      if (renderer.getContext().isContextLost()) graphicsLost()
+      else { frameFailed('render', e); if (graphics.state === 'restoring') graphicsNotice(true) }
+    } finally { for (const o of culled.splice(0)) o.visible = true }
+  }
   avatarGroup = new THREE.Group(); scene.add(avatarGroup)
   pickGroup = new THREE.Group(); scene.add(pickGroup)
   tracerGroup = new THREE.Group(); scene.add(tracerGroup)
@@ -13836,7 +13972,7 @@ function initTouch() {
 
   // every overlay must be listed, or a tap on it is a look-drag
   const isUI = t => !!(t && t.closest && t.closest(
-    '#trow, .tbtn, #chat, #ui, .ovl'))
+    '#trow, .tbtn, #chat, #ui, .ovl, #graphics-notice'))
   // fire sits in the look area; other buttons stay out (dragging off JUMP never turns)
   const isFire = INPUT_SCHEMA.lookTouch
 
@@ -13939,6 +14075,8 @@ function initDebug() {
 function toggleDebug(on) {
   dbgOpen = on === undefined ? !dbgOpen : !!on
   document.body.classList.toggle('dbg', dbgOpen)
+  // The panel must also open when a failed frame stopped the drawing loop.
+  if (dbgOpen && renderer && selfChar()) drawDebug(selfChar(), fps)
   if (dbgOpen && !stats) return void withLib(LIBS.stats, () => { stats || initDebug(); toggleDebug(dbgOpen) }, e => sysMsg('§c' + e.message))
   if (stats) stats.dom.style.display = dbgOpen ? 'block' : 'none'
 }
@@ -14001,6 +14139,12 @@ function drawDebug(me, fps) {
     row('gl', 'draws ' + v(p(i.render.calls, 3)) + '  tris ' + v(p(i.render.triangles, 5)) +
         '  geo ' + p(i.memory.geometries, 3) + '  tex ' + p(i.memory.textures, 2) +
         '  prog ' + p(i.programs ? i.programs.length : 0, 2)) +
+    row('context', esc(graphics.state) + '  lost ' + graphics.lost + '  restored ' + graphics.restored) +
+    row('lifecycle', ' resumes ' + pageLife.resumes + '  steps ' + pageLife.steps + '  frames ' + pageLife.frames + '  discarded ' + pageLife.discarded) +
+    row('events', esc(Object.entries(pageLife.events).map(([k, n]) => k + ':' + n).join(' '))) +
+    row('recent', esc(pageLife.recent.join(' > '))) +
+    row('sim life', phase + ' ' + document.visibilityState + ' server ' + serving + ' host ticks ' + pageLife.hostTicks + '/' + pageLife.hostAttempts + ' gap ' + pageLife.gap + 'ms') +
+    row('input', 'move ' + f(input.f, 4, 1) + '/' + f(input.r, 4, 1) + ' fire ' + input.fire + ' menu ' + menuUp() + ' chat ' + chatOpen + ' dead ' + !!me.dead) +
     row('xyz', v(f(me.x, 7, 2)) + ' / ' + v(f(me.y, 6, 2)) + ' / ' + v(f(me.z, 7, 2))) +
     row('facing', facing(me.yaw).padEnd(11) + ' yaw ' + f(me.yaw, 5, 2) +
         '  pitch ' + f(input.pitch, 5, 2)) +
@@ -18436,6 +18580,7 @@ function takeInput(id) {
 }
 
 function hostTick(dt) {
+  pageLife.hostAttempts++
   const t = { dt }
   GAME.host.beforeTick(t)
   const me = players.get(0)
@@ -18459,6 +18604,7 @@ function hostTick(dt) {
   t.all = all; t.cur = cur
   msPhys = msPhys * 0.9 + tickChars(all, c => cur.get(c.id) || IDLE_INPUT, dt, GAME.host, t) * 0.1      // the one step
   recordHistory(tickAt, all)
+  pageLife.hostTicks++
 }
 
 
@@ -18535,7 +18681,7 @@ function initBackgroundTicker() {
 function onTicker() {
   if (!document.hidden && !serving) return
   const t = now()
-  stepSim(t)
+  try { stepSim(t) } catch (e) { frameFailed('background sim', e) }
   if (serving) GAME.view.server(t)
 }
 
@@ -18630,6 +18776,7 @@ function stepSim(t) {
       lastSeqOut = seq
       INPUT_SCHEMA.consume(input)
     }
+    pageLife.steps++
     if (isHost && players.size) { for (const [id, c] of players) sampleTick(id, c, false, !id && (input.fire || input.alt)); for (const f of tracers) f.firedAt ??= tickAt }
   }
   drawDelay(t); input.view = null
@@ -19244,6 +19391,7 @@ class Arena extends ENABLE3D.Scene3D {
     renderer = this.renderer
     scene = this.scene
     camera = this.camera
+    initGraphicsLifecycle()
     applySettings()
     renderer.shadowMap.enabled = !IS_TOUCH && settings.shadows
     this.setSize(innerWidth, innerHeight)
@@ -19283,6 +19431,7 @@ class Arena extends ENABLE3D.Scene3D {
   }
 
   postRender() {
+    pageLife.frames++
     if (drawT0) { msDraw = msDraw * 0.9 + (now() - drawT0) * 0.1; drawT0 = 0 }
     if (stats) stats.end()
   }
