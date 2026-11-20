@@ -218,6 +218,9 @@
     bottom:calc(192px + env(safe-area-inset-bottom));font-size:10px}
   #btn-use{width:58px;height:58px;right:calc(200px + env(safe-area-inset-right));
     bottom:calc(126px + env(safe-area-inset-bottom));font-size:10px}
+  #btn-car{width:58px;height:58px;right:calc(200px + env(safe-area-inset-right));bottom:calc(192px + env(safe-area-inset-bottom));font-size:9px;display:none}
+  body.cancar #btn-car{display:grid}
+  body.invehicle #btn-car{right:calc(95px + env(safe-area-inset-right));bottom:calc(186px + env(safe-area-inset-bottom))}
   #btn-sprint{width:58px;height:58px;right:calc(206px + env(safe-area-inset-right));bottom:calc(46px + env(safe-area-inset-bottom));font-size:10px}
   body.sprinting #btn-sprint{background:rgba(216,207,184,.25);border-color:#d8cfb8}
   body.invehicle #btn-sprint{display:none}
@@ -439,6 +442,7 @@
   <div class="tbtn" id="btn-team">TEAM</div>
   <div class="tbtn" id="btn-shift">FORM</div>
   <div class="tbtn" id="btn-use">USE</div>
+  <div class="tbtn" id="btn-car">WHISTLE</div>
   <div class="tbtn" id="btn-sprint">SPRINT</div>
   <div class="tbtn" id="btn-radio">RADIO</div>
   <div id="trow">
@@ -638,6 +642,8 @@
 
    Rigged characters (card #10): MODELS rows of kind 'rig' load GLBs from assets/ (RIG_FILES), animate in rigAnimate.
    The villains (card #7): CHARS/BOTS rows by crew; their fighting is botThink's swarm, coverThink, drillThink and crewThink.
+   His car (card #12): the 'Maniak car' rows and MANIAK_CAR; the section 'his car' wires the whistle, the car coming to him, the
+     ejector seat and the wreck into the host's phases, the snapshot (`mc`) and the frame.
    Reskin: edit the CONTENT tables and look recipes. Keep pack/unpack and the
    wire guards aligned.
 */
@@ -767,6 +773,7 @@ const BEAM_STYLES = {
   lance: { speed: 60 },
 }
 const PARTICLES = {
+  smoke: { n: 5, life: [0.9, 1.7], speed: [0.6, 2.2], size: [0.5, 0.85], cone: 0.7, fall: -1.2, grow: 3.2, cell: 0, color: 0x75716a },      // card #12, the ejector
   flare: { n: 1, life: [0.1, 0.14], speed: [0, 0], size: [0.9, 1.1], cone: 0, grow: 1.8, add: true, cell: 3, hot: 0.3 },
   spark: { n: 12, life: [0.18, 0.4], speed: [5, 12], size: [0.1, 0.16], cone: 1, fall: 12, grow: 0.4, add: true, cell: 0, stretch: 0.07, hot: 0.55 },
   puff: { n: 4, life: [0.35, 0.7], speed: [0.3, 1.2], size: [0.18, 0.3], cone: 1.4, fall: -0.6, grow: 3, cell: 0, color: 0x8a8378 },
@@ -900,6 +907,9 @@ const OBJECTS = [
   // card #57: a car's doors, torn off (doorOf: its vehicle row; door: which; dmg: what it does thrown into someone)
   ...[['Car', 0xc0392b, 'fl fr rl rr'], ['Van', 0x2e86de, 'fl fr'], ['Truck', 0xd35400, 'fl fr'], ['Sports car', 0x11bca4, 'fl fr']].flatMap(([car, color, ids]) =>
     ids.split(' ').map(door => ({ name: car + ' door ' + door, shape: 'hull', doorOf: car, door, mass: 0.6, bounce: 0.15, friction: 0.6, damp: [0.1, 0.3], hit: 1, color, dmg: 30 }))),
+  // card #12, his car and its wreck (MANIAK_CAR); the wreck slides on its roof
+  { name: 'Maniak car', shape: 'hull', mass: 18, bounce: 0.1, friction: 0.8, damp: [0.05, 0.2], hit: 0.3, color: 0x15161a, drive: 'Maniak car' },
+  { name: 'Maniak wreck', shape: 'hull', model: 'Maniak car', mass: 18, bounce: 0.05, friction: 0.55, damp: [0.12, 0.5], hit: 0.2, color: 0x2b2b2b },
 ]
 // rider centre over its cushion, × (h + r)
 const SIT_HIP = 0.29
@@ -915,6 +925,7 @@ const VEHICLE_SHAPES = Object.fromEntries([
   ['Truck', 2.03, 5.89, 1.93, 0.4, 2, -1.955, 1.725, [-0.42, 0.9, -0.15]],
   ['Bus', 2.4, 7.6, 2.8, 0.44, 'dual', -7.6 * 0.32, 7.6 * 0.23, [0.6 - 2.4 * 0.49, 0.44 * 1.25 + 0.25, -7.6 * 0.06]],
   ['Sports car', 1.87, 4.38, 1.36, 0.33, 2, -1.235, 1.235, [-0.34, 0.34, 0.4]],
+  ['Maniak car', 2.12, 5.36, 1.42, 0.45, 2, -1.48, 1.70, [-0.42, 0.30, 0.44]],      // card #12, his car: long, low, wide, huge tyres
 ].map(([name, w, l, h, r, axles, front, rear, seat]) => {
   const at = []
   for (const z of [front, rear]) for (const side of [-1, 1]) for (const d of axles !== 'dual' ? [0.45] : z !== front ? [0.18, 0.9] : [0.18])
@@ -946,6 +957,9 @@ const VEHICLES = [
   { name: 'Bus', share: 0.15, engine: 24, brake: [1.65, 0.68], hand: 1.25, steer: 0.611, turn: 18, speed: 34, wheels: {"slip":[1.3,1.3],"roll":0.6}, hp: 600, ram: 5.6, boom: { radius: 9, dmg: 150, knock: 18 }, com: 1.1, bal: -0.07677201926708221, inertia: [173.30255126953125, 175.9712371826172, 30.871807098388672], steerTime: 0.12,
     variants: [{}, { color: 0xb8322a, speed: 1.05 }, { color: 0x2f7d4f, grip: 1.05 }, { color: 0x3a6fb5, speed: 0.95, grip: 1.05 }], wreck: 'Bus Wreck', rows: [1.3, 3.78], aimY: [0, 1.75, 1.75, 1.75, 1.75] },
   { name: 'Sports car', share: 0.5, engine: 65, brake: [1.4, 0.85], hand: 0.6, steer: 0.55, turn: 22, steerTime: 0.16, turnIn: 0.16, speed: 72, hp: 280, ram: 3.2, boom: { dmg: 120, knock: 16, radius: 7 }, com: 0.46, bal: 0, wheels: { slip: [1.55, 1.7], stiff: 45, travel: 0.18, damp: [4.8, 3.6], roll: 0.25 }, wreck: 'Sports wreck', variants: [{}, { color: 0xd63c32, speed: 1.04, grip: 0.96 }, { color: 0xe2e4e7, speed: 0.96, grip: 1.04 }, { color: 0x284b89 }] },
+  // card #12, his car (pin rule 10): heavy, quick, and it rams HARD; never parked by the city (share 0)
+  { name: 'Maniak car', share: 0, engine: 90, brake: [1.8, 1.1], hand: 0.9, steer: 0.6, turn: 32, speed: 66, hp: 700, ram: 6.5,
+    boom: { radius: 8, dmg: 140, knock: 18 }, com: 0.5, bal: 0, wheels: { slip: [1.6, 1.7] }, wreck: 'Maniak wreck' },
 ].map(vehicleRow)
 // card #44: Faustland's period fleet, drawn from assets/vehicles.*.glb (made for The MANIAK; see SOURCES.md). VEHICLE_STYLES:
 // per VEHICLES row, per variant (by index, as variantAt picks it): style, the file's model (sedan, taxi, beater, coupe,
@@ -1002,6 +1016,11 @@ const PERIOD = { lods: { high: [22, 70], medium: [0, 56], low: [0, 44] }, wheelN
 // body is closed (a van's or a bus's walls, a car's tub below the belt) the room runs to its shell, which hides what is in
 // it. seatPose keeps a rider's head, shoulders, arms, knees and feet in it
 const VEHICLE_CABINS = {
+  // card #12, his car: the cockpit tub inside the doors, the glass leaning in to the roof, the footwell under the dash, the
+  // raked windscreen, the parcel shelf and the fastback rear window
+  'Maniak car': { floor: 0.27, roof: 1.385, x: [[0.27, 0.86], [0.95, 0.86], [1.0, 0.84], [1.385, 0.72]],
+    front: [[0.27, -0.56], [0.69, -0.56], [0.71, -0.28], [0.93, -0.28], [0.96, -0.55], [1.2, -0.14], [1.385, 0.17]],
+    back: [[0.27, 1.02], [0.6, 1.02], [0.62, 1.7], [0.985, 1.85], [1.2, 1.62], [1.385, 1.36]] },
   Car: { floor: 0.36, roof: 1.395, x: [[0.36, 0.67], [0.97, 0.67], [1.0, 0.66], [1.31, 0.6], [1.4, 0.5]],
     front: [[0.36, -0.7], [0.97, -0.61], [1.31, -0.39], [1.4, -0.2]], back: [[0.36, 1.3], [0.97, 1.4], [1.31, 1.08], [1.4, 0.7]] },
   'Sports car': { floor: 0.28, roof: 1.335, x: [[0.28, 0.56], [0.36, 0.62], [0.89, 0.65], [0.93, 0.635], [1.25, 0.55], [1.335, 0.42]],
@@ -1012,6 +1031,21 @@ const VEHICLE_CABINS = {
     front: [[0.72, -1.22], [1.43, -1.2], [1.81, -0.86], [1.88, -0.68]], back: [[0.72, 0.88], [1.88, 0.86]] },
   Bus: { floor: 0.55, roof: 2.62, x: [[0.55, 1.1], [2.62, 1.07]], front: [[0.55, -1.9], [1.5, -1.9], [2.62, -1.7]], back: [[0.55, 3.7], [2.62, 3.6]] },
 }
+// MANIAK_CAR (card #12, pin rule 10): his car, the 'Maniak car' rows. file: its model in assets/, drawn over the row's procedural
+//   look once loaded; lods: m from the camera where LOD1 and LOD2 begin.
+// whistle: the rig's clip and its length s, its sound (SOUNDS), cd s between whistles.
+// come: speed m/s on the roads (GAME.traffic), far: m past which a new one comes instead, ring: [min, max] m from him where a new
+//   one appears (out of every player's sight; after wait s, anywhere in the ring), lead: m short of its stop that traffic brings
+//   it to, pull: m from his side to its door, pullSpeed m/s and pullMax s of the pull-up, stuck: s without getting nearer before
+//   a new one is sent.
+// eject: speed m/s up out of the hatch, keep: share of the car's own velocity he keeps, side: m/s toward the passenger's side,
+//   rearm: s until the seat is back, sound (SOUNDS).
+// wreck: roll rad/s it flips over with, lift m/s, burn s.
+const MANIAK_CAR = { row: 'Maniak car', file: 'maniak_car.5ef6eadc.glb', lods: [16, 45],
+  whistle: { clip: 'whistle', s: 1.8, sound: 'Whistle', cd: 1.2 },
+  come: { speed: 14, far: 260, ring: [90, 230], wait: 4, lead: 22, pull: 0.7, pullSpeed: 7, pullMax: 14, stuck: 100 },
+  eject: { speed: 24, keep: 0.4, side: 2.5, rearm: 4, sound: 'Eject' },
+  wreck: { roll: 3.6, lift: 4, burn: 25 } }
 // GLTFLoader has no SRI check; keep the asset commit pinned.
 // sha384-Oa+BcLukVPbtZ7kColOygKyQvDUR0mmaZq4Wrj5BNFylre7BPJZVju/2zVCTMAO4
 const ASSETS =
@@ -1278,6 +1312,12 @@ function vehicleModel(k, name) {
   vehicleWheels(k, V.wheels)
 }
 const VEHICLE_LOOKS = {
+  // card #12, his car before its model loads (and its physics hull): the headlight towers, the long hood, a raked screen, a short deck
+  'Maniak car': { liners: 'shell', sill: 0.27, narrow: 0.85, lamps: [0.655, 0.556], belt: 0.687, grille: 0.47, back: 0.4, pillars: [-0.366], doors: [0.224, -0.392],
+    body: [[1, 0.19, 0.04], [1, 0.80, 0.04], [0.77, 0.81], [0.43, 0.70], [0.246, 0.687], [-0.735, 0.694], [-0.91, 0.725], [-0.947, 0.757, 0.02], [-1, 0.70, 0.04], [-1, 0.19, 0.04]],
+    cab: [[0.246, 0.687], [-0.10, 1.0, 0.03], [-0.485, 1.0, 0.03], [-0.735, 0.694]],
+    glass: [[[0.22, 0.705], [-0.09, 0.975, 0.03], [-0.47, 0.975, 0.03], [-0.70, 0.705]]],
+    panes: [[[[0.246, 0.687], [-0.10, 1.0]], 0.9], [[[-0.735, 0.694], [-0.485, 1.0]], 0.88]] },
   'Sports car': { liners: 'shell', sill: 0.08, narrow: 0.86, lamps: [0.43, 0.64], belt: 0.72, pillars: [], doors: [0.23, -0.48],
     body: [[1, 0.22, 0.05], [1, 0.43, 0.08], [0.84, 0.61, 0.12], [0.23, 0.72], [-0.8, 0.72], [-0.91, 0.77, 0.06], [-1, 0.68, 0.08], [-1, 0.22, 0.05]],
     cab: [[0.23, 0.72], [-0.09, 0.97], [-0.25, 1, 0.15], [-0.46, 0.98], [-0.8, 0.72]],
@@ -1843,6 +1883,9 @@ const SOUNDS = {
   down: { say: 'another player dying, heard where they fell', seed: 0 },
   boom: { say: "a vehicle's fuel tank going up: a deep, rolling boom, then falling metal and glass", seed: 0 },
   burning: { say: 'a vehicle on fire: a roaring, crackling blaze that builds for three seconds', seed: 0 },
+  // card #12, his car
+  Whistle: { say: 'a piercing two-finger whistle, loud and rising, that carries down the street', seed: 0 },
+  Eject: { say: 'an ejector seat firing: a hatch blown open with a sharp bang and a short rocket roar going straight up', seed: 0 },
 
   // ---- carried things, where they are; '<object> pickup' for one's own
   pickup: { say: 'lifting something off the ground: a scrape and a short grunt of effort', seed: 0 },
@@ -2175,15 +2218,384 @@ const faustBox = (cx, cy, cz, ex, ey, ez, more) => ({ cx, cy, cz, ex, ey, ez, ..
 const faustKey = (x, z) => x + ' ' + z
 const faustMix = (seed, x, z) => cityHash((seed >>> 0) ^ Math.imul(x, 73856093) ^ Math.imul(z, 19349663))
 const faustLampOffsets = diagonal => diagonal ? [44, 76] : [20, 76]
-function faustPlan(seed, ci, cj, S = 20) {
-  const gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96
-  const rng = genRng(faustMix(seed, gx, gz)), districtHash = faustMix(seed ^ 9187, gx, gz)
-  const distance = (X + 48) ** 2 + (Z + 48) ** 2
+// ---------------------------------------------------------------- Faustland's monorail (card #60): the plan
+// A perimeter loop on the ring of avenues one cell inside the city's edge, a north-south line (B) over an avenue through
+// the central plaza, and a high east-west line (C) over the avenue on the globe's side of the plaza, crossing B above it.
+// Twin beams ±gauge off each avenue's centreline, on T-pylons in the median, 24 and 72 m along every 96 m block (more than
+// 21 m from any junction: clear of its box, its crossings and the cyclists' stop line). Stations: side platforms over the
+// outer lanes, each reached by a bridge from a pavilion on the corner lot beside it, which takes that lot's place in the
+// plan (faustPlan skips it). The loop's trains run round both beams, opposite ways; B's and C's run a shuttle on each beam.
+// Pure in (seed, S); the timetable uses only + - * / and sqrt, so every engine finds the same one. Metres, seconds.
+const RAIL = { level: { low: 10, high: 17 }, gauge: 2.5, beam: [0.45, 1.5], R: 24, ends: 4, switchAt: 24,
+  pylon: { plinth: [1.1, 1], shaft: 0.65, head: [0.7, 3.4, 1.4] },
+  car: { n: 3, half: 6.2, nose: 7.8, pitch: 13, width: 1.6, floor: 0.35, ceiling: 2.8, roof: 3.35, bogie: 4.5, doors: [-3.1, 3.1], door: 0.75, height: 2.1 },
+  plat: { half: 22, inner: 4.3, outer: 9.4, depth: 0.5, rail: 1.1, canopy: 3.2 },
+  pav: { stair: [14.5, 19.5], tower: [20, 34], half: 10, solid: 24, bridge: 4, step: 0.18 },
+  run: { vmax: 20, vcurve: 9, acc: 1, dec: 1.2, dwell: 22, open: [2, 3.2], close: [3.2, 2], ds: 0.5 },
+  light: { candela: 420, y: 3, along: [-16, 0, 16] },
+  names: ['Sinclair Row', 'Hell Block', 'Pacifier Yard', 'Teardrop Lane', 'Cathedral Steps', 'Victory Arcade', 'Dynamo Works',
+    'Meridian', 'Titan Court', 'Radiant Square', 'Zenith', 'Electra', 'Foundry Gate', 'Bastion', 'Monument', 'Exchange',
+    'Gargoyle Hill', 'Ironside', 'Lantern Quay', 'Obelisk', 'Propaganda Hall', 'Party Street', 'Trophy Row', 'Armory',
+    'Graveyard', 'Gasworks', 'Union Gate', 'Bulwark', 'Regent Circus', 'Sunburst', 'Aurora', 'Vanguard', 'Ministry',
+    'Tribune', 'Colossus', 'Vigil', 'Searchlight', 'Pinnacle', 'Belvedere', 'Rampart'] }
+// the parts of a cell's plan that the rail and faustPlan both read; faustPlan's own header, unchanged
+function faustCell(seed, gx, gz) {
+  const X = gx * 96, Z = gz * 96, districtHash = faustMix(seed ^ 9187, gx, gz), distance = (X + 48) ** 2 + (Z + 48) ** 2
   const district = distance < 480 ** 2 || distance > 650 ** 2 && districtHash % 97 === 0 ? 'core' : gx < -2 && gz < 4 && distance < 1000 ** 2 ? 'civic'
     : distance > 1050 ** 2 || gz < -7 ? 'industrial' : 'tenement'
   const centralPlaza = gx >= -2 && gx <= 1 && gz >= -2 && gz <= 1, plaza = centralPlaza || districtHash % 29 === 0
   const diagonal = gz - gx === 4
   const layout = district === 'industrial' ? 2 : district === 'civic' && districtHash % 3 === 0 || district === 'core' && districtHash % 7 === 0 ? 1 : 4
+  return { X, Z, districtHash, distance, district, centralPlaza, plaza, diagonal, layout }
+}
+// a quarter circle without trigonometry: (1 - t², 2t) / (1 + t²) for t from 0 to 1
+const railQuarter = n => Array.from({ length: n + 1 }, (_, i) => { const t = i / n, q = 1 + t * t; return [(1 - t * t) / q, 2 * t / q] })
+const RAIL_Q = railQuarter(16)
+// a run of the plan as points: line {a, b} or quarter arc {c, r, u, v} (from c + r u to c + r v), offset o to the right
+// of travel (the normal (dz, -dx))
+function railPoints(segs, o = 0) {
+  const out = []
+  const push = (x, z) => { const n = out.length; if (n && Math.abs(out[n - 2] - x) < 1e-9 && Math.abs(out[n - 1] - z) < 1e-9) return; out.push(x, z) }
+  for (const s of segs) {
+    if (s.a) {
+      const dx = s.b[0] - s.a[0], dz = s.b[1] - s.a[1], L = Math.sqrt(dx * dx + dz * dz), nx = dz / L * o, nz = -dx / L * o
+      push(s.a[0] + nx, s.a[1] + nz); push(s.b[0] + nx, s.b[1] + nz)
+    } else {
+      // at its start the arc runs along v; the offset grows the radius when the normal points along u
+      const nx = s.v[1], nz = -s.v[0], r = s.r + (nx * s.u[0] + nz * s.u[1] > 0 ? o : -o)
+      for (const [c, k] of RAIL_Q) push(s.c[0] + r * (c * s.u[0] + k * s.v[0]), s.c[1] + r * (c * s.u[1] + k * s.v[1]))
+    }
+  }
+  return out
+}
+// a polyline's arc length at each point
+function railLengths(p) {
+  const s = new Float64Array(p.length / 2)
+  for (let i = 1; i < s.length; i++) { const dx = p[2 * i] - p[2 * i - 2], dz = p[2 * i + 1] - p[2 * i - 1]; s[i] = s[i - 1] + Math.sqrt(dx * dx + dz * dz) }
+  return s
+}
+// the point at arc length d (clamped, or wrapped round a closed path), and its index
+function railAt(path, d) {
+  const { p, s, closed } = path, L = s[s.length - 1]
+  if (closed) d -= Math.floor(d / L) * L; else d = Math.max(0, Math.min(L, d))
+  let lo = 0, hi = s.length - 1
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (s[m] <= d) lo = m; else hi = m }
+  const k = s[hi] > s[lo] ? (d - s[lo]) / (s[hi] - s[lo]) : 0
+  return [p[2 * lo] + (p[2 * hi] - p[2 * lo]) * k, p[2 * lo + 1] + (p[2 * hi + 1] - p[2 * lo + 1]) * k]
+}
+// the arc length on a path nearest (x, z), and how far off it is
+function railProject(path, x, z) {
+  const { p, s } = path
+  let best = Infinity, at = 0
+  for (let i = 0; i + 1 < s.length; i++) {
+    const ax = p[2 * i], az = p[2 * i + 1], dx = p[2 * i + 2] - ax, dz = p[2 * i + 3] - az, L = dx * dx + dz * dz
+    const t = L ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L)) : 0, ex = ax + dx * t - x, ez = az + dz * t - z, e = ex * ex + ez * ez
+    if (e < best) { best = e; at = s[i] + (s[i + 1] - s[i]) * t }
+  }
+  return [at, Math.sqrt(best)]
+}
+// A timetable over [s0, s1] of a path: from rest at s0 to rest at s1, stopping at each of stops (sorted, inside) for the
+// dwell, under vmax and the slow spans' vcurve. Rows on a ds grid: s, v, the time it gets there, the time it leaves.
+function railLeg(path, s0, s1, stops, slow, R = RAIL.run) {
+  const dir = s1 >= s0 ? 1 : -1, n = Math.max(2, Math.round(Math.abs(s1 - s0) / R.ds) + 1), ds = Math.abs(s1 - s0) / (n - 1)
+  const s = new Float64Array(n), v = new Float64Array(n), ta = new Float64Array(n), td = new Float64Array(n), stop = new Uint8Array(n)
+  for (let i = 0; i < n; i++) {
+    s[i] = s0 + dir * ds * i
+    let lim = R.vmax
+    for (const [a, b] of slow) if (s[i] >= a - 6 && s[i] <= b + 6) lim = Math.min(lim, R.vcurve)
+    v[i] = lim
+  }
+  stop[0] = stop[n - 1] = 1
+  for (const d of stops) { const i = Math.round(Math.abs(d - s0) / ds); if (i > 0 && i < n - 1) stop[i] = 1 }
+  for (let i = 0; i < n; i++) if (stop[i]) v[i] = 0
+  for (let i = 1; i < n; i++) v[i] = Math.min(v[i], Math.sqrt(v[i - 1] * v[i - 1] + 2 * R.acc * ds))
+  for (let i = n - 2; i >= 0; i--) v[i] = Math.min(v[i], Math.sqrt(v[i + 1] * v[i + 1] + 2 * R.dec * ds))
+  ta[0] = 0; td[0] = R.dwell
+  for (let i = 1; i < n; i++) { ta[i] = td[i - 1] + 2 * ds / (v[i - 1] + v[i]); td[i] = ta[i] + (stop[i] && i < n - 1 ? R.dwell : 0) }
+  return { s, v, ta, td, stop, ds, dir, time: ta[n - 1] }
+}
+// where a leg is at time tau after it starts: arc length, speed (signed along the path), and the dwell's phase (s since
+// arriving) or -1 while moving
+function railLegAt(leg, tau) {
+  const { s, v, ta, td, ds, dir } = leg, n = s.length
+  if (tau <= td[0]) return [s[0], 0, tau]
+  if (tau >= ta[n - 1]) return [s[n - 1], 0, tau - ta[n - 1]]
+  let lo = 0, hi = n - 1
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (td[m] <= tau) lo = m; else hi = m }
+  if (tau >= ta[lo + 1]) return [s[lo + 1], 0, tau - ta[lo + 1]]
+  const d = tau - td[lo], a = (v[lo + 1] * v[lo + 1] - v[lo] * v[lo]) / (2 * ds), along = Math.min(ds, v[lo] * d + 0.5 * a * d * d)
+  return [s[lo] + dir * along, dir * (v[lo] + a * d), -1]
+}
+
+let faustRailMemo = null
+function faustRail(seed, S) {
+  seed >>>= 0; S = Math.max(16, Math.min(32, S & ~1))
+  if (faustRailMemo?.seed === seed && faustRailMemo.S === S) return faustRailMemo.rail
+  const A = S * 48, r0 = A - 96, H = S / 2, K = RAIL, g = K.gauge, rng = genRng(faustMix(seed ^ 0x5241494c, 60, 22))
+  const xB = rng() < 0.5 ? -96 : 96, zC = rng() < 0.5 ? -192 : -288
+  const cells = new Map(), cell = (gx, gz) => { const k = gx + ' ' + gz; if (!cells.has(k)) cells.set(k, faustCell(seed, gx, gz)); return cells.get(k) }
+  // world point of (along, across) on a run: dir 'z' runs along z at x = c, dir 'x' along x at z = c
+  const W = (dir, c, along, across) => dir === 'z' ? [c + across, along] : [along, c + across]
+  // A pavilion stands on a corner lot (x, z), in place of the lots it overlaps: a four-lot block's or an industrial yard's
+  // sheds; never a transit tower, a one-lot block's landmark, by the diagonal boulevard or on a plaza (its walkers' loops
+  // wander the whole paving). The lots it takes (their centres), or null.
+  const lotOK = (x, z) => {
+    const gx = Math.floor(x / 96), gz = Math.floor(z / 96)
+    if (gx < -H || gz < -H || gx >= H || gz >= H) return null
+    const C = cell(gx, gz)
+    if (C.plaza || C.diagonal || C.layout === 1) return null
+    const out = []
+    for (let i = 0; i < C.layout; i++) {
+      const lx = C.X + (i & 1 ? 72 : 24), lz = C.Z + (C.layout < 4 ? 48 : i & 2 ? 72 : 24), hx = 12, hz = C.layout < 4 ? 28 : 12
+      if (Math.abs(lx - x) < hx + 15 && Math.abs(lz - z) < hz + 15) {
+        if (i === 0 && (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0) return null
+        out.push(faustKey(lx, lz))
+      }
+    }
+    // the cell keeps a lot: a cell without one gets a plaza's wandering walkers (street life), who would walk through it
+    const taken = stations.reduce((n, t) => n + t.pavilions.reduce((m, q) => m + q.lots.filter(k => cellOf(k) === gx + ' ' + gz).length, 0), 0)
+    return taken + out.length < C.layout ? out : null
+  }
+  const cellOf = k => { const [x, z] = k.split(' ').map(Number); return Math.floor(x / 96) + ' ' + Math.floor(z / 96) }
+  const lines = {
+    L: { id: 'L', loop: true, level: K.level.low, runs: [['x', -r0], ['z', r0], ['x', r0], ['z', -r0]] },
+    B: { id: 'B', level: K.level.low, dir: 'z', c: xB, from: -r0, to: r0 },
+    C: { id: 'C', level: K.level.high, dir: 'x', c: zC, from: -r0, to: r0 } }
+  const stations = []
+  // keep-outs on a run's along axis where no platform goes: crossings with turnouts, the corners
+  const keep = { L: [], B: [], C: [] }
+  for (const z of [-r0, r0]) keep.L.push(['x', z, xB - 30, xB + 30])          // B's turnouts join the loop at xB ± 24
+  for (const x of [-r0, r0]) keep.L.push(['z', x, zC - 30, zC + 30])
+  keep.C.push(['x', zC, xB - 30, xB + 30]); keep.B.push(['z', xB, zC - 30, zC + 30])
+  const free = (line, dir, c, p) => {
+    const lim = line === 'L' ? r0 - 48 : r0 - 50
+    if (Math.abs(p) > lim) return false
+    if (keep[line].some(([d, k, a, b]) => d === dir && k === c && p + K.plat.half > a && p - K.plat.half < b)) return false
+    if (stations.some(t => t.line === line && t.dir === dir && t.c === c && Math.abs(t.p - p) < 96 + 2 * K.plat.half)) return false
+    // both pavilions: the corner lots either side, clear of every other station's
+    for (const side of [-1, 1]) {
+      const [x, z] = W(dir, c, p, side * 24)
+      if (!lotOK(x, z) || stations.some(t => t.pavilions.some(q => Math.abs(q.x - x) < 30 && Math.abs(q.z - z) < 30))) return false
+    }
+    return true
+  }
+  const add = (line, dir, c, p, name) => {
+    const level = lines[line].level, pavilions = [-1, 1].map(side => { const [x, z] = W(dir, c, p, side * 24); return { x, z, side, lots: lotOK(x, z) } })
+    const t = { id: stations.length, line, dir, c, p, level, name, pavilions }
+    stations.push(t); return t
+  }
+  // the first free place among candidates (along positions on lots' centres, 48 m apart)
+  const place = (line, dir, c, wanted, name) => { for (const p of wanted) if (free(line, dir, c, p)) return add(line, dir, c, p, name); return null }
+  const toward = (p0, step, n) => Array.from({ length: n }, (_, i) => p0 + step * i)
+  const around = (p0, n) => Array.from({ length: 2 * n + 1 }, (_, i) => p0 + (i & 1 ? 1 : -1) * 48 * Math.ceil(i / 2))
+  // B and C: termini nearest the loop, then the interchanges where they cross and where they meet the loop
+  for (const sgn of [-1, 1]) place('B', 'z', xB, toward(sgn * (r0 - 72), -sgn * 48, 10))
+  for (const sgn of [-1, 1]) place('C', 'x', zC, toward(sgn * (r0 - 72), -sgn * 48, 10))
+  place('B', 'z', xB, around(zC + 72, 8), 'Globe Cross'); place('C', 'x', zC, around(xB + (xB > 0 ? -72 : 72), 8), 'Globe Cross')
+  for (const z of [-r0, r0]) place('L', 'x', z, around(xB + 72, 8))
+  for (const x of [-r0, r0]) place('L', 'z', x, around(zC + 72, 8))
+  place('B', 'z', xB, toward(216, 48, 6), 'Faust Plaza')
+  // more along each run while a gap is long: the middle of the longest gap, jittered by the seed
+  const fill = (line, dir, c, lo, hi, gap) => {
+    for (let guard = 0; guard < 8; guard++) {
+      const ps = [lo, ...stations.filter(t => t.line === line && t.dir === dir && t.c === c).map(t => t.p).sort((a, b) => a - b), hi]
+      let best = -1, at = 0
+      for (let i = 0; i + 1 < ps.length; i++) if (ps[i + 1] - ps[i] > best) { best = ps[i + 1] - ps[i]; at = i }
+      if (best < gap) return
+      const mid = Math.round(((ps[at] + ps[at + 1]) / 2 + (rng() - 0.5) * 96 - 24) / 48) * 48 + 24
+      if (!place(line, dir, c, around(mid, 6))) return
+    }
+  }
+  for (const [dir, c] of lines.L.runs) fill('L', dir, c, -r0, r0, 760)
+  fill('B', 'z', xB, -r0, r0, 640); fill('C', 'x', zC, -r0, r0, 640)
+  // names: the fixed two, the rest dealt from the list by the seed
+  const deck = K.names.slice()
+  for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]] }
+  const named = new Map()
+  for (const t of stations) {
+    if (!t.name) { const k = t.line + t.dir + t.c + ':' + t.p; t.name = named.get(k) || deck[named.size % deck.length]; named.set(k, t.name) }
+  }
+
+  // ---- the track: runs as segments, then beams as offset polylines
+  const loopSegs = [], Rr = K.R
+  loopSegs.push({ a: [-r0 + Rr, -r0], b: [r0 - Rr, -r0] }, { c: [r0 - Rr, -r0 + Rr], r: Rr, u: [0, -1], v: [1, 0] },
+    { a: [r0, -r0 + Rr], b: [r0, r0 - Rr] }, { c: [r0 - Rr, r0 - Rr], r: Rr, u: [1, 0], v: [0, 1] },
+    { a: [r0 - Rr, r0], b: [-r0 + Rr, r0] }, { c: [-r0 + Rr, r0 - Rr], r: Rr, u: [0, 1], v: [-1, 0] },
+    { a: [-r0, r0 - Rr], b: [-r0, -r0 + Rr] }, { c: [-r0 + Rr, -r0 + Rr], r: Rr, u: [-1, 0], v: [0, -1] })
+  const beams = []      // { line, level, p (flat x z), closed }
+  const mk = (line, level, p, closed) => { const b = { line, level, p, s: railLengths(p), closed }; beams.push(b); return b }
+  const outer = mk('L', K.level.low, railPoints(loopSegs, g), true), inner = mk('L', K.level.low, railPoints(loopSegs, -g), true)
+  // B: straight from end to end, with a turnout from each beam into the loop's inner beam at both ends
+  const Bb = [-1, 1].map(o => mk('B', K.level.low, [xB + o * g, -r0 + K.ends, xB + o * g, r0 - K.ends], false))
+  const Cb = [-1, 1].map(o => mk('C', K.level.high, [-r0 + K.ends, zC + o * g, r0 - K.ends, zC + o * g], false))
+  const turnouts = []
+  for (const zs of [-1, 1]) for (const o of [-1, 1]) {
+    // from (xB + o g, zs (r0 - 24)) heading toward the loop, curving off to side o into the inner beam z = zs (r0 - g)
+    const r = K.switchAt - g, x0 = xB + o * g, z0 = zs * (r0 - K.switchAt), c = [x0 + o * r, z0]
+    const seg = { c, r, u: [-o, 0], v: [0, zs] }
+    // railPoints offsets by the travel normal; this arc is drawn as is
+    const p = []; for (const [cc, k] of RAIL_Q) p.push(c[0] + r * (cc * seg.u[0] + k * seg.v[0]), c[1] + r * (cc * seg.u[1] + k * seg.v[1]))
+    turnouts.push(mk('B', K.level.low, p, false)); turnouts.at(-1).turnout = true
+  }
+  const ends = [], switches = []
+  for (const b of [...Bb, ...Cb]) for (const e of [0, 1]) {
+    const k = e ? b.p.length - 2 : 0, j = e ? k - 2 : 2, dx = b.p[k] - b.p[j], dz = b.p[k + 1] - b.p[j + 1], L = Math.sqrt(dx * dx + dz * dz)
+    ends.push({ x: b.p[k], z: b.p[k + 1], y: b.level, dx: dx / L, dz: dz / L })
+  }
+  for (const zs of [-1, 1]) for (const o of [-1, 1]) switches.push({ x: xB + o * g, z: zs * (r0 - K.switchAt), y: K.level.low, dx: 0, dz: zs })
+
+  // ---- pylons: T-pylons in the medians, 24 and 72 m along each block, inside each run's beams' reach
+  const pylons = []
+  const pyl = (dir, c, lo, hi, level) => {
+    for (let q = Math.ceil((lo - 24) / 48) * 48 + 24; q <= hi; q += 48) {
+      const [x, z] = W(dir, c, q, 0); pylons.push({ x, z, level, dir })
+    }
+  }
+  for (const [dir, c] of lines.L.runs) pyl(dir, c, -r0 + Rr, r0 - Rr, K.level.low)
+  pyl('z', xB, -r0 + K.switchAt, r0 - K.switchAt, K.level.low)
+  pyl('x', zC, -r0 + K.switchAt, r0 - K.switchAt, K.level.high)
+
+  // ---- colliders, each in the cell its centre lies in; tagged rail so tests and drawers can find them
+  const boxes = [], lights = []
+  const box = (cx, cy, cz, ex, ey, ez, part) => boxes.push(faustBox(cx, cy, cz, ex, ey, ez, { rail: part }))
+  // a box from along a0..a1, across b0..b1 (either order), y0..y1 on a run
+  const rbox = (dir, c, a0, a1, b0, b1, y0, y1, part) => {
+    const [x0, z0] = W(dir, c, Math.min(a0, a1), Math.min(b0, b1)), [x1, z1] = W(dir, c, Math.max(a0, a1), Math.max(b0, b1))
+    box((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, Math.abs(x1 - x0) / 2, (y1 - y0) / 2, Math.abs(z1 - z0) / 2, part)
+  }
+  const [bw, bd] = K.beam
+  for (const b of beams) for (let i = 0; i + 1 < b.s.length; i++) {
+    const ax = b.p[2 * i], az = b.p[2 * i + 1], cx = b.p[2 * i + 2], cz = b.p[2 * i + 3]
+    // straights split at cell edges, so each cell holds its own piece
+    const cuts = [0, 1], axial = ax === cx || az === cz
+    if (axial) { const a = ax === cx ? az : ax, e = ax === cx ? cz : cx; for (let q = Math.ceil(Math.min(a, e) / 96) * 96; q < Math.max(a, e); q += 96) if (q > Math.min(a, e)) cuts.push((q - a) / (e - a)) }
+    cuts.sort((p, q) => p - q)
+    for (let k = 0; k + 1 < cuts.length; k++) {
+      const x0 = ax + (cx - ax) * cuts[k], z0 = az + (cz - az) * cuts[k], x1 = ax + (cx - ax) * cuts[k + 1], z1 = az + (cz - az) * cuts[k + 1]
+      const ex = Math.abs(x1 - x0) / 2 + (axial && x0 === x1 ? bw : axial ? 0 : bw * 0.75), ez = Math.abs(z1 - z0) / 2 + (axial && z0 === z1 ? bw : axial ? 0 : bw * 0.75)
+      box((x0 + x1) / 2, b.level - bd / 2, (z0 + z1) / 2, ex, bd / 2, ez, 'beam')
+    }
+  }
+  const P = K.pylon
+  for (const p of pylons) {
+    const top = p.level - bd, [hx, hz, hh] = P.head, along = p.dir === 'x'
+    box(p.x, P.plinth[1] / 2, p.z, P.plinth[0], P.plinth[1] / 2, P.plinth[0], 'pylon')
+    box(p.x, (P.plinth[1] + top - hh) / 2, p.z, P.shaft, (top - hh - P.plinth[1]) / 2, P.shaft, 'pylon')
+    box(p.x, top - hh / 2, p.z, along ? hx : hz, hh / 2, along ? hz : hx, 'pylon')
+  }
+  const C = K.plat, V = K.pav, deckOf = t => t.level + K.car.floor
+  for (const t of stations) {
+    const { dir, c, p } = t, d = deckOf(t)
+    for (const side of [-1, 1]) {
+      const s = side, R2 = (a0, a1, b0, b1, y0, y1, part) => rbox(dir, c, a0, a1, s * b0, s * b1, y0, y1, part)
+      // the platform, its outer railing (a gap for the bridge) and ends, its canopy roof
+      R2(p - C.half, p + C.half, C.inner, C.outer, d - C.depth, d, 'deck')
+      const high = t.level > K.level.low, g0 = high ? p + V.half - V.bridge : p - V.half, g1 = g0 + V.bridge
+      R2(p - C.half, g0, C.outer - 0.1, C.outer, d, d + C.rail, 'rail'); R2(g1, p + C.half, C.outer - 0.1, C.outer, d, d + C.rail, 'rail')
+      for (const e of [-1, 1]) R2(p + e * C.half - 0.05, p + e * C.half + 0.05, C.inner + 0.3, C.outer, d, d + C.rail, 'rail')
+      R2(p - C.half, p + C.half, C.inner + 0.3, C.outer + 0.2, d + C.canopy, d + C.canopy + 0.2, 'canopy')
+      // the bridge to the pavilion, railed both sides
+      R2(g0, g1, C.outer, V.stair[0], d - C.depth, d, 'bridge')
+      for (const e of [g0, g1]) R2(e - 0.05, e + 0.05, C.outer, V.stair[0], d, d + C.rail, 'rail')
+      // the stair: one flight up to the low deck; to a high deck two, round a half landing
+      const stepUp = (a0, a1, b0, b1, y0, y1) => {
+        const n = Math.ceil((y1 - y0) / V.step), run = (a1 - a0) / n
+        for (let k = 1; k <= n; k++) R2(a0 + run * (k - 1), a0 + run * k, b0, b1, 0, y0 + (y1 - y0) * k / n, 'stair')
+      }
+      const [s0, s1] = V.stair
+      if (!high) { stepUp(p + V.half, p - V.half + V.bridge, s0, s1, 0, d); R2(p - V.half, p - V.half + V.bridge, s0, s1, 0, d, 'landing') }
+      else {
+        const mid = (s0 + s1) / 2, h = d / 2
+        stepUp(p + V.half, p - V.half + V.bridge, s0, mid, 0, h); R2(p - V.half, p - V.half + V.bridge, s0, s1, 0, h, 'landing')
+        stepUp(p - V.half + V.bridge, p + V.half - V.bridge, mid, s1, h, d); R2(p + V.half - V.bridge, p + V.half, s0, s1, d - C.depth, d, 'landing')
+      }
+      // the pavilion's tower and its setbacks
+      const [t0, t1] = V.tower, tm = (t0 + t1) / 2
+      R2(p - V.half, p + V.half, t0, t1, 0, V.solid, 'tower')
+      R2(p - 7, p + 7, tm - 5, tm + 5, V.solid, V.solid + 6, 'tower'); R2(p - 4.5, p + 4.5, tm - 3.2, tm + 3.2, V.solid + 6, V.solid + 11, 'tower')
+      for (const a of K.light.along) { const [x, z] = W(dir, c, p + a, s * (C.inner + C.outer) / 2); lights.push(x, d + K.light.y, z, K.light.candela) }
+    }
+  }
+  // by cell
+  const byCell = new Map(), lightsByCell = new Map()
+  const into = (map, x, z, v) => { const k = faustKey(Math.floor(x / 96) + H, Math.floor(z / 96) + H); if (!map.has(k)) map.set(k, []); map.get(k).push(...v) }
+  for (const b of boxes) into(byCell, b.cx, b.cz, [b])
+  for (let i = 0; i < lights.length; i += 4) into(lightsByCell, lights[i], lights[i + 2], lights.slice(i, i + 4))
+  const lots = new Set(stations.flatMap(t => t.pavilions.flatMap(q => q.lots)))
+
+  // ---- service: routes over the beams, their stops, and their timetables
+  const routes = []
+  const stopsOn = b => stations.filter(t => t.line === b.line).flatMap(t => [-1, 1].map(side => {
+    const [x, z] = W(t.dir, t.c, t.p, side * g), [at, off] = railProject(b, x, z)
+    return off < 0.05 ? { station: t.id, side, s: at } : null
+  }).filter(Boolean)).sort((a, b) => a.s - b.s)
+  // the arcs, as spans of arc length the trains slow on
+  const slowOn = b => { const out = []; for (let i = 1; i + 1 < b.s.length; i++) { const ax = b.p[2 * i - 2], az = b.p[2 * i - 1], cx = b.p[2 * i + 2], cz = b.p[2 * i + 3]
+    if (!(ax === cx || az === cz)) { const last = out.at(-1); if (last && b.s[i - 1] <= last[1] + 0.01) last[1] = b.s[i + 1]; else out.push([b.s[i - 1], b.s[i + 1]]) } } return out }
+  // the loop's two beams: the outer one run with its points, the inner one against them; trains spaced in phase
+  for (const [b, way] of [[outer, 1], [inner, -1]]) {
+    const path = way > 0 ? b : { ...b, p: reversePts(b.p) }
+    if (way < 0) path.s = railLengths(path.p)
+    const stops = stopsOn(path), slow = slowOn(path), L = path.s[path.s.length - 1]
+    if (!stops.length) continue
+    // one lap from the first stop round to it again, as one leg on the path unrolled
+    const s0 = stops[0].s, legs = [railLeg(path, s0, s0 + L, stops.slice(1).map(q => q.s), slow.flatMap(([a, c]) => [[a, c], [a + L, c + L]]))]
+    const cycle = legs[0].time, n = Math.max(3, Math.round(L / 1500))
+    routes.push({ id: routes.length, line: 'L', beam: beams.indexOf(b), path, closed: true, stops, legs, cycle, trains: Array.from({ length: n }, (_, k) => k * cycle / n) })
+  }
+  // B's and C's beams: a shuttle each, terminus to terminus and back, the two beams half a cycle apart
+  for (const [list, line] of [[Bb, 'B'], [Cb, 'C']]) list.forEach((b, j) => {
+    const stops = stopsOn(b)
+    if (stops.length < 2) return
+    const s0 = stops[0].s, s1 = stops.at(-1).s, mid = stops.slice(1, -1).map(q => q.s)
+    const legs = [railLeg(b, s0, s1, mid, []), railLeg(b, s1, s0, mid.slice().reverse(), [])], cycle = legs[0].time + legs[1].time
+    routes.push({ id: routes.length, line, beam: beams.indexOf(b), path: b, closed: false, stops, legs, cycle, trains: [j * cycle / 2] })
+  })
+  const rail = { version: 1, seed, S, A, r0, xB, zC, stations, beams, turnouts, ends, switches, pylons, routes, boxes, byCell, lights, lightsByCell, lots }
+  // a fingerprint of the whole layout and timetable (rounded to 1 mm and 1 ms), for cross-engine checks
+  let hash = 2166136261
+  const feed = v => { const t = String(Math.round(v * 1000)); for (let i = 0; i < t.length; i++) hash = Math.imul(hash ^ t.charCodeAt(i), 16777619); hash = Math.imul(hash ^ 44, 16777619) }
+  for (const b of boxes) [b.cx, b.cy, b.cz, b.ex, b.ey, b.ez].forEach(feed)
+  for (const r of routes) { feed(r.cycle); for (const leg of r.legs) for (let i = 0; i < leg.ta.length; i += 97) { feed(leg.ta[i]); feed(leg.s[i]) } }
+  rail.hash = (hash >>> 0).toString(16).padStart(8, '0')
+  faustRailMemo = { seed, S, rail }
+  return rail
+}
+function reversePts(p) { const out = []; for (let i = p.length - 2; i >= 0; i -= 2) out.push(p[i], p[i + 1]); return out }
+// a train of a route at room time t (ms): its arc length, speed, the dwell phase (-1 moving) and the stop it dwells at
+function railTrain(route, k, tMs) {
+  const C = route.cycle, t = tMs / 1000 + route.trains[k]
+  let tau = t - Math.floor(t / C) * C, leg = 0
+  if (!route.closed && tau >= route.legs[0].time) { tau -= route.legs[0].time; leg = 1 }
+  const [s, v, dwell] = railLegAt(route.legs[leg], tau)
+  return { s, v, dwell, leg }
+}
+// the pose of car j (0 at the +s end) of a train: centre (x, y beam top, z), yaw (0 faces -Z as the game's yaw; the car's
+// own +X points along (dx, dz)), and its doors' opening 0..1 on the side whose normal is (sx, sz), toward the platform
+function railCar(route, k, j, tMs, out = {}) {
+  const T = railTrain(route, k, tMs), K = RAIL.car, off = ((K.n - 1) / 2 - j) * K.pitch
+  const a = railAt(route.path, T.s + off - K.bogie), b = railAt(route.path, T.s + off + K.bogie)
+  const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.sqrt(dx * dx + dz * dz) || 1
+  out.x = (a[0] + b[0]) / 2; out.z = (a[1] + b[1]) / 2; out.y = RAIL.level[route.line === 'C' ? 'high' : 'low']
+  out.dx = dx / L; out.dz = dz / L; out.v = T.v; out.s = T.s
+  // doors: open on the platform's side through the dwell
+  const R = RAIL.run, D = R.dwell, w = T.dwell
+  out.open = w < 0 ? 0 : Math.max(0, Math.min(1, (w - R.open[0]) / (R.open[1] - R.open[0]), (D - R.close[1] - w) / (R.close[0] - R.close[1])))
+  out.side = 0; out.station = -1
+  if (w >= 0) {
+    const L = route.path.s[route.path.s.length - 1], at = route.closed ? T.s - Math.floor(T.s / L) * L : T.s
+    let best = null, gap = Infinity
+    for (const q of route.stops) { const e = Math.min(Math.abs(q.s - at), route.closed ? L - Math.abs(q.s - at) : Infinity); if (e < gap) { gap = e; best = q } }
+    if (best && gap < 1) { out.side = best.side; out.station = best.station }
+  }
+  out.end = j === 0 ? 1 : j === K.n - 1 ? -1 : 0
+  return out
+}
+function faustPlan(seed, ci, cj, S = 20) {
+  const gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96
+  const rng = genRng(faustMix(seed, gx, gz)), { districtHash, distance, district, centralPlaza, plaza, diagonal, layout } = faustCell(seed, gx, gz)
+  // card #60: a monorail pavilion takes the place of the lot it stands on; its track, pylons and stations are this cell's too
+  const rail = faustRail(seed, S)
   const lots = [], boxes = [faustBox(X + 48, -0.52, Z + 48, 48.05, 0.5, 48.05)]
   const roads = [], lanes = [], sidewalks = [], masts = [], screens = []
   // Edge avenues join exactly. Each cell also owns two 8 m side streets.
@@ -2215,7 +2627,7 @@ function faustPlan(seed, ci, cj, S = 20) {
       : district === 'civic' ? 12 + (rng() * 25 | 0) : district === 'industrial' ? 2 + (rng() * 6 | 0) : 4 + (rng() * 10 | 0))
     const w = layout === 1 ? 29 : 10 + (rng() * 3 | 0), d = layout < 4 ? 28 : 10 + (rng() * 3 | 0)
     const gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
-    if (diagonal && Math.abs(z - x - 384) < w + d + 18 || Math.abs(x) < 48 && z > 192 && z < 720) continue
+    if (diagonal && Math.abs(z - x - 384) < w + d + 18 || Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z))) continue
     const stop = (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 && i === 0
     if (stop) H = 560 + (districtHash % 4) * 16
     const style = stop ? 'core' : district
@@ -2248,6 +2660,8 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (H > 36 && i === 0) screens.push({ x, y: 20, z: z + d + 0.12, w: 16, h: 9, yaw: 0, ground: null })
   }
   for (const q of faustLampOffsets(diagonal)) boxes.push(faustBox(X + 11.4, 4.5, Z + q, 0.14, 4.5, 0.14, { slim: true }))
+  boxes.push(...rail.byCell.get(faustKey(ci, cj)) || [])
+  const railLights = rail.lightsByCell.get(faustKey(ci, cj)) || []
   const nodes = new Map(), edges = []
   for (const road of roads) for (let i = 0; i < 2; i++) {
     const point = k => road.a.map((v, j) => v + (road.b[j] - v) * k / 2)
@@ -2261,7 +2675,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 1, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures }
+  const content = { version: 2, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -3543,7 +3957,7 @@ function faustLampSites(P) {
 // a cell's lamps as lights: x, y, z, candela each
 function faustLamps(P) {
   const L = FAUST_NIGHT.lamps
-  return Float32Array.from(faustLampSites(P).filter((s, i) => !dsLampDark(P, i)).flatMap(s => [s.x, s.nx || s.nz ? L.y : 8.3, s.z, L.candela]))      // card #46: not a broken head
+  return Float32Array.from(faustLampSites(P).filter((s, i) => !dsLampDark(P, i)).flatMap(s => [s.x, s.nx || s.nz ? L.y : 8.3, s.z, L.candela]).concat(P.railLights || []))      // card #46: not a broken head; card #60: the stations' lights after the street's
 }
 // a lamp in a cell's street detail: a post on the kerb, an arm, a glowing head over the road; or a lantern on its post
 function faustLampDraw(batch, s) {
@@ -4190,7 +4604,7 @@ function faustAtmosphere() {
     const smog = new THREE.Sprite(smogMaterial); smog.position.set(x, 13, z); smog.scale.set(600, 32, 1); root.add(smog)
   }
 }
-function faustAtmosphereFrame() { faustLampGrid(); faustInteriorLamps(); airDraw() }
+function faustAtmosphereFrame() { faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
 function faustFarLights() { return drain(faustFarLightsSteps()) }
 function* faustFarLightsSteps() {
   const F = faustState, lights = faustBatch(F.S * F.S * 48), warnings = []
@@ -4283,6 +4697,7 @@ function* faustBuildWorldSteps() {
   for (const key of faustRange([p], 1)) { yield* faustVisualSteps(faustGet(...key.split(' ').map(Number))); yield }
   still(worldGroup)
   airViewBuild()
+  railBuild()
 }
 // Traffic/aircraft/broadcast hooks consume plans without holding or modifying the city's internal state.
 // No map rows travel on the wire. Call plan(seed,ci,cj,size) anywhere, including a dedicated server.
@@ -5297,14 +5712,17 @@ const background = (() => {
     // The timeout starts a new task after the frame has painted. IdleCallback may
     // get no idle time in a busy game; its timeout still permits one small unit.
     const after = () => {
-      if (typeof requestIdleCallback === 'function') requestIdleCallback(pump, { timeout: 32 })
+      if (typeof startingGame !== 'undefined' && startingGame) pump(null)
+      else if (typeof requestIdleCallback === 'function') requestIdleCallback(pump, { timeout: 32 })
       else setTimeout(() => pump(null), 0)
     }
     if (document.hidden) setTimeout(after, 32); else requestAnimationFrame(() => setTimeout(after, 0))
   }
   function pump(deadline) {
     scheduled = false
-    const start = performance.now(), cap = Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
+    // While the loading overlay is up nothing else is drawn: take 30 ms slices (each still one bounded task).
+    const rush = typeof startingGame !== 'undefined' && startingGame
+    const start = performance.now(), cap = rush ? 30 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
     let steps = 0
     while (performance.now() - start < cap || !steps) {
       const list = [...jobs.values()].sort((a, b) => b.priority - a.priority || a.order - b.order)
@@ -5358,25 +5776,43 @@ function* uploadTextures(root) {
         if (v?.isTexture && !v.isRenderTargetTexture && !seen.has(v)) { seen.add(v); textures.push(v) }
     }
   })
-  for (const texture of textures) { renderer.initTexture(texture); yield 'frame' }
+  // one upload a step; a texture already on the GPU costs nothing
+  for (const texture of textures) if (!renderer.properties.get(texture).__webglInit) { renderer.initTexture(texture); yield }
 }
 // Use the final render state for compilation, but restore it before waiting for
 // the driver. compileAsync's context-generation guard is installed below.
+// Programs warmed in this context, by material, object kind and render state: a second warm-up skips them.
+const warmedPrograms = new Set()
 function* compileObjects(root, cam = camera, target = scene, setup = null) {
   if (!root || renderHeadless) return
   const objects = []; root.traverse(o => { if (o.material) objects.push(o) })
   const seen = new Set(), epoch = graphics.lost
+  // three's compile walks the whole target scene for its lights on every call: hand it the lights, collected once
+  const lights = []; target.traverseVisible(o => { if (o.isLight) lights.push(o) })
+  const ownWalk = Object.hasOwn(target, 'traverseVisible'), walk = target.traverseVisible
   // Programs already built resolve at once: issue about 2 ms of compiles a step, then await them together.
   let batch = [], t0 = performance.now()
   for (const o of objects) {
-    const materials = Array.isArray(o.material) ? o.material : [o.material]
-    const key = materials.map(m => m?.uuid + ':' + m?.version).join(',') + '/' + [o.type, !!o.instanceColor, o.receiveShadow, o.geometry?.attributes.color?.itemSize, !!o.geometry?.attributes.skinIndex].join('/')
+    const kind = [o.type, !!o.instanceColor, o.receiveShadow, o.geometry?.attributes.color?.itemSize, !!o.geometry?.attributes.skinIndex].join('/')
+    const key = (Array.isArray(o.material) ? o.material : [o.material]).map(m => m?.uuid + ':' + m?.version).join(',') + '/' + kind
     if (seen.has(key)) continue
     seen.add(key)
     while (graphics.state === 'lost' || renderer.getContext().isContextLost()) yield 'frame'
     const visit = o.traverse, undo = setup?.(o) || (() => {})
-    try { o.traverse = fn => fn(o); batch.push(renderer.compileAsync(o, cam, target)) }
-    finally { o.traverse = visit; undo() }
+    try {
+      const rt = renderer.getRenderTarget(), mats = Array.isArray(o.material) ? o.material : [o.material]
+      const state = [mats.map(m => m?.uuid + ':' + m?.version).join(','), kind, rt ? rt.texture.type + ':' + rt.texture.colorSpace + ':' + rt.samples : 'screen',
+        inkUniforms.inkEnabled.value, renderer.toneMapping, !!target.fog, target.environment?.uuid, lights.length, renderer.shadowMap.enabled, graphics.lost].join('|')
+      if (!warmedPrograms.has(state)) {
+        warmedPrograms.add(state)
+        o.traverse = fn => fn(o); target.traverseVisible = fn => { for (const l of lights) fn(l) }
+        batch.push(renderer.compileAsync(o, cam, target))
+      }
+    } finally {
+      o.traverse = visit
+      if (ownWalk) target.traverseVisible = walk; else delete target.traverseVisible
+      undo()
+    }
     if (performance.now() - t0 > 2) { yield Promise.all(batch); batch = []; t0 = performance.now() }
   }
   if (batch.length) yield Promise.all(batch)
@@ -7713,8 +8149,8 @@ function initPhysics(Ammo) {
 let statics = [], awaySig = ''
 function loadStatics() {
   for (const c of [...statics]) dropChunk(c)
-  if (LV.faust) { faustReset(); addChunk(BOXES.slice(), ['base']); faustSolids(); airInstall(); return }
-  awaySig = ''; airInstall()
+  if (LV.faust) { faustReset(); addChunk(BOXES.slice(), ['base']); faustSolids(); airInstall(); railInstall(); return }
+  awaySig = ''; airInstall(); railInstall()
   const cells = new Map()
   for (const b of BOXES) { const k = Math.floor((b.cx + ARENA) / 96) + ' ' + Math.floor((b.cz + ARENA) / 96)
     cells.has(k) ? cells.get(k).push(b) : cells.set(k, [b]) }
@@ -15037,6 +15473,10 @@ function rigAnimate(a, want, dt, t) {
     const clip = rigClip(M, K.hits[(R.hitN = (R.hitN || 0) + 1) % K.hits.length])
     if (clip) R.over = { clip, t0: 0, at: t, hit: true, w: a.spec.poise ? 0.4 : 0.85, speed: a.spec.poise ? 1.6 : 1.2 }
   }
+  // card #12: the finger whistle, over the upper body
+  if (a.whistleAt !== undefined && a.whistleAt !== R.whistleSeen && t - a.whistleAt < 600 && !(a.dying >= 0)) {
+    R.whistleSeen = a.whistleAt; const clip = rigClip(M, MANIAK_CAR.whistle.clip); if (clip) R.over = { clip, t0: Math.max(0, (t - a.whistleAt) / 1000), at: t }
+  }
   if (!(a.hayAge > 0)) { R.hayCut = 0; R.hayLow = undefined }
   // (the haymaker's clip, or its low variant, is chosen at its first frame and kept for its swing)
   else if (R.hayLow === undefined) R.hayLow = rigStrikeClip(M, a, HAY.clip)?.name !== HAY.clip
@@ -16283,6 +16723,7 @@ function drawObjects(list, wheelsAt = () => null) {
   for (const o of list) {
     const K = OBJECTS[o.k]
     if (K && K.shape === 'hull') {
+      if (K.ownLook?.(o, wheelsAt)) continue           // card #12: his car draws itself
       const H = hullOf(K), m = H && hullView(o.id ?? o, held, () => Object.assign(new THREE.Group(), { matrixAutoUpdate: false }))
       if (!m) continue
       if (m.parent !== objGroup) objGroup.add(m)
@@ -17944,7 +18385,7 @@ const marksHit = f => f[7] === 1 || f[7] === 3 || f[7] === 7 && f[5]
 const keys = {}
 // Legacy input adapter: absent fields stay absent; consume edges only after a simulated tick.
 const INPUT_SCHEMA = {
-  bit: { j: 1, fire: 2, sh: 4, alt: 8, sw: 16, sprint: 64, descend: 128, use: 32, grip: 256 },
+  bit: { j: 1, fire: 2, sh: 4, alt: 8, sw: 16, sprint: 64, descend: 128, use: 32, grip: 256, car: 512 },
   empty: () => ({ f: 0, r: 0, j: false, fire: false, yaw: 0, pitch: 0 }),
   predict(input, aim, A) {
     return { f: input.f, r: input.r, j: input.j, fire: input.fire, alt: input.alt, use: input.use, grip: input.grip, sprint: input.sprint, descend: input.descend,
@@ -17954,7 +18395,7 @@ const INPUT_SCHEMA = {
     const B = INPUT_SCHEMA.bit
     return [inp.f, inp.r,
             (inp.j ? B.j : 0) | (inp.fire ? B.fire : 0) |
-            (input.sh ? B.sh : 0) | (input.alt ? B.alt : 0) | (input.sw ? B.sw : 0) | (inp.sprint ? B.sprint : 0) | (input.descend ? B.descend : 0) | (input.use ? B.use : 0) | (input.grip ? B.grip : 0),
+            (input.sh ? B.sh : 0) | (input.alt ? B.alt : 0) | (input.sw ? B.sw : 0) | (inp.sprint ? B.sprint : 0) | (input.descend ? B.descend : 0) | (input.use ? B.use : 0) | (input.grip ? B.grip : 0) | (input.car ? B.car : 0),
             inp.yaw, inp.pitch, haveT ? r2(renderT) : 0, ...(inp.fire || input.alt || inp.descend ? [r2(A.d || 0)] : [])]
   },
   decode(t, seq) {
@@ -17964,11 +18405,11 @@ const INPUT_SCHEMA = {
     const nf = x => Number.isFinite(x = +x) ? x : 0
     return { s: seq, f: nf(t[0]), r: nf(t[1]), yaw: nf(t[3]), pitch: nf(t[4]), rt: nf(t[5]), d: nf(t[6]),
              j: !!(bits & B.j), fire: !!(bits & B.fire),
-             sh: !!(bits & B.sh), alt: !!(bits & B.alt), sw: !!(bits & B.sw), sprint: !!(bits & B.sprint), descend: !!(bits & B.descend), use: !!(bits & B.use), grip: !!(bits & B.grip) }
+             sh: !!(bits & B.sh), alt: !!(bits & B.alt), sw: !!(bits & B.sw), sprint: !!(bits & B.sprint), descend: !!(bits & B.descend), use: !!(bits & B.use), grip: !!(bits & B.grip), car: !!(bits & B.car) }
   },
-  consume(input) { input.sw = input.sh = input.use = false; jumpTapped = false },
+  consume(input) { input.sw = input.sh = input.use = input.car = false; jumpTapped = false },
   key: { forward: 'KeyW', back: 'KeyS', right: 'KeyD', left: 'KeyA', jump: 'Space',
-         descend: 'KeyQ', swap: 'KeyR', shift: 'KeyF', use: 'KeyE', sprint: 'ShiftLeft' },
+         descend: 'KeyQ', swap: 'KeyR', shift: 'KeyF', use: 'KeyE', sprint: 'ShiftLeft', car: 'KeyH' },
   keyDown(e) {
     if (e.code === 'Tab') { e.preventDefault(); tabOpen = true; return }
     if (e.code === 'KeyT' || (e.key === '/' && !e.ctrlKey && !e.metaKey)) {
@@ -18025,6 +18466,7 @@ const INPUT_SCHEMA = {
     tap('btn-swap', () => { tapSwap = true })
     tap('btn-shift', () => { tapShift = true })
     tap('btn-use', () => { tapUse = true })
+    tap('btn-car', () => { tapCar = true })
     tap('btn-sprint', sprintToggle)
     tap('btn-radio', () => GAME.audio.cycle())
     tap('btn-team', () => teamSwitch())
@@ -18050,6 +18492,8 @@ const INPUT_SCHEMA = {
       input.sw ||= tapSwap; tapSwap = false
       input.sh ||= tapShift; tapShift = false
       input.use ||= tapUse; tapUse = false
+      if (tapCar) { input.car = true; mcPress() }
+      tapCar = false
       input.grip = useDown          // card #55: the use button held
       return
     }
@@ -18065,6 +18509,8 @@ const INPUT_SCHEMA = {
     shiftHeld = !!keys[INPUT_SCHEMA.key.shift]
     input.use ||= !!keys[INPUT_SCHEMA.key.use] && !useHeld
     useHeld = !!keys[INPUT_SCHEMA.key.use]
+    if (keys[INPUT_SCHEMA.key.car] && !carHeld) { input.car = true; mcPress() }        // card #12: whistle, or the ejector at the wheel
+    carHeld = !!keys[INPUT_SCHEMA.key.car]
     input.grip = useHeld          // card #55: E held
   }
 }
@@ -18095,7 +18541,7 @@ function resetInput() {
   for (const k in keys) keys[k] = false
   const { yaw, pitch } = input
   Object.assign(input, INPUT_SCHEMA.empty(), { yaw, pitch, alt: false, view: null, aimed: null, aimAt: 0 })
-  shiftHeld = swapHeld = wheelSwap = useHeld = tapUse = sprintHeld = useDown = false
+  shiftHeld = swapHeld = wheelSwap = useHeld = tapUse = carHeld = tapCar = sprintHeld = useDown = false
   tapSwap = tapShift = descendHeld = sprintOn = tabOpen = jumpTapped = false
   document.body.classList.remove('sprinting')
   resetTouch()
@@ -18158,7 +18604,7 @@ function initInput() {
 function sampleInput() { INPUT_SCHEMA.sample() }
 
 let shiftHeld = false, swapHeld = false, wheelSwap = false
-let useHeld = false, tapUse = false, useDown = false
+let useHeld = false, tapUse = false, carHeld = false, tapCar = false, useDown = false
 let sprintOn = false, sprintHeld = false
 const sprintToggle = () => { sprintOn = !sprintOn; document.body.classList.toggle('sprinting', sprintOn) }
 let tapSwap = false, tapShift = false, descendHeld = false        // set by the touch buttons
@@ -19121,7 +19567,7 @@ function keyHelp(c) {
   return 'WASD move · Shift sprint · ' + space + '<br>' +
     'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
     (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + '<br>' +
-    'T chat · Tab scores · V view · M sound · B radio · F3 debug · Esc menu'
+    'H whistle for your car, at its wheel the ejector seat · T chat · Tab scores · V view · M sound · B radio · F3 debug · Esc menu'
 }
 
 function closePause() {
@@ -26032,6 +26478,410 @@ GAME.air = {
   get view() { return airView && { kit: !!airKit, ships: airView.ships.map(s => ({ id: s.c.id, near: s.root.parent === airView.near, lod: s.lods.findIndex(g => g.visible), at: s.root.position.toArray().map(v => +v.toFixed(2)) })) } },
 }
 
+// ---------------------------------------------------------------- Faustland's monorail (card #60): drawn, solid, ridden
+// Everything comes from faustRail(seed, S) and the room clock: nothing is on the wire. The trains are where the timetable
+// puts them, at the host's tick on the host, and ahead by the link on a guest, whose own body is predicted at the time the
+// host will run its input. Cars near a player have a kinematic solid each (its doors open or shut), so they stand on its
+// floor and roof, and its walls stop them; standing on one carries him with it, and leaving it he keeps its speed until
+// he lands on something else. The chain lodges in a car and follows it.
+// Drawn: the models (assets/monorail_*.glb, made with Blender for the game) merged a part at a time into one draw for its
+// opaque materials and one for its glass, instanced, the near ones at full detail and the rest at their LOD; the decks,
+// stairs, bridges and railings, which match the colliders exactly, as plain merged geometry by region. Until the models
+// arrive (or if they fail) boxes stand in for them.
+const RAIL_FILES = { track: 'monorail_track.a2f7242b.glb', cars: 'monorail_cars.bedc11fc.glb', station: null }
+// tiers [full detail, LOD, a plain box] out to these distances (m) from the camera; past the last, not drawn. plain: the decks,
+// bridges and canopies; fine: the stairs and railings
+const RAIL_VIEW = { tiers: { beam: [300, 300, 2600], pylon: [140, 500, 2000], kit: [140, 500, 900], car: [240, 900, 2600], door: [120, 0, 0],
+  tower: [170, 1200, 3000], fixture: [120, 400, 0] }, plain: 1600, fine: 380,
+  region: 768, glow: 2.2, metal: 0.6, refresh: 24, glass: { color: 0x1b2632, opacity: 0.36 },
+  colors: { deck: 0x2c2a2a, edge: 0xb08d57, stone: 0x4a4744, chrome: 0xb9c0c6, enamel: 0x1d1215, livery: 0x8e1a16, concrete: 0x3a3d42, sign: 0x15100f } }
+
+// ---- the cars as carriers (cards #5 and #60): a pose a room time, a shell and two sides of doors as solids, the room
+// inside and over the roof as where he is carried. The carriers' frame: nose toward -Z at yaw 0; a car's own (x along,
+// z across) is theirs as (z, -x).
+const RAIL_CARRY = { radius: 9, dt: 20 }
+// a car's colliders, in car frame (x along, y up from the beam's top, z across): floor, roof, skirt, walls with their two
+// doorways a side, lintels, end walls, a nose on an end car; and each side's door leaves, shut
+function railCarBoxes(end) {
+  const K = RAIL.car, shell = [], doors = { 1: [], '-1': [] }, b = (list, x0, x1, y0, y1, z0, z1) => list.push([(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2])
+  const L = K.half - 0.1, w = K.width - 0.05, d0 = K.doors.map(x => [x - K.door, x + K.door])
+  b(shell, -L, L, -0.15, K.floor, -w, w); b(shell, -L, L, K.ceiling + 0.05, K.roof - 0.05, -w, w); b(shell, -L, L, -1.1, -0.15, -w, w)
+  for (const s of [-1, 1]) {
+    const z0 = s > 0 ? w - 0.1 : -w, z1 = z0 + 0.1
+    let x = -L
+    for (const [a, c] of d0) { b(shell, x, a, K.floor, K.ceiling + 0.05, z0, z1); b(shell, a, c, K.floor + K.height, K.ceiling + 0.05, z0, z1); b(doors[s], a, c, K.floor, K.floor + K.height, z0, z1); x = c }
+    b(shell, x, L, K.floor, K.ceiling + 0.05, z0, z1)
+  }
+  b(shell, -L, -L + 0.1, K.floor, K.ceiling + 0.05, -w, w); b(shell, L - 0.1, L, K.floor, K.ceiling + 0.05, -w, w)
+  if (end) b(shell, L, K.nose - 0.6, -0.6, 2.6, -1.25, 1.25)
+  return { shell, doors }
+}
+// boxes (car frame) as triangles in the carriers' frame, wound outward
+function railCarTris(boxes) {
+  const out = []
+  for (const [cx, cy, cz, ex, ey, ez] of boxes) for (const t of RAY_TRIS) for (const [x, y, z] of t) out.push(cz + z * ez, cy + y * ey, -(cx + x * ex))
+  return Float32Array.from(out)
+}
+// a car's pose at room time t (ms), in the carriers' terms, with its doors (open: the car-frame side open, or 0)
+function railCarrierPose(car, t) {
+  const a = railCar(car.route, car.k, car.j, t, {}), b = railCar(car.route, car.k, car.j, t + RAIL_CARRY.dt, {}), e = a.end < 0 ? -1 : 1
+  const yaw = Math.atan2(-a.dx * e, -a.dz * e), yaw1 = Math.atan2(-b.dx * e, -b.dz * e), k = 1000 / RAIL_CARRY.dt
+  return { x: a.x, y: a.y, z: a.z, yaw, vx: (b.x - a.x) * k, vy: 0, vz: (b.z - a.z) * k, w: wrapPi(yaw1 - yaw) * k, open: railOpenSide(railState, a), car: a }
+}
+// the side (car frame, ±1) whose doors stand open in a car pose p, or 0
+function railOpenSide(S, p) {
+  if (!S || p.open < 0.35 || p.station < 0) return 0
+  const t = S.rail.stations[p.station], ax = t.dir === 'z' ? p.side : 0, az = t.dir === 'x' ? p.side : 0, e = p.end < 0 ? -1 : 1
+  return (-p.dz * ax + p.dx * az) * e > 0 ? 1 : -1
+}
+let railState = null
+// with the level's statics, on every machine: every car of every train a carrier
+function railInstall() {
+  for (const id of [...carriers.keys()]) if (String(id).startsWith('rail:')) carrierDel(id)
+  railState = null
+  if (!LV.faust || !LV.grow) return
+  const rail = faustRail(LV.grow.seed, LV.grow.S), cars = [], K = RAIL.car
+  railState = { seed: LV.grow.seed, S: LV.grow.S, rail, cars, view: null }
+  const tris = [0, 1].map(end => { const B = railCarBoxes(end); return { shell: railCarTris(B.shell), 1: railCarTris(B.doors[1]), '-1': railCarTris(B.doors[-1]) } })
+  for (const r of rail.routes) for (let k = 0; k < r.trains.length; k++) for (let j = 0; j < K.n; j++) {
+    const car = { route: r, k, j, key: 'rail:' + r.id + ':' + k + ':' + j }, end = j === 0 || j === K.n - 1 ? 1 : 0, T = tris[end], n = K.half + (end ? 0.8 : 0)
+    const shut = side => t => carrierPose(car.carrier, t).open !== side
+    car.carrier = carrierAdd({ id: car.key, pose: t => railCarrierPose(car, t), radius: RAIL_CARRY.radius,
+      // inside, floor to ceiling; and over the roof (their frame: x across, z = -along)
+      volume: [[0, (K.floor + K.ceiling) / 2, 0, K.width - 0.1, (K.ceiling - K.floor) / 2 + 0.05, K.half - 0.15],
+        [0, K.roof + 1.6, -(end ? 0.4 : 0), K.width - 0.25, 1.65, n - 0.2]],
+      parts: [{ tris: T.shell }, { tris: T[1], enabled: shut(1) }, { tris: T[-1], enabled: shut(-1) }] })
+    cars.push(car)
+  }
+}
+// ---- drawing
+// one material for every opaque rail surface: vertex colour, per-vertex metal and roughness (railPbr), glow (railEmit)
+function railMaterial() {
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 })
+  m.onBeforeCompile = shader => {
+    faustLampHook(shader)
+    shader.vertexShader = 'attribute vec2 railPbr;\nattribute vec3 railEmit;\nvarying vec2 vRailPbr;\nvarying vec3 vRailEmit;\n' +
+      shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vRailPbr = railPbr; vRailEmit = railEmit;')
+    shader.fragmentShader = 'varying vec2 vRailPbr;\nvarying vec3 vRailEmit;\n' + shader.fragmentShader
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = max(vRailPbr.y, 0.18);')
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>\n metalnessFactor = min(vRailPbr.x, ${RAIL_VIEW.metal.toFixed(2)});`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += vRailEmit;')
+  }
+  m.customProgramCacheKey = () => 'faust-rail-1'
+  return m
+}
+function railGlassMaterial() {
+  const G = RAIL_VIEW.glass
+  return new THREE.MeshStandardMaterial({ color: G.color, roughness: 0.08, metalness: 0.2, transparent: true, opacity: G.opacity, depthWrite: false })
+}
+// geometry with railMaterial's attributes, built a box or a quad at a time
+function railGeo() {
+  const P = [], N = [], C = [], M = [], E = [], col = new THREE.Color(), emi = new THREE.Color()
+  let pbr = [0, 0.8]
+  const set = (hex, metal = 0, rough = 0.8, glow = 0, glowHex = hex) => { col.setHex(hex); pbr = [metal, rough]; emi.setHex(glowHex).multiplyScalar(glow) }
+  const vtx = (x, y, z, nx, ny, nz) => { P.push(x, y, z); N.push(nx, ny, nz); C.push(col.r, col.g, col.b); M.push(pbr[0], pbr[1]); E.push(emi.r, emi.g, emi.b) }
+  // a quad a b c d (counter-clockwise seen from its front)
+  const quad = (a, b, c, d) => {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2]
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l
+    for (const q of [a, b, c, a, c, d]) vtx(q[0], q[1], q[2], nx, ny, nz)
+  }
+  const box = (cx, cy, cz, ex, ey, ez) => {
+    const x0 = cx - ex, x1 = cx + ex, y0 = cy - ey, y1 = cy + ey, z0 = cz - ez, z1 = cz + ez
+    quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]); quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1])
+    quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]); quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0])
+    quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]); quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0])
+  }
+  const geometry = () => {
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3))
+    g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); g.setAttribute('railPbr', new THREE.Float32BufferAttribute(M, 2))
+    g.setAttribute('railEmit', new THREE.Float32BufferAttribute(E, 3)); g.computeBoundingSphere()
+    return g
+  }
+  // a vertex with its own normal (a model's)
+  const raw = (q, n) => vtx(q[0], q[1], q[2], n[0], n[1], n[2])
+  return { set, quad, box, raw, geometry, get count() { return P.length / 3 } }
+}
+// a model's part (a named node and what is under it) as one railMaterial geometry and one glass geometry, in its frame
+function railPart(root, name) {
+  const node = root.getObjectByName(name)
+  if (!node) return null
+  root.updateMatrixWorld(true)
+  const inv = new THREE.Matrix4().copy(node.matrixWorld).invert(), out = railGeo(), glass = [], M = new THREE.Matrix4(), V = RAIL_VIEW
+  node.traverse(o => {
+    if (!o.isMesh || /_lod\d$/.test(o.name) && o !== node && !/_lod\d$/.test(name)) return
+    M.multiplyMatrices(inv, o.matrixWorld)
+    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone(); g.applyMatrix4(M)
+    const mats = Array.isArray(o.material) ? o.material : [o.material], groups = g.groups.length ? g.groups : [{ start: 0, count: g.attributes.position.count, materialIndex: 0 }]
+    const p = g.attributes.position.array, n = g.attributes.normal?.array
+    for (const gr of groups) {
+      const m = mats[gr.materialIndex] || mats[0], isGlass = /glass/i.test(m.name || '') || m.transparent && m.opacity < 0.9
+      if (!isGlass) out.set(m.color ? m.color.getHex(THREE.LinearSRGBColorSpace) : 0x808080, m.metalness ?? 0, m.roughness ?? 0.8, (m.emissiveIntensity ?? 1) * V.glow * (m.emissive && (m.emissive.r + m.emissive.g + m.emissive.b) > 0 ? 1 : 0), m.emissive ? m.emissive.getHex(THREE.LinearSRGBColorSpace) : 0)
+      for (let i = gr.start; i < gr.start + gr.count; i += 3) {
+        const tri = [0, 1, 2].map(k => [p[3 * (i + k)], p[3 * (i + k) + 1], p[3 * (i + k) + 2]])
+        if (isGlass) { glass.push(...tri.flat()); continue }
+        for (let k = 0; k < 3; k++) { const q = i + k; out.raw(tri[k], n ? [n[3 * q], n[3 * q + 1], n[3 * q + 2]] : [0, 1, 0]) }
+      }
+    }
+    g.dispose()
+  })
+  let glassGeo = null
+  if (glass.length) { glassGeo = new THREE.BufferGeometry(); glassGeo.setAttribute('position', new THREE.Float32BufferAttribute(glass, 3)); glassGeo.computeVertexNormals() }
+  return { opaque: out.count ? out.geometry() : null, glass: glassGeo }
+}
+// the drawn rail of a city: static parts instanced (LOD by distance), trains, plain geometry by region
+function railBuild() {
+  const S = railState
+  if (!S || !worldGroup || renderHeadless) return
+  if (S.view) railDispose(S)
+  const group = new THREE.Group(); group.name = 'monorail'; worldGroup.add(group)
+  const mat = railMaterial(), glass = railGlassMaterial()
+  S.view = { group, mat, glass, parts: {}, sets: [], trains: {}, regions: [], fallback: { track: [], station: [] }, at: null, ready: { track: false, cars: false, station: false }, owned: [mat, glass] }
+  background.run('monorail', function* () {
+    yield* railBuildPlain(S)
+    for (const which of ['track', 'cars', 'station']) { yield* railLoad(S, which); yield 'frame' }
+  }, { valid: () => railState === S && S.view?.group.parent === worldGroup }).catch(e => console.warn('monorail:', e?.message || e))
+}
+function railDispose(S) {
+  const V = S.view
+  if (!V) return
+  V.group.parent?.remove(V.group)
+  V.group.traverse(o => { if (o.geometry && !o.geometry.userData.railShared) o.geometry.dispose() })
+  for (const p of Object.values(V.parts)) { p.opaque?.dispose(); p.glass?.dispose() }
+  for (const m of V.owned) { m.map?.dispose(); m.dispose() }
+  S.view = null
+}
+// what the plain geometry draws, per region: decks and their stone edges, bridges, stairs (treads, risers, strings),
+// landings, railings (chrome), canopy roofs and the stand-ins for beams, pylons and towers until the models are in
+function* railBuildPlain(S) {
+  const V = RAIL_VIEW, Cc = V.colors, rail = S.rail, regions = new Map()
+  const reg = (x, z, kind) => { const k = Math.floor(x / V.region) + ':' + Math.floor(z / V.region) + ':' + kind; if (!regions.has(k)) regions.set(k, { kind, geo: railGeo(), x: (Math.floor(x / V.region) + 0.5) * V.region, z: (Math.floor(z / V.region) + 0.5) * V.region }); return regions.get(k).geo }
+  let n = 0
+  for (const b of rail.boxes) {
+    if (++n % 600 === 0) yield
+    const kind = b.rail === 'beam' || b.rail === 'pylon' ? 'track' : b.rail === 'tower' || b.rail === 'canopy' ? 'station' : b.rail === 'stair' || b.rail === 'rail' ? 'fine' : 'plain'
+    const g = reg(b.cx, b.cz, kind)
+    if (b.rail === 'stair') {
+      // a step: its tread and riser, and its share of the stair's two side walls
+      g.set(Cc.deck, 0, 0.7); g.box(b.cx, b.cy + b.ey - 0.03, b.cz, b.ex, 0.03, b.ez)
+      g.set(Cc.stone, 0, 0.85); g.box(b.cx, b.cy - 0.03, b.cz, b.ex, b.ey - 0.03, b.ez)
+      continue
+    }
+    if (b.rail === 'rail') g.set(Cc.chrome, 1, 0.22)
+    else if (b.rail === 'deck' || b.rail === 'bridge' || b.rail === 'landing') g.set(Cc.deck, 0, 0.55)
+    else if (b.rail === 'canopy') g.set(Cc.enamel, 0.3, 0.35)
+    else if (b.rail === 'beam') g.set(Cc.concrete, 0, 0.85)
+    else if (b.rail === 'pylon') g.set(Cc.concrete, 0, 0.8)
+    else if (b.rail === 'tower') g.set(Cc.stone, 0, 0.85)
+    else g.set(Cc.stone, 0, 0.85)
+    g.box(b.cx, b.cy, b.cz, b.ex, b.ey, b.ez)
+    // a brass edge under each deck and bridge, glowing strips under the canopies
+    if (b.rail === 'deck' || b.rail === 'bridge') { g.set(Cc.edge, 1, 0.3); g.box(b.cx, b.cy - b.ey - 0.04, b.cz, b.ex + 0.02, 0.04, b.ez + 0.02) }
+    if (b.rail === 'canopy') { g.set(0xffe2b0, 0, 0.5, 1.6); g.box(b.cx, b.cy - b.ey - 0.03, b.cz, b.ex * (b.ex > b.ez ? 0.96 : 0.25), 0.03, b.ez * (b.ez > b.ex ? 0.96 : 0.25)) }
+  }
+  // the name signs: one atlas of every station's name, a panel each side of each platform and one on each pavilion
+  yield
+  const signs = railSigns(S), view = S.view
+  for (const [, r] of regions) {
+    const mesh = new THREE.Mesh(r.geo.geometry(), view.mat)
+    mesh.castShadow = true; mesh.receiveShadow = true; mesh.userData.railRegion = r
+    view.group.add(mesh); view.regions.push(mesh)
+    if (view.fallback[r.kind]) view.fallback[r.kind].push(mesh)
+    yield
+  }
+  if (signs) { view.group.add(signs); view.owned.push(signs.material) }
+}
+// station names in period capitals on enamel, one atlas row each, on panels under the canopies and on the pavilions
+function railSigns(S) {
+  const rail = S.rail, names = [...new Set(rail.stations.map(t => t.name))]
+  if (!names.length || typeof document === 'undefined') return null
+  const W = 1024, Hh = 64, cv = document.createElement('canvas'); cv.width = W; cv.height = Hh * names.length
+  const g = cv.getContext('2d')
+  names.forEach((n, i) => {
+    const y = i * Hh
+    g.fillStyle = '#15100f'; g.fillRect(0, y, W, Hh)
+    g.strokeStyle = '#b08d57'; g.lineWidth = 3; g.strokeRect(6, y + 6, W - 12, Hh - 12); g.lineWidth = 1; g.strokeRect(12, y + 12, W - 24, Hh - 24)
+    // sunburst ends
+    for (const x0 of [40, W - 40]) for (let k = -4; k <= 4; k++) { g.beginPath(); g.moveTo(x0, y + Hh - 14); g.lineTo(x0 + Math.sin(k * 0.32) * 22, y + Hh - 14 - Math.cos(k * 0.32) * 26); g.stroke() }
+    g.fillStyle = '#f3d79a'; g.textAlign = 'center'; g.textBaseline = 'middle'
+    g.font = '600 38px "Futura", "Century Gothic", "Avenir Next", "Josefin Sans", "Gill Sans", sans-serif'
+    const text = n.toUpperCase().split('').join(' ')
+    g.fillText(text, W / 2, y + Hh / 2 + 2, W - 150)
+  })
+  const map = new THREE.CanvasTexture(cv); map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4; map.userData.faustOwned = true
+  const mat = new THREE.MeshStandardMaterial({ map, emissiveMap: map, emissive: 0xffffff, emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.1 })
+  const P = [], U = [], idx = n => names.indexOf(n)
+  const panel = (cx, cy, cz, nx, nz, w, h, row) => {
+    // a quad facing (nx, nz), its right along (-nz, nx)... seen from in front, u runs left to right
+    const rx = nz, rz = -nx, v0 = 1 - (row + 1) / names.length, v1 = 1 - row / names.length
+    const a = [cx - rx * w / 2, cy - h / 2, cz - rz * w / 2], b = [cx + rx * w / 2, cy - h / 2, cz + rz * w / 2], c = [cx + rx * w / 2, cy + h / 2, cz + rz * w / 2], d = [cx - rx * w / 2, cy + h / 2, cz - rz * w / 2]
+    P.push(...a, ...b, ...c, ...a, ...c, ...d); U.push(0, v0, 1, v0, 1, v1, 0, v0, 1, v1, 0, v1)
+  }
+  for (const t of rail.stations) {
+    const d = t.level + RAIL.car.floor, row = idx(t.name)
+    const W2 = (along, across) => t.dir === 'z' ? [t.c + across, along] : [along, t.c + across]
+    for (const s of [-1, 1]) {
+      // under the canopy, facing the track; and the same seen from the street side
+      const ax = t.dir === 'z' ? -s : 0, az = t.dir === 'x' ? -s : 0
+      for (const a of [-9, 9]) { const [x, z] = W2(t.p + a, s * 6.9); panel(x, d + 2.5, z, ax, az, 3.4, 0.6, row); panel(x - ax * 0.02, d + 2.5, z - az * 0.02, -ax, -az, 3.4, 0.6, row) }
+      // on the pavilion's face to the avenue, above the bridge
+      const [x, z] = W2(t.p, s * (RAIL.pav.tower[0] - 0.08)); panel(x, 15.5, z, ax, az, 12, 1.5, row)
+    }
+  }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2)); geo.computeVertexNormals()
+  const mesh = new THREE.Mesh(geo, mat); mesh.name = 'monorail signs'
+  return mesh
+}
+// a model file: once in, its parts become instanced sets and its stand-ins go
+function* railLoad(S, which) {
+  const file = RAIL_FILES[which]
+  if (!file) return
+  rigLoader()
+  let gltf = null
+  try { gltf = yield rigFetch(file) } catch (e) { console.warn('monorail ' + which + ': keeping the stand-ins,', e?.message || e); return }
+  {
+    if (railState !== S || !S.view) return
+    const root = gltf.scene, P = S.view.parts
+    for (const name of ({ track: ['pylon_plinth', 'pylon_shaft', 'pylon_head', 'beam_unit', 'beam_end', 'switch_box'], cars: ['car_end', 'car_mid', 'door'],
+      station: ['tower', 'canopy', 'bench', 'lamp', 'sign', 'railing', 'newel'] })[which]) for (const n of [name, name + '_lod1']) { const p = railPart(root, n); if (p) P[n] = p }
+    if (which === 'cars') railTrainSets(S)
+    else railStaticSets(S, which)
+    S.view.ready[which] = true
+    for (const m of S.view.fallback[which] || []) m.visible = false
+    S.view.at = null
+  }
+}
+// a part as a plain box: its bounds, in its mean colour (the far tier)
+function railBoxPart(part) {
+  const g = part.opaque
+  if (!g) return null
+  g.computeBoundingBox()
+  const b = g.boundingBox, c = g.attributes.color.array, n = c.length / 3, out = railGeo(), col = new THREE.Color()
+  let r = 0, gg = 0, bb = 0; for (let i = 0; i < c.length; i += 3) { r += c[i]; gg += c[i + 1]; bb += c[i + 2] }
+  col.setRGB(r / n, gg / n, bb / n); out.set(col.getHex(), 0.2, 0.7)
+  out.box((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2, (b.max.x - b.min.x) / 2, (b.max.y - b.min.y) / 2, (b.max.z - b.min.z) / 2)
+  return { opaque: out.geometry(), glass: null }
+}
+// an instanced set: a part at full detail, at its LOD and as a box, opaque and glass, each filled every refresh from a list
+// of matrices by distance (tiers: the distances, a 0 skipping that tier)
+function railTiers(S, name) {
+  const P = S.view.parts, full = P[name]
+  if (!full) return null
+  return [full, P[name + '_lod1'] || full, P[name + '_box'] ||= railBoxPart(full)]
+}
+function railMeshes(S, tiers, count, shadow = true) {
+  const mk = (g, m, k) => { if (!g) return null; const x = new THREE.InstancedMesh(g, m, count); x.count = 0; x.castShadow = shadow && k === 0 && m === S.view.mat; x.receiveShadow = m === S.view.mat; x.frustumCulled = false; S.view.group.add(x); return x }
+  return tiers.map((t, k) => t ? [mk(t.opaque, S.view.mat, k), mk(t.glass, S.view.glass, k)] : [])
+}
+function railSet(S, name, list, tiers, shadow = true) {
+  const parts = railTiers(S, name)
+  if (!parts || !list.length) return null
+  const set = { name, list, tiers, meshes: railMeshes(S, parts, list.length, shadow) }
+  S.view.sets.push(set)
+  return set
+}
+// which tier a squared distance falls in, or -1
+const railTier = (tiers, e) => { for (let k = 0; k < 3; k++) if (tiers[k] && e < tiers[k] ** 2) return k; return -1 }
+const railM = (x, y, z, ux, uz, sx = 1, sy = 1, sz = 1) => new THREE.Matrix4().set(ux * sx, 0, -uz * sz, x, 0, sy, 0, y, uz * sx, 0, ux * sz, z, 0, 0, 0, 1)
+function railStaticSets(S, which) {
+  const rail = S.rail, V = RAIL_VIEW, K = RAIL
+  if (which === 'track') {
+    const beams = [], plinths = [], shafts = [], heads = [], ends = [], switches = []
+    for (const b of rail.beams) for (let i = 0; i + 1 < b.s.length; i++) {
+      const ax = b.p[2 * i], az = b.p[2 * i + 1], dx = b.p[2 * i + 2] - ax, dz = b.p[2 * i + 3] - az, L = Math.hypot(dx, dz)
+      if (L < 1e-6) continue
+      // long straights in pieces, so distance picks the near ones
+      const n = Math.max(1, Math.ceil(L / 48))
+      for (let k = 0; k < n; k++) beams.push({ m: railM(ax + dx * k / n, b.level, az + dz * k / n, dx / L, dz / L, L / n + (L > 4 ? 0.02 : 0.1)), x: ax + dx * (k + 0.5) / n, z: az + dz * (k + 0.5) / n })
+    }
+    for (const p of rail.pylons) {
+      const top = p.level - K.beam[1], ux = p.dir === 'x' ? 1 : 0, uz = p.dir === 'x' ? 0 : 1, h = top - K.pylon.head[2] - K.pylon.plinth[1]
+      plinths.push({ m: railM(p.x, 0, p.z, ux, uz), x: p.x, z: p.z }); shafts.push({ m: railM(p.x, K.pylon.plinth[1], p.z, ux, uz, 1, h, 1), x: p.x, z: p.z })
+      heads.push({ m: railM(p.x, top, p.z, ux, uz), x: p.x, z: p.z })
+    }
+    for (const e of rail.ends) ends.push({ m: railM(e.x, e.y, e.z, e.dx, e.dz), x: e.x, z: e.z })
+    for (const e of rail.switches) switches.push({ m: railM(e.x, e.y, e.z, e.dx, e.dz), x: e.x, z: e.z })
+    const T = V.tiers
+    railSet(S, 'beam_unit', beams, T.beam); railSet(S, 'pylon_plinth', plinths, T.pylon)
+    railSet(S, 'pylon_shaft', shafts, T.pylon); railSet(S, 'pylon_head', heads, T.pylon)
+    railSet(S, 'beam_end', ends, T.kit); railSet(S, 'switch_box', switches, T.kit)
+  } else if (which === 'station') {
+    const towers = [], canopies = [], benches = [], lamps = [], signs = [], railings = [], newels = []
+    for (const t of rail.stations) {
+      const d = t.level + K.car.floor
+      const W2 = (along, across) => t.dir === 'z' ? [t.c + across, along] : [along, t.c + across]
+      for (const s of [-1, 1]) {
+        // +X along the run, +Z away from the avenue: railM's +Z is (-uz, ux), so +Z = s across needs (ux, uz) = (s, 0) on a
+        // run along x (across is +z) and (0, -s) on a run along z (across is +x)
+        const ux = t.dir === 'x' ? s : 0, uz = t.dir === 'z' ? -s : 0
+        const at = (along, across, y, list) => { const [x, z] = W2(t.p + along, s * across); list.push({ m: railM(x, y, z, ux, uz), x, z }) }
+        at(0, (K.pav.tower[0] + K.pav.tower[1]) / 2, 0, towers)
+        for (const a of [-16.5, -5.5, 5.5, 16.5]) at(a, K.plat.inner, d, canopies)
+        for (const a of [-12, 12]) at(a, 7.9, d, benches)
+        for (const a of [-20, 0, 20]) at(a, 9.0, d, lamps)
+        for (const a of [-9, 9]) at(a, 6.95, d + 2.2, signs)
+        const high = t.level > K.level.low, g0 = high ? t.p + K.pav.half - K.pav.bridge : t.p - K.pav.half, g1 = g0 + K.pav.bridge
+        for (let a = t.p - K.plat.half; a + 2 <= t.p + K.plat.half + 0.01; a += 2) if (a + 2 <= g0 || a >= g1) { const [x, z] = W2(a, s * (K.plat.outer - 0.05)); railings.push({ m: railM(x, d, z, ...(t.dir === 'z' ? [0, 1] : [1, 0])), x, z }) }
+        for (const across of K.pav.stair) at(K.pav.half, across, 0, newels)
+      }
+    }
+    const T = V.tiers
+    railSet(S, 'tower', towers, T.tower); railSet(S, 'canopy', canopies, T.kit); railSet(S, 'bench', benches, T.fixture, false)
+    railSet(S, 'lamp', lamps, T.kit); railSet(S, 'sign', signs, T.fixture, false); railSet(S, 'railing', railings, T.fixture, false)
+    railSet(S, 'newel', newels, T.fixture, false)
+  }
+}
+function railTrainSets(S) {
+  const n = S.cars.length, mk = (name, count) => { const t = railTiers(S, name); return t ? railMeshes(S, t, count) : null }
+  S.view.trains = { end: mk('car_end', n), mid: mk('car_mid', n), door: mk('door', n * 8) }
+}
+const railCam = new THREE.Vector3(), railTmp = new THREE.Matrix4(), railLeaf = new THREE.Matrix4()
+// each frame: trains where the timetable has them, doors as they open; the static sets refilled as the camera moves
+function railFrame() {
+  const S = railState
+  if (!S?.view || !camera) return
+  camera.getWorldPosition(railCam)
+  const V = RAIL_VIEW, cx = railCam.x, cz = railCam.z, d2 = (x, z) => (x - cx) ** 2 + (z - cz) ** 2
+  if (!S.view.at || d2(S.view.at[0], S.view.at[1]) > V.refresh ** 2) {
+    S.view.at = [cx, cz]
+    for (const set of S.view.sets) {
+      const n = [0, 0, 0]
+      for (const it of set.list) {
+        const k = railTier(set.tiers, d2(it.x, it.z)); if (k < 0) continue
+        for (const m of set.meshes[k]) if (m) m.setMatrixAt(n[k], it.m)
+        n[k]++
+      }
+      set.meshes.forEach((pair, k) => pair.forEach(m => { if (m) { m.count = n[k]; m.instanceMatrix.needsUpdate = true } }))
+    }
+    const half = V.region * 0.71
+    for (const r of S.view.regions) { const R = r.userData.railRegion, far = (R.kind === 'fine' ? V.fine : V.plain) + half
+      r.visible = (!S.view.ready[R.kind] || R.kind === 'plain' || R.kind === 'fine') && d2(R.x, R.z) < far ** 2 }
+  }
+  const T = S.view.trains
+  if (!T.end) return
+  const t = isHost ? drawnT() : renderT, K = RAIL.car, counts = { end: [0, 0, 0], mid: [0, 0, 0], door: [0, 0, 0] }, p = {}
+  for (const c of S.cars) {
+    railCar(c.route, c.k, c.j, t, p)
+    const e = d2(p.x, p.z), lod = railTier(V.tiers.car, e); if (lod < 0) continue
+    const kind = p.end ? 'end' : 'mid', s = p.end < 0 ? -1 : 1, M = railM(p.x, p.y, p.z, p.dx * s, p.dz * s)
+    for (const m of T[kind]?.[lod] || []) if (m) m.setMatrixAt(counts[kind][lod], M)
+    counts[kind][lod]++
+    if (!T.door || railTier(V.tiers.door, e) !== 0) continue
+    const open = railOpenSide(S, p), slide = 0.72 * p.open
+    for (const side of [-1, 1]) for (const xo of K.doors) for (const k of [-1, 1]) {
+      const x = xo + k * (K.door / 2 + (open === side ? slide : 0))
+      railLeaf.set(side, 0, 0, x, 0, 1, 0, K.floor, 0, 0, side, side * (K.width - 0.04), 0, 0, 0, 1)
+      railTmp.multiplyMatrices(M, railLeaf)
+      for (const m of T.door[0]) if (m) m.setMatrixAt(counts.door[0], railTmp)
+      counts.door[0]++
+    }
+  }
+  for (const kind of ['end', 'mid', 'door']) (T[kind] || []).forEach((pair, lod) => pair.forEach(m => { if (m) { m.count = counts[kind][lod]; m.instanceMatrix.needsUpdate = true } }))
+}
+// card #60's handle: the plan, a car's pose at a room time, the state, the drawn view
+GAME.monorail = { plan: (seed, S) => faustRail(seed, S), car: railCar, get state() { return railState }, carrier: (route, k, j) => railState?.cars.find(c => c.route.id === route && c.k === k && c.j === j)?.key ?? null }
+
 // ---------------------------------------------------------------- loop
 let acc = 0, last = now(), snapAcc = 0, tickAt = 0      // ms: when the last tick fell due
 // this frame's ticks of each player simulated here, for the drawn side to step through; fresh: moved by a reconcile, not a tick
@@ -26898,6 +27748,607 @@ function debugRows(row, v, p) {
                                 : navUp ? v(p(navMeshCount, 2)) + ' meshes built, in a worker' : 'loading') : ''
 }
 GAME.view = { serverReset: () => { srvSig = null; srvDrawnAt = 0 }, tab: drawTab, results: drawResults, server: drawServer, serverInit: initServerPanel, hud: drawHud, faceYaw, radar: drawRadar, pickups: hostPickups, passengerAim: (id, c, t, seat) => seat > 0 && seatRanged(GUNS[heldGun(id, c, t)]), debug: debugRows }
+
+// ---------------------------------------------------------------- his car (card #12)
+// Pin rule 10: "He can whistle with his fingers and his car drives up next to him like a horse coming to";
+// "The MANIAK doesn't drive a truck"; "Also does his car seat a passenger? If so then it should come with an ejector seat".
+// Every player is The Maniak, so each has his own car: the 'Maniak car' rows (OBJECTS, VEHICLES, VEHICLE_SHAPES) and MANIAK_CAR.
+// - The whistle (H, or the touch WHISTLE button), on foot: two fingers in his mouth (the rig's whistle clip), a whistle heard
+//   where he stands, and his car drives itself to him along the roads (GAME.traffic.pursue, on the lane whose left side faces
+//   him), then pulls up at the kerb beside him with the driver's door his side, like a horse coming to its rider. If he has
+//   none, or it's wrecked, someone else's now or too far, a new one comes from out of sight.
+// - The ejector seat (the same key, or the button's EJECT, at the wheel of one): the hatch over the passenger seat blows open,
+//   the seat fires straight up, and the passenger is thrown free high above the car, to come down as anyone does. It re-arms
+//   after MANIAK_CAR.eject.rearm s.
+// - Wrecked, it flips, slides on its roof and burns.
+// Host-authoritative. The snapshot's `mc` field carries the whistles and the ejections ([player or vehicle id, host ms]) while
+// they play; every client draws them at its own clock (renderT on guests). The car's look is assets/MANIAK_CAR.file, drawn
+// over the row's procedural look (VEHICLE_LOOKS, which is also its physics hull) once it has loaded.
+const MCAR = MANIAK_CAR, MC_V = VEHICLES.find(V => V.name === MCAR.row)
+const MC_K = OBJECTS.findIndex(K => K.name === MCAR.row), MC_WRECK = OBJECTS.findIndex(K => K.name === MC_V.wreck)
+if (!TRAFFIC.fleet.includes(MCAR.row)) TRAFFIC.fleet.push(MCAR.row)          // GAME.traffic drives it to him
+SFX_REACH[MCAR.whistle.sound] ??= 3; SFX_REACH[MCAR.eject.sound] ??= 2.5
+const mcClock = () => isHost ? tickAt || now() : renderT || now()
+const mcOwn = new Map()          // host: player id -> { car, mode, target, plan, path, since, whistled }
+const mcCars = new Map()         // host: vehicle id -> its owner's player id, live or wrecked
+const mcWhistles = new Map()     // every machine: player id -> the host ms of his whistle, while it plays
+const mcEjects = new Map()       // every machine: vehicle id -> the host ms of its last ejection, until re-armed
+const mcPlayed = new Map()       // every machine: what it has drawn and sounded ('w' / 'e' + id -> ms)
+const mcPeople = () => [...players.values()].filter(p => !p.bot && p.owner === undefined && p.body)
+
+// ---- host: the key, a tick at a time
+function mcInput(t) {
+  if (!LV.faust) return
+  for (const [id, c] of players) {
+    const inp = t.cur.get(id)
+    if (!inp?.car || c.bot || c.dead > 0) continue
+    const s = seatOf(c)
+    if (s) { if (!s[1] && s[0].k === MC_K) mcEject(s[0]) }
+    else mcWhistle(c)
+  }
+}
+const mcStateOf = id => mcOwn.get(id) || mcOwn.set(id, { car: undefined, mode: '', since: 0 }).get(id)
+const mcCarOf = st => st.car === undefined ? null : objs.find(o => o.id === st.car && o.k === MC_K) || null
+function mcWhistle(c) {
+  const T = mcClock(), st = mcStateOf(c.id)
+  if (T - (st.whistled ?? -Infinity) < MCAR.whistle.cd * 1000) return
+  st.whistled = T; mcWhistles.set(c.id, Math.round(T))
+  let o = mcCarOf(st)
+  if (o && o.riders.some(r => r !== undefined && r !== c.id)) { mcLetGo(o); o = null }          // someone else has it: his no more
+  if (o && (o.riders.includes(c.id) || o.heldBy !== undefined)) return
+  if (o && (Math.hypot(o.x - c.x, o.z - c.z) > MCAR.come.far || upOf(o) < 0.4)) { mcLetGo(o); o = null }
+  if (o) return mcSend(o, c, st, T)
+  st.car = undefined; st.mode = 'spawn'; st.since = T                                             // found over the next ticks
+}
+// his no more: an ordinary car now, which traffic retires once it's far from everyone and out of sight
+function mcLetGo(o) {
+  if (o.traffic) GAME.traffic.cancel(o.id)
+  o.trafficAmbient = true; mcCars.delete(o.id)
+  for (const st of mcOwn.values()) if (st.car === o.id) { st.car = undefined; st.mode = '' }
+}
+function mcRemove(o) {
+  const T = trafficState
+  trafficDetach(o, false); dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({ id: o.id, until: trafficClock() + 12 })
+  for (const sent of objSent.values()) sent.delete(o.id)
+  mcCars.delete(o.id); mcEjects.delete(o.id)
+}
+
+// Where it stops for him: on the nearest road it can drive (traffic's lanes; at 5.36 m it fits #34's side streets), on the lane whose left side faces him, at the kerb
+// on his side (or beside him, on the road), its driver's door (seat 0, on the left) at him. lead: a point on that lane
+// MCAR.come.lead m short of the stop, which traffic brings it to; the pull-up does the rest. Null: no road near enough to plan.
+function mcPlan(c) {
+  if (!trafficState) trafficReset()
+  trafficNear(c.x, c.z, 1)
+  const V = MC_V, w = V.w, seatZ = V.seats[0][2]
+  // lanes near him, each with its road: the road is the one whose kerb he is nearest (the pavement he stands on, where two meet at
+  // a corner), and on it the lane whose left side faces him; failing that, the nearest lane anywhere planned
+  let near = []
+  for (const e of trafficState.edges) {
+    const len = e.length || 96, s = (c.x - e.from.x - e.ox) * e.dx + (c.z - e.from.z - e.oz) * e.dz
+    if (s < -30 || s > len + 30) continue
+    const p = trafficPoint(e, clamp(s, 0, len)), side = (c.x - p.x) * e.dz - (c.z - p.z) * e.dx, d = Math.hypot(c.x - p.x, c.z - p.z)
+    near.push({ e, s, side, d, p })
+  }
+  near.sort((a, b) => a.d - b.d)
+  if (!near.length) return null
+  if (near[0].d < 60) near = near.filter(r => r.d < 60).slice(0, 16)
+  else near = near.slice(0, 1)
+  for (const r of near) {
+    r.road = mcRoad(r.e, r.p)
+    r.kerb = r.road ? Math.abs((c.x - r.road.ax) * r.e.dz - (c.z - r.road.az) * r.e.dx) - r.road.half : r.d
+    r.key = r.road ? Math.round(r.road.ax) + ':' + Math.round(r.road.az) + ':' + Math.round(Math.abs(r.e.dx)) : r.e
+  }
+  const roadOf = near.reduce((a, b) => b.kerb < a.kerb - 0.5 ? b : a).key, onIt = near.filter(r => r.key === roadOf)
+  const pick = onIt.filter(r => r.side > 0).sort((a, b) => a.d - b.d)[0] || onIt[0]
+  const e = pick.e, hx = e.dx, hz = e.dz, lx = hz, lz = -hx, road = pick.road
+  const ax = road ? road.ax : e.from.x + e.ox, az = road ? road.az : e.from.z + e.oz, half = road ? road.half : 3
+  const at = (x, z) => [(x - ax) * hx + (z - az) * hz, (x - ax) * lx + (z - az) * lz]          // along the lane's heading, out to its left
+  const [sHim, oHim] = at(c.x, c.z), oLane = at(e.from.x + e.ox, e.from.z + e.oz)[1]
+  const room = half - w / 2 - 0.3, oCar = clamp(Math.min(room, oHim - MCAR.come.pull - w / 2 - (c.r || 0.5)), -room, room)
+  const [lo, hi] = road ? [Math.min(0, road.len), Math.max(0, road.len)] : [-1e9, 1e9], m = half >= 8 ? 19 : 9
+  let sCar = hi - lo > 2 * m ? clamp(sHim + seatZ, lo + m, hi - m) : (lo + hi) / 2
+  // his lane, back from the stop through the lanes that run on into it: where it begins nearer than the lead point (a road that
+  // ends there), the stop moves on along the road until the lead lies 12 m into it, where traffic can take a car
+  let le = e, back = 0
+  for (let k = 0; k < 4 && back < MCAR.come.lead + 12 + m; k++) {
+    const q = trafficState.edges.find(q => q.to === le.from && q.dx === le.dx && q.dz === le.dz && Math.hypot(q.from.x + q.ox + q.dx * q.length - le.from.x - le.ox, q.from.z + q.oz + q.dz * q.length - le.from.z - le.oz) < 0.5)
+    if (!q) { const s0 = (le.from.x - ax) * hx + (le.from.z - az) * hz; if (sCar - MCAR.come.lead < s0 + 12) sCar = Math.min(Math.max(sCar, s0 + 12 + MCAR.come.lead), hi - m); break }
+    le = q; back += q.length
+  }
+  const P = (s, o) => ({ x: ax + hx * s + lx * o, z: az + hz * s + lz * o })
+  return { e, hx, hz, half, ax, az, pose: { ...P(sCar, oCar), hx, hz }, lead: P(sCar - MCAR.come.lead, oLane), him: { x: c.x, z: c.z } }
+}
+// the plan's road that a lane runs along, near point p: its centre line's start (ax, az), its half width, its length along the
+// lane's heading (negative when the lane runs against the road's own direction)
+function mcRoad(e, p) {
+  const [ci, cj] = FAUSTLAND_API.cellAt(p.x, p.z)
+  let best = null
+  for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) {
+    if (i < 0 || j < 0 || i >= LV.grow.S || j >= LV.grow.S) continue
+    for (const r of faustGet(i, j).plan.roads) {
+      const rx = r.b[0] - r.a[0], rz = r.b[2] - r.a[2], L = Math.hypot(rx, rz), ux = rx / L, uz = rz / L
+      if (Math.abs(ux * e.dz - uz * e.dx) > 0.05) continue
+      const off = Math.abs((p.x - r.a[0]) * uz - (p.z - r.a[2]) * ux), along = (p.x - r.a[0]) * ux + (p.z - r.a[2]) * uz
+      if (off > r.width / 2 || along < -1 || along > L + 1 || best && off >= best.off) continue
+      best = { ax: r.a[0], az: r.a[2], half: r.width / 2, len: L * (ux * e.dx + uz * e.dz), off }
+    }
+  }
+  return best
+}
+// on its way: traffic drives it to the lead point, re-read as he moves
+function mcSend(o, c, st, T, fresh = false) {
+  const P = mcPlan(c)
+  if (!P) { st.mode = ''; return }
+  st.plan = P; st.target ||= { x: 0, z: 0 }; st.target.x = P.lead.x; st.target.z = P.lead.z
+  st.since = T; st.best = Infinity; st.bestAt = T; st.planAt = T
+  const f = rotq(o.q, [0, 0, -1]), d = Math.hypot(o.x - P.pose.x, o.z - P.pose.z), along = f[0] * P.hx + f[2] * P.hz
+  if (d < 1.5 && along > 0.9) { st.mode = 'here'; return }                                 // already there
+  // a short way on along the same road, heading its way: it drives there itself
+  const ahead = (P.pose.x - o.x) * P.hx + (P.pose.z - o.z) * P.hz, across = Math.abs((o.x - P.pose.x) * P.hz - (o.z - P.pose.z) * P.hx)
+  if (along > 0.8 && ahead > 3 && ahead < 75 && across < P.half * 2) return mcPullFrom(o, st, T)
+  // facing the wrong way on his avenue, near him: it turns round across the road (a horse turns; the block is a long way round)
+  if (along < -0.7 && across < P.half * 2 && Math.abs(ahead) < 90 && mcTurnRound(o, st, T)) return
+  if (o.traffic) GAME.traffic.cancel(o.id)
+  // stood at a kerb, off its lane: first back into the lane it faces (traffic's own checks would hold it for the pavement)
+  if (!fresh && mcMerge(o, st, T)) return
+  mcPursue(o, c, st, T, fresh)
+}
+function mcPursue(o, c, st, T, fresh) {
+  // urgent: a summoned car, not ambient traffic (where traffic offers it: through signals and junctions, still braking for
+  // anything in its way)
+  if (GAME.traffic.pursue(o, st.target, { driver: false, speed: MCAR.come.speed, urgent: true })) { st.mode = 'come'; return }
+  if (fresh) { st.mode = ''; return }                     // the spawner drops it and tries elsewhere
+  mcLetGo(o); st.mode = 'spawn'; st.since = T              // where it is, traffic can't take it: a new one comes
+}
+// a U-turn toward the road's middle (radius up to 6.5 m, never under the car's own 4.8 m), then the curve on to its stop. It
+// turns where it stands, or first runs on along the road (past his stop, when that lies ahead of it) until there is room to curve
+// back in to the kerb: each way is tried in turn, 4 m further each time, and taken only if it bends no tighter than 4.5 m and
+// never loops
+function mcTurnRound(o, st, T) {
+  const P = st.plan, lx = P.hz, lz = -P.hx, off = (o.x - P.ax) * lx + (o.z - P.az) * lz          // its offset from the road's middle, to the plan's left
+  // it ends 2R across, toward and past the middle: within the far kerb when R <= (H + |off|) / 2
+  const side = off > 0 ? -1 : 1, H = P.half - MC_V.w / 2 - 0.4, R = Math.min(6.5, (H + Math.abs(off)) / 2)
+  if (!(R >= 4.8)) return false
+  const f = rotq(o.q, [0, 0, -1]), n = Math.hypot(f[0], f[2]) || 1, ahead = (P.pose.x - o.x) * P.hx + (P.pose.z - o.z) * P.hz
+  // run on only in its own lane (the plan's left is the far-side traffic's): never against the traffic it would meet
+  for (let run = Math.max(0, -ahead), k = 0; k < 12; k++, run += 4) {
+    if (run > 0 && off < 0) return false
+    const path = mcTurnPath(o, P, side * lx, side * lz, R, run, run > 0 ? -P.hx : f[0] / n, run > 0 ? -P.hz : f[2] / n)
+    if (!mcPathOk([{ x: o.x, z: o.z }, ...path])) continue
+    if (o.traffic) GAME.traffic.cancel(o.id)
+    let len = 0; for (let i = 1; i < path.length; i++) len += Math.hypot(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z)
+    st.path = path; st.index = 0; st.mode = 'pull'; st.pullAt = T; st.to = P.pose; st.turn = true
+    st.pullFor = (MCAR.come.pullMax + 2 * len / MCAR.come.pullSpeed) * 1000
+    return true
+  }
+  return false
+}
+// the run on (straight along the road), the half circle toward n, then a curve on to the stop
+function mcTurnPath(o, P, nx, nz, R, run, hx, hz) {
+  const steps = Math.ceil(run / 4), path = []
+  for (let i = 1; i <= steps; i++) path.push({ x: o.x + hx * run * i / steps, z: o.z + hz * run * i / steps })
+  const s = path.at(-1) || { x: o.x, z: o.z }, cx = s.x + nx * R, cz = s.z + nz * R
+  const turn = Array.from({ length: 13 }, (_, i) => { const t = Math.PI * i / 12; return { x: cx - nx * R * Math.cos(t) + hx * R * Math.sin(t), z: cz - nz * R * Math.cos(t) + hz * R * Math.sin(t) } })
+  const a = turn[turn.length - 1], b = P.pose, k = Math.hypot(b.x - a.x, b.z - a.z) / 3
+  const c1 = { x: a.x + P.hx * k, z: a.z + P.hz * k }, c2 = { x: b.x - b.hx * k, z: b.z - b.hz * k }
+  const on = Array.from({ length: 13 }, (_, i) => { const u = (i + 1) / 13, s = 1 - u
+    return { x: s ** 3 * a.x + 3 * s * s * u * c1.x + 3 * s * u * u * c2.x + u ** 3 * b.x, z: s ** 3 * a.z + 3 * s * s * u * c1.z + 3 * s * u * u * c2.z + u ** 3 * b.z } })
+  return path.concat(steps ? turn.slice(1) : turn, on)
+}
+// a path a car can drive: no bend tighter than 4.5 m (the circle through each three points in turn), and its heading sweeps no
+// more than a half turn and back (a loop sweeps a whole turn more)
+function mcPathOk(pts) {
+  let sweep = 0, prev = null
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i], q = pts[i - 1], dx = p.x - q.x, dz = p.z - q.z
+    if (dx * dx + dz * dz < 1e-6) continue
+    const h = Math.atan2(dx, dz)
+    if (prev !== null) sweep += Math.abs(wrapPi(h - prev))
+    prev = h
+    if (i < 2) continue
+    const r = pts[i - 2], ab = Math.hypot(q.x - r.x, q.z - r.z), bc = Math.hypot(dx, dz), ca = Math.hypot(r.x - p.x, r.z - p.z)
+    const cross = Math.abs((q.x - r.x) * (p.z - r.z) - (q.z - r.z) * (p.x - r.x))
+    if (cross > 1e-4 && ab > 0.05 && bc > 0.05 && ab * bc * ca / (2 * cross) < 4.5) return false
+  }
+  return sweep <= Math.PI * 2 + 0.2
+}
+// the lane it faces, if it stands off it: a short curve onto it, 18 m on
+function mcMerge(o, st, T) {
+  const f = rotq(o.q, [0, 0, -1]), n = Math.hypot(f[0], f[2]) || 1, hx = f[0] / n, hz = f[2] / n
+  let best = null
+  for (const e of trafficState.edges) {
+    if (e.dx * hx + e.dz * hz < 0.8) continue
+    const len = e.length || 96, s = (o.x - e.from.x - e.ox) * e.dx + (o.z - e.from.z - e.oz) * e.dz
+    if (s < -5 || s > len - 8) continue
+    const q = trafficPoint(e, s), lat = Math.hypot(o.x - q.x, o.z - q.z)
+    if (lat < 16 && (!best || lat < best.lat)) best = { e, s, lat }
+  }
+  if (!best || best.lat < 2.5) return false
+  const { e } = best, end = trafficPoint(e, best.s + 18)
+  st.merge = { x: end.x, z: end.z, hx: e.dx, hz: e.dz }
+  mcPullFrom(o, st, T, st.merge)
+  st.mode = 'merge'
+  return true
+}
+// A new car, out of sight of every player, on a lane MCAR.come.ring m from him that heads his way. After MCAR.come.wait s with no
+// hidden spot, the nearest in the ring will do.
+function mcSpawn(c, st, T) {
+  if (objs.length >= OBJ_MAX - 8 || !trafficState || T < (st.nextTry ?? 0)) return
+  st.nextTry = T + 300
+  if (st.since !== st.badSince) { st.bad = new Set(); st.badSince = st.since }
+  const P = mcPlan(c), people = mcPeople(), [lo, hi] = MCAR.come.ring, late = T - st.since > MCAR.come.wait * 1000
+  if (!P) { if (late) st.mode = ''; return }
+  const R = Math.ceil(hi / 96)
+  trafficNear(c.x, c.z, R)
+  const spots = []
+  for (const e of trafficState.edges) {
+    const len = e.length || 96
+    if (len < 30) continue
+    const q = trafficPoint(e, len / 2), d = Math.hypot(q.x - c.x, q.z - c.z)
+    if (d < lo || d > hi || e.dx * (c.x - q.x) + e.dz * (c.z - q.z) < 0) continue
+    if (Math.max(Math.abs(q.x), Math.abs(q.z)) > ARENA - 96) continue
+    // heading the way it must arrive (or across it) beats heading against it, which costs a turn round a block
+    spots.push({ e, q, d: d + (e.dx * P.hx + e.dz * P.hz < -0.5 ? 100 : 0) })
+  }
+  spots.sort((a, b) => a.d - b.d)
+  let tried = 0
+  for (const { e, q } of spots) {
+    if (st.bad.has(e) || objs.some(o => Math.hypot(o.x - q.x, o.z - q.z) < 22)) continue
+    if (!late && (++tried > 8 || !trafficHidden(q.x, q.z, people))) continue
+    const o = mcAdd(c, st, q.x, q.z, e.dx, e.dz)
+    if (!o) return
+    st.spawned = T
+    mcSend(o, c, st, T, true)
+    if (st.mode !== 'come') { mcRemove(o); st.car = undefined; st.mode = 'spawn'; st.bad.add(e) }      // no route from there
+    return
+  }
+}
+// his car on the road at (x, z), heading (hx, hz)
+function mcAdd(c, st, x, z, hx, hz) {
+  let id = OBJ_MAX - 1
+  while (id >= 16 && (objs.some(o => o.id === id) || trafficState.departures.some(v => v.id === id && v.until > trafficClock()))) id--
+  if (id < 16) return null
+  faustEnsure([[x, z]])
+  const o = addObject(MC_K, [x, 1, z], id, Math.atan2(-hx, -hz))
+  if (!o) return null
+  o.at = [x, -o.low + 0.02, z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body)
+  trafficState.cars.set(o.id, o); o.trafficAmbient = false        // its life rides traffic's roster (guests drop it with it)
+  mcCars.set(o.id, c.id); st.car = o.id
+  return o
+}
+function mcHostTick(t) {
+  if (!LV.faust || !trafficState) return
+  const T = mcClock(), dt = t.dt
+  for (const [id, w] of mcWhistles) if (T - w > MCAR.whistle.s * 1000 + 500) mcWhistles.delete(id)
+  for (const [id, e] of mcEjects) if (T - e > MCAR.eject.rearm * 1000 + 1500 || !objs.some(o => o.id === id)) mcEjects.delete(id)
+  for (const [pid, st] of mcOwn) {
+    const c = players.get(pid)
+    if (!c) { const o = mcCarOf(st); if (o) mcLetGo(o); mcOwn.delete(pid); continue }
+    if (st.mode === 'spawn') { if (c.dead > 0 || T - st.since > 30000) st.mode = ''; else mcSpawn(c, st, T); continue }
+    const o = mcCarOf(st)
+    if (!o) { if (st.mode) st.mode = ''; continue }
+    if (o.riders.some(r => r !== undefined) || o.heldBy !== undefined) { if (st.mode) { st.mode = ''; if (o.traffic) GAME.traffic.cancel(o.id) } continue }
+    if (st.mode === 'come') mcCome(o, c, st, T)
+    else if (st.mode === 'pull' || st.mode === 'merge') mcPull(o, c, st, T)
+  }
+  for (const [id] of mcCars) {
+    const o = objs.find(o => o.id === id)
+    if (!o) { mcCars.delete(id); continue }
+    if (o.k === MC_WRECK) mcWreck(o, T, dt)
+  }
+}
+// traffic has it: the plan follows him, and the pull-up takes over on the last stretch
+function mcCome(o, c, st, T) {
+  if (T - st.planAt > 600 && Math.hypot(c.x - st.plan.him.x, c.z - st.plan.him.z) > 3) {
+    const P = mcPlan(c)
+    if (P) { st.plan = P; st.target.x = P.lead.x; st.target.z = P.lead.z }
+    st.planAt = T
+  }
+  const P = st.plan, d = Math.hypot(o.x - P.pose.x, o.z - P.pose.z)
+  if (d < st.best - 3) { st.best = d; st.bestAt = T }
+  // stuck, flipped or lost: a new one comes
+  if (upOf(o) < 0.4 || T - st.bestAt > MCAR.come.stuck * 1000 || !o.traffic) {
+    if (upOf(o) >= 0.4 && !o.traffic && d < 40) return mcPullFrom(o, st, T)
+    mcLetGo(o); st.mode = 'spawn'; st.since = T; return
+  }
+  const f = rotq(o.q, [0, 0, -1]), along = f[0] * P.hx + f[2] * P.hz, lead = Math.hypot(o.x - P.lead.x, o.z - P.lead.z)
+  if (!o.traffic.path && along > 0.8 && (lead < 9 || o.traffic.arrived) && d < 45) mcPullFrom(o, st, T)
+}
+// the pull-up: a smooth curve from where it is to its stop beside him, followed by the engine's own driving (driveStep)
+function mcPullFrom(o, st, T, to = st.plan.pose) {
+  if (o.traffic) GAME.traffic.cancel(o.id)
+  const f = rotq(o.q, [0, 0, -1]), n = Math.hypot(f[0], f[2]) || 1, hx = f[0] / n, hz = f[2] / n
+  const a = { x: o.x, z: o.z }, b = to, k = Math.hypot(b.x - a.x, b.z - a.z) / 3
+  const c1 = { x: a.x + hx * k, z: a.z + hz * k }, c2 = { x: b.x - b.hx * k, z: b.z - b.hz * k }
+  st.path = Array.from({ length: 21 }, (_, i) => { const u = i / 20, s = 1 - u
+    return { x: s ** 3 * a.x + 3 * s * s * u * c1.x + 3 * s * u * u * c2.x + u ** 3 * b.x, z: s ** 3 * a.z + 3 * s * s * u * c1.z + 3 * s * u * u * c2.z + u ** 3 * b.z } })
+  st.index = 0; st.mode = 'pull'; st.pullAt = T; st.to = to; st.turn = false; st.pullFor = MCAR.come.pullMax * 1000
+}
+function mcPull(o, c, st, T) {
+  const P = st.plan, Q = st.to, merge = st.mode === 'merge', path = st.path, fw = rotq(o.q, [0, 0, -1]), yaw = Math.atan2(-fw[0], -fw[2]), speed = speedOf(o)
+  // he walked off: plan again
+  if (!merge && Math.hypot(c.x - P.him.x, c.z - P.him.z) > 5) return mcSend(o, c, st, T)
+  // the path point nearest its front axle, and the path's heading there (Stanley's steering: hold the path's heading, and close
+  // the gap to it, more gently the faster it goes), so it ends square to the kerb
+  const ax = o.x + fw[0] * 1.5, az = o.z + fw[2] * 1.5
+  let i = st.index, best = Infinity
+  for (let j = st.index; j < Math.min(path.length, st.index + 6); j++) { const d = Math.hypot(ax - path[j].x, az - path[j].z); if (d < best) { best = d; i = j } }
+  st.index = i
+  const last = i >= path.length - 1, a = path[Math.min(i, path.length - 2)], b = path[Math.min(i + 1, path.length - 1)]
+  let tx = last ? Q.hx : b.x - a.x, tz = last ? Q.hz : b.z - a.z
+  const tn = Math.hypot(tx, tz) || 1; tx /= tn; tz /= tn
+  const p = path[i], lat = (ax - p.x) * tz - (az - p.z) * tx                        // + its front is left of the path
+  const want = Math.atan2(-tx, -tz) - Math.atan(1.3 * lat / (speed + 1.2))
+  const err = wrapPi(want - yaw)
+  const end = path[path.length - 1], along = (end.x - o.x) * Q.hx + (end.z - o.z) * Q.hz, turning = st.turn && i < path.length - 4
+  let togo = along, bend = Infinity
+  if (turning) {
+    togo = Math.hypot(path[i].x - ax, path[i].z - az)
+    for (let j = i; j < path.length - 1; j++) togo += Math.hypot(path[j + 1].x - path[j].x, path[j + 1].z - path[j].z)
+    // the tightest bend in the next few points (the circle through each three), for its speed round the turn
+    for (let j = i; j < Math.min(path.length - 2, i + 4); j++) {
+      const r = path[j], q = path[j + 1], p = path[j + 2], ab = Math.hypot(q.x - r.x, q.z - r.z), bc = Math.hypot(p.x - q.x, p.z - q.z), ca = Math.hypot(r.x - p.x, r.z - p.z)
+      const cross = Math.abs((q.x - r.x) * (p.z - r.z) - (q.z - r.z) * (p.x - r.x))
+      if (cross > 1e-4) bend = Math.min(bend, ab * bc * ca / (2 * cross))
+    }
+  }
+  const late = T - st.pullAt > (st.pullFor ?? MCAR.come.pullMax * 1000)
+  if (merge && (togo < 4 || late)) return mcPursue(o, c, st, T, false)
+  if (!turning && togo < 0.35 && speed < 0.8 || late) {
+    st.mode = 'here'
+    o.V.wheels.at.forEach((w, k) => { o.car.applyEngineForce(0, k); o.car.setBrake(1, k) })
+    return
+  }
+  let desired = merge ? MCAR.come.pullSpeed : Math.min(MCAR.come.pullSpeed, Math.sqrt(2 * 2.4 * Math.max(0, togo - 0.2)), Math.sqrt(3.5 * bend))
+  // a stopping gap for anyone in its way, him included, and other vehicles; never through a building (the path is on the road)
+  let stop = Infinity
+  const obstacle = (x, y, z, r, lane = o.V.w / 2 + r + 0.3) => {
+    if (Math.abs(y - o.y) > 3.5) return
+    const dx = x - o.x, dz = z - o.z, f = dx * fw[0] + dz * fw[2], side = dx * -fw[2] + dz * fw[0]
+    if (f <= 0 || f > 20 || Math.abs(side) > lane) return
+    stop = Math.min(stop, Math.max(0, f - o.V.l / 2 - r - 1))
+  }
+  // he waits beside its stop, so for him only the car's own width counts (it never runs him down, nor stops short of him)
+  for (const p of players.values()) if (!(p.dead > 0) && !seatOf(p)) obstacle(p.x, p.y, p.z, p.r || 0.5, p === c ? o.V.w / 2 + 0.15 : undefined)
+  for (const p of objs) if (p !== o && p.heldBy === undefined) obstacle(p.x, p.y, p.z, p.V ? Math.min(p.V.w / 2, p.R) : p.R)
+  for (const p of GAME.streetLife?.obstacles?.(o.x + fw[0] * 8, o.z + fw[2] * 8, 14) || []) obstacle(p.x, p.y || 1, p.z, p.radius || 0.6)
+  const ray = castRay(o.x + fw[0] * (o.V.l / 2 + 0.3), o.y + 0.2, o.z + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], 8, RAY_GROUP | G_OBJ) * 8
+  stop = Math.min(stop, Math.max(0, ray - 1.5))
+  if (stop < Infinity) desired = Math.min(desired, Math.sqrt(stop * 4))
+  if (Math.abs(err) > 0.5) desired = Math.min(desired, 3)
+  // brake against its signed motion, then hold: never reverse throttle into a car that is all but stopped (driveStep's -1 is a
+  // brake only above 0.5 m/s forward); rolling back, a touch forward (as #34's traffic does)
+  const v = o.body.getLinearVelocity(), go = v.x() * fw[0] + v.z() * fw[2]
+  const f = go < -0.5 ? 1 : desired < 0.3 ? go > 0.5 ? -1 : 0 : go > desired + 0.2 ? -1 : clamp((desired - go) * 0.5, 0, 0.8)
+  const input = { f, r: clamp(-1.8 * err, -1, 1), j: desired < 0.3, yaw, pitch: 0 }
+  if (desired >= 0.3) setParked(o, false)
+  // the engine's own driving, through a private driver (as traffic's): no player takes a seat
+  const driver = { id: -2000 - o.id, seat: [o, 0] }, saved = o.riders[0]
+  o.riders[0] = driver.id; driveStep(driver, input); o.riders[0] = saved
+}
+// The ejector seat: the passenger (seat 1) out of the car and up from the hatch, with a little of the car's own speed and a push
+// to the passenger's side, so he comes down clear of it
+function mcEject(o) {
+  const T = mcClock(), last = mcEjects.get(o.id)
+  if (last !== undefined && T - last < MCAR.eject.rearm * 1000) return
+  mcEjects.set(o.id, Math.round(T))
+  const id = o.riders[1], p = id !== undefined && players.get(id)
+  if (!p || !p.body) return
+  o.riders[1] = undefined
+  if (p.seat?.[0] === o) p.seat = null
+  const s = o.V.seats[1], E = MCAR.eject, up = rotq(o.q, [0, 1, 0]), rt = rotq(o.q, [1, 0, 0]), v = o.body.getLinearVelocity()
+  const at = seatAt(o, [s[0], o.V.h + p.h + p.r + 0.15, s[2]]), u = [v.x(), v.y(), v.z()].map((x, i) => x * E.keep + up[i] * E.speed + rt[i] * E.side)
+  p.body.clearForces(); world.addRigidBody(p.body, ...COLLIDE.capsule)
+  restoreChar(p, ...at, ...u)
+  p.ejectedAt = T
+}
+// Wrecked: rolled over along its length so it comes down on its roof and slides, then it burns for MCAR.wreck.burn s; it leaves
+// once burnt out, far from everyone and out of sight
+function mcWreck(o, T, dt) {
+  if (o.mcBoom === undefined) {
+    o.mcBoom = T
+    const f = rotq(o.q, [0, 0, -1]), v = o.body.getLinearVelocity(), W = MCAR.wreck, side = Math.random() < 0.5 ? -1 : 1
+    velVec.setValue(f[0] * W.roll * side, f[1] * W.roll * side, f[2] * W.roll * side); o.body.setAngularVelocity(velVec)
+    velVec.setValue(v.x(), Math.max(v.y(), W.lift), v.z()); o.body.setLinearVelocity(velVec)
+    o.body.activate()
+  }
+  const age = T - o.mcBoom
+  if (age < MCAR.wreck.burn * 1000 && (o.mcFlame = (o.mcFlame || 0) - dt) <= 0) {
+    o.mcFlame = 0.25
+    tracers.push([r2(o.x), r2(o.y), r2(o.z), r2(o.x), r2(o.y + 1.5), r2(o.z), -1, 5, o.by ?? -1, 0, o.id, o.k])
+  }
+  if (age > MCAR.wreck.burn * 1000 && (o.mcLook = (o.mcLook || 0) - dt) <= 0) {
+    o.mcLook = 1
+    const people = mcPeople()
+    if (people.every(p => Math.hypot(p.x - o.x, p.z - o.z) > 150) && trafficHidden(o.x, o.z, people)) mcRemove(o)
+  }
+}
+
+// ---- the wire
+function mcWireOut() {
+  return mcWhistles.size || mcEjects.size ? { mc: [[...mcWhistles], [...mcEjects]] } : {}
+}
+function mcWireIn(d) {
+  const m = d.mc
+  if (!Array.isArray(m) || m.length !== 2) return
+  const ok = (r, max) => Array.isArray(r) && r.length === 2 && Number.isInteger(r[0]) && r[0] >= 0 && r[0] < max && Number.isFinite(r[1])
+  if (Array.isArray(m[0])) for (const r of m[0].slice(0, ENTITY_MAX)) if (ok(r, BOT_ID0 + BOTS.length + 64) && !(mcWhistles.get(r[0]) >= r[1])) mcWhistles.set(r[0], r[1])
+  if (Array.isArray(m[1])) for (const r of m[1].slice(0, OBJ_MAX)) if (ok(r, OBJ_MAX) && !(mcEjects.get(r[0]) >= r[1])) mcEjects.set(r[0], r[1])
+}
+
+// ---- every client: the whistle, played as it is heard
+let mcMine = -Infinity           // when this machine's own player last whistled (now()), drawn at once rather than at the echo
+function mcPress() {
+  const me = selfChar(), t = now()
+  if (!me || me.dead > 0 || seatOf(me) || me.ride || t - mcMine < MCAR.whistle.cd * 1000) return
+  mcMine = t
+  mcHearAt(myId, me, 0)
+}
+function mcHearAt(id, c, age) {
+  const a = avatars.get(id), t = now()
+  if (a) a.whistleAt = t - age
+  if (c && age < 600) sfxPlay(MCAR.whistle.sound, { x: c.x, y: c.y + 0.7, z: c.z }, id === myId ? 'you' : 'world')
+}
+let mcFrameN = 0
+function mcFrame(me, others) {
+  if (serving) return
+  const T = mcClock()
+  for (const [id, w] of mcWhistles) {
+    if (mcPlayed.get('w' + id) === w || T < w) continue
+    mcPlayed.set('w' + id, w)
+    if (id === myId && now() - mcMine < 2500) continue                     // already drawn on the press
+    const c = id === myId ? me : others.find(o => o.id === id)
+    if (T - w < MCAR.whistle.s * 1000) mcHearAt(id, c, T - w)
+  }
+  // views not drawn this frame are hidden; their vehicles gone, dropped
+  for (const [key, v] of mcViews) {
+    if (v.seen === mcFrameN) continue
+    v.root.visible = false; v.seat.visible = false
+    if (!objTracks.has(key) && !objs.some(o => o.id === key)) { mcDropView(v); mcViews.delete(key) }
+  }
+  mcFrameN++
+  // the touch button: WHISTLE on foot, EJECT at the wheel of his car, hidden otherwise
+  const s = me && !(me.dead > 0) && seatOf(me), car = s && s[0], mode = !me || me.dead > 0 || me.ride ? '' : car ? (!s[1] && car.k === MC_K ? 'eject' : '') : 'whistle'
+  hud('mcBtn', el('#btn-car'), 'textContent', mode === 'eject' ? 'EJECT' : 'WHISTLE')
+  hud('mcOn', document.body, '.cancar', !!mode && !!LV.faust)
+}
+
+// ---- every client: his car, drawn from its model (the row's procedural look until it loads, or if it can't)
+let mcProto = null, mcLoading = false
+const mcViews = new Map()
+function mcLoad() {
+  if (mcLoading || serving) return
+  mcLoading = true
+  rigLoader()
+  rigFetch(MCAR.file).then(g => { mcProto = mcParts(g.scene) }).catch(e => console.warn('his car failed, keeping its plain look:', e && e.message))
+}
+// the model's parts by name (assets: body_lod0..2, glass, hatch (pivot at its hinge), eject_seat (pivot at its base), wheel_fl/fr/rl/rr
+// on wheel_front/wheel_rear, and wheel_front_lod1/wheel_rear_lod1)
+function mcParts(scene) {
+  const get = n => scene.getObjectByName(n), mesh = n => { const o = get(n); return o?.isMesh ? o : o?.children.find(c => c.isMesh) }
+  const P = { body: [0, 1, 2].map(i => mesh('body_lod' + i)), glass: mesh('glass'), hatch: get('hatch'), seat: get('eject_seat'),
+    wheel: [mesh('wheel_fl'), mesh('wheel_rl')], wheelLod: [mesh('wheel_front_lod1'), mesh('wheel_rear_lod1')] }
+  if (!P.body[0] || !P.hatch || !P.seat || !P.wheel[0] || !P.wheel[1]) throw new Error('parts missing')
+  scene.traverse(n => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; if (n.geometry) n.geometry.userData.shared = true } })
+  P.hatchRest = P.hatch.position.clone(); P.seatRest = P.seat.position.clone()
+  // the burnt-out look: the paint and chrome gone to soot
+  P.burnt = new Map()
+  scene.traverse(n => { if (n.isMesh && !P.burnt.has(n.material)) { const m = n.material.clone(); m.color.multiplyScalar(0.22); m.roughness = 1; m.metalness = 0.1; m.emissiveIntensity = 0
+    if (m.transparent) m.opacity = 0.15; P.burnt.set(n.material, m) } })
+  return P
+}
+function mcView(wreck) {
+  const P = mcProto, root = new THREE.Group(), model = new THREE.Group(), mat = m => wreck ? P.burnt.get(m) || m : m
+  const copy = src => { const m = new THREE.Mesh(src.geometry, mat(src.material)); m.castShadow = m.receiveShadow = true; return m }
+  root.matrixAutoUpdate = false; root.add(model)
+  const body = P.body.map(b => b && copy(b)).map(m => (m && model.add(m), m)), glass = P.glass && copy(P.glass)
+  if (glass) model.add(glass)
+  const hatch = new THREE.Group(), seat = new THREE.Group()
+  hatch.position.copy(P.hatchRest)
+  for (const [g, src] of [[hatch, P.hatch], [seat, P.seat]]) for (const m of src.isMesh ? [src] : src.children.filter(c => c.isMesh)) g.add(copy(m))
+  model.add(hatch)
+  const seatAtRest = new THREE.Group(); seatAtRest.position.copy(P.seatRest); model.add(seatAtRest)
+  const wheels = [0, 1, 2, 3].map(i => { const g = new THREE.Group(), r = i >> 1; g.add(copy(P.wheel[r])); if (P.wheelLod[r]) g.add(copy(P.wheelLod[r])); root.add(g); return g })
+  return { root, model, body, glass, hatch, seat, seatAtRest, wheels, wreck, lod: -1, seen: -1, fly: null }
+}
+function mcDropView(v) { v.root.removeFromParent(); v.seat.removeFromParent() }
+const mcQ = new THREE.Quaternion(), mcQ2 = new THREE.Quaternion(), mcFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI)
+const mcAxisX = new THREE.Vector3(1, 0, 0)
+function mcLook(o, wheelsAt) {
+  if (!mcProto) { mcLoad(); return false }
+  const K = OBJECTS[o.k], H = hullOf(K), key = o.id ?? o, wreck = o.k === MC_WRECK
+  if (!H) return false
+  let v = mcViews.get(key)
+  if (v && v.wreck !== wreck) { mcDropView(v); v = null }
+  if (!v) { mcViews.set(key, v = mcView(wreck)); v.model.position.set(-H.at[0], -H.at[1], -H.at[2]) }
+  if (v.root.parent !== objGroup) objGroup.add(v.root)
+  v.seen = mcFrameN; v.root.visible = true
+  v.root.position.set(o.x, o.y, o.z); v.root.quaternion.set(...o.q); v.root.updateMatrix()
+  const d = camera ? v.root.position.distanceTo(camera.position) : 0, lod = d < MCAR.lods[0] ? 0 : d < MCAR.lods[1] ? 1 : 2
+  if (lod !== v.lod) { v.lod = lod; v.body.forEach((m, i) => { if (m) m.visible = i === lod || !v.body[lod] && i === 0 }); v.wheels.forEach(g => g.children.forEach((m, i) => { m.visible = (lod ? 1 : 0) === i || g.children.length === 1 })) }
+  // wheels: rolling and steered where the engine poses them, else at their stand
+  const V = vehicleOf(K) || MC_V, W = V.wheels, posed = !wreck && wheelsAt(o)
+  mcQ.set(...o.q).invert()
+  for (let i = 0; i < 4; i++) {
+    const g = v.wheels[i], a = W.at[i], right = a[0] > 0
+    if (posed) {
+      const p = posed[i]
+      g.position.set(p.pos[0] - o.x, p.pos[1] - o.y, p.pos[2] - o.z).applyQuaternion(mcQ)
+      g.quaternion.copy(mcQ).multiply(mcQ2.set(...p.quat))
+    } else { g.position.set(a[0] - H.at[0], a[1] - H.at[1], a[2] - H.at[2]); g.quaternion.identity() }
+    if (right) g.quaternion.multiply(mcFlip)
+  }
+  // the ejector: the hatch blown open and the seat gone up, until it re-arms; a wreck's hatch hangs open
+  const T = mcClock(), e = mcEjects.get(key), age = e === undefined ? Infinity : T - e, R = MCAR.eject.rearm * 1000
+  const open = wreck ? 1.9 : age < 0 || age >= R ? 0 : age < 90 ? 2.05 * age / 90 : age > R - 300 ? 2.05 * (R - age) / 300 : 2.05 - 0.1 * Math.sin(Math.min(1, (age - 90) / 400) * Math.PI)
+  v.hatch.quaternion.setFromAxisAngle(mcAxisX, open)
+  if (e !== undefined && age >= 0 && age < R && mcPlayed.get('e' + key) !== e) { mcPlayed.set('e' + key, e); mcBlast(o, v, age) }
+  const flying = !wreck && age >= 0 && age < R
+  if (v.seat.parent !== (flying ? objGroup : v.seatAtRest)) (flying ? objGroup : v.seatAtRest).add(v.seat)
+  v.seat.visible = !wreck && (!flying || !!v.fly && age < v.fly.until)
+  if (flying && v.fly) mcSeatFly(v, age)
+  else if (!flying) { v.seat.position.set(0, 0, 0); v.seat.quaternion.identity() }
+  return true
+}
+// the blast: a flash and sparks out of the hatch, a burst of smoke, the sound; the seat's flight, worked out from where the car is
+function mcBlast(o, v, age) {
+  const V = MC_V, s = V.seats[1], H = hullOf(OBJECTS[o.k]), q = new THREE.Quaternion(...o.q)
+  const at = (x, y, z) => new THREE.Vector3(x - H.at[0], y - H.at[1], z - H.at[2]).applyQuaternion(q).add(new THREE.Vector3(o.x, o.y, o.z))
+  const hatch = at(s[0], V.h, s[2]), up = new THREE.Vector3(0, 1, 0).applyQuaternion(q), side = new THREE.Vector3(1, 0, 0).applyQuaternion(q)
+  if (age < 400) {
+    burst('flare', hatch.x, hatch.y + 0.2, hatch.z, up.x, up.y, up.z, 0xffd27a, 2.2)
+    burst('spark', hatch.x, hatch.y + 0.1, hatch.z, up.x, up.y, up.z, 0xffb24a, 1.4)
+    for (let i = 0; i < 3; i++) burst('smoke', hatch.x, hatch.y + 0.1 + i * 0.5, hatch.z, up.x, up.y, up.z, 0x77726a, 1 + i * 0.3)
+    sfxPlay(MCAR.eject.sound, { x: hatch.x, y: hatch.y, z: hatch.z }, 'world')
+  }
+  // the car's speed when it fired: from the drawn track (guests) or the body (host)
+  const tr = objTracks.get(o.id), b = tr?.at(-1), a = tr?.at(-2), dt = a && b ? (b.t - a.t) / 1000 : 0, body = isHost && objs.find(p => p.id === o.id)?.body?.getLinearVelocity()
+  const vel = body ? new THREE.Vector3(body.x(), body.y(), body.z()) : dt > 0 ? new THREE.Vector3((b.p[1] - a.p[1]) / dt, (b.p[2] - a.p[2]) / dt, (b.p[3] - a.p[3]) / dt) : new THREE.Vector3()
+  const E = MCAR.eject, start = at(s[0], s[1] - 0.04, s[2])
+  v.fly = { start, vel: vel.multiplyScalar(E.keep).addScaledVector(up, E.speed * 0.93).addScaledVector(side, E.side), q, spin: (Math.random() - 0.5) * 6, until: 3600 }
+}
+// the seat: up through the hatch with him on its rocket, then off on its own, tumbling down
+function mcSeatFly(v, age) {
+  const F = v.fly, t = age / 1000, g = -GRAV
+  const p = F.start.clone().addScaledVector(F.vel, t); p.y -= 0.5 * g * t * t
+  v.seat.position.copy(p)
+  const tumble = Math.max(0, t - 0.45)
+  v.seat.quaternion.copy(F.q).multiply(mcQ2.setFromAxisAngle(mcAxisX, tumble * F.spin))
+  if (t < 0.5 && (v.trail = (v.trail || 0) + 1) % 2 === 0) burst('puff', p.x, p.y - 0.2, p.z, 0, -1, 0, 0x8a8378, 1.3)
+  if (p.y < (F.start.y - 0.5) && t > 0.6) F.until = Math.min(F.until, age)          // down: gone
+}
+
+// ---- wiring: the host's tick, the snapshot, the frame, and the look on both rows
+{
+  const H = HOST_PHASES, bi = H.beforeIntent, bp = H.beforePhysics
+  H.beforeIntent = t => { bi(t); mcInput(t) }
+  H.beforePhysics = t => { bp(t); mcHostTick(t) }
+  const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems
+  L.snapshot = () => ({ ...snap(), ...mcWireOut() })
+  L.takeItems = function (d) { take.call(this, d); mcWireIn(d) }
+  const hud0 = GAME.view.hud
+  GAME.view.hud = function (me, others, t) { const r = hud0.call(this, me, others, t); mcFrame(me, others); return r }
+  OBJECTS[MC_K].ownLook = OBJECTS[MC_WRECK].ownLook = mcLook
+}
+GAME.car = {
+  // tests and the debug panel (host): a player's car and what it is doing, and the plan it would follow now
+  of: id => { const st = mcOwn.get(id); return st && { car: st.car, mode: st.mode, plan: st.plan && { pose: st.plan.pose, lead: st.plan.lead }, since: st.since } },
+  plan: id => { const c = players.get(id); return c && mcPlan(c) },
+  whistle: id => { const c = players.get(id); if (isHost && c) mcWhistle(c) },
+  // tests and debug (host): his car stood at its stop beside him now, without the drive (or at { x, z, hx, hz })
+  place: (id, at) => { const c = players.get(id), st = c && mcStateOf(id), P = c && mcPlan(c)
+    if (!isHost || !P) return null
+    const old = mcCarOf(st); if (old) mcLetGo(old)
+    const to = at || P.pose, o = mcAdd(c, st, to.x, to.z, to.hx, to.hz)
+    if (o) { st.mode = 'here'; st.plan = P }
+    return o ? o.id : null },
+  eject: id => { const o = objs.find(o => o.id === id); if (isHost && o?.V && o.k === MC_K) mcEject(o) },
+  get ejects() { return [...mcEjects] }, get whistles() { return [...mcWhistles] }, get views() { return mcViews.size }, get loaded() { return !!mcProto },
+  // a drawn car: its hatch's opening (rad), and the seat (shown, in flight, its height)
+  view: id => { const v = mcViews.get(id); if (!v) return null; const p = v.seat.getWorldPosition(new THREE.Vector3())
+    return { hatch: +(2 * Math.acos(Math.min(1, Math.abs(v.hatch.quaternion.w)))).toFixed(3), seat: v.seat.visible, flying: v.seat.parent === objGroup, seatY: +p.y.toFixed(2), shown: v.root.visible, lod: v.lod } },
+  row: MCAR.row, k: MC_K, wreck: MC_WRECK,
+}
 
 // ---------------------------------------------------------------- boot
 class Arena extends ENABLE3D.Scene3D {
