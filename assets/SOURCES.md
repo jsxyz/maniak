@@ -97,6 +97,15 @@ Source pack, by Quaternius and dedicated to the public domain under CC0 1.0 (htt
 - **Made for maniak:** modelled from scratch with code (Blender and glTF-Transform). The textures, and the monogram drawn as shapes (no fonts), are procedural.
 - **License:** CC0 1.0, made for The MANIAK. No third-party content.
 
+### biplane.360a9509.glb: Faust's air-service biplane (card #5)
+
+- **What it is:** a flyable two-seat, open-cockpit 1930s biplane in Faust's air-service livery: gunmetal fuselage, crimson wings with black Deco chevrons and "DF" roundels, and a radial engine in a chrome cowling.
+- **Moving parts:** the propeller, ailerons, elevator and rudder are separate nodes, and an optional pilot figure sits in the rear cockpit.
+- **Structure:** three LODs (`plane_lod0` 6,734, `plane_lod1` 2,698 and `plane_lod2` 668 triangles) and two materials (`plane_body`, `plane_glow`).
+- **Maps:** a 1024² WebP base colour, a 1024² normal map, a 512² occlusion/roughness/metal map and a 64² glow map. Meshopt-compressed, metres, nose toward -Z.
+- **Made for maniak:** generated with code (Blender and glTF-Transform). The textures, and the monogram drawn as shapes (no fonts), are procedural.
+- **License:** CC0 1.0, made for The MANIAK. No third-party content.
+
 # The monorail (card #60)
 
 | File | What it is | Made from | License |

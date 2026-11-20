@@ -937,6 +937,23 @@ const THEME = {
 const LEVELS = [{ name: 'Faustland', gen: { kind: 'faustland', seed: 20261119, size: 20 }, reach: ['pads'] }]
 // OBJECTS: r: ball radius, or half: box half-extents (m); mass (player 1); hit: × shot knock; roll: rolling friction
 // weakens: { effect, within m, struck s }: gives `weak` bodies their `weakness`, else this effect
+// card #5: the biplane (pin rule 5, "Needs to have zeppelins and biplanes"; the brief: players fly them). A vehicle row
+// like a car's, with the flight model in planesTick ('biplanes' section): its three wheels are the landing gear, its
+// thrust and lift are forces of its own. Model space as VEHICLE_SHAPES' (m, -Z ahead), in its flying attitude: y 0 under the
+// main wheels, the thrust line at 1.9; on the ground it sits on its tail wheel, nose up 11°. Seat 0 (the rear cockpit)
+// flies it; seat 1 is the front cockpit's passenger.
+const PLANE = { row: 'Biplane', wreck: 'Biplane wreck',
+  // m/s² of thrust: S held (idle), nothing, W held (full); drag per (m/s)²; lift: the forward speed (m/s) whose lift holds
+  // 1 g; stall: rad of attack past which the wings let go; align: how fast the air turns its path onto its nose
+  thrust: [1.5, 6, 9.5], drag: 0.0042, lift: 33, stall: 0.33, maxG: 4, align: 1.6,
+  // rad/s at full authority: pitch, yaw, roll; the bank it rolls into to turn toward the aim; on the ground: steer rate
+  rates: [1.1, 0.45, 2.0], bank: 1.0, taxi: 0.8, brake: 1.4 }
+// its hull, model space: the fuselage, both wings' tips, the tail and the propeller's disc (carPts adds the wheels' rims)
+const PLANE_HULL = [[-0.5, 1.3, -3.4], [0.5, 1.3, -3.4], [-0.5, 2.5, -3.4], [0.5, 2.5, -3.4], [-0.5, 1.3, 0.9], [0.5, 1.3, 0.9], [-0.5, 2.5, 0.9], [0.5, 2.5, 0.9],
+  [-0.2, 1.7, 3.45], [0.2, 1.7, 3.45], [-0.2, 2.3, 3.45], [0.2, 2.3, 3.45], [0, 3.1, 4.2], [-1.5, 2, 3.4], [1.5, 2, 3.4], [-1.5, 2, 4.45], [1.5, 2, 4.45],
+  ...[-4.5, 4.5].flatMap(x => [[x, 3.05, -1.55], [x, 3.25, -1.55], [x, 3.05, -0.05], [x, 3.25, -0.05]]),
+  ...[-4.1, 4.1].flatMap(x => [[x, 1.49, -1.2], [x, 1.6, -1.2], [x, 1.49, 0.2], [x, 1.6, 0.2]]),
+  [0, 3.2, -3.7], [0, 0.6, -3.7], [-1.3, 1.9, -3.7], [1.3, 1.9, -3.7]]
 const OBJECTS = [
   { name: 'Ball', r: 0.55, mass: 1, bounce: 0.6, friction: 0.6, damp: [0.1, 0.3],
     hit: 1, color: 0xe3b341, stripe: 0xf4efe1 },
@@ -960,6 +977,9 @@ const OBJECTS = [
   // card #12, his car and its wreck (MANIAK_CAR); the wreck slides on its roof
   { name: 'Maniak car', shape: 'hull', mass: 18, bounce: 0.1, friction: 0.8, damp: [0.05, 0.2], hit: 0.3, color: 0x15161a, drive: 'Maniak car' },
   { name: 'Maniak wreck', shape: 'hull', model: 'Maniak car', mass: 18, bounce: 0.05, friction: 0.55, damp: [0.12, 0.5], hit: 0.2, color: 0x2b2b2b },
+  // card #5, the biplane and its wreck (PLANE); points: its hull in model space (carPts adds the wheels' rims)
+  { name: 'Biplane', shape: 'hull', mass: 8, bounce: 0.1, friction: 0.7, damp: [0, 0.3], hit: 0.3, color: 0x6e1c1c, drive: 'Biplane', plane: true, points: PLANE_HULL },
+  { name: 'Biplane wreck', shape: 'hull', model: 'Biplane', mass: 8, bounce: 0.05, friction: 0.9, damp: [0.2, 0.5], hit: 0.2, color: 0x2b2b2b, plane: true },
 ]
 // rider centre over its cushion, × (h + r)
 const SIT_HIP = 0.29
@@ -997,6 +1017,11 @@ const SPEED_UNIT = { name: 'km/h', per: 3.6 }
 const vehicleRow = ({ rows, ...V }) => { const S = VEHICLE_SHAPES[V.name]
   return { ...V, ...S, wheels: { ...S.wheels, ...WHEEL_RIDE, ...V.wheels }, boom: { ...BOOM, ...V.boom },
     seats: S.seats.flatMap(([x, y, z]) => [[x, y, z], ...rows ? rows.flatMap(d => [[-x, y, z + d], [x, y, z + d]]) : [[-x, y, z]]]) } }
+// card #5: the biplane's shape (PLANE)
+VEHICLE_SHAPES[PLANE.row] = { w: 9, l: 7.2, h: 3.4,
+  // the tail wheel's ray runs as the mains' (r 0.4): its hub sits 0.35 over the drawn one so it meets the ground where that does
+  wheels: { r: 0.4, at: [[-0.95, 0.4, -1.3, false], [0.95, 0.4, -1.3, false], [0, 1.5, 4.3, true]] },
+  seats: [[0, 1.7, 0.85], [0, 1.7, -0.25]], exit: [[-1.6, 0, 0.85], [-1.6, 0, -0.25]] }
 const VEHICLES = [
   { name: 'Car', share: 1, engine: 50, brake: [1.24, 0.76], hand: 0.6, steer: 0.65, turn: 30, speed: 59, hp: 300, ram: 3.2, boom: { radius: 7, dmg: 120, knock: 16 }, com: 0.55, wheels: {"slip":[1.4,1.5]},
     variants: [{}, { name: 'Sport', color: 0xffd400, speed: 1.15, grip: 1.1 }, { color: 0x2c6fbb }, { color: 0xb8bec6 }, { name: 'Beater', color: 0x8c7b5c, speed: 0.85, grip: 0.85 }], wreck: 'Wreck' },
@@ -1011,6 +1036,9 @@ const VEHICLES = [
   { name: 'Maniak car', share: 0, engine: 90, brake: [1.8, 1.1], hand: 0.9, steer: 0.6, turn: 32, speed: 66, hp: 700, ram: 6.5,
     boom: { radius: 8, dmg: 140, knock: 18 }, com: 0.5, bal: 0, wheels: { slip: [1.6, 1.7] }, wreck: 'Maniak wreck' },
 ].map(vehicleRow)
+// card #5: the biplane's row (PLANE); its seats as they are (vehicleRow mirrors a car's), its flight in planesTick
+VEHICLES.push({ ...vehicleRow({ name: PLANE.row, share: 0, engine: 0, brake: [0, PLANE.brake], hand: 1, steer: 0.6, turn: 20, speed: 46, hp: 240, ram: 2.4,
+  boom: { radius: 8, dmg: 130, knock: 16 }, com: 1.6, bal: 0, wheels: { slip: [1.2, 1.2] }, wreck: PLANE.wreck, variants: [{}] }), seats: VEHICLE_SHAPES[PLANE.row].seats, fly: PLANE })
 // card #44: Faustland's period fleet, drawn from assets/vehicles.*.glb (made for The MANIAK; see SOURCES.md). VEHICLE_STYLES:
 // per VEHICLES row, per variant (by index, as variantAt picks it): style, the file's model (sedan, taxi, beater, coupe,
 // speedster, van, truck, bus); wheels: 'ww' whitewalls and chrome hubcaps, 'bk' black tyres on painted steel; paints: [body,
@@ -3682,6 +3710,7 @@ function faustLevel(gen, theme) {
   const car = VEHICLES.find(v => v.name === 'Car') || VEHICLES[0]
   const objects = car ? [[[6, 0, 144], car.name, 0, faustMix(seed, 1, 1)], [[-6, 0, -144], car.name, Math.PI, faustMix(seed, 2, 2)]] : []
   // card #33: on the paving and pavements, off the road (faustSpawns); 5 m clear of the pads and the parked cars
+  objects.push(...faustAirfield(seed, S).planes)      // card #5: the biplanes, parked on the airfield
   const spawns = faustSpawns(seed, S, [...pads, ...objects.map(o => o[0])].map(p => [p[0], p[2], 5]))
   return { faust: true, A, W: FAUST.world, theme: { ...THEME, ...theme, size: A, height: FAUST.lid, lid: FAUST.lid, navTop: FAUST.navTop,
     fog: [0x243044, 360 / A, 2300 / A], ramp: [0, 340], pad: 0xd6c5a0 },
@@ -7472,7 +7501,7 @@ function carWant(b, seat, tgt, sd, dt) {
   if (b.bot.enforcer || (ai.carCd = (ai.carCd || 0) - dt) > 0 || tgt && sd < (ai.car ? 50 : BOARD_FAR) || !tgt && !(ai.roam ||= parked.size && roamSpot(b, b.y - b.h - b.r)) || objs.some(o => o.heldBy === b.id)) return ai.car = null
   const free = (o, i) => o.riders[i] === undefined && fits(b, o, i), by = o => players.get(o.riders[0])
   // empty, or a same-side driver's while it waits
-  const usable = o => o.V && o.car && o.heldBy === undefined && o.thrownBy === undefined && o.fuse === undefined && upOf(o) > 0.7 && !canLift(b, o) &&
+  const usable = o => o.V && !o.V.fly && o.car && o.heldBy === undefined && o.thrownBy === undefined && o.fuse === undefined && upOf(o) > 0.7 && !canLift(b, o) &&
     o.V.speed >= BOARD_GAIN * bestPace(b) && (o.riders[0] === undefined ? free(o, 0) && !o.traffic && speedOf(o) < 3 : by(o) && sideOf(by(o)) === sideOf(b) && speedOf(o) < 3 && o.riders.some((r, i) => free(o, i)))
   if (ai.car && !(objs.includes(ai.car) && usable(ai.car) && Math.hypot(ai.car.x - b.x, ai.car.z - b.z) < 30 && (ai.carT -= dt) > 0)) ai.car = null
   if (!ai.car && (ai.carScan = (ai.carScan || 0) - dt) <= 0) {
@@ -8324,6 +8353,7 @@ function chaseStep(o, inp) {
 // the ground by sinkBy of the way up, once clear m outside the car's footprint, and the view tilts up to PITCH_MAX
 const CAR_CAM = { low: 0.05, floor: 0.75, sinkBy: 0.5, clear: 0.6 }
 function vehicleCamera(o, me, inp, cam, firstPerson) {
+  if (o.V?.fly) return planeCamera(o, me, inp, cam, firstPerson)      // card #5
   const pass = (seatOf(me)?.[1] ?? me.ride?.[1]) > 0
   if (chase.yaw !== chase.yaw || tickAt - chase.t >= 500) chaseStep(o, inp)
   const at = objDrawn.get(o), X = at ? at.x : o.x, Y = at ? at.y : o.y, Z = at ? at.z : o.z, Q = at ? at.q : o.q, drawnOff = at ? [0, 0, 0] : o.off || [0, 0, 0]
@@ -8382,9 +8412,9 @@ function lookStep(me, inp) {
   if (!me) return
   wallLook(inp, animOf(me) === 4 && GAME.participantOf(me)?.wallRun ? wallUp(me) : 0, TICK)
   const s = !(me.dead > 0) && seatOf(me)
-  if (s) chaseStep(s[0], inp)
+  if (s && !s[0].V.fly) chaseStep(s[0], inp)
   const o = !s && rideOf(me)
-  if (o) chaseStep(o, inp)
+  if (o && !o.V?.fly) chaseStep(o, inp)
 }
 // card #30: at a sprint the view widens (SPRINT_FOV deg, less in first person), easing in over about 0.2 s and out as he
 // slows; the footfalls (rigFootfall) thump it
@@ -9224,6 +9254,7 @@ function leave(c, o, i) {
 function driveStep(c, inp) {
   const s = seatOf(c)
   if (!s || s[1]) return
+  if (s[0].V.fly) return      // card #5: a plane flies (planesTick)
   const o = s[0], V = o.V, W = V.wheels, v = o.body.getLinearVelocity(), fw = rotq(o.q, [0, 0, -1]), go = v.x() * fw[0] + v.y() * fw[1] + v.z() * fw[2]
   let f = clamp(inp.f || 0, -1, 1), brake = 0
   if (f * go < -0.5) { brake = 1; f = 0 }
@@ -9312,6 +9343,7 @@ function tickChars(list, inputFor, dt, P, t) {
   preTick(list, inputFor, dt)
   if (P) present(list)
   for (const c of list) { carryStep(c, inputFor(c), dt); driveStep(c, inputFor(c)) }
+  planesTick(list, inputFor, dt)
   if (P) P.beforePhysics(t)
   if (P) present(list)
   const p0 = now()
@@ -16873,6 +16905,7 @@ function hullView(key, held, make) {
 }
 // a hull row's vertices off a clone, without its wheels and 'wells'
 function objHullPoints(K) {
+  if (K.points) return K.points.map(p => p.map(Math.fround))      // card #5: a row that lists its own (the biplane)
   const k = OBJECTS.indexOf(K), root = K.drive ? buildProp('object', k) : propModel('object', k).clone(), seen = new Map(), v = new THREE.Vector3()
   if (K.drive) batchMeshes(root, null, { joints: ['wheel', 'wells'] })
   const wheel = n => n && (n.userData.part === 'wheel' || n.userData.part === 'wells' || wheel(n.parent))
@@ -20193,6 +20226,7 @@ function keyHelp(c) {
   return 'WASD move · Shift sprint · ' + space + '<br>' +
     'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
     (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + (C.disguise !== undefined ? ' · G change coat' : '') + (C.pipe ? ' · P pipe' : '') + '<br>' +
+    'In a biplane: the mouse aims it · W full throttle · S idle · A/D roll (on the ground, steer) · Space brakes · E get out<br>' +
     'H whistle for your car, at its wheel the ejector seat · T chat · Tab scores · V view · M sound · B radio · F3 debug · Esc menu'
 }
 
@@ -27473,7 +27507,9 @@ function airInstall() {
 // airship is in the city's pass; past it, in the sky's (whose far plane reaches the globe). The smog lies on the streets:
 // airships keep their own lighter haze, the same in both passes, and running lights that read through it.
 const AIR_FILE = 'zeppelin.59c58b16.glb'
-let airKit = null, airKitAsk = false, airView = null
+// the models, by kind: the airship, and the biplane (planes.js adds its own); each loads once, on a machine that draws
+const airKits = { zep: { file: AIR_FILE, lods: ['zep_lod0', 'zep_lod1', 'zep_lod2'], scene: null, ask: false } }
+let airView = null
 const airHazeColor = { value: new THREE.Color(0x243044) }
 function airMaterial(m) {
   if (!m.isMeshStandardMaterial) return m
@@ -27487,19 +27523,20 @@ function airMaterial(m) {
   m.userData.shared = true
   return m
 }
-function airKitLoad() {
-  if (airKit || airKitAsk || renderHeadless) return
-  airKitAsk = true
+function airKitLoad(kind = 'zep') {
+  const K = airKits[kind]
+  if (!K || K.scene || K.ask || renderHeadless) return
+  K.ask = true
   rigLoader()
-  rigFetch(AIR_FILE).then(g => {
+  rigFetch(K.file).then(g => {
     const mats = new Map()
     g.scene.traverse(n => { if (!n.isMesh) return
       n.geometry.userData.shared = true; n.receiveShadow = true
       n.material = mats.get(n.material) || (mats.set(n.material, airMaterial(n.material)), n.material) })
-    airKit = g.scene
+    K.scene = g.scene
     airWarm(g.scene)
     if (airView) airViewBuild()
-  }).catch(e => { airKitAsk = false; console.warn('zeppelin model failed, drawing its collider:', e?.message || e) })
+  }).catch(e => { K.ask = false; console.warn(kind + ' model failed, drawing its stand-in:', e?.message || e) })
 }
 // its programs, ahead of the first one in view: each LOD's meshes in the city's pass and in the sky's
 function airWarm(kit) {
@@ -27510,66 +27547,78 @@ function airWarm(kit) {
     renderer.compileAsync(probe, camera, target).catch(() => {})
   }
 }
-let airStand = null
-function airStandIn() {
-  if (airStand) return airStand
-  const t = airTris(), g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.BufferAttribute(t, 3)); g.computeVertexNormals(); g.userData.shared = true
-  return airStand = new THREE.Mesh(g, airMaterial(new THREE.MeshStandardMaterial({ color: 0x2b2e35, roughness: 0.6, metalness: 0.3, side: THREE.DoubleSide })))
+// until its model is here: the airship's collider, the biplane's hull
+const airStands = {}
+function airStandIn(kind = 'zep') {
+  if (airStands[kind]) return airStands[kind]
+  const mat = airMaterial(new THREE.MeshStandardMaterial({ color: kind === 'zep' ? 0x2b2e35 : 0x4a2020, roughness: 0.6, metalness: 0.3, side: THREE.DoubleSide }))
+  if (kind === 'zep') { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(airTris(), 3)); g.computeVertexNormals(); g.userData.shared = true
+    return airStands[kind] = new THREE.Mesh(g, mat) }
+  // the biplane: its fuselage and two wings, as boxes [cx, cy, cz, w, h, d] in its model space
+  const root = new THREE.Group()
+  for (const [x, y, z, w, h, d] of [[0, 1.9, -0.25, 1, 1.2, 7], [0, 3.15, -0.8, 9, 0.12, 1.5], [0, 1.45, -0.5, 8.2, 0.12, 1.4], [0, 2.6, 3.9, 0.12, 1.2, 1]]) {
+    const g = new THREE.BoxGeometry(w, h, d); g.userData.shared = true; const m = new THREE.Mesh(g, mat); m.position.set(x, y, z); root.add(m) }
+  return airStands[kind] = root
 }
-// a ship's running lights (port red, starboard green, tail white, the cabin's amber), one draw: its frame
-let airLightGeo = null, airLightMat = null
-function airLights() {
-  if (!airLightGeo) {
-    airLightGeo = new THREE.BufferGeometry(); airLightGeo.userData.shared = true
-    airLightGeo.setAttribute('position', new THREE.Float32BufferAttribute([-16, -15, -40, 16, -15, -40, 0, 0, 61, -6.2, -14, -10, 6.2, -14, -10, 0, 12.3, -20], 3))
-    airLightGeo.setAttribute('color', new THREE.Float32BufferAttribute([1, 0.12, 0.08, 0.1, 1, 0.3, 1, 1, 1, 1, 0.65, 0.3, 1, 0.65, 0.3, 1, 0.1, 0.05], 3))
-    airLightMat = new THREE.PointsMaterial({ size: 4, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, fog: false, toneMapped: false, blending: THREE.AdditiveBlending })
-    airLightMat.userData.shared = true
+// a ship's running lights, one draw in its frame: the airship's (port red, starboard green, tail white, the cabin's amber,
+// the crimson beacon), the biplane's (port red, starboard green, tail white)
+const airLightSets = { zep: [[-16, -15, -40, 16, -15, -40, 0, 0, 61, -6.2, -14, -10, 6.2, -14, -10, 0, 12.3, -20], [1, 0.12, 0.08, 0.1, 1, 0.3, 1, 1, 1, 1, 0.65, 0.3, 1, 0.65, 0.3, 1, 0.1, 0.05], 4],
+  plane: [[-4.5, 3.15, -0.8, 4.5, 3.15, -0.8, 0, 3.1, 4.3], [1, 0.12, 0.08, 0.1, 1, 0.3, 1, 1, 1], 3] }
+const airLightGeos = {}
+function airLights(kind = 'zep') {
+  let L = airLightGeos[kind]
+  if (!L) {
+    const [pos, col, size] = airLightSets[kind], g = new THREE.BufferGeometry(); g.userData.shared = true
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+    const m = new THREE.PointsMaterial({ size, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, fog: false, toneMapped: false, blending: THREE.AdditiveBlending })
+    m.userData.shared = true; L = airLightGeos[kind] = { g, m }
   }
-  const p = new THREE.Points(airLightGeo, airLightMat); p.frustumCulled = false; return p
+  const p = new THREE.Points(L.g, L.m); p.frustumCulled = false; return p
+}
+// one drawn ship of a kind: its LODs, and in each the parts that move (propellers, a biplane's surfaces and pilot)
+function airShip(kind, name) {
+  const K = airKits[kind], root = new THREE.Group(), lods = [], parts = []
+  if (K.scene) for (const n of K.lods) {
+    const g = K.scene.getObjectByName(n)?.clone()
+    if (!g) continue
+    g.traverse(m => { if (m.isMesh) m.castShadow = n === K.lods[0] })
+    root.add(g); lods.push(g)
+    parts.push({ props: g.children.filter(m => /^prop(_\d)?$/.test(m.name)), pilot: g.getObjectByName('pilot') })
+  }
+  if (!lods.length) { const m = airStandIn(kind).clone(); root.add(m); lods.push(m) }
+  root.add(airLights(kind)); root.name = name
+  return { root, lods, parts, kind }
 }
 function airViewBuild() {
   const F = faustState
-  if (airView) { for (const s of airView.ships) s.root.removeFromParent(); airView.near.removeFromParent(); airView.far.removeFromParent() }
+  if (airView) { for (const s of airView.ships) s.root.removeFromParent(); airView.near.removeFromParent(); airView.far.removeFromParent(); airView.field?.removeFromParent() }
   airView = null
-  if (!LV.faust || !worldGroup || renderHeadless || !airFleet.length) return
-  airKitLoad()
+  if (!LV.faust || !worldGroup || renderHeadless || !LV.grow) return
+  airKitLoad('zep'); airKitLoad('plane')
   const near = new THREE.Group(), far = new THREE.Group()
   near.name = 'airships'; far.name = 'airships far'; worldGroup.add(near); F?.skyScene?.add(far)
   airHazeColor.value.set(LV.theme.fog[0])
-  const ships = airFleet.map(c => {
-    const root = new THREE.Group(), lods = [], props = []
-    if (airKit) for (const name of ['zep_lod0', 'zep_lod1', 'zep_lod2']) {
-      const g = airKit.getObjectByName(name)?.clone()
-      if (!g) continue
-      g.traverse(n => { if (n.isMesh) n.castShadow = name === 'zep_lod0' })
-      root.add(g); lods.push(g)
-      props.push(g.children.filter(n => /^prop_\d$/.test(n.name)))
-    }
-    if (!lods.length) { const m = airStandIn().clone(); root.add(m); lods.push(m) }
-    root.add(airLights())
-    root.name = c.id; root.userData.carrier = c.id
-    return { c, root, lods, props }
-  })
-  airView = { near, far, ships, t: NaN }
+  const ships = airFleet.map(c => ({ ...airShip('zep', c.id), pose: t => airPose(c.line, c.k, t), id: c.id }))
+  for (const C of planeCircuits(LV.grow.seed, LV.grow.S)) for (let k = 0; k < C.fleet; k++) ships.push({ ...airShip('plane', 'plane:' + C.id + ':' + k), pose: t => planeCircuitPose(C, k, t), id: 'plane:' + C.id + ':' + k })
+  airView = { near, far, ships, t: NaN, field: airfieldView() }
 }
-// every frame, before the city draws: each ship where it is at the drawn time
+// every frame, before the city draws: each ship where it is at the drawn time; a biplane banked into its turn
 function airDraw() {
   const V = airView
   if (!V || !LV.faust || !camera) return
   const t = isHost ? drawnT() : renderT
   if (V.t === t) return
-  V.t = t
+  V.t = t; planeFrame++
+  for (const [key, v] of planeViews) if (v.seen < planeFrame - 1) { v.root.visible = false; if (v.seen < planeFrame - 600) { v.root.removeFromParent(); planeViews.delete(key) } }
   if (V.far.parent !== faustState?.skyScene && faustState?.skyScene) faustState.skyScene.add(V.far)
   const cp = camera.position
   for (const s of V.ships) {
-    const p = airPose(s.c.line, s.c.k, t), d = Math.hypot(p.x - cp.x, p.y - cp.y, p.z - cp.z)
-    s.root.position.set(p.x, p.y, p.z); s.root.rotation.y = p.yaw; s.root.matrixAutoUpdate = true
-    const lod = Math.min(d < AIR.lod[0] ? 0 : d < AIR.lod[1] ? 1 : 2, s.lods.length - 1)
+    const p = s.pose(t), d = Math.hypot(p.x - cp.x, p.y - cp.y, p.z - cp.z), zep = s.kind === 'zep', R = zep ? AIR.lod : PLANE_LOOK.lods
+    s.root.position.set(p.x, p.y, p.z); s.root.rotation.set(p.pitch || 0, p.yaw, p.bank || 0, 'YXZ'); s.root.matrixAutoUpdate = true
+    const lod = Math.min(d < R[0] ? 0 : d < R[1] ? 1 : 2, s.lods.length - 1)
     s.lods.forEach((g, i) => { g.visible = i === lod })
-    const spin = t / 1000 * (p.stage === 'leg' ? 13 : p.stage === 'dwell' ? 2.5 : 7)
-    for (const n of s.props[lod] || []) { n.rotation.z = spin + n.id; n.matrixAutoUpdate = true }
+    const spin = t / 1000 * (!zep ? 40 : p.stage === 'leg' ? 13 : p.stage === 'dwell' ? 2.5 : 7)
+    for (const n of s.parts[lod]?.props || []) { n.rotation.z = spin + n.id; n.matrixAutoUpdate = true }
     const into = d < AIR.near || !V.far.parent ? V.near : V.far
     if (s.root.parent !== into) into.add(s.root)
     s.root.updateMatrixWorld(true)
@@ -27587,8 +27636,168 @@ GAME.air = {
     return null },
   local: (id, x, y, z, t) => { const p = GAME.air.pose(id, t); return p && carrierLocal(p, x, y, z) },
   world: (id, x, y, z, t) => { const p = GAME.air.pose(id, t); return p && carrierWorld(p, x, y, z) },
-  get view() { return airView && { kit: !!airKit, ships: airView.ships.map(s => ({ id: s.c.id, near: s.root.parent === airView.near, lod: s.lods.findIndex(g => g.visible), at: s.root.position.toArray().map(v => +v.toFixed(2)) })) } },
+  get view() { return airView && { kits: Object.fromEntries(Object.entries(airKits).map(([k, K]) => [k, !!K.scene])), ships: airView.ships.map(s => ({ id: s.id, near: s.root.parent === airView.near, lod: s.lods.findIndex(g => g.visible), at: s.root.position.toArray().map(v => +v.toFixed(2)) })) } },
 }
+// ---------------------------------------------------------------- biplanes (card #5)
+// Pin rule 5, "Needs to have zeppelins and biplanes"; the brief: players fly them. The 'Biplane' rows (PLANE): seat 0, the
+// rear cockpit, flies it; seat 1, the front, rides. Host-authoritative and synced like any car; a guest predicts the one it flies.
+// - Arcade flight: it flies toward the aim (the camera's yaw and pitch: the mouse, or the touch look), banking into turns.
+//   W full throttle, S idle, neither cruise; A/D roll (on the ground, steer); Space the wheel brakes. Lift grows with
+//   airspeed: too slow, or pulled past PLANE.stall, the wings let go, the nose drops onto its path and it gathers speed to
+//   fly again. It lands on its wheels anywhere flat enough: roads, the fields, big roofs.
+// - A crash is a car's: hit points from the knock, then its boom and wreck ('Biplane wreck').
+// - Unflown, it glides: the same air, no thrust, wings levelling.
+// - Parked on the airfield past the city's south-east (faustAirfield); AI biplanes fly circuits of their own (planeCircuits),
+//   between the towers, past Faust's face and round the top of the globe, drawn like the airships.
+const planeDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+const planeCross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+function planesTick(list, inputFor, dt) {
+  for (const o of objs) {
+    if (!o.V?.fly || !o.car || o.parked || o.heldBy !== undefined) continue
+    const id = o.riders[0], c = id !== undefined ? list.find(c => c.id === id) : null
+    if (id !== undefined && !c) continue           // flown by someone simulated elsewhere
+    planeStep(o, c ? inputFor(c) : null, dt)
+  }
+}
+function planeStep(o, inp, dt) {
+  const P = o.V.fly, b = o.body, v0 = b.getLinearVelocity(), w0 = b.getAngularVelocity(), W = o.V.wheels
+  const fw = rotq(o.q, [0, 0, -1]), up = rotq(o.q, [0, 1, 0]), rt = rotq(o.q, [1, 0, 0]), v = [v0.x(), v0.y(), v0.z()], speed = Math.hypot(...v)
+  const vf = planeDot(v, fw), vu = planeDot(v, up), ground = W.at.some((_, k) => o.car.getWheelInfo(k).get_m_raycastInfo().get_m_isInContact())
+  // the air: thrust along the nose; lift along its up, from the forward speed and the angle of attack; drag
+  const thr = inp ? P.thrust[inp.f > 0.3 ? 2 : inp.f < -0.3 ? 0 : 1] : 0
+  const aoa = Math.atan2(-vu, Math.max(Math.abs(vf), 1)), stalled = vf < P.lift * 0.62 || Math.abs(aoa) > P.stall
+  const lift = -GRAV * Math.min((Math.max(vf, 0) / P.lift) ** 2 * (stalled ? 0.35 : clamp(1 + aoa * 4, 0, 2)), P.maxG), drag = P.drag * speed
+  let nv = v.map((x, i) => x + (fw[i] * thr + up[i] * lift - x * drag) * dt)
+  // aloft, the air turns its path onto the nose (sideslip and sink bleed away), the more the faster it flies
+  if (!ground) { const f = planeDot(nv, fw), k = 1 - Math.exp(-dt * P.align * clamp(f / P.lift, 0, 1.5)); nv = nv.map((x, i) => x - (x - fw[i] * f) * k) }
+  velVec.setValue(nv[0], nv[1], nv[2]); b.setLinearVelocity(velVec)
+  // the controls, with authority as the air flows over them: toward the aim, banking into the turn; A/D roll over it
+  const auth = clamp(vf / P.lift, ground ? 0 : 0.12, 1.2), bank = Math.atan2(-rt[1], up[1])
+  let pitch = 0, yaw = 0, roll = clamp(-bank * 2, -1, 1) * P.rates[2] * Math.min(auth, 1)
+  if (inp) {
+    const d = aimDir(inp.yaw, inp.pitch), dx = planeDot(d, rt), dy = planeDot(d, up), dz = planeDot(d, fw)
+    pitch = clamp(Math.atan2(dy, Math.max(dz, 0.25)) * 3, -1, 1) * P.rates[0] * auth
+    yaw = clamp(-dx * 2.5, -1, 1) * P.rates[1] * auth
+    const err = wrapPi(inp.yaw - Math.atan2(-fw[0], -fw[2])), want = clamp(-err * 1.8, -P.bank, P.bank) * clamp(Math.hypot(fw[0], fw[2]) * 2, 0, 1)
+    roll = Math.abs(inp.r || 0) > 0.3 ? Math.sign(inp.r) * P.rates[2] * Math.max(auth, 0.3) : clamp((want - bank) * 2.5, -1, 1) * P.rates[2] * Math.min(auth, 1)
+    if (ground) yaw = -clamp(inp.r || 0, -1, 1) * P.taxi * clamp(Math.abs(vf) / 6, 0.35, 1)
+  }
+  // the air weathervanes the nose onto its path: hard in a stall, so the nose drops and it flies again
+  const vane = !ground && speed > 2 ? planeCross(fw, nv.map(x => x / speed)).map(x => x * (stalled ? 1.8 : 0.5) * clamp(speed / P.lift, 0.25, 1.2)) : [0, 0, 0]
+  let w = [0, 1, 2].map(i => rt[i] * pitch + up[i] * yaw + fw[i] * roll + vane[i])
+  if (ground) {      // on its wheels the gear holds pitch and roll: it steers, and rotates to take off once the wings bite
+    const now_ = [w0.x(), w0.y(), w0.z()], dy = yaw - planeDot(now_, up), dp = auth > 0.6 ? (pitch - planeDot(now_, rt)) * 0.5 : 0
+    w = now_.map((x, i) => x + up[i] * dy + rt[i] * dp)
+  }
+  velVec.setValue(w[0], w[1], w[2]); b.setAngularVelocity(velVec); b.activate()
+  const brake = inp && (inp.j || inp.f < -0.3 && Math.abs(vf) < 10) ? P.brake : inp ? 0 : 0.4
+  W.at.forEach(([, , , tail], k) => { o.car.applyEngineForce(0, k); o.car.setBrake(tail ? 0 : brake, k); if (tail) o.car.setSteeringValue(0, k) })
+  o.steer = 0; o.planeIn = inp ? [clamp(pitch / P.rates[0], -1, 1), clamp(yaw / P.rates[1], -1, 1), clamp(roll / P.rates[2], -1, 1), thr / P.thrust[2]] : null
+}
+// the camera flying one: behind and over it along the aim (third person), or from the cockpit (first)
+const PLANE_CAM = { back: 15, over: 3.2, look: 40, eye: 0.95 }
+function planeCamera(o, me, inp, cam, firstPerson) {
+  const seat = seatOf(me)?.[1] ?? me.ride?.[1] ?? 0, at = objDrawn.get(o), D = at || o, off = at ? [0, 0, 0] : o.off || [0, 0, 0]
+  const d = aimDir(inp.yaw, inp.pitch), frame = { ...D, at0: hullAt(o.K) }
+  if (cam.fov !== settings.fov) { cam.fov = settings.fov; cam.updateProjectionMatrix?.() }
+  if (firstPerson) {
+    const s = o.V.seats[seat] || o.V.seats[0], e = seatAt(frame, [s[0], s[1] + PLANE_CAM.eye + 0.6, s[2]]).map((v, i) => v + off[i])
+    cam.position.set(...e); cam.lookAt(e[0] + d[0], e[1] + d[1], e[2] + d[2])
+    return { dist: 0, hideSelf: true, fade: 0, seatRay: seat ? { x: e[0], y: e[1], z: e[2], dx: d[0], dy: d[1], dz: d[2], near: 0 } : null }
+  }
+  const tx = D.x + off[0], ty = D.y + off[1] + 1.6, tz = D.z + off[2], bx = -d[0], by = -d[1] + PLANE_CAM.over / PLANE_CAM.back, bz = -d[2], bl = Math.hypot(bx, by, bz) || 1
+  const len = Math.hypot(PLANE_CAM.back, PLANE_CAM.over), t = camBlock(tx, ty, tz, bx / bl, by / bl, bz / bl, len)
+  const cx = tx + bx / bl * t, cy = Math.max(ty + by / bl * t, FLOOR_TOP + 0.35), cz = tz + bz / bl * t
+  cam.position.set(cx, cy, cz); cam.lookAt(tx + d[0] * PLANE_CAM.look, ty + d[1] * PLANE_CAM.look, tz + d[2] * PLANE_CAM.look)
+  const v = new THREE.Vector3(); cam.getWorldDirection(v)
+  return { dist: t, hideSelf: false, fade: 1, seatRay: seat ? { x: cx, y: cy, z: cz, dx: v.x, dy: v.y, dz: v.z, near: t } : null }
+}
+// ---- the airfield, past the city's south-east corner on #18's fields: a runway north and south, and the planes parked at its
+// southern end, headed up it toward the city. Pure in (seed, S): faustLevel lists the planes among its objects.
+function faustAirfield(seed, S) {
+  const A = S * 48, x = Math.round(A * 0.45), z0 = A + 250, z1 = A + 850
+  return { x, z0, z1, w: 30, planes: [[-8, 0], [8, 0], [-24, 30], [24, 30]].map(([dx, dz], i) => [[x + dx, 0, z1 - 50 + dz], PLANE.row, 0, faustMix(seed, 4100 + i, 17)]) }
+}
+function airfieldView() {
+  if (!LV.faust || !LV.grow || !worldGroup) return null
+  const F = faustAirfield(LV.grow.seed, LV.grow.S), g = new THREE.Group(), p = [], c = []
+  const quad = (x0, x1, z0, z1, y, col) => { p.push(x0, y, z0, x0, y, z1, x1, y, z1, x0, y, z0, x1, y, z1, x1, y, z0); for (let i = 0; i < 6; i++) c.push(...col) }
+  quad(F.x - F.w / 2, F.x + F.w / 2, F.z0, F.z1, 0.03, [0.16, 0.17, 0.19])
+  for (let z = F.z0 + 30; z < F.z1 - 30; z += 40) quad(F.x - 0.5, F.x + 0.5, z, z + 20, 0.04, [0.75, 0.73, 0.66])
+  for (const z of [F.z0 + 8, F.z1 - 8]) for (let k = -5; k <= 5; k += 2) quad(F.x + k * 1.2 - 0.4, F.x + k * 1.2 + 0.4, z - 6, z + 6, 0.04, [0.75, 0.73, 0.66])
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(c, 3))
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(p.map((_, i) => i % 3 === 1 ? 1 : 0), 3))
+  const strip = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 })); strip.receiveShadow = true; g.add(strip)
+  const L = [], C = []
+  for (let z = F.z0; z <= F.z1; z += 50) for (const s of [-1, 1]) { L.push(F.x + s * (F.w / 2 + 1), 0.4, z); C.push(...(z === F.z0 ? [1, 0.2, 0.15] : z === F.z1 ? [0.2, 1, 0.35] : [1, 0.8, 0.45])) }
+  const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(L, 3)); lg.setAttribute('color', new THREE.Float32BufferAttribute(C, 3))
+  g.add(new THREE.Points(lg, new THREE.PointsMaterial({ size: 1.6, vertexColors: true, transparent: true, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending })))
+  g.name = 'airfield'; worldGroup.add(g); still(g)
+  return g
+}
+// ---- AI biplanes: circuits, pure in (seed, S) and the room clock; drawn with the airships, not bodies. A circuit is a closed
+// path: a rounded rectangle between the transit towers (on the lattice's midlines, under the airships), a loop in front of
+// Faust's face, and a ring round the globe over his head.
+function planeCircuits(seed, S) {
+  const A = S * 48, mid = k => 24 + 384 * k, out = []
+  const ring = (cx, y, cz, r, n = 48) => Array.from({ length: n }, (_, i) => [cx + r * Math.cos(2 * Math.PI * i / n), y, cz + r * Math.sin(2 * Math.PI * i / n)])
+  const k = Math.max(1, Math.floor((A - 120) / 384)), x0 = mid(-k), x1 = mid(k - 1), r = 150
+  const rect = []
+  for (const [cx, cz, a0] of [[x1 - r, x0 + r, -Math.PI / 2], [x1 - r, x1 - r, 0], [x0 + r, x1 - r, Math.PI / 2], [x0 + r, x0 + r, Math.PI]])
+    for (let i = 0; i <= 8; i++) { const a = a0 + Math.PI / 2 * i / 8; rect.push([cx + r * Math.cos(a), 450, cz + r * Math.sin(a)]) }
+  out.push({ id: 'towers', path: rect, speed: 42, fleet: 2 })
+  out.push({ id: 'face', path: ring(0, 1500, -640, 260, 32), speed: 40, fleet: 1 })
+  out.push({ id: 'globe', path: ring(0, 3050, -3000, 1500, 64), speed: 48, fleet: 2 })
+  for (const [n, C] of out.entries()) {
+    C.loop = airPath([...C.path, C.path[0]])
+    C.L = C.loop.at(-1)[3]; C.T = C.L / C.speed; C.phase = (faustMix(seed, 5300 + n, 7) % 100000) / 100000 * C.T
+  }
+  return out
+}
+// an AI biplane at room time t (ms): where, its heading, and its bank into the turn (v²κ against gravity)
+function planeCircuitPose(C, k, t) {
+  const s = (((t / 1000 + C.phase + k * C.T / C.fleet) % C.T + C.T) % C.T) * C.speed, a = airAlong(C.loop, s), b = airAlong(C.loop, (s + 20) % C.L)
+  const turn = airWrap(b[3] - a[3]) / 20, bank = Math.atan(C.speed * C.speed * turn / -GRAV)
+  return { x: a[0], y: a[1], z: a[2], yaw: a[3], pitch: 0, bank, vx: 0, vy: 0, vz: 0, w: 0, stage: 'leg' }
+}
+// ---- the look of a flown (or parked) one: the model over its body, LOD by distance, its propeller turning with the throttle
+// and its surfaces where its pilot holds them; the pilot drawn only when nobody flies it (a player shows himself)
+const planeViews = new Map(), planeQ = new THREE.Quaternion()
+let planeFrame = 0, planeWreckMat = null
+function planeLook(o) {
+  const K = OBJECTS[o.k], H = hullOf(K), key = o.id ?? o
+  if (!H) return true
+  airKitLoad('plane')
+  let v = planeViews.get(key)
+  const kit = airKits.plane.scene, wreck = !K.drive
+  if (v && (v.kit !== kit || v.wreck !== wreck)) { v.root.removeFromParent(); planeViews.delete(key); v = null }
+  if (!v) {
+    const root = new THREE.Group(), model = kit ? kit.clone() : airStandIn('plane').clone(), lods = kit ? ['plane_lod0', 'plane_lod1', 'plane_lod2'].map(n => model.getObjectByName(n)).filter(Boolean) : [model]
+    if (wreck && kit) { planeWreckMat ||= new THREE.MeshStandardMaterial({ color: 0x1b1a19, roughness: 1 }); model.traverse(n => { if (n.isMesh) n.material = planeWreckMat }) }
+    model.position.set(-H.at[0], -H.at[1], -H.at[2]); root.add(model); root.matrixAutoUpdate = false
+    model.traverse(n => { if (n.isMesh) { n.castShadow = !/lod[12]/.test(n.parent?.name || ''); n.receiveShadow = true } })
+    planeViews.set(key, v = { root, model, lods, kit, wreck, lod: -1, parts: lods.map(g => ({ prop: g.getObjectByName('prop'), aileron_l: g.getObjectByName('aileron_l'),
+      aileron_r: g.getObjectByName('aileron_r'), elevator: g.getObjectByName('elevator'), rudder: g.getObjectByName('rudder'), pilot: g.getObjectByName('pilot') })) })
+  }
+  if (v.root.parent !== objGroup) objGroup.add(v.root)
+  v.seen = planeFrame; v.root.visible = true
+  v.root.position.set(o.x, o.y, o.z); v.root.quaternion.set(...o.q); v.root.updateMatrix()
+  const d = camera ? v.root.position.distanceTo(camera.position) : 0, lod = Math.min(d < PLANE_LOOK.lods[0] ? 0 : d < PLANE_LOOK.lods[1] ? 1 : 2, v.lods.length - 1)
+  if (lod !== v.lod) { v.lod = lod; v.lods.forEach((g, i) => { g.visible = i === lod }) }
+  const live = objs.find(x => x.id === o.id) || o, P = live.planeIn, flown = live.riders?.[0] !== undefined, at = v.parts[lod]
+  if (at?.prop) at.prop.rotation.z = flown || !live.parked ? now() / 1000 * (P ? 18 + 30 * P[3] : 14) : 0
+  for (const [n, a, i] of [['elevator', 'x', 0], ['rudder', 'y', 1], ['aileron_l', 'x', 2], ['aileron_r', 'x', 2]]) if (at?.[n]) at[n].rotation[a] = P ? P[i] * 0.35 * (n === 'aileron_r' ? -1 : 1) * (n === 'elevator' ? -1 : 1) : 0
+  if (at?.pilot) at.pilot.visible = false
+  v.model.updateMatrixWorld(true)
+  return true
+}
+const PLANE_LOOK = { file: 'biplane.360a9509.glb', lods: [70, 320] }
+for (const K of OBJECTS) if (K.plane) K.ownLook = planeLook
+airKits.plane = { file: PLANE_LOOK.file, lods: ['plane_lod0', 'plane_lod1', 'plane_lod2'], scene: null, ask: false }
+GAME.planes = { config: PLANE, look: PLANE_LOOK, airfield: () => LV.faust && LV.grow ? faustAirfield(LV.grow.seed, LV.grow.S) : null,
+  get circuits() { return LV.faust && LV.grow ? planeCircuits(LV.grow.seed, LV.grow.S).map(C => ({ id: C.id, L: C.L, T: C.T, fleet: C.fleet })) : [] },
+  // the flown ones simulated here: id, where, speed, its controls
+  get flying() { return objs.filter(o => o.V?.fly).map(o => { const v = o.body.getLinearVelocity(); return { id: o.id, x: o.x, y: o.y, z: o.z, speed: Math.hypot(v.x(), v.y(), v.z()), parked: o.parked, pilot: o.riders[0], hp: o.hp, controls: o.planeIn } }) } }
 
 // ---------------------------------------------------------------- Faustland's monorail (card #60): drawn, solid, ridden
 // Everything comes from faustRail(seed, S) and the room clock: nothing is on the wire. The trains are where the timetable
