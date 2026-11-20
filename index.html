@@ -662,6 +662,7 @@ const LOOK_DEFAULT = 'ink'
 const LOOKS = {
   ink: { label: 'Ink', render: inkRender, teardown: inkDispose, scale: quality => quality === 'low' ? 0.8 : 1 },
   plain: { label: 'Plain' },
+  realistic: { label: 'Realistic', render: realRender, teardown: realTeardown, scale: realScale },
 }
 const ROOM_NS = 'maniak-'
 const TITLE_FONT = { family: 'Maniak Display', url: 'https://cdn.jsdelivr.net/npm/@fontsource/luckiest-guy@5.3.0/files/luckiest-guy-latin-400-normal.woff2',
@@ -8545,7 +8546,7 @@ function lookRender(render, s, cam) {
   const draw = LOOKS[activeLook]?.render || faustRender
   draw(render, s, cam)
   Object.assign(lookStats, { look: activeLook, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
-    passes: activeLook === 'ink' && inkPost ? inkPost.outlines ? inkPost.field ? 3 : 2 : 1 : 0, targetBytes: activeLook === 'ink' && inkPost ? inkPost.target.width * inkPost.target.height * (inkPost.outlines ? inkPost.field ? 20 : inkPost.separateNormals ? 12 : 16 : 8) + (inkPost.separateNormals ? inkPost.normalTarget.width * inkPost.normalTarget.height * 8 : 0) : 0 })
+    passes: activeLook === 'realistic' ? realStats.passes : activeLook === 'ink' && inkPost ? inkPost.outlines ? inkPost.field ? 3 : 2 : 1 : 0, targetBytes: activeLook === 'realistic' ? realStats.targetMB * 1048576 : activeLook === 'ink' && inkPost ? inkPost.target.width * inkPost.target.height * (inkPost.outlines ? inkPost.field ? 20 : inkPost.separateNormals ? 12 : 16 : 8) + (inkPost.separateNormals ? inkPost.normalTarget.width * inkPost.normalTarget.height * 8 : 0) : 0 })
 }
 function inkPrepare(root) {
   root?.traverse(o => {
@@ -8947,6 +8948,1001 @@ function inkRender(render, s, cam) {
 }
 GAME.look = { table: LOOKS, stats: lookStats, set(name) { if (!Object.hasOwn(LOOKS, name)) return false; settings.look = name; applySettings(); saveSettings(); return true },
   get current() { return settings.look } }
+
+// ---------------------------------------------------------------- realistic noir (card #25)
+// LOOKS.realistic: Faustland at night as close to modern GTA as the browser allows. For the length of its own render
+// call it swaps in PBR city materials (CC0 texture arrays from assets/, see SOURCES.md), an image-based night
+// environment, height fog, sodium street lights and a sky dome, draws the frame into an HDR target, and finishes it
+// with a post chain: ambient occlusion, wet-street reflections, light shafts, bloom, a filmic tone map (AgX) and grade,
+// and anti-aliasing. Every state it swaps is restored in finally, so Plain and Ink never see any of it.
+// Tiers (settings.quality): msaa = HDR samples, used below 1.5 device pixels a pixel (else, and at 0, FXAA); ao, ssr =
+// samples per pixel, shafts = samples per cone (0: the pass is off); bloom = mip levels, from half (1) or quarter (2)
+// resolution; lamps = real spot lights at the nearest street lamps; tex = texture size; scale = render scale (LOOKS'
+// scale hook). Low has no AO, reflections, shafts or composite: the HDR frame goes straight to bloom and the grade.
+const REAL_TIERS = {
+  high:   { msaa: 4, ao: 12, ssr: 28, shafts: 6, bloom: 6, bloomFrom: 1, lamps: 8, tex: 1024, scale: 1 },
+  medium: { msaa: 0, ao: 6,  ssr: 14, shafts: 3, bloom: 5, bloomFrom: 1, lamps: 4, tex: 1024, scale: 1 },
+  low:    { msaa: 0, ao: 0,  ssr: 0,  shafts: 0, bloom: 3, bloomFrom: 2, lamps: 2, tex: 512,  scale: 0.75 },
+}
+// test and tuning only: fields merged over the tier (GAME.realistic.override), e.g. { ssr: 0 } to time a frame without it
+const realOverride = {}
+// The grade: exposure, bloom (strength, threshold), saturation, split toning (shadows, highlights), vignette, grain,
+// and how much AO, reflections and shafts the composite adds.
+const REAL_GRADE = { exposure: 1.4, bloom: 0.5, threshold: 0.9, saturation: 0.8, shadows: [0.9, 1.0, 1.12],
+  highlights: [1.07, 1.0, 0.9], vignette: 0.5, grain: 0.018, ao: 0.9, ssr: 1, shafts: 1 }
+// The night: moon direction and light, ambient, fog (colour, density at street level, scale height in m), street lamps.
+const REAL_SKY = { moon: [-28, 18, 14], moonColor: 0xb8d3ff, moonLight: 1.4, hemi: 0.06, fog: 0x1a1e27, fogDensity: 0.003,
+  fogHeight: 90, lamp: 0xffa54f, lampCandela: 500, lampRange: 30 }
+// Texture arrays: one layer per material, colour + occlusion and normal + roughness, WebP named by content hash (pin
+// rule 9). REAL_MEAN is each colour map's mean linear albedo: a surface's own tint sets its mean, the map its detail.
+const REAL_LAYERS = ['stone', 'brick', 'concrete', 'asphalt', 'setts', 'granite']
+const REAL_FILES = {
+  stone: ['real_stone_c.56b7c34a.webp', 'real_stone_n.82c6a8ce.webp'],
+  brick: ['real_brick_c.42ff7300.webp', 'real_brick_n.fd17444c.webp'],
+  concrete: ['real_concrete_c.687e9b94.webp', 'real_concrete_n.c6160c5a.webp'],
+  asphalt: ['real_asphalt_c.fd3c2e58.webp', 'real_asphalt_n.b5a93bdd.webp'],
+  setts: ['real_setts_c.01d7b74b.webp', 'real_setts_n.d36c293d.webp'],
+  granite: ['real_granite_c.a24732fb.webp', 'real_granite_n.46e169b8.webp'],
+}
+const REAL_MEAN = [[0.241, 0.241, 0.239], [0.255, 0.170, 0.107], [0.127, 0.120, 0.108], [0.0248, 0.0253, 0.0224],
+  [0.275, 0.268, 0.242], [0.489, 0.470, 0.445]]
+// What the city's tints are made of, matched on the vertex colour; a tint not listed falls back by brightness (dark:
+// iron, else stone). Keep in step with faustVisualSteps' tints.
+const REAL_KIND = { stone: 0, brick: 1, concrete: 2, asphalt: 3, sidewalk: 4, setts: 5, granite: 6, darkGranite: 7,
+  paintWhite: 8, paintYellow: 9, paintBike: 10, iron: 11, steel: 12, brass: 13, door: 14, shadow: 15, lamp: 16,
+  pier: 17, cornice: 18, crown: 19 }
+const REAL_TINTS = [
+  [0x242a33, 'asphalt'], [0x5d626a, 'setts'], [0x404b5b, 'setts'], [0x8e9399, 'granite'], [0x737983, 'sidewalk'],
+  [0xa1a5a9, 'granite'], [0x3d5557, 'paintBike'], [0xa3adb0, 'paintWhite'], [0xb4a77d, 'paintYellow'],
+  [0xadb0ad, 'paintWhite'], [0x343d4b, 'darkGranite'], [0x969b9e, 'concrete'], [0x111a26, 'door'], [0xa1a8ae, 'cornice'],
+  [0x080f1a, 'door'], [0x283342, 'iron'], [0x8b939b, 'iron'], [0x6a7480, 'iron'], [0xb3bac0, 'pier'], [0xadb0b1, 'cornice'],
+  [0x515963, 'darkGranite'], [0xa4a9ac, 'stone'], [0x8d949c, 'stone'], [0x1b222b, 'door'], [0x080e18, 'shadow'],
+  [0xc0c5c7, 'stone'], [0x596574, 'stone'], [0xadb5b9, 'cornice'], [0xc1c6c7, 'stone'], [0xc6c8c3, 'steel'],
+  [0x8c939b, 'crown'], [0xa4aab0, 'steel'], [0xc4c9c9, 'steel'], [0xe1d2a9, 'brass'], [0x8b969f, 'steel'],
+  [0x252d37, 'iron'], [0x5c6671, 'iron'], [0xd6d0b2, 'lamp'],
+]
+
+// The city's surfaces. One fragment library for the street detail (REAL_ORNAMENT), the building masses (REAL_FACADE),
+// the far skyline (REAL_FAR, instanced boxes) and the ground plane (REAL_GROUND). World-space mapping on box faces;
+// windows are interior-mapped rooms in bays laid out from each box's own extents (realBoxes), so a near chunk and the
+// skyline show the same lit rooms.
+const REAL_GLSL = /* glsl */`
+uniform sampler2DArray realAlbedo, realNormal;
+uniform float realTime;
+varying vec3 vRealW, vRealN;
+// flat: a box's identity is exact on every pixel (interpolated, its last bits jitter and every hash of it is noise)
+flat varying vec4 vRealBox;
+flat varying vec2 vRealBoxY;
+flat varying float vRealKind;
+const vec3 REAL_LW = vec3(0.2126, 0.7152, 0.0722);
+const vec3 REAL_MEAN[6] = vec3[6](${REAL_MEAN.map(c => 'vec3(' + c.join(', ') + ')').join(', ')});
+float realHash12(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+vec3 realHash32(vec2 p) { vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973)); q += dot(q, q.yxz + 33.33); return fract((q.xxy + q.yzz) * q.zyx); }
+float realNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(realHash12(i), realHash12(i + vec2(1, 0)), f.x), mix(realHash12(i + vec2(0, 1)), realHash12(i + vec2(1, 1)), f.x), f.y);
+}
+// Standing water: low spots in a broad noise, more of it along the kerbs of the grid's avenues and streets.
+float realPuddle(vec2 xz, float more) {
+  vec2 m = mod(xz, 96.0);
+  vec2 k = min(min(abs(m - 10.0), abs(m - 86.0)), min(abs(m - 44.0), abs(m - 52.0)));
+  float gutter = 1.0 - smoothstep(0.3, 2.4, min(k.x, k.y));
+  float n = realNoise(xz * 0.07) * 0.62 + realNoise(xz * 0.23 + 7.1) * 0.38;
+  return smoothstep(0.63 - more, 0.68 - more, n + gutter * 0.17);
+}
+struct RealSurf { vec3 albedo; float ao; vec3 normal; float rough; float metal; vec3 emit; float reflect; };
+// a layer of the arrays: colour (sRGB, decoded by the sampler) with occlusion, normal (GL) with roughness
+void realTex(float layer, vec2 uv, inout RealSurf s, out vec3 nT) {
+  vec4 c = texture(realAlbedo, vec3(uv, layer));
+  vec3 t = texture(realNormal, vec3(uv, layer)).rgb;
+  s.albedo = c.rgb / REAL_MEAN[int(layer)]; s.ao = c.a; s.rough = t.b;
+  nT = vec3(t.xy * 2.0 - 1.0, 0.0); nT.z = sqrt(max(1e-4, 1.0 - dot(nT.xy, nT.xy)));
+}
+// a face's right-handed frame: tangent T (u), bitangent B (v), normal N; uv in metres along T and B
+void realFrame(vec3 N, vec3 w, out vec3 T, out vec3 B, out vec2 uv) {
+  vec3 a = abs(N);
+  if (a.y >= a.x && a.y >= a.z) { T = vec3(1, 0, 0); B = vec3(0, 0, -sign(N.y)); }
+  else if (a.x >= a.z) { T = vec3(0, 0, -sign(N.x)); B = vec3(0, 1, 0); }
+  else { T = vec3(sign(N.z), 0, 0); B = vec3(0, 1, 0); }
+  uv = vec2(dot(w, T), -dot(w, B));     // rows run down the image: its up is +B, upright on walls
+  T = normalize(T - N * dot(N, T)); B = cross(N, T);
+}
+// per kind: texture layer (-1: none), metres per tile, albedo gain on the tint, saturation kept, roughness (-1: the
+// map's), metalness, wetness (1: puddles), emission
+struct RealK { float layer; float scale; float gain; float sat; float rough; float metal; float wet; vec3 emit; };
+RealK realKind(int k) {
+  RealK m = RealK(0.0, 4.8, 1.0, 0.55, -1.0, 0.0, 0.0, vec3(0.0));
+  if (k == 1) { m.layer = 1.0; m.scale = 1.6; m.sat = 0.7; }
+  else if (k == 2) { m.layer = 2.0; m.scale = 3.0; }
+  else if (k == 3) { m.layer = 3.0; m.scale = 3.2; m.gain = 2.6; m.wet = 1.0; m.sat = 0.2; }
+  else if (k == 4) { m.layer = 2.0; m.scale = 2.6; m.gain = 1.15; m.wet = 0.45; m.sat = 0.35; }
+  else if (k == 5) { m.layer = 4.0; m.scale = 1.15; m.gain = 0.9; m.wet = 0.45; m.sat = 0.5; }
+  else if (k == 6) { m.layer = 5.0; m.scale = 1.4; m.wet = 0.45; m.rough = 0.5; }
+  else if (k == 7) { m.layer = 5.0; m.scale = 2.0; m.gain = 0.9; m.rough = 0.22; m.wet = 0.3; }
+  else if (k >= 8 && k <= 10) { m.layer = 3.0; m.scale = 3.2; m.gain = 0.8; m.wet = 0.8; m.sat = 0.8; }
+  else if (k == 11) { m.layer = -1.0; m.gain = 0.8; m.rough = 0.42; m.metal = 0.35; m.wet = 0.2; }
+  else if (k == 12) { m.layer = -1.0; m.rough = 0.2; m.metal = 1.0; }
+  else if (k == 13) { m.layer = -1.0; m.rough = 0.28; m.metal = 1.0; m.sat = 1.0; }
+  else if (k == 14) { m.layer = -1.0; m.gain = 0.5; m.rough = 0.08; m.emit = vec3(1.0, 0.66, 0.36) * 0.5; }
+  else if (k == 15) { m.layer = -1.0; m.gain = 0.4; m.rough = 0.9; }
+  else if (k == 16) { m.layer = -1.0; m.rough = 0.3; m.emit = vec3(1.0, 0.56, 0.22) * 40.0; }
+  else if (k == 17 || k == 18 || k == 19) { m.layer = 0.0; m.gain = 0.9; }
+  return m;
+}
+// Art Deco trim on boxes #3 builds (box-local: u across the face, its half width hw, height in the box hy 0..1, half
+// height ey): fluted piers, moulded cornices with dentils, chevrons on the stepped crowns.
+void realTrim(int k, float u, float hw, float hy, float ey, inout vec3 nT, inout RealSurf s) {
+  if (k == 17 && ey > 3.0 * hw && hw < 1.2) {
+    float f = u / (2.0 * hw) * floor(2.0 * hw / 0.16);
+    nT.x += sin(f * 6.2831853) * 0.55; s.ao *= 0.75 + 0.25 * abs(cos(f * 3.14159265));
+  } else if (k == 18) {
+    nT.y += sin(hy * 6.0 * 6.2831853) * 0.5;
+    if (hy < 0.33) { float d = step(0.5, fract(u / 0.32)); s.ao *= mix(1.0, 0.55, d); nT.x += (d - 0.5) * 0.3; }
+  } else if (k == 19) {
+    float c = step(0.5, fract((abs(u) * 0.9 + hy * ey * 2.0) / 0.9));
+    s.albedo *= 0.82 + 0.3 * c; nT.y += (c - 0.5) * 0.35;
+  }
+}
+`
+
+// The facade: per-building identity from the box centre, bays between the piers, rooms behind the glass.
+const REAL_FACADE_GLSL = /* glsl */`
+// A room behind glass (interior mapping): p on the glass in room space (x across, y up, z = 0), rd the view ray in
+// room space (z into the room), size the room; walls, floor and ceiling lit by a ceiling lamp. A shop has shelves.
+vec3 realRoom(vec3 p, vec3 rd, vec3 size, vec3 seed, vec3 lamp, float lit, bool shop) {
+  vec3 tt = (step(0.0, rd) * size - p) / rd;
+  float t = min(min(tt.x, tt.y), tt.z);
+  vec3 h = p + rd * t;
+  vec3 wall = mix(vec3(0.52, 0.47, 0.4), vec3(0.4, 0.44, 0.47), seed.y);
+  vec3 c = t == tt.z ? wall : t == tt.x ? wall * 0.8 : rd.y < 0.0 ? vec3(0.13, 0.085, 0.055) : vec3(0.62);
+  if (shop && h.y > 0.3 && h.y < 2.3 && t != tt.y) {
+    float sh = fract(h.y / 0.46), along = (t == tt.z ? h.x : h.z);
+    vec3 g = realHash32(floor(vec2(along / 0.21, h.y / 0.46)) + seed.xy * 40.0);
+    vec3 goods = mix(vec3(dot(g, vec3(0.33))), g, 0.45) * (0.08 + 0.32 * g.z) * step(0.18, fract(along / 0.21 + g.x * 0.3));
+    c = sh < 0.12 || fract(along / 1.2) < 0.04 ? vec3(0.035) : goods * (t == tt.z ? 1.0 : 0.7);
+  } else if (!shop && t == tt.z) {
+    if (h.y < 0.9 && abs(h.x - size.x * (0.3 + 0.4 * seed.z)) < size.x * 0.24) c *= 0.3;
+    if (seed.y > 0.93 && length((h.xy - vec2(size.x * 0.5, 1.45)) * vec2(1.6, 0.8)) < 0.42) c *= 0.05;
+  }
+  vec3 lp = h - vec3(size.x * 0.5, size.y - 0.3, size.z * 0.45);
+  return c * lamp * (0.18 + 2.6 / (1.0 + 0.35 * dot(lp, lp))) * lit + c * 0.0025;
+}
+void realFacade(vec3 N, vec3 T, float u, float hw, float y0, float y1, float lod, inout RealSurf s, inout vec3 nT) {
+  vec2 lot = vRealBox.xy;
+  vec2 g = floor(lot / 96.0); vec2 cc = g * 96.0 + 48.0; float d2 = dot(cc, cc);
+  int district = d2 < 230400.0 ? 0 : (g.x < -2.0 && g.y < 4.0 && d2 < 1e6) ? 1 : (d2 > 1102500.0 || g.y < -7.0) ? 3 : 2;
+  bool deco = district < 2 || y1 > 300.0, base = y0 < 0.5;
+  float face = dot(floor(N + 0.5), vec3(1.0, 2.0, 3.0)), fh = 4.0;
+  float fy = vRealW.y / fh, fl = floor(fy), fv = fract(fy);
+  // bays: a Deco base has piers at 0 and 0.86 hw, a setback at 0.7 hw; brick and concrete fronts are evenly divided
+  float bw = 3.0, f = -1.0, n = 0.0, sx = 1.0;
+  if (deco && base) { float a = 0.6, b = 0.86 * hw - 0.6; n = max(1.0, floor((b - a) / 2.9 + 0.5)); bw = (b - a) / n; f = (abs(u) - a) / bw; sx = u < 0.0 ? -1.0 : 1.0; }
+  else if (deco) { float b = 0.7 * hw - 0.55; n = max(1.0, floor(2.0 * b / 2.9 + 0.5)); bw = 2.0 * b / n; f = (u + b) / bw; }
+  else { n = floor((2.0 * hw - 1.6) / 3.0); f = (u + n * 1.5) / 3.0; }
+  bool bay = f >= 0.0 && f < n, storey = fl >= 1.0 && fl * fh >= y0 - 0.1 && (fl + 1.0) * fh <= y1 - 0.45;
+  float ci = (floor(f) + 0.5) * sx, fu = fract(f);
+  vec2 wx = deco ? vec2(0.12, 0.88) : district == 3 ? vec2(0.1, 0.9) : vec2(0.24, 0.76);
+  vec2 wy = deco ? vec2(0.14, 0.86) : district == 3 ? vec2(0.3, 0.85) : vec2(0.24, 0.78);
+  float wu = (fu - wx.x) / (wx.y - wx.x), wv = (fv - wy.x) / (wy.y - wy.x);
+  bool inX = wu > 0.0 && wu < 1.0, win = bay && storey && inX && wv > 0.0 && wv < 1.0;
+  if (bay && storey && deco && inX && !win) {
+    // spandrel: a cast-aluminium panel with a chevron in relief, the Deco tower's vertical stripe
+    float c = abs(fract(wu * 3.0) - 0.5) * 2.0, v = fract(fv + 0.5);
+    s.albedo = vec3(0.1, 0.1, 0.105); s.metal = 0.85; s.rough = 0.38; s.ao *= 0.9;
+    nT = normalize(vec3(sign(fract(wu * 3.0) - 0.5) * 0.35 * step(abs(v - 0.5 - c * 0.15), 0.08), 0.25 * sign(v - 0.5), 1.0));
+    return;
+  }
+  if (!deco && bay && storey && inX) {
+    // stone sill and lintel round a brick window, the lintel's shadow on the wall above
+    if (wv < 0.0 && wv > -0.09) { s.albedo = vec3(0.3); s.rough = 0.8; nT = vec3(0, 0.5, 1); }
+    else if (wv > 1.0 && wv < 1.12) { s.albedo = vec3(0.26); s.ao *= 0.8; }
+    else if (wv > 1.12 && wv < 1.3) s.ao *= 0.7;
+  }
+  if (!win) return;
+  // the room: bw wide, a storey high, 4.5-8 m deep, seen through the glass along the view ray
+  vec3 seed = realHash32(vec2(ci * 7.13 + fl * 31.7 + face * 101.3, dot(lot, vec2(0.37, 0.191))));
+  float litP = district == 3 ? 0.14 : district == 2 ? 0.44 : 0.36;
+  float lit = step(seed.x, litP) * step(0.08, fract(seed.x * 13.7 + floor(realTime / 240.0 + seed.y) * 0.37));
+  vec3 lamp = seed.z < 0.62 ? vec3(1.0, 0.6, 0.3) : seed.z < 0.9 ? vec3(0.78, 0.86, 1.0) : vec3(0.32, 0.48, 1.0);
+  if (seed.z >= 0.9) lamp *= 0.55 + 0.45 * realNoise(vec2(realTime * 9.0, seed.y * 50.0));
+  float depth = 4.5 + 3.5 * seed.y;
+  vec3 V = normalize(vRealW - cameraPosition);
+  vec3 rd = vec3(dot(V, T) * sx, V.y, max(-dot(V, N), 1e-3));
+  vec3 inside = realRoom(vec3(fu * bw, fv * fh, 0.0), rd, vec3(bw, fh, depth), seed, lamp, lit, false);
+  // blinds down to a random height glow with the room's light; far away the room is its average
+  float blind = seed.y > 0.55 ? 1.0 - fract(seed.z * 17.0) * 0.75 : 2.0;
+  if (wv > blind) inside = lamp * lit * (0.32 + 0.3 * smoothstep(0.35, 0.5, abs(fract(wv * 22.0) - 0.5))) * (0.8 + 0.2 * wu) + vec3(0.012) * (1.0 - lit);
+  inside = mix(inside, lamp * lit * 0.9 + vec3(0.003), lod);
+  // glass and its frame: thin bronze mullions, a transom
+  float fr = step(wu, 0.03) + step(0.97, wu) + step(wv, 0.035) + step(0.965, wv) + step(abs(wu - 0.5), 0.012) + step(abs(wv - 0.7), 0.012);
+  if (fr > 0.0 && lod < 0.8) { s.albedo = vec3(0.03, 0.028, 0.025); s.metal = 0.6; s.rough = 0.45; nT = vec3(0, 0, 1); return; }
+  s.albedo = vec3(0.012); s.metal = 0.0; s.rough = 0.05; s.ao = 1.0; nT = vec3(0, 0, 1);
+  s.emit = inside * 2.4;
+}
+`
+
+// Shopfronts in the dark-granite podiums of #3's lots (0-4 m): 4-5 m bays of glass with lit shelves, a sign band
+// above, neon over some; none on industrial lots.
+const REAL_SHOP_GLSL = /* glsl */`
+void realShop(vec3 N, vec3 T, float u, float hw, float lod, inout RealSurf s, inout vec3 nT) {
+  vec2 g = floor(vRealBox.xy / 96.0); vec2 cc = g * 96.0 + 48.0; float d2 = dot(cc, cc);
+  if (d2 > 1102500.0 || g.y < -7.0) return;
+  float n = floor((2.0 * hw - 1.0) / 4.5);
+  if (n < 1.0) return;
+  float bw = (2.0 * hw - 1.0) / n, f = (u + hw - 0.5) / bw, fu = fract(f), y = vRealW.y;
+  if (f < 0.0 || f >= n) return;
+  float wu = (fu - 0.07) / 0.86, wv = (y - 0.55) / 2.75;
+  vec3 seed = realHash32(vec2(floor(f) * 5.71 + dot(floor(N + 0.5), vec3(1.0, 2.0, 3.0)) * 17.0, dot(vRealBox.xy, vec2(0.29, 0.43))));
+  if (wu > 0.0 && wu < 1.0 && y > 3.3 && y < 3.98) {
+    // the sign band: over some shops a neon tube in a Deco shape (a frame round chevrons, a diamond, or speed lines)
+    if (seed.x > 0.55) {
+      vec3 neon = seed.y < 0.4 ? vec3(1.0, 0.12, 0.25) : seed.y < 0.75 ? vec3(0.15, 0.7, 1.0) : vec3(1.0, 0.45, 0.08);
+      vec2 q = vec2((wu - 0.5) * bw * 0.86, y - 3.64), hb = vec2(bw * 0.3, 0.25);
+      vec2 dq = abs(q) - hb + 0.1;
+      float frame = abs(length(max(dq, 0.0)) + min(max(dq.x, dq.y), 0.0) - 0.1), motif;
+      float pick = fract(seed.z * 7.3);
+      if (pick < 0.34) { vec2 c = vec2(abs(abs(q.x) - hb.x * 0.45), q.y); motif = abs(c.y + 0.08 - abs(c.x) * 0.9) + step(hb.x * 0.25, abs(c.x)) * 9.0; }
+      else if (pick < 0.67) motif = abs(abs(q.x) * 0.55 + abs(q.y) - 0.13);
+      else { float k = clamp(floor(q.y / 0.08 + 0.5), -1.0, 1.0); motif = max(abs(q.y - k * 0.08), abs(q.x) - (hb.x * 0.75 - abs(k) * 0.12)); }
+      float tube = 1.0 - smoothstep(0.012, 0.03, min(frame, motif));
+      float halo = exp(-min(frame, motif) * 18.0) * 0.18;
+      s.emit = neon * mix(9.0 * tube + 3.0 * halo, 1.2, lod) * (0.92 + 0.08 * realNoise(vec2(realTime * 5.0, seed.z * 30.0)));
+      s.albedo = vec3(0.02); s.rough = 0.3;
+    }
+    return;
+  }
+  if (wu < 0.0 || wu > 1.0 || wv < 0.0 || wv > 1.0) return;
+  float lit = step(seed.z, 0.62);
+  vec3 lamp = seed.y < 0.75 ? vec3(1.0, 0.72, 0.45) : vec3(0.85, 0.92, 1.0);
+  vec3 V = normalize(vRealW - cameraPosition), rd = vec3(dot(V, T), V.y, max(-dot(V, N), 1e-3));
+  vec3 size = vec3(bw * 0.86, 2.75, 3.5);
+  vec3 inside = mix(realRoom(vec3(wu * size.x, wv * size.y, 0.0), rd, size, seed, lamp, lit, true), lamp * lit * 0.8, lod);
+  if (step(wu, 0.015) + step(0.985, wu) + step(wv, 0.02) + step(0.98, wv) > 0.0) { s.albedo = vec3(0.04); s.metal = 0.7; s.rough = 0.4; nT = vec3(0, 0, 1); return; }
+  s.albedo = vec3(0.01); s.metal = 0.0; s.rough = 0.04; s.ao = 1.0; nT = vec3(0, 0, 1); s.emit = inside * 3.0;
+}
+`
+
+// One shader patch for the four city surfaces. kind: 'ornament' | 'facade' | 'far' | 'ground'.
+function realCityMaterial(kind, R) {
+  const m = new THREE.MeshStandardMaterial({ vertexColors: kind === 'ornament' || kind === 'facade', roughness: 1, metalness: 0 })
+  const define = { ornament: 'REAL_ORNAMENT', facade: 'REAL_FACADE', far: 'REAL_FAR', ground: 'REAL_GROUND' }[kind]
+  const tints = REAL_TINTS.map(([hex, k]) => { const c = new THREE.Color(hex)
+    return `if (all(lessThan(abs(c - vec3(${c.r.toFixed(6)}, ${c.g.toFixed(6)}, ${c.b.toFixed(6)})), vec3(0.0015)))) return ${REAL_KIND[k]}.0;` }).join('\n  ')
+  m.onBeforeCompile = shader => {
+    Object.assign(shader.uniforms, { realAlbedo: R.uniforms.albedo, realNormal: R.uniforms.normal, realTime: R.uniforms.time })
+    shader.defines = { ...shader.defines, [define]: 1 }
+    const swap = (src, from, to) => { if (!src.includes(from)) throw new Error('realistic: no shader anchor ' + from); return src.replace(from, to) }
+    let vs = shader.vertexShader, fs = shader.fragmentShader
+    vs = `attribute vec4 realBox;\nattribute vec2 realBoxY;\nvarying vec3 vRealW, vRealN;\nflat varying vec4 vRealBox;\nflat varying vec2 vRealBoxY;\nflat varying float vRealKind;
+float realKindOf(vec3 c) {
+  ${tints}
+  return dot(c, vec3(0.2126, 0.7152, 0.0722)) < 0.012 ? ${REAL_KIND.iron}.0 : ${REAL_KIND.stone}.0;
+}\n` + vs
+    vs = swap(vs, '#include <project_vertex>', `#include <project_vertex>
+      vec4 realWorld = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+        realWorld = instanceMatrix * realWorld;
+        vRealBox = vec4(instanceMatrix[3].x, instanceMatrix[3].z, length(instanceMatrix[0].xyz) * 0.5, length(instanceMatrix[2].xyz) * 0.5);
+        vRealBoxY = vec2(instanceMatrix[3].y, length(instanceMatrix[1].xyz) * 0.5);
+      #else
+        vRealBox = realBox; vRealBoxY = realBoxY;
+      #endif
+      realWorld = modelMatrix * realWorld; vRealW = realWorld.xyz;
+      vRealN = normalize(mat3(modelMatrix) * objectNormal);
+      #if defined(REAL_ORNAMENT)
+        vRealKind = realKindOf(color.rgb);
+      #else
+        vRealKind = ${REAL_KIND.asphalt}.0;
+      #endif`)
+    // after three's declarations (vColor, cameraPosition), before main
+    fs = swap(fs, 'void main() {', REAL_GLSL + REAL_FACADE_GLSL + REAL_SHOP_GLSL + `
+RealSurf realSurface() {
+  RealSurf s = RealSurf(vec3(0.5), 1.0, vec3(0.0, 0.0, 1.0), 0.8, 0.0, vec3(0.0), 0.0);
+  #if defined(USE_COLOR) || defined(USE_INSTANCING_COLOR)
+    vec3 tint = vColor;
+  #else
+    vec3 tint = vec3(0.024, 0.025, 0.026);
+  #endif
+  vec3 N = normalize(vRealN), T, B; vec2 uv;
+  realFrame(N, vRealW, T, B, uv);
+  vec3 nT = vec3(0.0, 0.0, 1.0);
+  bool isBox = vRealBoxY.y > 0.0;
+  // box-local: u across the face (m from its centre), the face's half width, height in the box 0..1
+  bool alongX = abs(N.x) > abs(N.z);
+  float u = isBox ? dot(vRealW.xz - vRealBox.xy, T.xz) : 0.0, hw = alongX ? vRealBox.w : vRealBox.z;
+  float y0 = vRealBoxY.x - vRealBoxY.y, y1 = vRealBoxY.x + vRealBoxY.y;
+  float hy = clamp((vRealW.y - y0) / max(2.0 * vRealBoxY.y, 1e-3), 0.0, 1.0);
+  float lod = smoothstep(0.08, 0.22, fwidth(u));   // taken before any branch: a window under ~10 px is its average
+#if defined(REAL_FACADE) || defined(REAL_FAR)
+  vec2 g = floor(vRealBox.xy / 96.0); vec2 cc = g * 96.0 + 48.0; float d2 = dot(cc, cc);
+  int district = d2 < 230400.0 ? 0 : (g.x < -2.0 && g.y < 4.0 && d2 < 1e6) ? 1 : (d2 > 1102500.0 || g.y < -7.0) ? 3 : 2;
+  float layer = N.y > 0.5 ? 2.0 : (district < 2 || y1 > 300.0) ? 0.0 : district == 3 ? 2.0 : 1.0;
+  float scale = layer == 1.0 ? 1.6 : layer == 0.0 ? 4.8 : 3.0;
+  #ifdef REAL_FAR
+    s.albedo = vec3(1.0); s.ao = 1.0; s.rough = 0.85;
+  #else
+    realTex(layer, uv / scale, s, nT);
+  #endif
+  float lum = max(dot(tint, REAL_LW), 1e-3), lh = realHash12(vRealBox.xy * 0.173 + 11.7);
+  vec3 base = mix(vec3(lum), tint, 0.45) * (layer == 1.0 ? REAL_MEAN[1] / dot(REAL_MEAN[1], REAL_LW) : vec3(1.0));
+  s.albedo *= base * 2.4 * (0.75 + 0.5 * lh);
+  if (N.y > 0.5) { // a tar-and-gravel roof, dark and wet in its low spots
+    float pud = realPuddle(vRealW.xz * 1.7 + 31.0, 0.0);
+    s.albedo *= 0.4 * mix(1.0, 0.6, pud); s.rough = mix(0.85, 0.04, pud); s.reflect = pud * 0.85; nT = normalize(mix(nT, vec3(0, 0, 1), pud));
+  } else if (isBox && N.y > -0.5) realFacade(N, T, u, hw, y0, y1, lod, s, nT);
+#else
+  int k = int(vRealKind + 0.5);
+  RealK m = realKind(k);
+  realTex(max(m.layer, 0.0), uv / m.scale, s, nT);    // always fetched: no texture reads in divergent branches
+  vec3 tone = mix(vec3(dot(tint, REAL_LW)), tint, m.sat) * m.gain;
+  if (m.layer < 0.0) { s.albedo = vec3(1.0); s.ao = 1.0; nT = normalize(vec3(realNoise(uv * 3.0) - 0.5, realNoise(uv * 3.0 + 9.0) - 0.5, 5.0)); }
+  s.albedo = mix(vec3(dot(s.albedo, REAL_LW)), s.albedo, m.sat) * tone;
+  if (m.rough >= 0.0) s.rough = m.rough;
+  s.metal = m.metal; s.emit = m.emit;
+  if (isBox && k >= 17) realTrim(k, u, hw, hy, vRealBoxY.y, nT, s);
+  if (isBox && k == 7 && abs(N.y) < 0.5 && abs(vRealBoxY.y - 2.0) < 0.15 && y0 < 0.1 && hw > 4.0) realShop(N, T, u, hw, lod, s, nT);
+  // concrete flags: 1.5 m slabs, each its own shade, with dark joints between
+  if (k == 4 && N.y > 0.5) {
+    vec2 fq = vRealW.xz / 1.52, fj = abs(fract(fq) - 0.5);
+    float joint = smoothstep(0.47, 0.488, max(fj.x, fj.y));
+    s.albedo *= (0.86 + 0.28 * realHash12(floor(fq) + 17.0)) * mix(1.0, 0.4, joint); s.ao *= mix(1.0, 0.55, joint);
+    nT = normalize(nT + vec3(step(0.47, fj.x) * sign(0.5 - fract(fq.x)), step(0.47, fj.y) * sign(fract(fq.y) - 0.5), 0.0) * 0.5);
+  }
+  // the macro variation that breaks a tiling texture's repeat
+  s.albedo *= 0.8 + 0.4 * realNoise(vRealW.xz * 0.19 + vRealW.y * 0.13);
+  if (m.wet > 0.0 && N.y > 0.5) {
+    float pud = realPuddle(vRealW.xz, k == 3 ? 0.0 : -0.08) * step(0.5, m.wet);
+    float wet = m.wet * (0.6 + 0.4 * realNoise(vRealW.xz * 0.05));
+    s.albedo *= mix(1.0, 0.55, wet) * mix(1.0, 0.5, pud);
+    s.rough = mix(mix(s.rough, 0.2, wet * 0.85), 0.02, pud);
+    nT = normalize(mix(nT, vec3(0, 0, 1), max(pud, wet * 0.3)));
+    s.reflect = max(pud * 0.95, wet * 0.3);
+  }
+#endif
+  s.normal = normalize(T * nT.x + B * nT.y + N * nT.z);
+  return s;
+}\nvoid main() {`)
+    fs = swap(fs, '#include <map_fragment>', '#include <map_fragment>\n RealSurf realS = realSurface();\n diffuseColor.rgb = realS.albedo;')
+    fs = swap(fs, '#include <color_fragment>', '')
+    fs = swap(fs, '#include <roughnessmap_fragment>', 'float roughnessFactor = clamp(realS.rough, 0.02, 1.0);')
+    fs = swap(fs, '#include <metalnessmap_fragment>', 'float metalnessFactor = realS.metal;')
+    fs = swap(fs, '#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(realS.normal, 0.0)).xyz);')
+    fs = swap(fs, '#include <emissivemap_fragment>', 'totalEmissiveRadiance = realS.emit;')
+    fs = swap(fs, '#include <aomap_fragment>', '#include <aomap_fragment>\n reflectedLight.indirectDiffuse *= realS.ao; reflectedLight.indirectSpecular *= realS.ao; reflectedLight.directDiffuse *= mix(1.0, realS.ao, 0.5);')
+    // alpha carries 1 - reflectivity to the screen-space reflection pass
+    fs = swap(fs, '#include <opaque_fragment>', '#include <opaque_fragment>\n gl_FragColor.a = 1.0 - realS.reflect;')
+    shader.vertexShader = vs; shader.fragmentShader = fs
+  }
+  m.customProgramCacheKey = () => 'real-city-' + kind + '-1'
+  return m
+}
+// Each 36-vertex run of a faustBatch whose normals follow FAUST_CUBE is one box: its centre and half extents become
+// the attributes realBox (cx, cz, ex, ez) and realBoxY (cy, ey); a lone triangle gets ey = -1. Made again whenever the
+// batch's positions change (#6's crater cut removes ground triangles and appends the clipped ground).
+function realBoxes(g) {
+  const pos = g.attributes.position
+  if (!pos || !g.attributes.normal || g.userData.realBoxes === pos && g.userData.realBoxesVersion === pos.version) return
+  const p = g.attributes.position.array, n = g.attributes.normal.array, count = g.attributes.position.count
+  const box = new Float32Array(count * 4), boxY = new Float32Array(count * 2)
+  const isBox = i => { if (i + 36 > count) return false
+    for (let k = 0; k < 36; k++) { const v = FAUST_CUBE[k], j = (i + k) * 3; if (n[j] !== v[3] || n[j + 1] !== v[4] || n[j + 2] !== v[5]) return false }
+    return true }
+  for (let i = 0; i < count;) {
+    if (isBox(i)) {
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity]
+      for (let k = 0; k < 36; k++) for (let a = 0; a < 3; a++) { const v = p[(i + k) * 3 + a]; if (v < lo[a]) lo[a] = v; if (v > hi[a]) hi[a] = v }
+      for (let k = i; k < i + 36; k++) {
+        box[k * 4] = (lo[0] + hi[0]) / 2; box[k * 4 + 1] = (lo[2] + hi[2]) / 2; box[k * 4 + 2] = (hi[0] - lo[0]) / 2; box[k * 4 + 3] = (hi[2] - lo[2]) / 2
+        boxY[k * 2] = (lo[1] + hi[1]) / 2; boxY[k * 2 + 1] = (hi[1] - lo[1]) / 2
+      }
+      i += 36
+    } else { for (let k = i; k < Math.min(count, i + 3); k++) boxY[k * 2 + 1] = -1; i += 3 }
+  }
+  g.setAttribute('realBox', new THREE.BufferAttribute(box, 4)); g.setAttribute('realBoxY', new THREE.BufferAttribute(boxY, 2))
+  g.userData.realBoxes = pos; g.userData.realBoxesVersion = pos.version
+}
+// The Maniak under real light: matte suit and cape, a satin cowl, a little sheen on the armour plates only (the ORM
+// map's metal channel marks the plates; its glossiest non-metal parts are the cowl).
+function realRigMaterial(orig) {
+  const m = orig.clone(), key = orig.customProgramCacheKey()
+  m.onBeforeCompile = shader => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+      float realPlate = smoothstep(0.4, 0.6, metalnessFactor);
+      roughnessFactor = mix(mix(0.5, 0.86, smoothstep(0.25, 0.55, roughnessFactor)), 0.42, realPlate);
+      metalnessFactor = 0.22 * realPlate;`)
+  }
+  m.customProgramCacheKey = () => key + '|real-rig-1'
+  return m
+}
+
+// FogExp2 is this look's own: an exponential height fog, brighter toward the moon and with the city's sodium glow low
+// down. The linear fog that Plain and Ink use is untouched.
+{
+  const C = THREE.ShaderChunk, m = new THREE.Vector3(...REAL_SKY.moon).normalize()
+  const put = (k, from, to) => { if (!C[k].includes(from)) throw new Error('realistic fog: no anchor in ' + k); C[k] = C[k].replace(from, to) }
+  put('fog_pars_vertex', 'varying float vFogDepth;', 'varying float vFogDepth;\n\t#ifdef FOG_EXP2\n\t\tvarying vec3 vRealFogW;\n\t#endif')
+  C.fog_vertex += '\n#ifdef FOG_EXP2\n\tvRealFogW = transpose( mat3( viewMatrix ) ) * ( mvPosition.xyz - viewMatrix[ 3 ].xyz );\n#endif\n'
+  put('fog_pars_fragment', 'uniform float fogDensity;', 'uniform float fogDensity;\n\t\tvarying vec3 vRealFogW;')
+  put('fog_fragment', 'float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );', `vec3 realFogRay = vRealFogW - cameraPosition;
+		float realFogDist = length( realFogRay ), realFogDy = realFogRay.y / ${REAL_SKY.fogHeight.toFixed(1)};
+		float realFogK = abs( realFogDy ) > 1e-3 ? ( 1.0 - exp( - realFogDy ) ) / realFogDy : 1.0;
+		float fogFactor = 1.0 - exp( - fogDensity * realFogDist * ( exp( - max( cameraPosition.y, 0.0 ) / ${REAL_SKY.fogHeight.toFixed(1)} ) * realFogK + 0.08 ) );
+		vec3 realFogDir = realFogRay / max( realFogDist, 1e-3 );
+		vec3 realFogC = fogColor * ( 1.0 + 0.8 * exp( - max( realFogDir.y, 0.0 ) * 5.0 ) ) + vec3( 0.012, 0.015, 0.022 ) * pow( max( dot( realFogDir, vec3( ${m.x.toFixed(4)}, ${m.y.toFixed(4)}, ${m.z.toFixed(4)} ) ), 0.0 ), 8.0 );
+		gl_FragColor.rgb = mix( gl_FragColor.rgb, realFogC, fogFactor );
+		fogFactor = 0.0;`)
+}
+
+// The texture arrays, loaded once per entry into the look: from assets/ beside the page, else the published site (as
+// the rigs are). Until they arrive, or if they fail, the city keeps its plain materials under the realistic light.
+function realFetch(file) {
+  const at = base => fetch(base + file, { mode: 'cors', credentials: 'omit' }).then(r => r.ok ? r : Promise.reject(new Error(file + ': ' + r.status)))
+  return at(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? at(RIG_SITE) : Promise.reject(e))
+}
+const realBitmap = file => realFetch(file).then(r => r.blob()).then(b => createImageBitmap(b, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }))
+// the two arrays (colour + occlusion, normal + roughness) from per-layer pairs of ImageBitmaps (drawn at size) or RGBA bytes
+function realArrays(pairs, size) {
+  const n = pairs.length, cv = document.createElement('canvas'); cv.width = cv.height = size
+  const g = cv.getContext('2d', { willReadFrequently: true }), data = [new Uint8Array(size * size * 4 * n), new Uint8Array(size * size * 4 * n)]
+  pairs.forEach((pair, layer) => pair.forEach((src, i) => {
+    if (src instanceof Uint8Array) { data[i].set(src, layer * size * size * 4); return }
+    g.clearRect(0, 0, size, size); g.drawImage(src, 0, 0, size, size); src.close()
+    data[i].set(g.getImageData(0, 0, size, size).data, layer * size * size * 4)
+  }))
+  return data.map((d, i) => Object.assign(new THREE.DataArrayTexture(d, size, size, n), {
+    colorSpace: i ? THREE.NoColorSpace : THREE.SRGBColorSpace, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
+    generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter,
+    anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()), needsUpdate: true }))
+}
+function realLoadTextures(size) {
+  return Promise.all(REAL_LAYERS.map(k => Promise.all(REAL_FILES[k].map(realBitmap)))).then(pairs => realArrays(pairs, size))
+}
+// where the arrays come from; the neural trial (an optional add-on) may replace it
+let realTextureSource = realLoadTextures
+// The night sky: navy at the zenith, the city's sodium glow on the haze at the horizon, the moon and a few stars.
+const REAL_SKY_GLSL = /* glsl */`
+uniform vec3 moonDir;
+varying vec3 vDir;
+float realStar(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+void main() {
+  vec3 d = normalize(vDir);
+  float h = d.y, mu = dot(d, moonDir);
+  vec3 c = mix(vec3(0.03, 0.021, 0.016), vec3(0.0011, 0.0017, 0.0038), pow(smoothstep(-0.04, 0.62, h), 0.55));
+  if (h < 0.0) c = mix(vec3(0.03, 0.021, 0.016), vec3(0.008, 0.007, 0.007), smoothstep(0.0, -0.25, h));
+  c += vec3(0.8, 0.86, 1.0) * smoothstep(0.99976, 0.99986, mu) * 7.0;
+  c += vec3(0.05, 0.06, 0.085) * pow(max(mu, 0.0), 400.0) * 2.0 + vec3(0.01, 0.012, 0.018) * pow(max(mu, 0.0), 10.0);
+  vec2 sp = vec2(atan(d.z, d.x) * 95.5, asin(clamp(h, -1.0, 1.0)) * 95.5), cell = floor(sp);
+  float r = realStar(cell);
+  c += vec3(0.85, 0.9, 1.0) * step(0.986, r) * smoothstep(0.12, 0.5, h) * smoothstep(0.42, 0.1, length(fract(sp) - 0.5)) * 0.05 * fract(r * 37.0);
+  gl_FragColor = vec4(c, 1.0);
+}`
+const realSkyMaterial = moonDir => new THREE.ShaderMaterial({ uniforms: { moonDir: { value: moonDir } }, side: THREE.BackSide,
+  depthTest: false, depthWrite: false, fog: false, toneMapped: false, fragmentShader: REAL_SKY_GLSL,
+  vertexShader: 'varying vec3 vDir;\nvoid main() { vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }' })
+// Image-based light for glossy things (the cowl, glass, wet stone): the sky, the city's windows on the horizon, the
+// dark street below, prefiltered once (PMREM).
+function realEnvironment(R) {
+  const env = new THREE.Scene(), owned = []
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), realSkyMaterial(R.moonDir)); env.add(sky)
+  const windows = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, toneMapped: false }), 160)
+  const o = new THREE.Object3D(), c = new THREE.Color()
+  for (let i = 0; i < 160; i++) {
+    const h = cityHash(i * 7 + 3), a = (h % 3600) / 3600 * Math.PI * 2, r = 70 + (h >> 12) % 20, y = -3 + ((h >> 6) % 30) * 0.5
+    o.position.set(Math.cos(a) * r, y, Math.sin(a) * r); o.lookAt(0, y, 0); o.scale.set(1 + (h % 3), 0.8 + (h >> 9) % 2, 1); o.updateMatrix()
+    windows.setMatrixAt(i, o.matrix); windows.setColorAt(i, (h >> 3) % 4 ? c.setRGB(3.2, 1.9, 0.9) : c.setRGB(1.6, 2.0, 2.6))
+  }
+  env.add(windows)
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(100, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.01, 0.01, 0.012) }))
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -1.7; env.add(ground)
+  const pm = new THREE.PMREMGenerator(renderer), target = pm.fromScene(env, 0.02, 0.1, 400)
+  pm.dispose(); env.traverse(n => { n.geometry?.dispose(); n.material?.dispose() }); windows.dispose()
+  return target
+}
+// Spot lights at the nearest street lamps (the city's two per cell on the avenue); further lamps keep their pools.
+function realPlaceLamps(R, cam, n) {
+  if (R.lamps.length !== n) {
+    for (const l of R.lamps) R.lampGroup.remove(l, l.target)
+    R.lamps = Array.from({ length: n }, () => { const l = new THREE.SpotLight(REAL_SKY.lamp, 0, REAL_SKY.lampRange, 1.1, 0.7, 2); R.lampGroup.add(l, l.target); return l })
+  }
+  const F = faustState, p = cam.position, f = cam.getWorldDirection(R.v3), list = R.lampList; list.length = 0
+  if (F) for (const c of F.chunks.values()) if (c.visual) for (const q of [20, 76]) {
+    const x = c.ci * 96 - ARENA + 8.6, z = c.cj * 96 - ARENA + q, dx = x - p.x, dz = z - p.z
+    list.push([(dx * dx + dz * dz + (8.5 - p.y) ** 2) * (dx * f.x + dz * f.z > -8 ? 1 : 4), x, z])
+  }
+  list.sort((a, b) => a[0] - b[0])
+  R.lamps.forEach((l, i) => {
+    const e = list[i]; l.intensity = e ? REAL_SKY.lampCandela : 0
+    if (e) { l.position.set(e[1], 8.42, e[2]); l.target.position.set(e[1], 0, e[2]) }
+    l.updateMatrixWorld(); l.target.updateMatrixWorld()
+  })
+  R.litLamps = list.slice(0, n)
+}
+// The globe under Realistic: Plain's material with its self-light (emissive and the fixed flood term) cut to a third,
+// so the moon, the environment and the searchlight haze model it
+function realGlobeMaterial(orig) {
+  const m = orig.clone(), key = orig.customProgramCacheKey()
+  m.emissiveIntensity = orig.emissiveIntensity * 0.35; m.color.multiplyScalar(0.8)
+  m.onBeforeCompile = shader => {
+    shader.vertexShader = 'varying vec3 faustGlobeNormal; varying vec3 faustGlobePosition;\n' + shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+      faustGlobeNormal = mat3(modelMatrix) * normal;
+      faustGlobePosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`)
+    shader.fragmentShader = 'varying vec3 faustGlobeNormal; varying vec3 faustGlobePosition;\n' + shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      vec3 globeFlood = normalize(vec3(-1400.0, 500.0, -800.0) - faustGlobePosition);
+      totalEmissiveRadiance += diffuseColor.rgb * max(0.0, dot(normalize(faustGlobeNormal), globeFlood)) * 0.4;`)
+  }
+  m.customProgramCacheKey = () => key + '|real-globe-1'
+  return m
+}
+// The unlit solid effects (dust, rubble, #6's smash cracks, debris) sit in the night light under Realistic: their
+// materials are patched once with a shared switch, on only during this look's frames, that dims the desaturated ones
+// to the street's level; fire, sparks and blood keep their colour. Plain and Ink draw them exactly as before.
+const realFx = { night: { value: 0 } }, realFxPatched = new WeakSet()
+function realFxPatch(m) {
+  if (realFxPatched.has(m) || !m.isMeshBasicMaterial || m.blending !== THREE.NormalBlending || m.toneMapped === false) return
+  realFxPatched.add(m)
+  const before = m.onBeforeCompile, key = m.customProgramCacheKey()
+  m.onBeforeCompile = function (shader, r) {
+    before.call(this, shader, r)
+    shader.uniforms.realNight = realFx.night
+    shader.fragmentShader = 'uniform float realNight;\n' + shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+      if (realNight > 0.5) { float realHi = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)), realLo = min(diffuseColor.r, min(diffuseColor.g, diffuseColor.b));
+        diffuseColor.rgb *= mix(vec3(0.24, 0.22, 0.2), vec3(1.0), smoothstep(0.35, 0.6, (realHi - realLo) / max(realHi, 1e-3))); }`)
+  }
+  m.customProgramCacheKey = () => key + '|real-fx-1'
+  m.needsUpdate = true
+}
+// What the look puts in place of a plain material: a material, 'hide', or null (keep).
+function realSwapFor(R, m, o) {
+  const F = faustState, key = typeof m.customProgramCacheKey === 'function' && Object.hasOwn(m, 'customProgramCacheKey') ? m.customProgramCacheKey() : ''
+  if (F?.materials && m === F.materials.facade) return R.mats.facade
+  if (F?.materials && m === F.materials.stone) return R.mats.ornament
+  if (F?.materials && m === F.materials.far) return R.mats.far
+  if (m === F?.poolMaterial) return R.mats.pool
+  if (key.startsWith('faust-road-light-1')) return R.mats.roadLights      // Ink may have suffixed the key
+  if (key.startsWith('faust-downlight-1')) return 'beam'
+  if (key.startsWith('faust-globe-flood-1')) { const r = realGlobeMaterial(m); R.owned.push(r); return r }
+  if (m.isMeshStandardMaterial && o.geometry?.type === 'PlaneGeometry' && !m.map && m.color.getHex() === 0x303741) return R.mats.ground
+  if (m.isMeshBasicMaterial && !m.map && m.color.getHex() === 0xf1f6ff) return R.mats.lens
+  if (m.isSpriteMaterial && m.map?.userData.faustOwned && m.color.getHex() === 0xb3c2d6) return R.mats.cloud
+  if (m.name === 'maniak' && m.isMeshStandardMaterial) { const r = realRigMaterial(m); R.owned.push(r); return r }
+  return null
+}
+// The state swaps of one frame, each recorded so finally can undo it.
+function realSwap(R, s, tier, undo) {
+  const put = (o, k, v) => { undo.push([o, k, o[k]]); o[k] = v }
+  const F = faustState, lit = R.litLamps
+  const visit = o => {
+    const m = o.material
+    if (!m || Array.isArray(m)) return
+    let r = R.swaps.get(m)
+    if (r === undefined) R.swaps.set(m, r = R.ready ? realSwapFor(R, m, o) : null)
+    if (!r) return
+    if (r === 'beam') return          // the plain cones stay: the shafts pass adds their scattering low in the haze
+    if (r === R.mats.pool && lit.some(e => Math.abs(e[1] - o.position.x) < 1 && Math.abs(e[2] - o.position.z) < 1)) { put(o, 'visible', false); return }
+    if (r === R.mats.facade || r === R.mats.ornament) realBoxes(o.geometry)
+    put(o, 'material', r)
+  }
+  worldGroup?.traverse(visit); avatarGroup?.traverse(visit); F?.skyScene?.traverse(visit)
+  if (R.ready) for (const o of [...effectPool, ...boxPool, ...orbPool]) if (o.material && (o.fxKind === 'box' || o.fxKind === 'orb' || !o.fxKind)) realFxPatch(o.material)
+  put(realFx.night, 'value', 1)
+  // #4's traffic signals: their unlit lamps glow (HDR, so they bloom); the poles, the cars and their drivers are PBR
+  // and take the look's light as they are
+  const signals = typeof trafficLights === 'undefined' ? null : trafficLights?.lamps
+  if (signals?.material?.color) put(signals.material, 'color', R.signalGlow)
+  put(s, 'fog', R.fog); put(s, 'environment', R.env.texture)
+  const hemi = s.children.find(o => o.isHemisphereLight)
+  if (hemi) put(hemi, 'intensity', REAL_SKY.hemi)
+  if (sunLight) put(sunLight, 'intensity', REAL_SKY.moonLight)
+  for (const l of F?.localLights || []) put(l, 'intensity', 0)
+  s.add(R.lampGroup); undo.push([null, () => s.remove(R.lampGroup)])
+  // the sky in the same light: the night environment on the globe and Faust's head (#19's PBR model), the dome behind
+  if (F?.skyScene) { put(F.skyScene, 'environment', R.env.texture); R.dome.position.copy(camera.position); F.skyScene.add(R.dome); undo.push([null, () => F.skyScene.remove(R.dome)]) }
+}
+
+// ---- the post chain: full-screen triangles into half-float targets
+const REAL_POST_VS = 'varying vec2 vUv;\nvoid main() { vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }'
+const REAL_DEPTH_GLSL = /* glsl */`
+uniform sampler2D tDepth; uniform mat4 uProj, uProjInv; uniform vec2 uTexel;
+varying vec2 vUv;
+float realD(vec2 uv) { return texture2D(tDepth, uv).x; }
+vec3 realView(vec2 uv, float d) { vec4 p = uProjInv * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); return p.xyz / p.w; }
+vec2 realProj(vec3 v) { vec4 c = uProj * vec4(v, 1.0); return c.xy / c.w * 0.5 + 0.5; }
+// the view-space normal from depth: on each axis the nearer one-sided difference, so silhouettes stay out
+vec3 realNormalAt(vec2 uv, vec3 p) {
+  vec3 l = realView(uv - vec2(uTexel.x, 0.0), realD(uv - vec2(uTexel.x, 0.0))), r = realView(uv + vec2(uTexel.x, 0.0), realD(uv + vec2(uTexel.x, 0.0)));
+  vec3 b = realView(uv - vec2(0.0, uTexel.y), realD(uv - vec2(0.0, uTexel.y))), t = realView(uv + vec2(0.0, uTexel.y), realD(uv + vec2(0.0, uTexel.y)));
+  vec3 dx = abs(r.z - p.z) < abs(p.z - l.z) ? r - p : p - l, dy = abs(t.z - p.z) < abs(p.z - b.z) ? t - p : p - b;
+  return normalize(cross(dx, dy));
+}
+float realIGN(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+`
+const REAL_PASSES = {
+  // ambient occlusion: a normal-oriented hemisphere of samples, half resolution, faded out by 260 m
+  ao: `uniform float uRadius, uPower; uniform int uSamples; uniform vec3 uKernel[16];
+void main() {
+  float d = realD(vUv);
+  if (d >= 1.0) { gl_FragColor = vec4(1.0); return; }
+  vec3 p = realView(vUv, d), n = realNormalAt(vUv, p);
+  float a = 6.2831853 * realIGN(gl_FragCoord.xy);
+  vec3 rv = vec3(cos(a), sin(a), 0.0), t = normalize(rv - n * dot(rv, n)), b = cross(n, t);
+  float r = uRadius * (1.0 + 2.0 * smoothstep(15.0, 90.0, -p.z)), occ = 0.0;
+  for (int i = 0; i < 16; i++) {
+    if (i >= uSamples) break;
+    vec3 k = uKernel[i], s = p + (t * k.x + b * k.y + n * k.z) * r;
+    vec2 su = realProj(s);
+    float sd = realD(su), sz = sd >= 1.0 ? -1e6 : realView(su, sd).z;
+    occ += step(s.z + 0.03 * r, sz) * smoothstep(0.0, 1.0, r / max(abs(p.z - sz), 1e-3));
+  }
+  float ao = pow(clamp(1.0 - occ / float(uSamples), 0.0, 1.0), uPower);
+  gl_FragColor = vec4(mix(ao, 1.0, smoothstep(140.0, 260.0, -p.z)), 0.0, 0.0, 1.0);
+}`,
+  // a depth-aware blur along uStep (AO and reflections)
+  blur: `uniform sampler2D tSrc; uniform vec2 uStep;
+void main() {
+  float z0 = -realView(vUv, realD(vUv)).z;
+  vec4 s = vec4(0.0); float w = 0.0;
+  for (int i = -3; i <= 3; i++) {
+    vec2 uv = vUv + uStep * float(i);
+    float z = -realView(uv, realD(uv)).z, wi = exp(-0.15 * float(i * i)) * (abs(z - z0) < 0.04 * z0 + 0.2 ? 1.0 : 0.01);
+    s += texture2D(tSrc, uv) * wi; w += wi;
+  }
+  gl_FragColor = s / w;
+}`,
+  // wet-street reflections: march the reflected ray against depth; an escaped ray sees the sky at infinity
+  // (globe, head, beams) where the screen shows sky. Alpha of the scene colour carries 1 - reflectivity.
+  ssr: `uniform sampler2D tColor; uniform int uSteps; uniform float uTime;
+void main() {
+  float refl = 1.0 - texture2D(tColor, vUv).a, d = realD(vUv);
+  if (refl < 0.03 || d >= 1.0) { gl_FragColor = vec4(0.0); return; }
+  vec3 p = realView(vUv, d), n = realNormalAt(vUv, p);
+  float j = realIGN(gl_FragCoord.xy + fract(uTime) * 64.0), a = 6.2831853 * realIGN(gl_FragCoord.yx * 1.7 + 11.0);
+  n = normalize(n + vec3(cos(a), 0.0, sin(a)) * (1.0 - refl) * 0.12 * j);
+  vec3 v = normalize(p), r = reflect(v, n);
+  float t = 0.0, dt = (0.25 + 0.012 * -p.z) * (0.6 + 0.8 * j), prev = 0.0;
+  vec2 hit = vec2(-1.0);
+  for (int i = 0; i < 64; i++) {
+    if (i >= uSteps) break;
+    prev = t; t += dt; dt *= 1.16;
+    vec3 q = p + r * t;
+    if (q.z > -0.05) break;
+    vec2 u = realProj(q);
+    if (u.x < 0.0 || u.x > 1.0 || u.y < 0.0 || u.y > 1.0) break;
+    float sd = realD(u);
+    if (sd >= 1.0) continue;
+    float behind = realView(u, sd).z - q.z;
+    if (behind > 0.0 && behind < max(0.35, t * 0.08)) {
+      float lo = prev, hi = t;
+      for (int k = 0; k < 5; k++) { float m = 0.5 * (lo + hi); vec3 qm = p + r * m; vec2 um = realProj(qm); if (realView(um, realD(um)).z - qm.z > 0.0) hi = m; else lo = m; }
+      hit = realProj(p + r * hi); break;
+    }
+  }
+  vec3 col = vec3(0.0); float w = 0.0;
+  if (hit.x >= 0.0) {
+    col = texture2D(tColor, hit).rgb; vec2 e = smoothstep(0.0, 0.12, hit) * smoothstep(1.0, 0.88, hit);
+    w = e.x * e.y * (1.0 - smoothstep(0.25, 0.55, length(hit - vUv))) * smoothstep(0.35, -0.1, r.z) * smoothstep(1.5, 4.0, -realView(hit, realD(hit)).z);
+  }
+  else if (r.y > -0.2) {
+    vec4 c = uProj * vec4(r, 0.0); vec2 u = c.xy / c.w * 0.5 + 0.5;
+    if (c.w > 0.0 && u.x > 0.0 && u.x < 1.0 && u.y > 0.0 && u.y < 1.0 && realD(u) >= 1.0) { col = texture2D(tColor, u).rgb; vec2 e = smoothstep(0.0, 0.07, u) * smoothstep(1.0, 0.93, u); w = e.x * e.y; }
+  }
+  gl_FragColor = vec4(min(col, vec3(60.0)) * w, w);
+}`,
+  // light shafts: the globe's searchlights and the nearest lamps as cones of lit haze along each view ray, stopped by
+  // the city's depth (and, for the sky, by the globe)
+  shafts: `uniform mat4 uCamWorld; uniform vec3 uCamPos; uniform vec4 uConeA[14], uConeB[14], uConeC[14]; uniform int uCones, uSamples; uniform vec4 uGlobe; uniform float uTime;
+vec2 realCone(vec3 ro, vec3 rd, vec3 a, vec3 v, float c2, float L) {
+  vec3 co = ro - a; float dv = dot(rd, v), cv = dot(co, v);
+  float A = dv * dv - c2, B = 2.0 * (dv * cv - dot(rd, co) * c2), C = cv * cv - dot(co, co) * c2, disc = B * B - 4.0 * A * C;
+  vec2 r = vec2(1e9, -1e9);
+  if (abs(A) < 1e-6 || disc < 0.0) return r;
+  float s = sqrt(disc), t0 = (-B - s) / (2.0 * A), t1 = (-B + s) / (2.0 * A);
+  if (t0 > t1) { float x = t0; t0 = t1; t1 = x; }
+  if (A < 0.0) { if (dv * 0.5 * (t0 + t1) + cv > 0.0) r = vec2(t0, t1); }
+  else r = dv > 0.0 ? vec2(t1, 1e9) : vec2(-1e9, t0);
+  if (abs(dv) > 1e-6) { float h0 = -cv / dv, h1 = (L - cv) / dv; r = vec2(max(r.x, min(h0, h1)), min(r.y, max(h0, h1))); }
+  else if (cv < 0.0 || cv > L) r = vec2(1e9, -1e9);
+  return r;
+}
+void main() {
+  float d = realD(vUv);
+  vec3 pv = realView(vUv, min(d, 0.9999999)), rd = normalize(mat3(uCamWorld) * normalize(pv));
+  float tMax = d >= 1.0 ? 9000.0 : length(pv);
+  if (d >= 1.0) { vec3 oc = uCamPos - uGlobe.xyz; float b = dot(oc, rd), c = dot(oc, oc) - uGlobe.w * uGlobe.w, h = b * b - c; if (h > 0.0 && -b - sqrt(h) > 0.0) tMax = -b - sqrt(h); }
+  float j = realIGN(gl_FragCoord.xy + fract(uTime) * 37.0);
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 14; i++) {
+    if (i >= uCones) break;
+    vec3 a = uConeA[i].xyz, v = uConeB[i].xyz; float c2 = uConeA[i].w * uConeA[i].w, L = uConeB[i].w;
+    vec2 seg = realCone(uCamPos, rd, a, v, c2, L);
+    seg.x = max(seg.x, 0.0); seg.y = min(seg.y, tMax);
+    if (seg.y <= seg.x) continue;
+    float tanA = sqrt(1.0 - c2) / uConeA[i].w, stp = (seg.y - seg.x) / float(uSamples), acc = 0.0;
+    for (int k = 0; k < 8; k++) {
+      if (k >= uSamples) break;
+      vec3 x = uCamPos + rd * (seg.x + (float(k) + j) * stp), q = x - a;
+      float h = dot(q, v), rr = length(q - v * h) / max(h * tanA, 1e-3);
+      float g = 1.0 + 1.2 * pow(max(dot(normalize(q), -rd), 0.0), 8.0);
+      acc += (1.0 - smoothstep(0.35, 1.0, rr)) / (1.0 + h * h * uConeC[i].w) * smoothstep(L, 0.75 * L, h) * g * exp(-max(x.y, 0.0) / 420.0);
+    }
+    sum += uConeC[i].rgb * acc * stp;
+  }
+  gl_FragColor = vec4(sum, 1.0);
+}`,
+  // the HDR frame with AO, reflections and shafts
+  composite: `uniform sampler2D tColor, tAO, tSSR, tShaft; uniform float uAO, uSSR, uShaft; uniform mat4 uView;
+void main() {
+  vec4 c = texture2D(tColor, vUv); vec3 col = c.rgb;
+  float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+  if (uAO > 0.0) col *= mix(1.0, texture2D(tAO, vUv).r, uAO * (1.0 - smoothstep(0.8, 4.0, l)));
+  if (uSSR > 0.0 && c.a < 0.97) {
+    float d = realD(vUv); vec3 v = normalize(realView(vUv, d)), up = normalize(mat3(uView) * vec3(0.0, 1.0, 0.0));
+    float F = 0.03 + 0.97 * pow(1.0 - clamp(dot(-v, up), 0.0, 1.0), 5.0);
+    col += texture2D(tSSR, vUv).rgb * (1.0 - c.a) * mix(F, 1.0, 0.25) * uSSR;
+  }
+  if (uShaft > 0.0) col += texture2D(tShaft, vUv).rgb * uShaft;
+  gl_FragColor = vec4(col, 1.0);
+}`,
+  // bloom (Jimenez 2014): a 13-tap downsample (the first with a soft threshold and Karis average) and a tent upsample
+  down: `uniform sampler2D tSrc; uniform vec2 uSrcTexel; uniform float uFirst, uThreshold;
+vec3 s(vec2 o) { return texture2D(tSrc, vUv + o * uSrcTexel).rgb; }
+vec3 karis(vec3 a, vec3 b, vec3 c, vec3 d) { vec4 w = 1.0 / (1.0 + vec4(dot(a, vec3(0.2126, 0.7152, 0.0722)), dot(b, vec3(0.2126, 0.7152, 0.0722)), dot(c, vec3(0.2126, 0.7152, 0.0722)), dot(d, vec3(0.2126, 0.7152, 0.0722)))); return (a * w.x + b * w.y + c * w.z + d * w.w) / (w.x + w.y + w.z + w.w); }
+void main() {
+  vec3 a = s(vec2(-2, 2)), b = s(vec2(0, 2)), c = s(vec2(2, 2)), d = s(vec2(-2, 0)), e = s(vec2(0)), f = s(vec2(2, 0));
+  vec3 g = s(vec2(-2, -2)), h = s(vec2(0, -2)), i = s(vec2(2, -2)), j = s(vec2(-1, 1)), k = s(vec2(1, 1)), l = s(vec2(-1, -1)), m = s(vec2(1, -1));
+  vec3 o;
+  if (uFirst > 0.5) {
+    o = karis(j, k, l, m) * 0.5 + karis(a, b, d, e) * 0.125 + karis(b, c, e, f) * 0.125 + karis(d, e, g, h) * 0.125 + karis(e, f, h, i) * 0.125;
+    float br = max(o.r, max(o.g, o.b)), soft = clamp(br - uThreshold * 0.5, 0.0, uThreshold); soft = soft * soft / (2.0 * uThreshold + 1e-4);
+    o *= max(soft, br - uThreshold) / max(br, 1e-4);
+  } else o = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+  gl_FragColor = vec4(o, 1.0);
+}`,
+  up: `uniform sampler2D tSrc, tLow; uniform vec2 uLowTexel;
+void main() {
+  vec2 t = uLowTexel;
+  vec3 u = (texture2D(tLow, vUv + vec2(-t.x, t.y)).rgb + texture2D(tLow, vUv + vec2(t.x, t.y)).rgb + texture2D(tLow, vUv - t).rgb + texture2D(tLow, vUv + vec2(t.x, -t.y)).rgb) * 0.0625
+    + (texture2D(tLow, vUv + vec2(0.0, t.y)).rgb + texture2D(tLow, vUv - vec2(0.0, t.y)).rgb + texture2D(tLow, vUv + vec2(t.x, 0.0)).rgb + texture2D(tLow, vUv - vec2(t.x, 0.0)).rgb) * 0.125
+    + texture2D(tLow, vUv).rgb * 0.25;
+  gl_FragColor = vec4(texture2D(tSrc, vUv).rgb + u, 1.0);
+}`,
+  // AgX (Sobotka; the polynomial fit by Wrensch) with a punchy look, then the noir grade, vignette, grain, sRGB.
+  // Alpha carries luma for FXAA.
+  final: `uniform sampler2D tColor, tBloom; uniform float uExposure, uBloom, uBloomN, uSat, uVignette, uGrain, uTime; uniform vec3 uShadows, uHighlights;
+vec3 agxCurve(vec3 x) { vec3 x2 = x * x, x4 = x2 * x2; return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232; }
+vec3 agx(vec3 c) {
+  c = mat3(0.842479062253094, 0.0423282422610123, 0.0423756549057051, 0.0784335999999992, 0.878468636469772, 0.0784336, 0.0792237451477643, 0.0791661274605434, 0.879142973793104) * c;
+  c = clamp(log2(max(c, 1e-10)), -12.47393, 4.026069); c = (c + 12.47393) / 16.49999;
+  c = agxCurve(c);
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722)); c = pow(max(c, 0.0), vec3(1.25)); c = l + 1.2 * (c - l);
+  c = mat3(1.19687900512017, -0.0528968517574562, -0.0529716355144438, -0.0980208811401368, 1.15190312990417, -0.0980434501171241, -0.0990297440797205, -0.0989611768448433, 1.15107367264116) * c;
+  return pow(max(c, 0.0), vec3(2.2));
+}
+float h12(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+void main() {
+  vec3 c = (texture2D(tColor, vUv).rgb + texture2D(tBloom, vUv).rgb * uBloom / uBloomN) * uExposure;
+  c = agx(c);
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, uSat) * mix(uShadows, uHighlights, smoothstep(0.0, 0.45, l));
+  vec2 q = vUv - 0.5; c *= 1.0 - uVignette * dot(q, q) * 1.5;
+  c = mix(12.92 * c, 1.055 * pow(max(c, 0.0), vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+  vec2 g = gl_FragCoord.xy + fract(uTime * 7.0) * 911.0;
+  c += (h12(g) + h12(g + 17.3) - 1.0) * uGrain;
+  c = clamp(c, 0.0, 1.0);
+  gl_FragColor = vec4(c, dot(c, vec3(0.299, 0.587, 0.114)));
+}`,
+  // FXAA (Lottes 3.11, the luma-edge walk), on the graded LDR frame
+  fxaa: `uniform sampler2D tColor;
+float L(vec2 uv) { return texture2D(tColor, uv).a; }
+void main() {
+  vec2 t = uTexel, uv = vUv;
+  vec4 m = texture2D(tColor, uv);
+  float lM = m.a, lN = L(uv + vec2(0.0, t.y)), lS = L(uv - vec2(0.0, t.y)), lE = L(uv + vec2(t.x, 0.0)), lW = L(uv - vec2(t.x, 0.0));
+  float hi = max(lM, max(max(lN, lS), max(lE, lW))), lo = min(lM, min(min(lN, lS), min(lE, lW))), range = hi - lo;
+  if (range < max(0.0312, hi * 0.125)) { gl_FragColor = vec4(m.rgb, 1.0); return; }
+  float lNW = L(uv + vec2(-t.x, t.y)), lNE = L(uv + t), lSW = L(uv - t), lSE = L(uv + vec2(t.x, -t.y));
+  float eh = abs(lNW + lSW - 2.0 * lW) + 2.0 * abs(lN + lS - 2.0 * lM) + abs(lNE + lSE - 2.0 * lE);
+  float ev = abs(lNW + lNE - 2.0 * lN) + 2.0 * abs(lW + lE - 2.0 * lM) + abs(lSW + lSE - 2.0 * lS);
+  bool horz = eh >= ev;
+  float l1 = horz ? lS : lW, l2 = horz ? lN : lE, g1 = l1 - lM, g2 = l2 - lM, len = horz ? t.y : t.x;
+  bool steep = abs(g1) >= abs(g2);
+  float gs = 0.25 * max(abs(g1), abs(g2)), avg;
+  if (steep) { len = -len; avg = 0.5 * (l1 + lM); } else avg = 0.5 * (l2 + lM);
+  vec2 cur = uv + (horz ? vec2(0.0, len * 0.5) : vec2(len * 0.5, 0.0)), off = horz ? vec2(t.x, 0.0) : vec2(0.0, t.y);
+  vec2 u1 = cur - off, u2 = cur + off;
+  float e1 = L(u1) - avg, e2 = L(u2) - avg;
+  bool r1 = abs(e1) >= gs, r2 = abs(e2) >= gs;
+  for (int i = 0; i < 10; i++) {
+    if (r1 && r2) break;
+    float k = i < 3 ? 1.0 : i < 6 ? 1.5 : 3.0;
+    if (!r1) { u1 -= off * k; e1 = L(u1) - avg; r1 = abs(e1) >= gs; }
+    if (!r2) { u2 += off * k; e2 = L(u2) - avg; r2 = abs(e2) >= gs; }
+  }
+  float d1 = horz ? uv.x - u1.x : uv.y - u1.y, d2 = horz ? u2.x - uv.x : u2.y - uv.y;
+  float pix = (((d1 < d2) ? e1 : e2) < 0.0) != (lM < avg) ? 0.5 - min(d1, d2) / (d1 + d2) : 0.0;
+  float sub = clamp(abs((2.0 * (lN + lS + lE + lW) + lNW + lNE + lSW + lSE) / 12.0 - lM) / range, 0.0, 1.0);
+  sub = (-2.0 * sub + 3.0) * sub * sub; pix = max(pix, sub * sub * 0.75);
+  gl_FragColor = vec4(texture2D(tColor, uv + (horz ? vec2(0.0, pix * len) : vec2(pix * len, 0.0))).rgb, 1.0);
+}`,
+}
+
+let realState = null
+const realStats = { passes: 0, calls: 0, triangles: 0, targetMB: 0, textureMB: 0, cpuMs: 0, tier: '', ready: false, error: '' }
+function realInit() {
+  const R = realState = { ready: false, failed: false, size: 0, swaps: new WeakMap(), owned: [], lamps: [], lampList: [], litLamps: [],
+    lampGroup: new THREE.Group(), v3: new THREE.Vector3(), v2: new THREE.Vector2(), t: null, tier: null, frame: 0,
+    moonDir: new THREE.Vector3(...REAL_SKY.moon).normalize(),
+    uniforms: { albedo: { value: null }, normal: { value: null }, time: { value: 0 } } }
+  R.fog = new THREE.FogExp2(REAL_SKY.fog, REAL_SKY.fogDensity)
+  R.signalGlow = new THREE.Color(6, 6, 6)
+  R.env = realEnvironment(R)
+  R.dome = new THREE.Mesh(new THREE.SphereGeometry(30000, 32, 16), realSkyMaterial(R.moonDir)); R.dome.renderOrder = -10; R.dome.frustumCulled = false
+  R.mats = { facade: realCityMaterial('facade', R), ornament: realCityMaterial('ornament', R), far: realCityMaterial('far', R), ground: realCityMaterial('ground', R),
+    pool: Object.assign(faustState?.poolMaterial?.clone() || new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }), { opacity: 0.16 }),
+    roadLights: null, lens: new THREE.MeshBasicMaterial({ color: new THREE.Color(14, 15, 18), fog: false, toneMapped: false }),
+    cloud: new THREE.SpriteMaterial({ color: new THREE.Color(0.05, 0.043, 0.04), opacity: 0.85, fog: false, transparent: true, depthWrite: false }) }
+  // additive pools keep the frame's alpha (the reflection pass reads it)
+  for (const m of [R.mats.pool]) Object.assign(m, { blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor,
+    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor })
+  const roads = faustState && [...worldGroup.children].find(o => o.material?.customProgramCacheKey?.().startsWith('faust-road-light-1'))
+  if (roads) { R.mats.roadLights = roads.material.clone(); R.mats.roadLights.onBeforeCompile = roads.material.onBeforeCompile
+    R.mats.roadLights.customProgramCacheKey = () => 'faust-road-light-1|real'; R.mats.roadLights.color.multiplyScalar(4)
+    Object.assign(R.mats.roadLights, { blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor }) }
+  const cloud = faustState?.skyScene && [...faustState.skyScene.children].find(o => o.isSprite)
+  if (cloud) R.mats.cloud.map = cloud.material.map
+  // post: one triangle, a material per pass
+  const tri = new THREE.BufferGeometry(); tri.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3))
+  R.quad = new THREE.Mesh(tri); R.quad.frustumCulled = false; R.post = new THREE.Scene(); R.post.add(R.quad); R.postCam = new THREE.Camera()
+  const common = () => ({ tDepth: { value: null }, uProj: { value: new THREE.Matrix4() }, uProjInv: { value: new THREE.Matrix4() }, uTexel: { value: new THREE.Vector2() } })
+  R.pass = {}
+  for (const [k, src] of Object.entries(REAL_PASSES)) R.pass[k] = new THREE.ShaderMaterial({ uniforms: common(), vertexShader: REAL_POST_VS,
+    fragmentShader: REAL_DEPTH_GLSL + src, depthTest: false, depthWrite: false, toneMapped: false })
+  const kernel = Array.from({ length: 16 }, (_, i) => { const h = cityHash(i * 31 + 7), a = (h % 1000) / 1000 * Math.PI * 2, z = 0.15 + ((h >> 10) % 1000) / 1000 * 0.85
+    const r = Math.sqrt(1 - z * z), s = 0.15 + 0.85 * ((i + 1) / 16) ** 2; return new THREE.Vector3(Math.cos(a) * r * s, Math.sin(a) * r * s, z * s) })
+  Object.assign(R.pass.ao.uniforms, { uRadius: { value: 1.1 }, uPower: { value: 1.6 }, uSamples: { value: 8 }, uKernel: { value: kernel } })
+  for (const k of ['blur']) Object.assign(R.pass[k].uniforms, { tSrc: { value: null }, uStep: { value: new THREE.Vector2() } })
+  Object.assign(R.pass.ssr.uniforms, { tColor: { value: null }, uSteps: { value: 16 }, uTime: { value: 0 } })
+  const cones = n => Array.from({ length: n }, () => new THREE.Vector4())
+  Object.assign(R.pass.shafts.uniforms, { uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() }, uConeA: { value: cones(14) }, uConeB: { value: cones(14) },
+    uConeC: { value: cones(14) }, uCones: { value: 0 }, uSamples: { value: 4 }, uGlobe: { value: new THREE.Vector4(FAUST.globe.x, FAUST.globe.y, FAUST.globe.z, FAUST.globe.radius) }, uTime: { value: 0 } })
+  Object.assign(R.pass.composite.uniforms, { tColor: { value: null }, tAO: { value: null }, tSSR: { value: null }, tShaft: { value: null }, uAO: { value: 0 }, uSSR: { value: 0 }, uShaft: { value: 0 }, uView: { value: new THREE.Matrix4() } })
+  Object.assign(R.pass.down.uniforms, { tSrc: { value: null }, uSrcTexel: { value: new THREE.Vector2() }, uFirst: { value: 0 }, uThreshold: { value: REAL_GRADE.threshold } })
+  Object.assign(R.pass.up.uniforms, { tSrc: { value: null }, tLow: { value: null }, uLowTexel: { value: new THREE.Vector2() } })
+  Object.assign(R.pass.final.uniforms, { tColor: { value: null }, tBloom: { value: null }, uExposure: { value: 1 }, uBloom: { value: 0 }, uBloomN: { value: 1 }, uSat: { value: 1 },
+    uVignette: { value: 0 }, uGrain: { value: 0 }, uTime: { value: 0 }, uShadows: { value: new THREE.Vector3() }, uHighlights: { value: new THREE.Vector3() } })
+  Object.assign(R.pass.fxaa.uniforms, { tColor: { value: null } })
+  return R
+}
+// The tier in force: the quality's row, MSAA only below 1.5 device pixels a pixel (above it the buffer is already
+// supersampled, and FXAA is cheaper), and any test override
+function realTier() {
+  const t = { ...(REAL_TIERS[settings.quality] || REAL_TIERS.high), ...realOverride }
+  if (renderer.getPixelRatio() >= 1.5) t.msaa = 0
+  t.mid = !!(t.ao || t.ssr || t.shafts)        // the composite runs only when it has something to add
+  return t
+}
+// render targets for a drawing-buffer size and tier, only those the tier uses; remade when either changes
+function realTargets(R, w, h, tier) {
+  const key = [w, h, tier.msaa, !!tier.ao, !!tier.ssr, !!tier.shafts, tier.bloom, tier.bloomFrom].join('/')
+  if (R.t?.key === key) return R.t
+  realDisposeTargets(R)
+  const all = [], rt = (W, H, type = THREE.HalfFloatType, more) => {
+    const t = new THREE.WebGLRenderTarget(Math.max(1, W), Math.max(1, H), { type, depthBuffer: false, magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter, ...more })
+    all.push(t); return t }
+  const hw = Math.ceil(w / 2), hh = Math.ceil(h / 2), T = { key, w, h, hw, hh, all }
+  T.hdr = rt(w, h, THREE.HalfFloatType, { depthBuffer: true, samples: tier.msaa }); T.hdr.depthTexture = new THREE.DepthTexture(w, h)
+  if (tier.ao) { T.aoA = rt(hw, hh, THREE.UnsignedByteType); T.aoB = rt(hw, hh, THREE.UnsignedByteType) }
+  if (tier.ssr) { T.ssrA = rt(hw, hh); T.ssrB = rt(hw, hh) }
+  if (tier.shafts) T.shaft = rt(hw, hh)
+  if (tier.mid) T.comp = rt(w, h)
+  if (!tier.msaa) T.ldr = rt(w, h, THREE.UnsignedByteType)
+  T.down = []; T.up = []
+  for (let i = 0, W = Math.ceil(w / 2 ** tier.bloomFrom), H = Math.ceil(h / 2 ** tier.bloomFrom); i < tier.bloom; i++, W = Math.ceil(W / 2), H = Math.ceil(H / 2)) {
+    T.down.push(rt(W, H)); if (i < tier.bloom - 1) T.up.push(rt(W, H)) }
+  // bytes: colour per texel by type, the HDR target's depth and its MSAA storage (colour + depth per sample)
+  let bytes = w * h * 4 * (tier.msaa ? tier.msaa * 3 + 1 : 1)
+  for (const t of all) bytes += t.width * t.height * (t.texture.type === THREE.HalfFloatType ? 8 : 4)
+  realStats.targetMB = +(bytes / 1048576).toFixed(1)
+  return R.t = T
+}
+function realDisposeTargets(R) {
+  const T = R.t; if (!T) return
+  for (const t of T.all) { t.depthTexture?.dispose(); t.dispose() }
+  R.t = null
+}
+function realPassTo(raw, R, name, target) {
+  R.quad.material = R.pass[name]; renderer.setRenderTarget(target); raw(R.post, R.postCam); realStats.passes++
+}
+// LOOKS.realistic.render: swap, draw into the HDR target through faustRender (sky, then city), finish with the chain
+function realRender(raw, s, cam) {
+  // a GPU that cannot render to half floats (some phones) gets the plain draw, never a broken frame
+  if (!(renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float'))) {
+    if (!realStats.error) { realStats.error = 'no float render targets'; console.warn('realistic: this GPU cannot render to half floats; drawing plain') }
+    return faustRender(raw, s, cam)
+  }
+  const t0 = performance.now(), R = realState || realInit(), tier = realTier()
+  if (!R.ready && !R.loading && !R.failed) {
+    R.loading = realTextureSource(tier.tex).then(([albedo, normal]) => {
+      if (realState !== R) { albedo.dispose(); normal.dispose(); return }
+      R.uniforms.albedo.value = albedo; R.uniforms.normal.value = normal; R.size = tier.tex; R.ready = true; R.swaps = new WeakMap()
+      realStats.textureMB = +(2 * tier.tex * tier.tex * 4 * REAL_LAYERS.length * 4 / 3 / 1048576).toFixed(1); realStats.ready = true
+    }).catch(e => { R.failed = true; realStats.error = String(e?.message || e); console.warn('realistic textures unavailable:', realStats.error) })
+  }
+  const size = renderer.getDrawingBufferSize(R.v2), T = realTargets(R, size.x, size.y, tier), U = R.pass
+  const out = renderer.getRenderTarget(), autoClear = renderer.autoClear, reset = renderer.info.autoReset, undo = []
+  R.uniforms.time.value = performance.now() / 1000; realStats.passes = 0; realStats.tier = settings.quality
+  try {
+    if (reset) renderer.info.reset()
+    renderer.info.autoReset = false
+    realPlaceLamps(R, cam, tier.lamps)
+    realSwap(R, s, tier, undo)
+    renderer.setRenderTarget(T.hdr)
+    faustRender(raw, s, cam)
+    renderer.autoClear = false
+    // shared uniforms of the depth-reading passes
+    for (const m of Object.values(U)) { const u = m.uniforms; u.tDepth.value = T.hdr.depthTexture; u.uProj.value.copy(cam.projectionMatrix); u.uProjInv.value.copy(cam.projectionMatrixInverse); u.uTexel.value.set(1 / T.w, 1 / T.h) }
+    if (tier.ao) {
+      U.ao.uniforms.uSamples.value = tier.ao; realPassTo(raw, R, 'ao', T.aoA)
+      U.blur.uniforms.tSrc.value = T.aoA.texture; U.blur.uniforms.uStep.value.set(1 / T.hw, 0); realPassTo(raw, R, 'blur', T.aoB)
+      U.blur.uniforms.tSrc.value = T.aoB.texture; U.blur.uniforms.uStep.value.set(0, 1 / T.hh); realPassTo(raw, R, 'blur', T.aoA)
+    }
+    if (tier.ssr) {
+      U.ssr.uniforms.tColor.value = T.hdr.texture; U.ssr.uniforms.uSteps.value = tier.ssr; U.ssr.uniforms.uTime.value = R.uniforms.time.value
+      realPassTo(raw, R, 'ssr', T.ssrA)
+      U.blur.uniforms.tSrc.value = T.ssrA.texture; U.blur.uniforms.uStep.value.set(1.2 / T.hw, 0); realPassTo(raw, R, 'blur', T.ssrB)
+      U.blur.uniforms.tSrc.value = T.ssrB.texture; U.blur.uniforms.uStep.value.set(0, 1.8 / T.hh); realPassTo(raw, R, 'blur', T.ssrA)
+    }
+    if (tier.shafts) { realCones(R, cam, tier); realPassTo(raw, R, 'shafts', T.shaft) }
+    let frame = T.hdr
+    if (tier.mid) {
+      const C = U.composite.uniforms
+      C.tColor.value = T.hdr.texture; C.tAO.value = T.aoA?.texture || null; C.tSSR.value = T.ssrA?.texture || null; C.tShaft.value = T.shaft?.texture || null
+      C.uAO.value = tier.ao ? REAL_GRADE.ao : 0; C.uSSR.value = tier.ssr ? REAL_GRADE.ssr : 0; C.uShaft.value = tier.shafts ? REAL_GRADE.shafts : 0
+      C.uView.value.copy(cam.matrixWorldInverse)
+      realPassTo(raw, R, 'composite', T.comp); frame = T.comp
+    }
+    // bloom: down the mips, then back up adding each level
+    let src = frame
+    T.down.forEach((d, i) => { const u = U.down.uniforms; u.tSrc.value = src.texture; u.uSrcTexel.value.set(1 / src.width, 1 / src.height); u.uFirst.value = i ? 0 : 1; realPassTo(raw, R, 'down', d); src = d })
+    for (let i = T.up.length - 1; i >= 0; i--) { const u = U.up.uniforms, low = i === T.up.length - 1 ? T.down[i + 1] : T.up[i + 1]
+      u.tSrc.value = T.down[i].texture; u.tLow.value = low.texture; u.uLowTexel.value.set(1 / low.width, 1 / low.height); realPassTo(raw, R, 'up', T.up[i]) }
+    const F = U.final.uniforms, G = REAL_GRADE
+    F.tColor.value = frame.texture; F.tBloom.value = (T.up[0] || T.down[0]).texture; F.uExposure.value = G.exposure; F.uBloom.value = G.bloom; F.uBloomN.value = tier.bloom
+    F.uSat.value = G.saturation; F.uVignette.value = G.vignette; F.uGrain.value = G.grain; F.uTime.value = R.uniforms.time.value
+    F.uShadows.value.set(...G.shadows); F.uHighlights.value.set(...G.highlights)
+    if (tier.msaa) realPassTo(raw, R, 'final', out)
+    else { realPassTo(raw, R, 'final', T.ldr); U.fxaa.uniforms.tColor.value = T.ldr.texture; realPassTo(raw, R, 'fxaa', out) }
+  } finally {
+    for (let i = undo.length; i--;) { const [o, k, v] = undo[i]; if (o) o[k] = v; else k() }
+    renderer.setRenderTarget(out); renderer.autoClear = autoClear; renderer.info.autoReset = reset
+    realStats.calls = renderer.info.render.calls; realStats.triangles = renderer.info.render.triangles; realStats.cpuMs = +(performance.now() - t0).toFixed(2)
+  }
+}
+// the cones the shafts pass lights: the six searchlights from the globe, and the lamps that have a real light
+function realCones(R, cam, tier) {
+  const u = R.pass.shafts.uniforms, F = faustState
+  let n = 0
+  const put = (x, y, z, dx, dy, dz, cosA, length, r, g, b, fall) => { if (n >= 14) return
+    u.uConeA.value[n].set(x, y, z, cosA); u.uConeB.value[n].set(dx, dy, dz, length); u.uConeC.value[n].set(r, g, b, fall); n++ }
+  for (const beam of F?.skyBeams || []) {
+    const d = R.v3.set(0, -1, 0).applyQuaternion(beam.quaternion), L = beam.userData.length * beam.scale.y
+    put(beam.position.x, beam.position.y, beam.position.z, d.x, d.y, d.z, Math.cos(Math.atan(217 / L)), L, 0.0011, 0.0013, 0.0016, 1e-7)
+  }
+  for (const e of R.litLamps) put(e[1], 8.42, e[2], 0, -1, 0, Math.cos(0.9), 9.5, 0.02, 0.0115, 0.0048, 0.12)
+  u.uCones.value = n; u.uSamples.value = tier.shafts
+  u.uCamWorld.value.copy(cam.matrixWorld); u.uCamPos.value.setFromMatrixPosition(cam.matrixWorld); u.uTime.value = R.uniforms.time.value
+}
+function realTeardown() {
+  const R = realState; if (!R) return
+  realState = null
+  realDisposeTargets(R)
+  for (const m of [...Object.values(R.mats), ...Object.values(R.pass), ...R.owned, R.dome.material]) m?.dispose()
+  R.dome.geometry.dispose(); R.quad.geometry.dispose(); R.env.dispose()
+  R.uniforms.albedo.value?.dispose(); R.uniforms.normal.value?.dispose()
+  Object.assign(realStats, { ready: false, targetMB: 0, textureMB: 0 })
+}
+// hoisted: LOOKS refers to the look's functions long before this section runs
+function realScale(quality) { return (REAL_TIERS[quality] || REAL_TIERS.high).scale }
+GAME.realistic = { tiers: REAL_TIERS, grade: REAL_GRADE, sky: REAL_SKY, stats: realStats, override: realOverride, get state() { return realState } }
 
 function buildWorld() {
   setHeadless(renderHeadless)

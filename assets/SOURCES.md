@@ -41,3 +41,22 @@ the comic's art. No other third-party content is in these files.
 | `freak_anims.<hash>.glb` | 8 clips for the villains' weapons on the shared skeleton, no mesh: knife_idle, knife_a, knife_b, knife_lunge, bat_idle, bat_swing, rifle_idle, rifle_shoot | knife_a, knife_b and knife_lunge retargeted from Quaternius "Universal Animation Library" (Sword_Attack) and "Universal Animation Library 2" (Sword_Regular_A, Sword_Regular_B); knife_idle is "Universal Animation Library" Sword_Idle with the head lifted, and bat_idle, bat_swing, rifle_idle and rifle_shoot are authored for The MANIAK on the shared idle | CC0 1.0 |
 
 The held weapons (knife, bat, pipe, rifle) are drawn in the page from code (`PROP_MODELS`, `GUN_PROFILES`); they are not asset files.
+
+
+# The Realistic look (card #25)
+
+City surface textures for the Realistic look, each a pair: `real_<material>_c.<hash>.webp` holds the colour map with
+ambient occlusion in its alpha, and `real_<material>_n.<hash>.webp` holds the normal map (OpenGL convention) in red and
+green with roughness in blue. Each is 1024 px, resized from the 2K set and repacked for The MANIAK. All are from
+ambientCG and dedicated to the public domain under CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/).
+
+| Files | What it is | Made from | License |
+|---|---|---|---|
+| `real_stone_c.56b7c34a.webp`, `real_stone_n.82c6a8ce.webp` | Grey ashlar: Art Deco and Gothic towers, piers, cornices, crowns | ambientCG Bricks066 (https://ambientcg.com/view?id=Bricks066) | CC0 1.0 |
+| `real_brick_c.42ff7300.webp`, `real_brick_n.fd17444c.webp` | Weathered brick: tenements | ambientCG Bricks097 (https://ambientcg.com/view?id=Bricks097) | CC0 1.0 |
+| `real_concrete_c.687e9b94.webp`, `real_concrete_n.c6160c5a.webp` | Board-formed concrete: industry, roofs, and the sidewalk flags (their joints are drawn by the shader) | ambientCG Concrete031 (https://ambientcg.com/view?id=Concrete031) | CC0 1.0 |
+| `real_asphalt_c.fd3c2e58.webp`, `real_asphalt_n.b5a93bdd.webp` | Road asphalt, wet in the look | ambientCG Asphalt025C (https://ambientcg.com/view?id=Asphalt025C) | CC0 1.0 |
+| `real_setts_c.01d7b74b.webp`, `real_setts_n.d36c293d.webp` | Granite setts: plazas | ambientCG PavingStones070 (https://ambientcg.com/view?id=PavingStones070) | CC0 1.0 |
+| `real_granite_c.a24732fb.webp`, `real_granite_n.46e169b8.webp` | Granite: podiums, kerbs | ambientCG Granite002A (https://ambientcg.com/view?id=Granite002A) | CC0 1.0 |
+
+The look's sky, windows, rooms, shopfronts, neon, trims, puddles and light are made in its shaders for The MANIAK.
