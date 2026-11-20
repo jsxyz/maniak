@@ -1,12 +1,13 @@
-# Characters (card #10)
+# Characters (cards #10 and #23)
 
 Every file below is made for The MANIAK from public-domain (CC0 1.0) sources. No other third-party content is in these files.
 
 | File | What it is | Made from | License |
 |---|---|---|---|
 | `maniak.<hash>.glb` | The Maniak: one skinned mesh with one material, LOD0/1/2 (50,590 / 12,140 / 3,793 triangles), 68 joints (the shared 65 plus `cape_01`-`cape_03`), sockets `grip_l`, `grip_r` and `mouth`. 2048 WebP colour, normal and occlusion/roughness/metal maps | Quaternius "Universal Base Characters" (Superhero male body), sculpted, costumed, textured and baked for The MANIAK | CC0 1.0 (source); modifications CC0 1.0 |
-| `civ_m_suit.<hash>.glb`, `civ_m_coat.<hash>.glb`, `civ_m_worker.<hash>.glb` | Male pedestrians, LOD0/1/2 (about 7.8k / 5.4k / 1.9k triangles), the shared 65-joint skeleton | Quaternius "Universal Base Characters" (Superhero male body, hair, beard), re-proportioned and dressed for The MANIAK | CC0 1.0 |
-| `civ_f_dress.<hash>.glb`, `civ_f_coat.<hash>.glb` | Female pedestrians, LOD0/1/2 (about 8.6k / 5.9k / 2.0k triangles) | Quaternius "Universal Base Characters" (Superhero female body, hair), re-proportioned and dressed for The MANIAK | CC0 1.0 |
+| `civ_m_suit.<hash>.glb`, `civ_m_coat.<hash>.glb`, `civ_m_worker.<hash>.glb` | Male pedestrians in 1930s and 40s city clothes: a pinstriped double-breasted suit and fedora; a belted trench coat over a suit; a vest over rolled shirt sleeves and a flat cap. The garments are modelled cloth (shells, collars, lapels, belts, cuffs, coat skirts). LOD0/1/2 (about 8.2-8.9k / 5.6-6.1k / 1.9-2.1k triangles), the shared 65-joint skeleton, 1024 WebP colour and 512 WebP normal maps | Quaternius "Universal Base Characters" (Superhero male body, hair, beard), re-proportioned and dressed for The MANIAK | CC0 1.0 (source); modifications CC0 1.0 |
+| `civ_f_dress.<hash>.glb`, `civ_f_coat.<hash>.glb` | Female pedestrians: a belted dress with a full skirt and a collar; a belted coat with lapels and a cloche hat. LOD0/1/2 (about 9.1-9.4k / 6.3-6.5k / 2.2k triangles) | Quaternius "Universal Base Characters" (Superhero female body, hair), re-proportioned and dressed for The MANIAK | CC0 1.0 (source); modifications CC0 1.0 |
+| `civ_freak.<hash>.glb`, `civ_brute.<hash>.glb` | Stand-in bodies for the Freak and the Brute: a hunched, gaunt, pale Freak in a long ragged coat and fedora; a broad Brute in shirt, suspenders, butcher's apron and flat cap. LOD0/1/2 (about 8.6k / 5.9k / 2.0k and 8.4k / 5.8k / 2.0k triangles) | Quaternius "Universal Base Characters" (Superhero male body, hair, beard), re-proportioned, sculpted and dressed for The MANIAK | CC0 1.0 (source); modifications CC0 1.0 |
 | `anims.<hash>.glb` | 40 animation clips on the shared skeleton, no mesh | 32 clips retargeted from Quaternius "Universal Animation Library" and "Universal Animation Library 2" (Standard); 8 authored for The MANIAK on top of them (haymaker, smash_charge, smash_air, smash_land, block_whirl, chain_hang, chain_reel, whistle) | CC0 1.0 |
 | `props.<hash>.glb` | The cinderblock (with a `chain_anchor` node) and one chain link | Made for The MANIAK | CC0 1.0 |
 

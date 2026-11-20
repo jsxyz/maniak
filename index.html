@@ -599,6 +599,7 @@
   </div>
   <div class="mrow" style="margin-top:16px">
     <button id="set-view">View: third</button>
+    <button id="set-look">Look: Ink</button>
     <button id="set-quality">Quality: high</button>
     <button id="set-distance">View distance: normal</button>
     <button id="set-shadows">Shadows: on</button>
@@ -709,6 +710,13 @@ const THREE = ENABLE3D.THREE
 //   POWERS, HEALS, OBJECTS, LEVELS, VEHICLES, MODELS (COSTUMES), RADIO, and the game's ids and title face just below
 // ROOM_NS: a room's id on the PeerJS signaling server is ROOM_NS + its code, so other games' rooms never meet this one's.
 // TITLE_FONT: the landing title's display face (Luckiest Guy, Apache-2.0), fetched under its pin as the libraries are
+// CONTENT: add a look by supplying render(rawRender, scene, camera), optional setup/teardown,
+// and scale(quality). The raw renderer avoids recursion; faustRender draws the existing sky + city.
+const LOOK_DEFAULT = 'ink'
+const LOOKS = {
+  ink: { label: 'Ink', render: inkRender, teardown: inkDispose, scale: quality => quality === 'low' ? 0.8 : 1 },
+  plain: { label: 'Plain' },
+}
 const ROOM_NS = 'maniak-'
 const TITLE_FONT = { family: 'Maniak Display', url: 'https://cdn.jsdelivr.net/npm/@fontsource/luckiest-guy@5.3.0/files/luckiest-guy-latin-400-normal.woff2',
   sri: 'sha384-DW4kh5v1xGwmuLm1y4PGroJqIeVVN2L5GVuh/afTWWkHSOXF2nYcG+bUyOKo5EOe' }
@@ -944,7 +952,7 @@ const ASSETS =
 // decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
 // neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { anims: 'anims.4491f331.glb', civ_f_coat: 'civ_f_coat.c55d8093.glb', civ_f_dress: 'civ_f_dress.16b9f27f.glb', civ_m_coat: 'civ_m_coat.69013444.glb', civ_m_suit: 'civ_m_suit.29e88161.glb', civ_m_worker: 'civ_m_worker.11e6984e.glb', maniak: 'maniak.dae0434f.glb', props: 'props.c509eb59.glb' }
+const RIG_FILES = { anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.6e652416.glb', civ_f_coat: 'civ_f_coat.67e51246.glb', civ_f_dress: 'civ_f_dress.c79bc6fb.glb', civ_freak: 'civ_freak.a813a76c.glb', civ_m_coat: 'civ_m_coat.d4b5d9fb.glb', civ_m_suit: 'civ_m_suit.afd3fc9e.glb', civ_m_worker: 'civ_m_worker.3c5412af.glb', maniak: 'maniak.dae0434f.glb', props: 'props.c509eb59.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -972,10 +980,11 @@ const MODELS = {
     punches: { jab: [['jab', 0.12], ['cross', 0.18], ['hook', 0.04]], rise: [['haymaker', 0.36]], slam: [['smash_land', 0]] },
     lods: [12, 28], cape: ['cape_01', 'cape_02', 'cape_03'], capeK: 0.11, capeMax: 1.25, deathShow: 2.2,
   },
-  // the freaks until card #7 brings the comic's: the trench coat for the Freak, the heavy worker for the Brute; a creeping
-  // walk, the freak's swipe for a shiv, a hook for anything else swung (the Brute's sledge)
-  freak: { ...RIG_CIV, file: RIG_FILES.civ_m_coat, punches: { jab: [['freak_attack', 0.35]], melee: [['hook', 0.04]] } },
-  brute: { ...RIG_CIV, file: RIG_FILES.civ_m_worker, punches: { jab: [['hook', 0.04]], melee: [['hook', 0.04], ['cross', 0.18]] } },
+  // the freaks until card #7 brings the comic's (card #23's stand-ins): the Freak hunched, gaunt and pale in a long ragged
+  // coat, the Brute a broad butcher in cap and apron; a creeping walk, the freak's swipe for a shiv, a hook for anything else
+  // swung (the Brute's sledge)
+  freak: { ...RIG_CIV, file: RIG_FILES.civ_freak, punches: { jab: [['freak_attack', 0.35]], melee: [['hook', 0.04]] } },
+  brute: { ...RIG_CIV, file: RIG_FILES.civ_brute, punches: { jab: [['hook', 0.04]], melee: [['hook', 0.04], ['cross', 0.18]] } },
   man: {
     url: ASSETS + 'box_man.glb',
     yaw: Math.PI,
@@ -2298,6 +2307,7 @@ function faustMonument() {
       totalEmissiveRadiance += diffuseColor.rgb * max(0.0, dot(normalize(faustGlobeNormal), globeFlood)) * 1.3;`)
   }
   globe.material.customProgramCacheKey = () => 'faust-globe-flood-1'
+  globe.material.userData.inkGlobe = true
   far.add(globe)
   // The placeholder, including its emissive eyes, is one mesh in a centred unit box.
   // A replacement uses the same transform, without re-baking its vertices into world coordinates.
@@ -7653,6 +7663,261 @@ function buildScenery(boxes, unit = ARENA / 72) {
   return K.root
 }
 
+// ---------------------------------------------------------------- comic ink
+// LOOKS entries may provide render(rawRender, scene, camera), scale(quality), setup and teardown.
+// A look owns its temporary render state and releases targets in teardown. Plain uses faustRender unchanged.
+const inkUniforms = { inkEnabled: { value: false }, inkExtent: { value: 960 } }
+const inkPatched = new WeakSet()
+let activeLook = null, inkPost = null
+const lookStats = { look: 'plain', passes: 0, calls: 0, triangles: 0, targetBytes: 0 }
+function applyLook() {
+  const name = Object.hasOwn(LOOKS, settings.look) ? settings.look : LOOK_DEFAULT
+  settings.look = name
+  if (!renderer || !scene || activeLook === name) return
+  LOOKS[activeLook]?.teardown?.(renderer, scene)
+  activeLook = name
+  inkUniforms.inkEnabled.value = name === 'ink'
+  LOOKS[name].setup?.(renderer, scene)
+}
+function lookRender(render, s, cam) {
+  if (s !== scene || renderHeadless) return faustRender(render, s, cam)
+  applyLook()
+  inkUniforms.inkEnabled.value = activeLook === 'ink'
+  const draw = LOOKS[activeLook]?.render || faustRender
+  draw(render, s, cam)
+  Object.assign(lookStats, { look: activeLook, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
+    passes: activeLook === 'ink' && inkPost ? inkPost.outlines ? 2 : 1 : 0, targetBytes: activeLook === 'ink' && inkPost ? inkPost.target.width * inkPost.target.height * (inkPost.outlines ? 12 : 8) : 0 })
+}
+function inkPrepare(root) {
+  root?.traverse(o => {
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (!m || inkPatched.has(m) || !(m.isMeshStandardMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial || m.isMeshBasicMaterial || m.isSpriteMaterial)) continue
+      inkPatched.add(m)
+      const before = m.onBeforeCompile, key = m.customProgramCacheKey(), lit = !m.isMeshBasicMaterial && !m.isSpriteMaterial
+      const facade = m === faustState?.materials?.facade || m === faustState?.materials?.far
+      const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe
+      m.onBeforeCompile = function(shader, r) {
+        before.call(this, shader, r)
+        Object.assign(shader.uniforms, inkUniforms)
+        shader.vertexShader = 'varying vec3 inkViewPosition; varying vec3 inkPoint; varying vec3 inkWorldPoint;\n' + shader.vertexShader
+        shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+ inkViewPosition = mvPosition.xyz;
+ vec4 inkWorld = vec4(transformed, 1.0);
+ #ifdef USE_INSTANCING
+   inkWorld = instanceMatrix * inkWorld;
+ #endif
+ inkWorldPoint = (modelMatrix * inkWorld).xyz;
+ #ifdef USE_SKINNING
+   // glTF may store integer positions under a dequantization scale. Keep bind-pose hatch
+   // coordinates in metres and independent of the character's world translation and yaw.
+   inkPoint = position * vec3(length(modelMatrix[0].xyz), length(modelMatrix[1].xyz), length(modelMatrix[2].xyz));
+ #else
+   inkPoint = inkWorldPoint;
+ #endif`)
+        // Sprite shaders form mvPosition themselves.
+        if (m.isSpriteMaterial) shader.vertexShader = shader.vertexShader.replace('gl_Position = projectionMatrix * mvPosition;', 'inkViewPosition = mvPosition.xyz; inkPoint = position; inkWorldPoint = (modelMatrix * vec4(position, 1.0)).xyz;\n gl_Position = projectionMatrix * mvPosition;')
+        shader.fragmentShader = `uniform bool inkEnabled;
+          uniform float inkExtent;
+          varying vec3 inkViewPosition, inkPoint, inkWorldPoint;
+          float inkLuma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+          float inkStroke(float p, float width) {
+            float d = abs(fract(p) - 0.5), aa = max(fwidth(p), 0.015);
+            return 1.0 - smoothstep(width - aa, width + aa, d);
+          }\n` + shader.fragmentShader
+        const shade = lit ? `
+          float base = inkLuma(diffuseColor.rgb);
+          float light = inkLuma(reflectedLight.directDiffuse + reflectedLight.indirectDiffuse) / max(base, 0.0001);
+          ${!paper && !sky ? 'light = max(light, 0.22 + 0.40 * max(0.0, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)))));' : ''}
+          float tone = light < 0.08 ? 0.012 : light < 0.20 ? 0.55 : light < 0.40 ? 0.82 : 0.97;
+          float pigment = smoothstep(0.006, ${paper ? '0.025' : '0.14'}, base);
+          tone *= mix(0.025, 1.0, pigment);
+          vec3 eye = normalize(-inkViewPosition);
+          float facing = abs(dot(normal, eye));
+          float rim = (1.0 - smoothstep(0.13, 0.25, facing)) * smoothstep(0.0002, 0.004, length(fwidth(normal)));
+          // Black cloth keeps a narrow white edge; pale surfaces get a black silhouette.
+          float keyLight = dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)));
+          if (${paper || sky ? 'false' : 'true'} && base < 0.035) tone = keyLight > 0.55 && facing > 0.18 && facing < 0.27 ? 0.95 : 0.003;
+          // Stable surface coordinates. Skins use their bind pose so marks bend with the rig;
+          // architecture uses world coordinates, including instancing, so they never swim with the camera.
+          vec3 n = abs(cross(dFdx(inkPoint), dFdy(inkPoint)));
+          vec2 pen = n.y > max(n.x, n.z) ? inkPoint.xz : n.x > n.z ? inkPoint.zy : inkPoint.xy;
+          float spacing = ${globe ? '56.0' : sky ? '24.0' : paper ? '0.30' : '0.065'};
+          float hatch = inkStroke((pen.x + pen.y * 0.62) / spacing, 0.11);
+          float crossHatch = inkStroke((pen.x - pen.y * 0.86) / (spacing * 1.27), 0.09);
+          float middle = step(0.08, light) * (1.0 - step(0.40, light));
+          float strokes = max(hatch, crossHatch * (1.0 - step(0.20, light)));
+          // Blend to the analytic stroke coverage before lines become finer than roughly two pixels.
+          // Coverage preserves the light paper tone instead of turning unresolved hatch into black blotches.
+          float unresolved = smoothstep(0.10, 0.18, fwidth((pen.x + pen.y * 0.62) / spacing));
+          float coverage = light < 0.20 ? 0.34 : 0.22;
+          strokes = mix(strokes, coverage, unresolved);
+          float paving = step(max(n.x, n.z), n.y) * (1.0 - step(0.2, inkPoint.y));
+          tone = mix(tone, 0.004, strokes * middle * (1.0 - paving));
+          if (paving > 0.5) tone = min(tone, base < 0.06 ? 0.30 : base < 0.20 ? 0.52 : 0.90);
+
+          tone = mix(tone, 0.006, rim);
+          ${sky && !globe ? `
+          // The stone face stays below the white eye band. A dark rim around its emissive map
+          // makes the eyes readable even where the moon lights the forehead and cheeks.
+          tone = min(tone, 0.68);
+          #ifdef USE_EMISSIVEMAP
+            vec2 eyeStep = max(fwidth(vEmissiveMapUv) * 1.7, vec2(1.0 / 512.0));
+            float eyeNeighbour = max(max(inkLuma(texture2D(emissiveMap, vEmissiveMapUv + vec2(eyeStep.x, 0.0)).rgb),
+              inkLuma(texture2D(emissiveMap, vEmissiveMapUv - vec2(eyeStep.x, 0.0)).rgb)),
+              max(inkLuma(texture2D(emissiveMap, vEmissiveMapUv + vec2(0.0, eyeStep.y)).rgb),
+              inkLuma(texture2D(emissiveMap, vEmissiveMapUv - vec2(0.0, eyeStep.y)).rgb)));
+            if (eyeNeighbour > 0.35 && inkLuma(totalEmissiveRadiance) < 0.35) tone = 0.004;
+          #endif` : ''}
+          vec3 ink = vec3(tone);
+          float glow = inkLuma(totalEmissiveRadiance);
+          // Warm windows retain a little sodium colour; all other emission reads as white ink.
+          vec3 emission = totalEmissiveRadiance;
+          float warm = step(emission.b * 1.3 + 0.015, emission.r) * step(emission.b * 1.15, emission.g);
+          ink = mix(ink, mix(vec3(0.94), vec3(1.0, 0.66, 0.28), warm), ${globe ? '0.0' : 'smoothstep(0.08, 0.5, glow)'});
+          float blood = step(diffuseColor.g * 2.0 + 0.04, diffuseColor.r) * step(diffuseColor.b * 1.8, diffuseColor.r);
+          outgoingLight = mix(ink, vec3(max(tone, 0.18), 0.008, 0.012), blood);
+        ` : cloud ? `
+          float mass = diffuseColor.a / max(opacity, 0.001);
+          if (mass < 0.065) discard;
+          float tone = mass < 0.09 ? 0.006 : mass < 0.19 ? 0.34 : 0.93;
+          vec2 pen = inkPoint.xy * 256.0;
+          float stroke = inkStroke((pen.x + 0.45 * pen.y) / 8.0, 0.075);
+          if (mass < 0.25) tone = mix(tone, 0.015, stroke);
+          outgoingLight = vec3(tone); diffuseColor.a = 0.96;
+        ` : `
+          float grey = inkLuma(outgoingLight);
+          float red = step(outgoingLight.g * 2.0 + 0.08, outgoingLight.r);
+          float warm = step(outgoingLight.b * 1.4 + 0.08, outgoingLight.r) * step(outgoingLight.b * 1.2, outgoingLight.g);
+          outgoingLight = mix(vec3(grey), outgoingLight, max(red, warm));
+        `
+        if (lit) shader.fragmentShader = shader.fragmentShader
+          .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n vec3 inkSurfaceNormal = normal;')
+          .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n if (inkEnabled) normal = inkSurfaceNormal;')
+        if (facade) shader.fragmentShader = shader.fragmentShader
+          .replace('#include <map_fragment>', `vec3 inkBaseAlbedo = diffuseColor.rgb; float inkGridFade = 0.0;
+            #include <map_fragment>
+            #ifdef USE_MAP
+              if (inkEnabled) {
+                vec2 cells = vMapUv * vec2(4.0, 8.0);
+                inkGridFade = smoothstep(0.20, 0.38, max(length(dFdx(cells)), length(dFdy(cells))));
+                diffuseColor.rgb = mix(diffuseColor.rgb, inkBaseAlbedo * 0.45, inkGridFade);
+              }
+            #endif`)
+          .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n if (inkEnabled) totalEmissiveRadiance *= 1.0 - inkGridFade;')
+        shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `if (inkEnabled) { ${shade} }\n#include <opaque_fragment>`)
+        if (!sky) shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', `#include <fog_fragment>
+          if (inkEnabled) {
+            float edgeFade = smoothstep(inkExtent - 288.0, inkExtent - 96.0, max(abs(inkWorldPoint.x), abs(inkWorldPoint.z)));
+            gl_FragColor.rgb *= 1.0 - edgeFade;
+          }`)
+      }
+      m.customProgramCacheKey = () => key + '|ink-4|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade)
+      m.needsUpdate = true
+    }
+  })
+}
+function inkDispose() {
+  if (!inkPost) return
+  inkPost.target.dispose(); inkPost.aaTarget.dispose(); inkPost.mesh.geometry.dispose()
+  inkPost.mesh.material.dispose(); inkPost.aaMesh.material.dispose()
+  inkPost = null
+}
+function inkTarget(width, height, outlines) {
+  if (inkPost && inkPost.outlines !== outlines) inkDispose()
+  if (!inkPost) {
+    const target = new THREE.WebGLRenderTarget(width, height, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true })
+    target.texture.colorSpace = THREE.SRGBColorSpace
+    target.depthTexture = new THREE.DepthTexture(width, height, THREE.UnsignedIntType)
+    const material = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, toneMapped: false,
+      uniforms: { colour: { value: target.texture }, depth: { value: target.depthTexture }, texel: { value: new THREE.Vector2() }, nearFar: { value: new THREE.Vector2() }, penScale: { value: 1 } },
+      vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+      fragmentShader: `uniform sampler2D colour, depth;
+        uniform vec2 texel, nearFar; uniform float penScale; varying vec2 vUv;
+        float distanceAt(vec2 p) { float d = texture2D(depth, p).x; return nearFar.x * nearFar.y / (nearFar.y - d * (nearFar.y - nearFar.x)); }
+        float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+        void main() {
+          vec3 c = texture2D(colour, vUv).rgb;
+          float z = distanceAt(vUv), weight = mix(0.7, 2.5, exp(-z / 160.0));
+          vec2 dx = vec2(texel.x, 0.0) * weight * penScale, dy = vec2(0.0, texel.y) * weight * penScale;
+          float l = distanceAt(vUv - dx), r = distanceAt(vUv + dx), u = distanceAt(vUv + dy), d = distanceAt(vUv - dy);
+          float bend = max(abs(l + r - 2.0 * z), abs(u + d - 2.0 * z)) / max(z, 1.0);
+          float edge = smoothstep(0.008, 0.04, bend);
+          // Colour edges also reach the sky, whose depth is cleared before the city draw.
+          float contrast = max(abs(lum(texture2D(colour, vUv + dx).rgb) - lum(texture2D(colour, vUv - dx).rgb)),
+                               abs(lum(texture2D(colour, vUv + dy).rgb) - lum(texture2D(colour, vUv - dy).rgb)));
+          edge = max(edge, smoothstep(0.48, 0.85, contrast) * 0.65);
+          gl_FragColor = vec4(mix(c, vec3(0.004), edge * 0.96), 1.0);
+          #include <colorspace_fragment>
+        }` })
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material), postScene = new THREE.Scene()
+    mesh.frustumCulled = false; postScene.add(mesh)
+    const aaTarget = new THREE.WebGLRenderTarget(width, height, { depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter })
+    aaTarget.texture.colorSpace = THREE.SRGBColorSpace
+    // FXAA follows the outline composite, so it reaches both the new lines and cloud/window edges.
+    const aaMaterial = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, toneMapped: false,
+      uniforms: { colour: { value: outlines ? aaTarget.texture : target.texture }, texel: { value: new THREE.Vector2() } },
+      vertexShader: material.vertexShader,
+      fragmentShader: `uniform sampler2D colour; uniform vec2 texel; varying vec2 vUv;
+        float luma(vec3 c) { return dot(sqrt(max(c, vec3(0.0))), vec3(0.299, 0.587, 0.114)); }
+        void main() {
+          vec3 centre = texture2D(colour, vUv).rgb;
+          float nw = luma(texture2D(colour, vUv + texel * vec2(-1.0, 1.0)).rgb);
+          float ne = luma(texture2D(colour, vUv + texel * vec2(1.0, 1.0)).rgb);
+          float sw = luma(texture2D(colour, vUv + texel * vec2(-1.0, -1.0)).rgb);
+          float se = luma(texture2D(colour, vUv + texel * vec2(1.0, -1.0)).rgb);
+          float m = luma(centre), low = min(m, min(min(nw, ne), min(sw, se))), high = max(m, max(max(nw, ne), max(sw, se)));
+          vec3 result = centre;
+          if (high - low > max(0.035, high * 0.10)) {
+            vec2 direction = vec2(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));
+            float reduce = max((nw + ne + sw + se) * 0.03125, 0.0078125);
+            direction = clamp(direction / (min(abs(direction.x), abs(direction.y)) + reduce), vec2(-8.0), vec2(8.0)) * texel;
+            vec3 inner = 0.5 * (texture2D(colour, vUv - direction / 6.0).rgb + texture2D(colour, vUv + direction / 6.0).rgb);
+            vec3 outer = inner * 0.5 + 0.25 * (texture2D(colour, vUv - direction * 0.5).rgb + texture2D(colour, vUv + direction * 0.5).rgb);
+            float test = luma(outer); result = test < low || test > high ? inner : outer;
+          }
+          gl_FragColor = vec4(result, 1.0);
+          #include <colorspace_fragment>
+        }` })
+    const aaMesh = new THREE.Mesh(mesh.geometry, aaMaterial), aaScene = new THREE.Scene()
+    aaMesh.frustumCulled = false; aaScene.add(aaMesh)
+    inkPost = { target, mesh, scene: postScene, camera: new THREE.Camera(), aaTarget, aaMesh, aaScene, outlines }
+  }
+  if (inkPost.target.width !== width || inkPost.target.height !== height) {
+    inkPost.target.setSize(width, height); inkPost.aaTarget.setSize(width, height)
+  }
+  return inkPost
+}
+function inkRender(render, s, cam) {
+  inkPrepare(faustState?.skyScene)
+  const background = s.background, fog = s.fog?.color.clone(), target = renderer.getRenderTarget()
+  const autoClear = renderer.autoClear, reset = renderer.info.autoReset
+  const size = renderer.getDrawingBufferSize(new THREE.Vector2())
+  inkUniforms.inkExtent.value = ARENA
+  s.background = new THREE.Color(0x050607)
+  if (s.fog) s.fog.color.setHex(0x050607)
+  const post = !target ? inkTarget(size.x, size.y, settings.quality !== 'low') : null
+  if (!post && inkPost) inkDispose()
+  try {
+    if (reset) renderer.info.reset()
+    renderer.info.autoReset = false
+    if (post) renderer.setRenderTarget(post.target)
+    faustRender(render, s, cam)
+    if (post) {
+      const u = post.mesh.material.uniforms
+      u.texel.value.set(1 / size.x, 1 / size.y); u.nearFar.value.set(cam.near, cam.far); u.penScale.value = Math.max(0.7, renderer.getPixelRatio())
+      renderer.autoClear = true
+      if (post.outlines) { renderer.setRenderTarget(post.aaTarget); render(post.scene, post.camera) }
+      post.aaMesh.material.uniforms.texel.value.set(1 / size.x, 1 / size.y)
+      renderer.setRenderTarget(target); render(post.aaScene, post.camera)
+    }
+  } finally {
+    s.background = background; if (s.fog && fog) s.fog.color.copy(fog)
+    renderer.setRenderTarget(target); renderer.autoClear = autoClear; renderer.info.autoReset = reset
+  }
+}
+GAME.look = { table: LOOKS, stats: lookStats, set(name) { if (!Object.hasOwn(LOOKS, name)) return false; settings.look = name; applySettings(); saveSettings(); return true },
+  get current() { return settings.look } }
+
 function buildWorld() {
   setHeadless(renderHeadless)
 
@@ -7667,9 +7932,9 @@ function buildWorld() {
 
   objGroup = new THREE.Group(); scene.add(objGroup)     // not worldGroup: a level empties that
   skipStill(worldGroup); skipStill(objGroup)
-  scene.onBeforeRender = (r, s, cam) => cullView(cam)
+  scene.onBeforeRender = (r, s, cam) => { cullView(cam); if (inkUniforms.inkEnabled.value) inkPrepare(s) }
   const render = renderer.render.bind(renderer)
-  renderer.render = (s, cam) => { try { faustRender(render, s, cam) } finally { for (const o of culled.splice(0)) o.visible = true } }
+  renderer.render = (s, cam) => { try { lookRender(render, s, cam) } finally { for (const o of culled.splice(0)) o.visible = true } }
   avatarGroup = new THREE.Group(); scene.add(avatarGroup)
   pickGroup = new THREE.Group(); scene.add(pickGroup)
   tracerGroup = new THREE.Group(); scene.add(tracerGroup)
@@ -11210,6 +11475,7 @@ function drawDebug(me, fps) {
         p(Math.round(interpD), 3) + ' ms') +
     row('display', p(innerWidth, 4) + 'x' + p(innerHeight, 4) + ' @' + f(renderer.getPixelRatio(), 4, 2) +
         '  touch ' + String(IS_TOUCH).padEnd(5) + ' shadows ' + String(renderer.shadowMap.enabled).padEnd(5)) +
+    row('look', LOOKS[settings.look].label + '  post ' + lookStats.passes + '  targets ' + (lookStats.targetBytes / 1048576).toFixed(1) + ' MiB') +
     row('cost', 'sim ' + v(f(msSim, 5, 2)) + 'ms  phys ' + v(f(msPhys, 5, 2)) +
         'ms  draw ' + v(f(msDraw, 5, 2)) + 'ms  steps ' + p(lastSteps, 2)) +
     (joinLog.length ? row('joins', esc(joinLog.join('  '))) : '') +
@@ -11283,7 +11549,7 @@ function detectQuality() {
   return score >= 3 ? 'high' : score >= 1 ? 'medium' : 'low'
 }
 
-const settings = { sens: 1, fov: 72, shadows: true, quality: 'high', sound: true, volume: 0.8,
+const settings = { look: LOOK_DEFAULT, sens: 1, fov: 72, shadows: true, quality: 'high', sound: true, volume: 0.8,
                    qualityChosen: false, viewChosen: false, rate: 0, station: RADIO_START, view: 'third', distance: 'normal' }
 let qualityAuto = ''
 
@@ -11292,6 +11558,7 @@ function loadSettings() {
     const raw = localStorage.getItem(SET_KEY)
     if (raw) Object.assign(settings, JSON.parse(raw))
   } catch (e) {}
+  if (!Object.hasOwn(LOOKS, settings.look)) settings.look = LOOK_DEFAULT
   settings.sens = clamp(+settings.sens || 1, 0.2, 3)
   settings.fov = clamp(+settings.fov || 72, 60, FOV_MAX)
   settings.shadows = !!settings.shadows
@@ -11326,11 +11593,12 @@ function saveSettings() {
 }
 
 function applySettings() {
+  applyLook()
   if (camera) { camera.fov = settings.fov; camera.updateProjectionMatrix() }
   const Q = QUALITY[settings.quality] || QUALITY.high
   fxStride = Q.fx >= 1 ? 1 : Math.max(2, Math.round(1 / Q.fx))
   if (renderer) {
-    const want = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : Q.ratio) * (softGL() ? SOFT_SCALE : 1)
+    const want = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : Q.ratio) * (softGL() ? SOFT_SCALE : 1) * (LOOKS[settings.look]?.scale?.(settings.quality) ?? 1)
     if (Math.abs(renderer.getPixelRatio() - want) > 0.01) {
       renderer.setPixelRatio(want)
       renderer.setSize(innerWidth, innerHeight)
@@ -11353,6 +11621,7 @@ function applySettings() {
 }
 const onOff = v => v ? 'on' : 'off', nextOf = (list, v) => list[(list.indexOf(v) + 1) % list.length]
 const SET_BUTTONS = {
+  'set-look': [() => 'Look: ' + LOOKS[settings.look].label, () => { settings.look = nextOf(Object.keys(LOOKS), settings.look) }],
   'set-view': [() => 'View: ' + (firstPerson ? 'first' : 'third'), () => setView(!firstPerson)],
   'set-quality': [() => 'Quality: ' + settings.quality,
     () => { settings.quality = nextOf(QNAMES, settings.quality); settings.qualityChosen = true; qualityAuto = '' }],
