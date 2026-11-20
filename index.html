@@ -8310,7 +8310,7 @@ const background = (() => {
   const gpuLog = [], gpuNone = { links: 0, shaders: 0, upKB: 0, sync: 0 }
   let gpuOpen = { ...gpuNone }, gpuLast = { ...gpuNone }, frameNo = 0
   // per second, the last 20 minutes; and the new geometry admitted to this frame's draw (uploadSlot)
-  const secLog = [], accMap = new Map()
+  const secLog = [], accMap = new Map(), secBy = new Map()
   let secOpen = null, planKB = 0, accT = 0
   // the fence gate: the last frame with GPU work, and the last frame whose fence has signalled
   let gateFrame = 0, signaledFrame = 0, fenceOn = false, gateHeld = 0
@@ -8411,9 +8411,12 @@ const background = (() => {
       if (q >= 3 && !(gpuLog.at(-1)?.kind === 'queue' && gpuLog.at(-1).q >= q)) gpuLog.push({ t: Math.round(t), i, kind: 'queue', q })
       if (ms >= 50) gpuLog.push({ t: Math.round(t), i, kind: 'frame', ms, parts: open.parts.slice(0, 4), links: gpuOpen.links, upKB: gpuOpen.upKB })
       { const s = Math.floor(t / 1000)
-        if (secOpen?.s !== s) { secOpen = { s, frames: 0, maxMs: 0, links: 0, upKB: 0, uploads: 0, sync: 0, caps: 0, q: 0, cells: 0 }; secLog.push(secOpen); if (secLog.length > 1200) secLog.shift() }
+        if (secOpen?.s !== s) { if (secOpen) secOpen.by = [...secBy].sort((x, y) => y[1][1] - x[1][1]).slice(0, 8).map(([k, [n, kb]]) => [k, n, Math.round(kb)]); secBy.clear()
+          secOpen = { s, skip: 0, skipKB: 0, skel: 0, frames: 0, maxMs: 0, links: 0, upKB: 0, uploads: 0, sync: 0, caps: 0, q: 0, cells: 0 }; secLog.push(secOpen); if (secLog.length > 1200) secLog.shift() }
         const S = secOpen; S.frames++; S.maxMs = Math.max(S.maxMs, ms); S.links += gpuOpen.links; S.upKB += gpuOpen.upKB; S.uploads += gpuOpen.uploads || 0
-        S.sync += gpuOpen.sync; S.caps += gpuOpen.caps || 0; S.q = Math.max(S.q, q); S.cells += gpuOpen.cells || 0 }
+        S.sync += gpuOpen.sync; S.caps += gpuOpen.caps || 0; S.q = Math.max(S.q, q); S.cells += gpuOpen.cells || 0
+        S.skip += gpuOpen.skip || 0; S.skipKB += Math.round(gpuOpen.skipKB || 0); S.skel += gpuOpen.skel || 0 }
+      if (gpuOpen.skipKB) gpuOpen.skipKB = Math.round(gpuOpen.skipKB)
       if (gpuOpen.bgLinks || gpuOpen.bgKB >= 256 || gpuOpen.cells) gateFrame = i      // background work only, never the draw's own
       gpuLast = gpuOpen; gpuOpen = { ...gpuNone }; frameNo = i; planKB = 0
       if (frameLog.length > 900) frameLog.shift()
@@ -8421,6 +8424,11 @@ const background = (() => {
     },
     frames(n = 300) { return frameLog.slice(-n) },
     gpuEvents(n = 3000) { return gpuLog.slice(-n) },
+    longFrame(e) {
+      gpuLog.push({ t: Math.round(e.startTime), i: frameNo, kind: 'loaf', ms: Math.round(e.duration), block: Math.round(e.blockingDuration || 0), render: Math.round(e.renderStart ? e.startTime + e.duration - e.renderStart : 0),
+        scripts: (e.scripts || []).slice(0, 4).map(s => (s.invokerType || '') + ' ' + String(s.invoker || '').slice(0, 60) + ' ' + (s.sourceFunctionName || '') + ' ' + Math.round(s.duration)) })
+      if (gpuLog.length > 3000) gpuLog.shift()
+    },
     seconds(n = 1200) { return secLog.slice(-n) },
     // new geometry of `bytes` may join this frame's draw: at most UPLOAD_KB a frame, the first always (yield 'frame' while false)
     signaled(i) { fenceOn = true; if (i > signaledFrame) signaledFrame = i },
@@ -8434,6 +8442,9 @@ const background = (() => {
       else if (kind === 'shader') gpuOpen.shaders++
       else if (kind === 'capture') { gpuOpen.caps = (gpuOpen.caps || 0) + 1; gpuEvent({ kind: 'capture', what, job }) }
       else if (kind === 'cell') gpuOpen.cells = (gpuOpen.cells || 0) + 1
+      else if (kind === 'skip') { gpuOpen.skip = (gpuOpen.skip || 0) + 1; gpuOpen.skipKB = (gpuOpen.skipKB || 0) + n / 1024 }
+      else if (kind === 'skel') gpuOpen.skel = (gpuOpen.skel || 0) + 1
+      if (kind === 'up') { const k = what + ' ' + (n < 4096 ? Math.round(n / 256) * 256 + 'B' : Math.round(n / 1024) + 'KB'), e = secBy.get(k) || secBy.set(k, [0, 0]).get(k); e[0]++; e[1] += n / 1024 }
       else if (kind === 'sync') { gpuOpen.sync++; if (gpuOpen.sync <= 3) gpuEvent({ kind: 'sync', what, job }) }
     },
     get gpuLast() { return gpuLast },
@@ -16914,7 +16925,66 @@ function initGraphicsLifecycle() {
       texImage3D: a => a[3] * a[4] * a[5] * 4, texSubImage3D: a => a[5] * a[6] * a[7] * 4,
       compressedTexImage2D: a => a[6]?.byteLength || 0, compressedTexSubImage2D: a => a[7]?.byteLength || 0 }
     for (const [name, bytes] of Object.entries(size)) if (gl[name]) { const f = gl[name].bind(gl); gl[name] = (...a) => { try { background.gpu('up', bytes(a), name) } catch (e) {} return f(...a) } }
+    // card #53: an upload of the bytes already there is not sent (idle animation, instance and data buffers rewritten unchanged)
+    {
+      const MAX = 262144, ranges = new WeakMap(), noCompare = new WeakSet(), units = [], unpack = {}
+      let arrayBuf = null, unit = 0
+      const same = (a, b) => {
+        if (a.length !== b.length) return false
+        if (!(a.byteOffset & 3) && !(b.byteOffset & 3) && !(a.length & 3)) { const x = new Uint32Array(a.buffer, a.byteOffset, a.length >> 2), y = new Uint32Array(b.buffer, b.byteOffset, b.length >> 2); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false; return true }
+        for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+        return true
+      }
+      // true: these bytes are already at that range of that object (nothing to send); else they are noted as there now, in
+      // place where the range was seen before (no garbage). A buffer forgets the ranges a write overlaps; a texture keeps one
+      // rectangle (a different one forgets it: rectangles overlap in two dimensions)
+      const uploadSame = (obj, key, at, bytes, rect) => {
+        let m = ranges.get(obj)
+        const e = m?.get(key)
+        if (e && same(e, bytes)) return true
+        if (!m) ranges.set(obj, m = new Map())
+        if (rect) { for (const k of m.keys()) if (k !== key) m.delete(k) }
+        else for (const [k, v] of m) if (k !== key && v.at < at + bytes.length && at < v.at + v.length) m.delete(k)
+        if (bytes.length > MAX) m.delete(key)
+        else if (e && e.length === bytes.length) { e.set(bytes); e.at = at }
+        else { const c = bytes.slice(); c.at = at; m.set(key, c) }
+        return false
+      }
+      const skip = n => { try { background.gpu('skip', n) } catch (e) {} }
+      const bytesOf = (v, off = 0, len = 0) => { const B = v.BYTES_PER_ELEMENT || 1, n = len || ((v.length ?? v.byteLength) - off); return new Uint8Array(v.buffer, v.byteOffset + off * B, n * B) }
+      const wrap = (name, fn) => { if (!gl[name]) return; const f = gl[name].bind(gl); gl[name] = (...a) => fn(f, a) }
+      wrap('bindBuffer', (f, a) => { if (a[0] === gl.ARRAY_BUFFER) arrayBuf = a[1]; return f(...a) })
+      wrap('bufferData', (f, a) => { if (a[0] === gl.ARRAY_BUFFER && arrayBuf) ranges.delete(arrayBuf); return f(...a) })
+      wrap('bufferSubData', (f, a) => {
+        if (a[0] === gl.ARRAY_BUFFER && arrayBuf && ArrayBuffer.isView(a[2])) {
+          const b = bytesOf(a[2], a[3], a[4])
+          if (b.length <= MAX && uploadSame(arrayBuf, a[1], a[1], b)) { skip(b.length); return }
+          if (b.length > MAX) uploadSame(arrayBuf, a[1], a[1], b)
+        } else if (a[0] === gl.ARRAY_BUFFER && arrayBuf) ranges.delete(arrayBuf)
+        return f(...a)
+      })
+      wrap('activeTexture', (f, a) => { unit = a[0] - gl.TEXTURE0; return f(...a) })
+      wrap('bindTexture', (f, a) => { if (a[0] === gl.TEXTURE_2D) units[unit] = a[1]; return f(...a) })
+      wrap('pixelStorei', (f, a) => { unpack[a[0]] = a[1]; return f(...a) })
+      const tex = () => units[unit]
+      for (const name of ['texImage2D', 'texStorage2D', 'compressedTexImage2D', 'copyTexSubImage2D', 'copyTexImage2D', 'generateMipmap']) wrap(name, (f, a) => { if (a[0] === gl.TEXTURE_2D && tex()) ranges.delete(tex()); return f(...a) })
+      wrap('framebufferTexture2D', (f, a) => { if (a[3]) noCompare.add(a[3]); return f(...a) })
+      wrap('texSubImage2D', (f, a) => {
+        const t = tex()
+        if (a[0] === gl.TEXTURE_2D && t && !noCompare.has(t) && a.length >= 9 && ArrayBuffer.isView(a[8])) {
+          const b = bytesOf(a[8], a[9] || 0)
+          const key = [a[1], a[2], a[3], a[4], a[5], a[6], a[7], unpack[gl.UNPACK_FLIP_Y_WEBGL], unpack[gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL], unpack[gl.UNPACK_ALIGNMENT]].join(':')
+          if (b.length <= MAX && uploadSame(t, key, 0, b, true)) { skip(b.length); return }
+          if (b.length > MAX) ranges.delete(t)
+        } else if (a[0] === gl.TEXTURE_2D && t) ranges.delete(t)
+        return f(...a)
+      })
+    }
     const link = gl.linkProgram.bind(gl), compile = gl.compileShader.bind(gl)
+    // skeleton updates: each is a bone-texture upload
+    if (THREE.Skeleton?.prototype.update && !THREE.Skeleton.prototype.update.counted) { const up = THREE.Skeleton.prototype.update; THREE.Skeleton.prototype.update = function () { try { background.gpu('skel') } catch (e) {} return up.call(this) }; THREE.Skeleton.prototype.update.counted = true }
+    // long animation frames, with their scripts' invokers (what ran outside the frame's own parts)
+    try { new PerformanceObserver(l => { for (const e of l.getEntries()) if (e.duration >= 50) background.longFrame(e) }).observe({ type: 'long-animation-frame' }) } catch (e) {}
     gl.linkProgram = p => { background.gpu('link'); return link(p) }
     gl.compileShader = s => { background.gpu('shader'); return compile(s) }
     const COMPLETION = 0x91B1
@@ -25111,7 +25181,7 @@ function startHost() {
     { const sb = el('#set-bots'); if (sb && sb.value !== '') BOT_COUNT = clamp(+sb.value | 0, 0, regulars()) }      // card #59 fix: the Freaks slider, as it stands
     background.mark('bots'); for (const i of foesWanted()) { addBot(i); yield }
     markStart('bots')
-    if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('avatar'); { const c = players.get(0); if (c) yield* avatarSteps(0, looksCid(c), c.cap | 0) } yield; for (const [id, c] of [...players]) if (id !== 0 && players.get(id) === c) { yield* avatarSteps(id, looksCid(c), c.cap | 0); yield } background.mark('draw0'); background.sec(null); draw(0, now()); yield }
+    if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('avatar'); { const c = players.get(0); if (c) yield* avatarSteps(0, looksCid(c), c.cap | 0) } yield; for (const [id, c] of [...players]) if (id !== 0 && players.get(id) === c) { yield* avatarSteps(id, looksCid(c), c.cap | 0); yield; const a = avatars.get(id); if (a?.animate) { background.mark('pose'); a.animate(a, 0, 0, now()); yield } background.mark('avatar') } background.mark('draw0'); background.sec(null); draw(0, now()); yield }
     loadingText('Preparing the view…')
     background.mark('effects'); warmEffects()
     yield* warmWithin(3000, 'plain')
@@ -30483,8 +30553,9 @@ GAME.destruction = {
 // shoot when attacked but be visible the whole time"): a hit on the baby, its pram or its mother marks the attacker, and it
 // turns on him and fires as the engine's pistol thugs aim and fire (SHOOTER's range, aim error and turn rate; the Pistol row
 // through fireHitscan), the nearest such attacker it can see first. The mark lasts while he lives and the pram is near anyone;
-// his death ends it. An attack on the pram itself (a blow, a shot, a blast, the cinderblock, a car; on it or the baby in it)
-// blows it up; violence on the mother doesn't hit the pram. It blows with a car's blast (VEHICLES' Car boom, dealt as boom()
+// his death ends it. The pram takes hits as a car does: a hit on it (or on the baby in it) sets it burning on a short fuse, and
+// it blows when the fuse runs out or when a hit's damage destroys it outright (a haymaker, a leap-smash, the cinderblock, a car,
+// a near blast); violence on the mother doesn't hit the pram. It blows with a car's blast (VEHICLES' Car boom, dealt as boom()
 // deals it: damage and knock over its radius, cars in it set burning, people in it knocked down) and boom()'s fire and smoke.
 // Pram and baby are gone until the mother comes back on her schedule. Host records in street life's 'sl' field, played alike on every
 // client: [6, agent, t, x, z, player] the baby aims at a player (-1: it stands down); [7, agent, t, x, z] the pram blew up there
@@ -30496,12 +30567,15 @@ const SL_BABY = {
   // drawing: LOD steps and draw distance (m), how many are drawn at once; host: aim records refreshed while it keeps a target
   lod: [9, 20], draw: 40, pool: 8, refreshMs: 20000,
 }
+// the pram as a car takes hits: its hp (a hit doing this much blows it at once), the fuse once burning (s), flames every s; its
+// blast's dust ring (m), drawn to the pram's size (the blast's reach stays the Car row's radius)
+const SL_PRAM_HIT = { hp: 24, fuse: 2.5, flame: 0.25, ring: 3.5 }
 // what the hit being dealt struck, set by its caller around slKnock: 'pram' (its tub or the baby in it), 'mother', or null (a
-// knock that says neither: the cinderblock, a car, a blast, a test), and its damage
+// knock that says neither: the cinderblock, a car, a blast, a test), and its damage (none given: enough to destroy it)
 const slHit = { part: null, dmg: Infinity }
 const SL_BABY_ID = -45, SL_BOOM_IDS = 16
 const SL_BABY_ROW = { name: SL_BABY.name, side: 'freaks' }
-const slBabyOf = st => st.bb ||= { live: new Map(), recs: new Map(), pending: [], booms: 0, mad: new Map() }
+const slBabyOf = st => st.bb ||= { live: new Map(), recs: new Map(), pending: [], booms: 0, mad: new Map(), hurt: new Map() }
 // ---- records 6 and 7, kept apart from the ones that steer people (an aim or a blast moves nobody)
 function slBabyRec(r, a, local) {
   const st = slState, B = slBabyOf(st)
@@ -30549,21 +30623,23 @@ function slPramAt(p, o) {
 
 // ---- the host: the babies near a Maniak think, aim and fire; attacked prams blow up
 // slKnock calls this first for a pram's agent. The attacker (a player) is marked for its baby. Unless only the mother was struck,
-// the pram blows: the record now, the blast at the end of the tick (its own sweep of the street would reuse the pose the caller
-// is iterating with)
+// the pram takes the hit's damage: past its hp it blows now (the record now, the blast at the end of the tick: its own sweep of
+// the street would reuse the pose the caller is iterating with); else it starts burning, and blows when the fuse runs out
 function slPramHit(ag, p, by, T) {
   if (!isHost || !slState || slPramGone(ag, T)) return
   const B = slBabyOf(slState)
   if (by && players.get(by.id) === by && !by.bot) (B.mad.get(ag.id) || B.mad.set(ag.id, new Set()).get(ag.id)).add(by.id)
   if (slHit.part === 'mother') return
-  const q = slPramAt(p, {})
-  slPramBlow(ag.id, q.x, q.z, by, T)
+  const h = B.hurt.get(ag.id) || { ag, hp: SL_PRAM_HIT.hp, fuse: T + SL_PRAM_HIT.fuse * 1000, flame: 0, by: null }
+  h.hp -= slHit.dmg; if (by && players.get(by.id) === by) h.by = by
+  if (h.hp <= 0) { const q = slPramAt(p, {}); return slPramBlow(ag.id, q.x, q.z, h.by, T) }
+  if (!B.hurt.has(ag.id)) { B.hurt.set(ag.id, h); const q = slPramAt(p, {}); sfxPlay('burning', { x: q.x, y: 0.6, z: q.z }, 'world', 1, 0, SL_PRAM_HIT.fuse, 'Car') }
 }
 // a pram blows up at (x, z): its record, and its blast at the end of the tick, credited to `by` if a player set it off
 function slPramBlow(id, x, z, by, T) {
   slAddRec([7, id, Math.round(T), slR2(x), slR2(z)])
   slBabyOf(slState).pending.push({ x, z, by: by && players.get(by.id) === by ? by : null, T })
-  slState.bb.live.delete(id); slState.bb.mad.delete(id)
+  slState.bb.live.delete(id); slState.bb.hurt.delete(id); slState.bb.mad.delete(id)
 }
 // boom()'s blast, at a pram: players in its radius hurt and thrown (credited to whoever set it off), vehicles in it damaged
 // (they burn and blow in their own turn), people in it knocked down, the street panicked; one fire-and-smoke record
@@ -30584,10 +30660,13 @@ function slPramBlast(e, credit) {
   }
   const caught = []
   slAround(at[0], at[2], B.radius, T, (ag, p) => { const d = Math.hypot(p.x - at[0], p.z - at[2]); if (d < B.radius && !p.down) caught.push([ag, { ...p }, d]) })
-  for (const [ag, p, d] of caught) slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T)
+  for (const [ag, p, d] of caught) {
+    slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
+    try { slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T) } finally { slHit.part = null; slHit.dmg = Infinity }
+  }
   slPanic(at[0], at[2], T)
   const seed = Math.random() * 2 ** 31 | 0, B_ = slBabyOf(slState)
-  tracers.push([r2(at[0]), r2(at[1]), r2(at[2]), B.radius, 0, -1, -1, 6, by?.id ?? -1, 0, OBJ_MAX + (B_.booms++ % SL_BOOM_IDS), seed])
+  tracers.push([r2(at[0]), r2(at[1]), r2(at[2]), SL_PRAM_HIT.ring, 0, -1, -1, 6, by?.id ?? -1, 0, OBJ_MAX + (B_.booms++ % SL_BOOM_IDS), seed])
   sfxPlay('boom', { x: at[0], y: at[1], z: at[2] }, 'world', 1, 0, 0)
 }
 function slBabyKill(v) {
@@ -30650,10 +30729,16 @@ function slBabyThink(bb, q, men, dt, T) {
   GAME.audio.fx(fx)
   bb.shots = (bb.shots || 0) + 1
 }
-// every host tick: the blasts set off this tick, then (20 Hz) the babies near a Maniak
+// every host tick: burning prams (their flames, their fuse), the blasts set off this tick, then (20 Hz) the babies near a Maniak
 function slBabyHost(t) {
   const st = slState; if (!st || !isHost || !LV.faust) return
   const B = slBabyOf(st), T = tickAt || now(), dt0 = t.dt || 1 / 60
+  for (const [id, h] of B.hurt) {
+    if (slPramGone(h.ag, T)) { B.hurt.delete(id); continue }
+    const q = slPramAt(slPose(h.ag, T, slTmpPose), {})
+    if (T >= h.fuse) { slPramBlow(id, q.x, q.z, h.by, T); continue }
+    if ((h.flame -= dt0) <= 0) { h.flame = SL_PRAM_HIT.flame; tracers.push([r2(q.x), 0.3, r2(q.z), r2(q.x), 1.8, r2(q.z), -1, 5, h.by?.id ?? -1, 0, OBJ_MAX + SL_BOOM_IDS, -1]) }
+  }
   for (const e of B.pending.splice(0)) slPramBlast(e, t.credit)
   if ((B.tick = (B.tick || 0) + 1) % 3) return
   const dt = dt0 * 3, men = [...players.values()].filter(c => !c.bot && !(c.dead > 0)), seen = new Map()
@@ -30672,6 +30757,7 @@ function slBabyHost(t) {
     slBabyThink(bb, q, foes, dt, T)
   }
 }
+const slTmpPose = SL_POSE()
 
 // ---- drawing: a few skinned babies, posed from the shared clips (legs from 'sit'; the rest from 'arms_folded' at rest,
 // 'pistol_idle' aiming, 'pistol_shoot' as it fires), turned in the pram toward the player it aims at, the chest tilted to his height
