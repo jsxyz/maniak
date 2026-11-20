@@ -28504,10 +28504,76 @@ const driveCommand = a => {
   })
 }
 Object.assign(GAME.commands, { drive: { args: '<x> <z> | <thing>', help: 'host only, test: take the nearest free car and drive there by the roads', run: driveCommand } })
+// card #74: /blackbox [on|off|dump], a flight recorder for the black box that flashes when a car turns. Off by default. On, it keeps
+// the last 300 frames (the car's steer and speed, the camera, draw calls, triangles, programs built, which look of the car shows,
+// whether its view was culled) and tells chat the frame one of them jumps: a program built (a stall), the camera jumping, calls or
+// triangles swinging over 30%, the car's wheeled and wheelless looks flipping, its view culled, or a drawn mesh near the camera jumping (named). dump: the rows to the console
+const blackbox = (() => {
+  const B = { on: false, rows: [], last: null, said: 0, flags: 0 }
+  // every drawn mesh within 80 m of the camera, by its world bounding sphere: one that moves over 3 m in a frame, grows or shrinks by half,
+  // or comes back after a frame hidden is named in the row (its type, names, material, geometry, parents). Over 12 at once: a scene change
+  B.objects = (row, cam) => {
+    const seen = B.seen ||= new WeakMap(), c = new THREE.Vector3(), f = row.t, hits = []
+    scene.traverseVisible(n => {
+      if (!(n.isMesh || n.isPoints || n.isSprite)) return
+      const s = n.boundingSphere || n.geometry?.boundingSphere
+      if (!s) return
+      c.copy(s.center).applyMatrix4(n.matrixWorld)
+      const r = s.radius * n.matrixWorld.getMaxScaleOnAxis(), d = c.distanceTo(cam) - r
+      if (d > 80) return
+      const w = seen.get(n)
+      if (w) {
+        const move = Math.hypot(c.x - w.x, c.y - w.y, c.z - w.z), grew = Math.abs(r - w.r) > Math.max(1, 0.5 * w.r), back = w.f !== B.frameNo - 1
+        if (move > 3 || grew || back) {
+          const m = [].concat(n.material)[0], up = n.parent, how = back ? 'reappeared after ' + (B.frameNo - w.f - 1) + ' frames' : move > 3 ? 'moved ' + move.toFixed(1) + ' m' : 'radius ' + w.r.toFixed(1) + '>' + r.toFixed(1)
+          hits.push(how + ': ' + n.type + ' "' + (n.name || '') + '" mat "' + (m?.name || m?.type || '') + '" geo ' + (n.geometry?.type || '') + '/' + (n.geometry?.attributes?.position?.count ?? 0) + ' v' +
+            (n.isInstancedMesh ? ' x' + n.count : '') + ' at ' + [c.x, c.y, c.z].map(v => v.toFixed(1)).join(',') + ' r ' + r.toFixed(1) + ' d ' + d.toFixed(1) + ' in "' + (up?.name || up?.type || '') + '"/"' + (up?.parent?.name || up?.parent?.type || '') + '"')
+        }
+      }
+      seen.set(n, { x: c.x, y: c.y, z: c.z, r, f: B.frameNo })
+    })
+    B.frameNo++
+    if (hits.length > 12) row.flag.push('scene change: ' + hits.length + ' objects moved')
+    else for (const h of hits) { row.flag.push(h); console.warn('[blackbox] ' + h) }
+  }
+  B.frameNo = 0
+  B.frame = () => {
+    const t = performance.now(), c = selfChar(), o = c && (seatOf(c)?.[0] || rideOf(c)), cam = camera.position, L = B.last
+    const v = o && objPool.find(m => m.userData.oid === o.id), bv = o?.body ? o.body.getLinearVelocity() : null
+    const row = { t: Math.round(t), dt: L ? Math.round(t - L.t) : 0, calls: lookStats.calls, tri: lookStats.triangles, prog: renderer.info.programs?.length ?? 0,
+      cam: [cam.x, cam.y, cam.z].map(x => +x.toFixed(2)), fov: +camera.fov.toFixed(1), steer: o ? +(o.steer || 0).toFixed(3) : null,
+      speed: bv ? +Math.hypot(bv.x(), bv.z()).toFixed(1) : null, look: v ? v.children.map(k => +k.visible).join('') : '', shown: v ? +v.visible : null, wheels: wheelN, flag: [] }
+    if (L && o) {
+      const jump = Math.hypot(cam.x - L.cam[0], cam.y - L.cam[1], cam.z - L.cam[2])
+      if (row.prog !== L.prog) row.flag.push('programs ' + L.prog + '>' + row.prog)
+      if (jump > 2 + (row.speed || 0) * Math.max(row.dt, 16) / 1000 * 1.5) row.flag.push('camera jumped ' + jump.toFixed(1) + ' m')
+      if (L.tri > 2000 && Math.abs(row.tri - L.tri) > 0.3 * L.tri) row.flag.push('triangles ' + L.tri + '>' + row.tri)
+      if (L.calls > 50 && Math.abs(row.calls - L.calls) > 0.3 * L.calls) row.flag.push('calls ' + L.calls + '>' + row.calls)
+      if (row.look !== L.look) row.flag.push('look ' + L.look + '>' + row.look)
+      if (row.shown === 0) row.flag.push('car view culled')
+      if (row.dt > 120) row.flag.push('slow frame ' + row.dt + ' ms')
+    }
+    if (o) B.objects(row, cam)
+    B.last = row; B.rows.push(row); if (B.rows.length > 300) B.rows.shift()
+    if (row.flag.length) { B.flags++; if (t - B.said > 400) { B.said = t; sysMsg('§e[blackbox] §7steer §f' + row.steer + ' §7speed §f' + row.speed + ' §7' + row.flag.join(', ').slice(0, 260)) } }
+  }
+  B.run = a => {
+    const w = String(a || '').trim().toLowerCase()
+    if (w === 'dump') {
+      console.log('blackbox ' + JSON.stringify(B.rows)); const f = B.rows.filter(r => r.flag.length)
+      return sysMsg('§7blackbox: §f' + B.rows.length + ' §7frames kept, §f' + f.length + ' §7flagged (all in the console as "blackbox …"); last: §f' + (f.at(-1)?.flag.join(', ') || 'none'))
+    }
+    B.on = w === 'off' ? false : w === 'on' || w === '' ? !B.on : B.on
+    if (!B.on) { B.last = null }
+    sysMsg('§7blackbox recorder §f' + (B.on ? 'on' : 'off') + '§7: drive and turn; §f/blackbox dump §7prints the frames')
+  }
+  return B
+})()
 Object.assign(GAME.commands, {
   tp:    { args: '<x> <z>', help: 'host only, test: teleport to the street under a point', run: testTools.tp },
   near:  { args: '<thing> [go]', help: 'host only, test: find the nearest (' + testTools.things() + '), go to teleport beside it', run: testTools.near },
   where: { args: '', help: 'test: your x, z, heading and city cell', run: testTools.where },
+  blackbox: { args: '[on|off|dump]', help: 'test: a flight recorder for the black box that flashes when a car turns (card #74)', run: blackbox.run },
 })
 // a joining player's row: the one it asked for, unless this room cannot take it (told why), and its team fielded once it stands
 GAME.rows = {
@@ -31687,6 +31753,7 @@ class Arena extends ENABLE3D.Scene3D {
   postRender() {
     pageLife.frames++
     if (drawT0) { msDraw = msDraw * 0.9 + (now() - drawT0) * 0.1; drawT0 = 0 }
+    if (blackbox.on) try { blackbox.frame() } catch (e) { blackbox.on = false; console.warn('blackbox', e) }
     if (stats) stats.end()
   }
 }
