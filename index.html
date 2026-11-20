@@ -22155,7 +22155,9 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     phase, startingGame, worldPreparing, guestLoading: !!guestLoading, look: activeLook, wanted: settings.look }),
   room() {
     const all = [...players.values()]
-    return { ready: phase === 'menu' && !el('#serve-btn').disabled, hosting: isHost, serving, open: isHost && roomOpen, code: isHost ? roomCodeStr : '',
+    return { ready: phase === 'menu' && !el('#serve-btn').disabled, hosting: isHost, serving,
+      // a guest's side (the rest of room() is the host's): in play, admitted by the host, its id, the roster it sees, its level
+      guest: isHost ? null : { joined: phase === 'playing' && connected, admitted, id: myId, roster: roster.size, loading: !!guestLoading, level: levelGen ? levelGen.seed + '/' + levelGen.size : null }, open: isHost && roomOpen, code: isHost ? roomCodeStr : '',
       level: LEVELS[levelId].name, mode: 'ffa', fragLimit: GAME.match.fragLimit, minutes: GAME.match.timeLimit / 60,
       match: isHost ? hookMeta('room').match : null, players: all.filter(c => !c.bot).length, enemies: all.filter(c => c.bot && c.owner === undefined).length,
       uptime: serving ? Math.floor((now() - servedAt) / 1000) : 0, signaling: !peer ? '' : peer.disconnected ? 'lost, retrying' : peer.open ? 'connected' : 'connecting',
@@ -23160,6 +23162,7 @@ function initEndModal() {
 
 function beginPlay() {
   phase = 'playing'
+  if (!isHost) setStatus('')          // a guest's "Connecting…" is done
   if (!startingGame) document.body.classList.remove('starting')
   played = true; jitTip()
   lastRecvAt = now()
