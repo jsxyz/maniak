@@ -22890,6 +22890,8 @@ const PARTS = {
   pram: { of: 'street', mass: 1.4, grab: { grip: 'chest' }, throw: {}, punt: {} },
 }
 const PART_ADAPTERS = {}, partsHeard = { grab: [], rip: [], throw: [], punt: [], land: [] }
+// what E uses before it grabs (fix 55a): each fn(c) returns true when it took the press. #38's express lift first
+const partsUses = [c => LV.faust && typeof faustInLift === 'function' && faustInLift(c)]
 const partsEmit = (type, ...a) => { for (const fn of partsHeard[type] || []) try { fn(...a) } catch (e) { console.warn('parts listener', e) } }
 const PUNT_G = () => gunNamed('Punt'), FLUNG_G = () => gunNamed('Flung')
 // the kind of an object: its row by name, a vehicle (or its wreck), else `object`; null if he can't lift it
@@ -23013,8 +23015,9 @@ function partsStep(c, inp, dt) {
   // s (held: a pull, the nearest part torn off or the vehicle lifted)
   const seat = s => s.V && !s.fuse && s.riders.some((r, i) => r === undefined && fits(c, s, i)) && objGap(c, s) <= 1.5 && inSight(c, s)
   if (useEdge && c.useT <= 0) {
+    for (const use of partsUses) { let took = false; try { took = use(c) } catch (e) { console.warn('parts use', e) } if (took) { c.useT = USE_S; return true } }
     const g = partsNear(c, 'grab')[0], car = objs.filter(seat).sort((a, b) => objGap(c, a) - objGap(c, b))[0]
-    if (g && (!car || g.gap < objGap(c, car))) { c.useT = USE_S; partsTake(c, g); return true }
+    if (g && !car) { c.useT = USE_S; partsTake(c, g); return true }          // a seat in reach takes the tap (fix 55a)
     S.press = 0; S.car = car || null
     return true
   }
@@ -23571,6 +23574,9 @@ GAME.parts = {
   // it holds), drawn(o, mask) for its own drawing
   kind(name, row, adapter) { PARTS[name] = { ...PARTS[name], ...row }; if (adapter) PART_ADAPTERS[name] = adapter; return PARTS[name] },
   near: (c, verb) => partsNear(c, verb), held: c => partsHeld(c),
+  // E-usable things (fix 55a): fn(c) -> true when it took the press; tried before a seat or a grab, on the host and in a
+  // guest's prediction alike
+  use(fn) { partsUses.push(fn) },
   // the part channel
   mask: o => partsMaskOf(o), list: o => partsListOf(o), version: o => partsVersion(o),
   setMask(o, bits) { if (!isHost) return false; o.pm = bits | 0; partsChanged(o); return true },
