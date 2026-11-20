@@ -10634,6 +10634,10 @@ function deliver(c, P, gunId, aimed, onKill) {
       if (wallAt(ox, oy, oz, bx / n, by / n, bz / n, n) < n - v.r) continue
       down(v, bx / n, 0.35, bz / n); hits++
     }
+    if (!car && LV.faust && isHost) for (const du of [-0.5, 0, 0.5]) {      // card #77: the swing's glass (a pane, a lamp, a post), as a punch's ray does
+      const [qx, qy, qz] = aimDir(aimAngles(c)[0] + du, aimAngles(c)[1]), t = wallAt(ox, oy, oz, qx, qy, qz, pRange)
+      if (t < pRange - 1e-3) dsShot(ox, oy, oz, qx, qy, qz, t, pRange, P)
+    }
     const a = aimAngles(c)[0], y = car ? car.p[1] : eyeOf(c)      // card #57: drawn where it met the car
     for (let j = 0; j < 8; j++) { const u = a - 1.2 + j * 0.3, v = u + 0.3
       fx.push([r2(c.x - Math.sin(u) * pRange), r2(y), r2(c.z - Math.cos(u) * pRange),
@@ -26201,6 +26205,21 @@ function dsPaneAt(x, y, z, nx, nz) {
   }
   return null
 }
+// card #77: where along ground window w (its outward normal n) to stand, `dist` m out, so a punch at eye height and pitch 0 straight in
+// reaches its glass: its middle, else beside it clear of a pier or entrance; null if none does (a city with no physics there: its middle)
+function dsPunchSpot(w, n, dist = 1.6, eye = 1.6) {
+  const axis = w.face < 2, mid = (w.a0 + w.a1) / 2
+  for (const o of [0, -0.8, 0.8, -1.4, 1.4]) {
+    const a = mid + o
+    if (a <= w.a0 + 0.3 || a >= w.a1 - 0.3) continue
+    const h = []
+    staticRay(axis ? a : w.plane + n[0] * dist, eye, axis ? w.plane + n[1] * dist : a, -n[0], 0, -n[1], dist + 1, h)
+    if (!h.length) return a
+    const p = dsPaneAt(h[0], h[1], h[2], h[3], h[5])
+    if (p && p.key === w.key) return a
+  }
+  return null
+}
 // the panes a blast at (x, y, z) reaches within r, nearest first, each in sight of it (a static ray), at most `max`
 function dsPanesNear(x, y, z, r, max = DESTRUCT.blastMax, sight = true) {
   const F = faustState, out = []
@@ -28698,10 +28717,16 @@ const testTools = (() => {
         const n = [[0, 1], [0, -1], [1, 0], [-1, 0]][w.face], a = (w.a0 + w.a1) / 2, x = w.face < 2 ? a : w.plane, z = w.face < 2 ? w.plane : a
         out.push({ x, z, y0: 0, what: (broken ? 'broken' : 'intact') + ' window' + (w.k ? ', storey ' + w.k + ', ' + Math.round((w.y0 + w.y1) / 2) + ' m up' : '') + ', of a ' + B.style + ' building',
           spot: { x: x + n[0] * 2, z: z + n[1] * 2, face: [-n[0], -n[1]] } }) }
+      const addG = (B, w) => {      // card #77: an intact ground window, with the spot a punch reaches its glass from (none does: not offered)
+        const n = [[0, 1], [0, -1], [1, 0], [-1, 0]][w.face], a = typeof dsPunchSpot === 'function' && faustState && dsCheck() ? dsPunchSpot(w, n) : (w.a0 + w.a1) / 2
+        if (a === null) return
+        const mid = (w.a0 + w.a1) / 2, x = w.face < 2 ? mid : w.plane, z = w.face < 2 ? w.plane : mid
+        out.push({ x, z, y0: 0, what: 'intact window of a ' + B.style + ' building (a punch at pitch 0 reaches its glass from the spot)',
+          spot: { x: (w.face < 2 ? a : w.plane) + n[0] * 1.6, z: (w.face < 2 ? w.plane : a) + n[1] * 1.6, face: [-n[0], -n[1]] } }) }
       if (faustState && faustIn.broken.size) for (const id of faustIn.broken.keys()) { const B = inBuilding(id); for (const w of inBrokenWindows(B)) add(B, w, true) }
       if (out.length) return out
       for (const t of lotsAround(c, () => true).sort((p, q) => Math.hypot(p.x - c.x, p.z - c.z) - Math.hypot(q.x - c.x, q.z - c.z)).slice(0, 8)) {
-        const B = inBuilding(t.id); for (const w of inWindowsOf(B, 0)) add(B, { ...w, k: 0 }, false) }
+        const B = inBuilding(t.id); for (const w of inWindowsOf(B, 0)) addG(B, w) }
       return out },
     performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk), enforcer: bots(b => b.enforcer),
     squad: () => objs.filter(o => squadIds.has(o.id) && o.squadKind !== 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'squad car (' + (o.V ? o.squadState || 'driving' : 'wrecked') + ')' })),
