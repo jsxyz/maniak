@@ -3100,6 +3100,29 @@ function faustFeatMesh(P) {
   const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true
   return mesh
 }
+// card #69: the landmark buildings. A landmark takes one of the city's one-lot core blocks (a cell whose lot is 58 x 56 m) in the
+// inner core, chosen from the seed alone, in a fixed order: the first LANDMARKS.theatre of them, by hash, hold a theatre. Never
+// a plaza, the diagonal's cells, the transit towers' cells, a cell the monorail runs through or has a pavilion on, nor a lot the
+// plan drops; the plan sets lot.landmark and the plan content version carries it. Memoised per (seed, S).
+const FAUST_LANDMARKS = { theatre: 2 }
+let faustLandmarkMemo = null
+function faustLandmarks(seed, S) {
+  seed >>>= 0
+  if (faustLandmarkMemo?.seed === seed && faustLandmarkMemo.S === S) return faustLandmarkMemo.map
+  const rail = faustRail(seed, S), list = []
+  for (let gx = -S / 2; gx < S / 2; gx++) for (let gz = -S / 2; gz < S / 2; gz++) {
+    const c = faustCell(seed, gx, gz)
+    if (c.district !== 'core' || c.layout !== 1 || c.plaza || c.diagonal || c.distance > 480 ** 2) continue
+    const x = c.X + 48, z = c.Z + 48
+    if ((gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 || Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z)) || rail.byCell.has(faustKey(gx + S / 2, gz + S / 2))) continue
+    list.push({ k: gx + ' ' + gz, h: faustMix(seed ^ 0x6c616e64, gx, gz) })
+  }
+  list.sort((a, b) => a.h - b.h || (a.k < b.k ? -1 : 1))
+  const map = new Map()
+  list.slice(0, FAUST_LANDMARKS.theatre).forEach(e => map.set(e.k, 'theatre'))
+  faustLandmarkMemo = { seed, S, map }
+  return map
+}
 function faustPlan(seed, ci, cj, S = 20) {
   const gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96
   const rng = genRng(faustMix(seed, gx, gz)), { districtHash, distance, district, centralPlaza, plaza, diagonal, layout } = faustCell(seed, gx, gz)
@@ -3130,12 +3153,14 @@ function faustPlan(seed, ci, cj, S = 20) {
       sidewalks.push([[X + side * 12, 0, Z - side * 12], [X + 96 + side * 12, 0, Z + 96 - side * 12]])
     }
   }
+  const landmark = !plaza && layout === 1 ? faustLandmarks(seed, S).get(gx + ' ' + gz) : undefined
   if (!plaza) for (let i = 0; i < layout; i++) {
     const x = X + (layout === 1 ? 48 : i & 1 ? 72 : 24), z = Z + (layout < 4 ? 48 : i & 2 ? 72 : 24)
     const ticket = rng(); let H = 4 * (district === 'core' ? distance > 650 ** 2 ? i === 0 ? 80 + (rng() * 22 | 0) : 12 + (rng() * 8 | 0) : ticket > 0.22 ? 34 + (rng() * 54 | 0) : 9 + (rng() * 16 | 0)
       : district === 'civic' ? 12 + (rng() * 25 | 0) : district === 'industrial' ? 2 + (rng() * 6 | 0) : 4 + (rng() * 10 | 0))
     const w = layout === 1 ? 29 : 10 + (rng() * 3 | 0), d = layout < 4 ? 28 : 10 + (rng() * 3 | 0)
-    const gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
+    let gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
+    if (landmark === 'theatre') gothic = false       // card #69: a theatre is never the Gothic kind (the rng draws stay as they were)
     if (diagonal && Math.abs(z - x - 384) < w + d + 18 || Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z))) continue
     const stop = (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 && i === 0
     if (stop) H = 560 + (districtHash % 4) * 16
@@ -3147,6 +3172,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     else mass.push(faustBox(x + w * 0.3, H + 2, z, 3, 2, 4), faustBox(x - w * 0.4, H + 5, z - d * 0.3, 2.6, 3, 2.6))
     const skyMass = h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, w * 0.73, (H - h0) / 2, d * 0.73)] : mass.slice(0, 2)
     const lot = { x, z, w, d, height: H, gothic, district: style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + i, gz) }
+    if (landmark && !stop) lot.landmark = landmark
     lots.push(lot); boxes.push(...mass)
     // The strong façade piers also stop the block and chain, including in a server with no rendered city.
     if (style !== 'industrial' && style !== 'tenement') {
@@ -3187,7 +3213,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 5, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features }
+  const content = { version: 6, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -5523,7 +5549,7 @@ function faustDecoTower(g, lot) {
 // a stepped parapet at the corners and the middle of the street front. All of it over 2.2 m, so clear of the walking paths.
 function faustDecoMarquee(g, lot) {
   const { x, z, d, gothic, seed } = lot, D = FAUST_DECO
-  if (gothic || lot.mass.length < 3) return
+  if (gothic || lot.landmark || lot.mass.length < 3) return
   const hw = (seed >>> 3) % 2 ? 3.3 : 2.6, f = z + d + 0.25, out = 3.2
   g.box(faustBox(x, 3.5, f + out / 2, hw, 0.12, out / 2), 0x252d37)
   g.box(faustBox(x, 3.38, f + out / 2, hw - 0.5, 0.02, out / 2 - 0.4), D.brass, 0.45)
@@ -5621,6 +5647,45 @@ function faustDecoRelief(g, lot) {
     for (const q of [L, R]) { g.tri([q[0][0], q[0][1], f], [q[1][0], q[1][1], f], [q[2][0], q[2][1], f], D.brass); g.tri([q[0][0], q[0][1], f], [q[2][0], q[2][1], f], [q[3][0], q[3][1], f], D.brass) }
   }
 }
+// card #69: a theatre's front. A deep marquee over the door (a mid-grey iron slab with a lighter top edge, a lit soffit, rows of lamps
+// along its edges, a lit fascia with dark chevrons, a stepped lit crest with a finial), a tall blade sign beside it (lit faces, dark
+// rungs, a finial), and a ticket booth either side of the door (a lit window, a lit sign over it). The booths stand 0.6 m off the
+// wall, inside the front's 1.13 m of pier; everything else is over 2.2 m. Pure in the lot; only for lot.landmark === 'theatre'.
+function faustDecoTheatre(g, lot) {
+  if (lot.landmark !== 'theatre' || lot.mass.length < 3) return
+  const { x, z, d, height: H } = lot, D = FAUST_DECO, f = z + d + 0.25, hw = 8, out = 5.6, y = 4.2, I = 0x6a7480, E = 0x8b939b, L = 0xd6d0b2, K = 0x283342
+  g.box(faustBox(x, y, f + out / 2, hw, 0.14, out / 2), I)
+  g.box(faustBox(x, y + 0.16, f + out / 2, hw + 0.1, 0.03, out / 2 + 0.1), E)
+  g.box(faustBox(x, y - 0.15, f + out / 2, hw - 0.5, 0.015, out / 2 - 0.4), D.brass, 0.5)
+  for (let i = 0; i <= 16; i++) g.box(faustBox(x - hw + 0.4 + i * (2 * hw - 0.8) / 16, y - 0.2, f + out - 0.1, 0.07, 0.07, 0.07), L, 1)
+  for (const s of [-1, 1]) for (let i = 1; i < 5; i++) g.box(faustBox(x + s * (hw - 0.1), y - 0.2, f + i * out / 5, 0.07, 0.07, 0.07), L, 1)
+  const fz = f + out + 0.04
+  g.box(faustBox(x, y + 0.55, fz, hw + 0.2, 0.55, 0.06), E)
+  g.box(faustBox(x, y + 0.55, fz + 0.07, hw - 0.3, 0.38, 0.02), D.brass, 0.65)
+  for (let j = 0; j < 4; j++) for (const s of [-1, 1]) for (let i = 0; i < 3; i++)
+    g.box(faustBox(x + (j - 1.5) * 3.6 + s * (0.2 + i * 0.4), y + 0.78 - i * 0.14, fz + 0.1, 0.2, 0.05, 0.012), K)
+  for (const s of [-1, 1]) g.box(faustBox(x + s * (hw + 0.2), y + 0.5, f + out / 2, 0.06, 0.6, out / 2), E)
+  for (let k = 0; k < 3; k++) {
+    const h = 3.6 - 1.2 * k
+    g.box(faustBox(x, 5.65 + k * 0.7, fz - 0.1, h, 0.35, 0.06), E)
+    g.box(faustBox(x, 5.65 + k * 0.7, fz - 0.03, h - 0.25, 0.2, 0.02), D.brass, 0.6)
+  }
+  faustPyramid(g, x, 7.05, fz - 0.1, 0.4, 0.1, 1.6, D.brass)
+  // the blade sign: out from the wall at the marquee's right, up to 20 m
+  const bx = x + hw + 1.6, Hs = Math.min(20, H * 0.45), y0 = 5, bz = f + 0.9
+  g.box(faustBox(bx, y0 + Hs / 2, bz, 0.14, Hs / 2, 0.9), I)
+  for (const s of [-1, 1]) g.box(faustBox(bx + s * 0.16, y0 + Hs / 2, bz, 0.02, Hs / 2 - 0.25, 0.7), D.brass, 0.7)
+  for (let k = 1; k * 1.25 < Hs - 0.5; k++) g.box(faustBox(bx, y0 + k * 1.25, bz, 0.2, 0.07, 0.75), K)
+  g.box(faustBox(bx, y0 + Hs + 0.15, bz, 0.2, 0.15, 0.95), E)
+  faustPyramid(g, bx, y0 + Hs + 0.3, bz, 0.2, 0.95, 2.2, D.brass)
+  // the ticket booths
+  for (const s of [-1, 1]) {
+    const px = x + s * 5.6
+    g.box(faustBox(px, 1.1, z + d + 0.3, 1.4, 1.0, 0.3), I)
+    g.box(faustBox(px, 1.45, z + d + 0.63, 1.0, 0.4, 0.02), L, 0.7)
+    g.box(faustBox(px, 2.35, z + d + 0.45, 1.2, 0.12, 0.35), D.brass, 0.6)
+  }
+}
 function* faustVisualSteps(c) {
   const facade = faustBatch(3072), ornament = faustBatch(26624), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
@@ -5707,6 +5772,7 @@ function* faustVisualSteps(c) {
     faustGap(ornament, faustBox(x, 2.1, z + d + 0.29, 1.25, 2.1, 0.04), 0x1b222b, B.door)
     ornament.box(faustBox(x, 3.06, z + d + 0.34, 0.85, 0.06, 0.02), 0x8a6a38)
     faustDecoMarquee(ornament, lot)
+    faustDecoTheatre(ornament, lot)
     if (gothic) {
       // Pointed portal with a stone archivolt and deep black tympanum.
       const front = z + d + 0.3
