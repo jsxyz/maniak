@@ -20099,10 +20099,13 @@ function periodSetup(gltf) {
     F.wheels[kind + lod] = m
   }
   F.ready = true
+  // card #53: the wheel buckets are in the scene from the start (hidden, empty), so every warm-up sees them
+  if (typeof objGroup !== 'undefined' && objGroup) for (const m of Object.values(F.wheels)) if (m.parent !== objGroup) objGroup.add(m)
   if (renderer?.compileAsync && scene) {
     // a body and the instanced wheels, in the drawn look and pass, shadow depth included (the look watch takes later looks)
-    const probe = new THREE.Group(), body = new THREE.Mesh(geo.sedan_lod2, base); body.castShadow = body.receiveShadow = true; probe.add(body, F.wheels.ww1)
-    background.run('period warm', function* () { try { yield* warmSceneSteps(activeLook || 'plain', [probe]) } finally { probe.remove(F.wheels.ww1) } }, { gpu: true })
+    const probe = new THREE.Group(), body = new THREE.Mesh(geo.sedan_lod2, base); body.castShadow = body.receiveShadow = true; probe.add(body)
+    // the body, and the wheels in place: all four buckets, near and far (the near ones are the first a boarding draws)
+    background.run('period warm', function* () { yield* warmSceneSteps(activeLook || 'plain', [probe, ...Object.values(F.wheels)]) }, { gpu: true })
       .catch(e => frameFailed('vehicle preparation', e))
   }
 }
@@ -28228,20 +28231,32 @@ function slClip(ag, o, t) {
 const SL_PUSH = 0.25
 const slPushOff = (tr, v0, v) => tr < SL_PUSH ? v0 * tr + (v - v0) * tr * tr / (2 * SL_PUSH) : v * tr - (v - v0) * SL_PUSH / 2
 const slPushV = (tr, v0, v) => tr < SL_PUSH ? v0 + (v - v0) * tr / SL_PUSH : v
+// card #72 (on #67's fling): a knock-down's tumble from its throw d (m): launched at 0.75 of the impact speed that throws that
+// far (slFling's inverse), in the air until it has halved (an arc 0.08 + 0.16 d high), then sliding, slowing the harder the
+// faster it lands (2 m/s: 0.5 m in 0.5 s; 6 m/s: 2 m in 0.67 s), to rest at d
+function slTumble(d) {
+  const w = (Math.sqrt(0.0625 + 0.4 * d) - 0.25) / 0.2, vl = 0.75 * w / 0.45, vt = vl / 2, ag = 1.25 * vt + 1.5
+  const s = vt * vt / (2 * ag), ts = vt / ag, da = d - s, ta = 2 * da / (vl + vt)
+  return { d, vl, vt, ag, aa: (vl - vt) / ta, s, ts, da, ta, T: ta + ts, h: clamp(0.08 + 0.16 * d, 0.1, 1.2) }
+}
+// the distance along the throw after tau s
+const slTumbleAt = (tb, tau) => tau < tb.ta ? tb.vl * tau - tb.aa * tau * tau / 2 : Math.min(tb.d, tb.da + tb.vt * (tau - tb.ta) - tb.ag * (tau - tb.ta) ** 2 / 2)
 // the pose under a record
 function slDetached(ag, r, t, o) {
   if (r.kind === 8 || r.kind === 9) return partsStreetPose(ag, r, t, o)          // card #55: held, flung
   const tau = (t - r.t) / 1000, H = ag.body >= 3 ? 1.66 : 1.78, S = STREET
   const dog = ag.kind === SL_K.stray
   if (r.kind === 1 || r.kind === 4) {
-    const k0 = r.kind === 1 ? S.knockS : 0, k1 = k0 + (r.kind === 1 ? S.lieS : 0), k2 = k1 + (r.kind === 1 ? S.getupS : 0)
+    // card #72: the tumble lasts as long as its throw needs (none: a flung body's landing, 0.55 s)
+    const kd = r.kind === 1 ? Math.hypot(r.x1 - r.x, r.z1 - r.z) : 0, tb = kd >= 0.05 ? (r.tb ||= slTumble(kd)) : null
+    const k0 = r.kind === 1 ? (tb ? tb.T : S.knockS) : 0, k1 = k0 + (r.kind === 1 ? S.lieS : 0), k2 = k1 + (r.kind === 1 ? S.getupS : 0)
     const face = Math.atan2(r.x - r.x1, r.z - r.z1)
     if (r.kind === 1 && tau < k0) {
-      // card #63: off at the hit's speed (it left at twice it: a 0.5-0.8 m first frame), and a rider rises off the saddle
-      // instead of starting 0.55 m up; down at 85% of the way, the last of it a slide along the ground; the hop scales with the
-      // fling (d04a91af: a 0.3 m stumble must not hop 0.45 m)
-      const u = tau / k0, e = u * (1 + u - u * u)
-      o.x = r.x + (r.x1 - r.x) * e; o.z = r.z + (r.z1 - r.z) * e; o.y = Math.sin(Math.PI * Math.min(1, u / 0.85)) * (ag.kind === SL_K.cyclist ? 0.8 : 0.45) * clamp(Math.hypot(r.x1 - r.x, r.z1 - r.z) / 2.5, 0.2, 1)
+      // card #72: thrown, in the air (an arc as high as the throw is long), then sliding to rest (slTumble); a rider rises off
+      // the saddle (card #63) at least as high as before
+      const u = tau / k0, e = tb ? slTumbleAt(tb, tau) / kd : 0, air = tb && tau < tb.ta ? Math.sin(Math.PI * tau / tb.ta) : 0
+      const hh = tb ? ag.kind === SL_K.cyclist ? Math.max(tb.h, 0.8 * clamp(kd / 2.5, 0.2, 1)) : tb.h : 0
+      o.x = r.x + (r.x1 - r.x) * e; o.z = r.z + (r.z1 - r.z) * e; o.y = air * hh
       o.yaw = face; o.clip = dog ? 'flinch' : 'knockback'; o.ct = u * 0.8; o.down = true
       if (dog) { o.roll = u * Math.PI / 2; o.y += Math.sin(o.roll) * 0.22 }
     } else if (tau < k1) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = dog ? 'idle' : 'death'; o.ct = 2.39; o.down = true
@@ -28257,7 +28272,7 @@ function slDetached(ag, r, t, o) {
       if (tau - k2 > end) { const g = (tau - k2 - end) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
     }
     if (ag.kind === SL_K.cyclist) {          // card #63: the bike falls over and slides from under him to where it lies
-      const b = r.bike || [r.x1, r.z1, face], f = r.kind === 1 ? Math.min(1, tau / k0) : 1, e = f * (1 + f - f * f), y0 = b[2] - (slRnd(ag.id) - 0.5)
+      const b = r.bike || [r.x1, r.z1, face], f = r.kind === 1 ? Math.min(1, tau / S.knockS) : 1, e = f * (1 + f - f * f), y0 = b[2] - (slRnd(ag.id) - 0.5)
       o.bikeDown = [r.x + (b[0] - r.x) * e, r.z + (b[1] - r.z) * e, y0 + (b[2] - y0) * e, e]; o.wheel = 0
     }
     return
