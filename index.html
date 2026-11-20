@@ -3244,7 +3244,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (gothic) for (const a of [-1, 1]) for (const b of [-1, 1]) boxes.push(faustBox(x + a * (w - 0.4), H * 0.24, z + b * (d - 0.4), 1.2, H * 0.24, 1.2, { slim: true }))
     if (stop) {
       const platform = faustBox(x, H + 0.2, z, 6, 0.2, 6), id = [gx, gz, i].join(':')
-      boxes.push(platform, faustBox(x, H + 14, z, 0.45, 14, 0.45, { slim: true }))
+      boxes.push(platform, faustBox(x, H + 14, z, 0.45, 14, 0.45, { slim: true }), ...inLiftHouse(x, z, H))      // card #38: the lift's roof stop
       masts.push({ id, x, y: H + 0.4, z, height: H + 0.4, mastTop: H + 28, radius: 20,
         tower: { id, x, z, roofY: H, district }, platform, cruiseY: FAUST.cruiseY, airBand: FAUST.airBand.slice(),
         approach: [x + 30, H + 10, z] })
@@ -3438,6 +3438,19 @@ function inFace(b, face, round = false) {
 // halves of a cell is centred on the midline and takes the lower. Centres are 24, 48 or 72 m into a cell, and #46's shaders
 // take the slot from a mass box's centre, so the line is drawn at 56 m (8 m from either)
 const inSlot = (plan, lot) => (lot.x - (plan.ci - plan.S / 2) * 96 > 56 ? 1 : 0) + (lot.z - (plan.cj - plan.S / 2) * 96 > 56 ? 2 : 0)
+// card #38: a transit tower's lift house on #5's stop platform, the express lift's roof stop (agreed with #5): a cab over the
+// shaft's (faustInterior puts these towers' core 0.6 m east of the lot's centre, clear of the mast), walls 0.15 m round it, a door
+// 1.6 m wide on its west face (away from the platform's east edge), a roof 3 m up. Plan boxes (every client's colliders) and drawn
+// with the platform
+function inLiftHouse(x, z, H) {
+  const K = FAUST_IN, S = K.stair, cw = 2 * S.width + S.well + K.lift + 3 * K.part, cl = 2 * S.landing + S.run + 2 * K.part
+  const lx0 = inCm(x + 0.6 - cw / 2 + K.part) + 2 * S.width + S.well + K.part, cz1 = inCm(z + cl / 2) - K.part
+  const t = 0.15, y0 = H + 0.4, h = 2.8, X0 = lx0 - t, X1 = lx0 + K.lift + t, Z0 = cz1 - K.lift - t, Z1 = cz1 + t, d0 = z + 1, d1 = z + 2.6
+  const b = (x0, x1, y1, y2, z0, z1) => faustBox((x0 + x1) / 2, (y1 + y2) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (y2 - y1) / 2, (z1 - z0) / 2)
+  return [b(X0, X1, y0, y0 + h, Z0, Z0 + t), b(X0, X1, y0, y0 + h, Z1 - t, Z1), b(X1 - t, X1, y0, y0 + h, Z0 + t, Z1 - t),
+    b(X0, X0 + t, y0, y0 + h, Z0 + t, d0), b(X0, X0 + t, y0, y0 + h, d1, Z1 - t), b(X0, X0 + t, y0 + 2.5, y0 + h, d0, d1),
+    b(X0, X1, y0 + h, y0 + h + 0.2, Z0, Z1)]
+}
 // the building on lot li of a cell's plan
 function faustInterior(plan, li) {
   const lot = plan.lots[li], { x, z, w, d, height: H, district: style, gothic, stop, mass } = lot, K = FAUST_IN, T = K.wall
@@ -3448,7 +3461,7 @@ function faustInterior(plan, li) {
   const S = K.stair, sw = 2 * S.width + S.well, sl = 2 * S.landing + S.run, lift = tower && H >= 48
   const cw = sw + (lift ? K.lift + K.part : 0) + 2 * K.part, cl = sl + 2 * K.part
   const house = tower ? null : mass[style === 'industrial' ? 2 : 1]
-  const ccx = house ? house.cx : x, ccz = house ? house.cz : z
+  const ccx = house ? house.cx : x + (stop ? 0.6 : 0), ccz = house ? house.cz : z      // a transit tower's: clear of #5's mast
   const core = inRect(ccx - cw / 2, ccx + cw / 2, ccz - cl / 2, ccz + cl / 2, { lift, stairX: inCm(ccx - cw / 2 + K.part) })
   // storeys on #25's 4 m grid; each takes the plate of the highest mass it reaches into, so setbacks stay outside
   const n = Math.round(H / K.storey), storeys = []
@@ -6398,6 +6411,7 @@ function* faustVisualSteps(c) {
       ornament.box(faustBox(x, H + 14, z, 0.45, 14, 0.45), 0xc4c9c9)
       ornament.box(faustBox(x, H + 27, z, 3.4, 0.25, 0.45), 0xe1d2a9)
       for (const side of [-1, 1]) ornament.box(faustBox(x + side * 5.8, H + 0.9, z, 0.1, 0.5, 5.8), 0x8b969f)
+      for (const b of inLiftHouse(x, z, H)) ornament.box(b, 0xa7aeb5)        // card #38: the express lift's house, its roof stop
       yield; continue
     }
     // card #69: the tower's Art Deco crown, setback pylons and corner fins
@@ -7101,7 +7115,7 @@ function inOpen(id) {
   if (faustIn.open.has(id)) return faustIn.open.get(id)
   const t = performance.now(), B = inBuilding(id), c = faustGet(B.ci, B.cj)
   faustPhysics(c)
-  if (!c.physics || B.stop) return null
+  if (!c.physics) return null
   // a crater cut into its boxes already (a smash on its roof): it stays shut
   if (craters.some(([x, z, r, , y]) => y > 1 && Math.abs(x - B.x) < B.w + r && Math.abs(z - B.z) < B.d + r)) return null
   const map = inBodyMap(c), O = { id, B, c, shell: null, storeys: new Map(), want: new Set([0]), seen: performance.now() }
@@ -7224,6 +7238,12 @@ function faustInStairs(c, mx, vy, mz) {
 // the lift cab a character stands in: { B, k, lx0 } or null
 function inCab(c) {
   const at = inAt(c.x, c.y - c.h - c.r, c.z), K = FAUST_IN
+  // a transit tower's roof stop: the cab in its lift house on #5's platform (inLiftHouse), level n
+  if (at && at.k === -1 && at.B.stop && at.B.core.lift) {
+    const B = at.B, C = B.core, lx0 = C.stairX + 2 * K.stair.width + K.stair.well + K.part, cz1 = C.z1 - K.part, feet = c.y - c.h - c.r
+    return feet > B.H + 0.2 && feet < B.H + 1.2 && c.x >= lx0 && c.x <= lx0 + K.lift && c.z >= cz1 - K.lift && c.z <= cz1
+      ? { B, k: B.storeys.length, lx0, roof: true } : null
+  }
   if (!at?.inside || at.k < 0 || !at.B.core.lift) return null
   const B = at.B, C = B.core, lx0 = C.stairX + 2 * K.stair.width + K.stair.well + K.part, cz1 = C.z1 - K.part
   return c.x < lx0 || c.x > lx0 + K.lift || c.z < cz1 - K.lift || c.z > cz1 ? null : { B, k: at.k, lx0 }
@@ -7232,12 +7252,14 @@ function faustInLift(c) {
   const cab = inCab(c), K = FAUST_IN
   if (!cab) return false
   const { B, lx0 } = cab, at = cab
-  const n = B.storeys.length, k = at.k, up = c.x > lx0 + K.lift / 2
-  const to = up ? Math.min(n - 1, (Math.floor(k / 10) + 1) * 10) : k % 10 ? Math.floor(k / 10) * 10 : Math.max(0, k - 10)
+  // a transit tower's top stop is its roof (level n, 0.4 m up on #5's platform); from there either half rides down to the top storey
+  const n = B.storeys.length, k = at.k, top = B.stop ? n : n - 1, up = !cab.roof && c.x > lx0 + K.lift / 2
+  const to = up ? Math.min(top, (Math.floor(k / 10) + 1) * 10) : cab.roof ? n - 1 : k % 10 ? Math.floor(k / 10) * 10 : Math.max(0, k - 10)
   const O = faustIn.open.get(B.id)
   if (to === k || !O) return false
   for (const q of [to - 1, to, to + 1]) inStoreyBodies(O, q, true)
-  setCharPos(c, c.x, c.y + (to - k) * K.storey, c.z)
+  const level = q => q * K.storey + (q >= n ? 0.4 : 0)
+  setCharPos(c, c.x, c.y + level(to) - level(k), c.z)
   if (c === (isHost ? players.get(0) : predicted)) faustIn.fade = performance.now()
   return true
 }
@@ -7561,7 +7583,7 @@ function faustInteriorFrame(cam) {
     }
     // behind a broken window within 40 m: its room
     for (const id of faustIn.broken.keys()) { const B = inBuilding(id)
-      if (B.stop || Math.max(Math.abs(p.x - B.x) - B.w, Math.abs(p.z - B.z) - B.d) > 40) continue
+      if (Math.max(Math.abs(p.x - B.x) - B.w, Math.abs(p.z - B.z) - B.d) > 40) continue
       const ks = want.get(id) || want.set(id, new Set()).get(id)
       for (const w of inBrokenWindows(B)) ks.add(w.k) }
     faustIn.camera = at && (at.inside || at.k === -1) ? at : null
@@ -7572,7 +7594,6 @@ function faustInteriorFrame(cam) {
       else { D.keep = last; for (const q of [...D.storeys.keys()]) if (!ks.has(q) && !(q === 'door' && ks.has(0) && !D.storeys.has(0)) && !(q === 0 && ks.has('door') && !D.storeys.has('door'))) inUndraw(D, q) }
     }
     for (const [id, ks] of want) {
-      if (inBuilding(id).stop) continue          // a transit stop's tower stays shut in phase 1
       let D = faustIn.drawn.get(id)
       if (!D) faustIn.drawn.set(id, D = { B: inBuilding(id), storeys: new Map(), keep: last })
       D.want = ks
