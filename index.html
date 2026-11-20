@@ -21335,6 +21335,7 @@ function autoEnd(R, error) {
   if (autoRun !== R) return
   autoRun = null
   R.holds.length = 0
+  for (const s of R.cur?.subs || []) try { s.abort?.() } catch (e) {}
   for (const b of ['fire', 'alt']) if (R.set[b]) input[b] = false
   clearInterval(R.dog)
   for (const [ev, fn, o] of R.listen) removeEventListener(ev, fn, o)
@@ -21475,6 +21476,73 @@ AUTO_STEPS.go = (R, a) => {
   const sub = { tick: t => {
     const m = selfChar(), r = autoGoTick(s, m, t, (y, ux, uz) => { const d = staticRay(m.x, y, m.z, ux, 0, uz, 8); return d > 0.01 && d < 8 ? d : Infinity }, nav)
     if (r) { sub.out = { ...r, what: s.what }; return true }
+    return false
+  } }
+  return sub
+}
+// card #75, { drive }: on foot, walk to the nearest free car (the { go } way) and take its driver's seat; then drive it to a point or
+// thing along the roads by the traffic router. The router's own driver (trafficThink: lanes, junction locks and signals, braking for
+// people and cars, pure-pursuit steering) is asked for its input each frame and that is laid over the player's, for the player is
+// seated and trafficDriveTo only takes an empty car: the route is made with the seat blanked, and o.traffic held aside between frames.
+// { drive: { x, z, speed, urgent } | { thing } | 'thing' }. Ends on arrival ({ arrived, x, z, left, ms }) or throws.
+function autoCarNear(me, skip) {
+  let best = null, bd = Infinity
+  for (const o of objs) {
+    if (!o.V || !o.car || o.V.fly || o.heldBy !== undefined || o.thrownBy !== undefined || o.riders[0] !== undefined || !TRAFFIC.fleet.includes(o.V.name) || o === skip) continue
+    const d = Math.hypot(o.x - me.x, o.z - me.z) + (o.traffic ? 15 : 0)
+    if (d < bd && d < 100 && fits(me, o, 0)) { bd = d; best = o }
+  }
+  return best
+}
+AUTO_STEPS.drive = (R, a) => {
+  const me = selfChar()
+  if (!LV.faust || !isHost || !me) throw new Error('drive: Faustland host only')
+  const A = typeof a === 'string' ? { thing: a } : a || {}
+  let gx = Number(A.x), gz = Number(A.z), what = 'x ' + gx + ' z ' + gz
+  if (A.thing) {
+    const t = testTools.find(String(A.thing).toLowerCase(), me)
+    if (!t) throw new Error('drive: no ' + A.thing + ' yet')
+    const p = t.spot || t; gx = p.x; gz = p.z; what = t.what
+  }
+  if (!Number.isFinite(gx) || !Number.isFinite(gz)) throw new TypeError('drive: needs x and z, or a thing')
+  const st = { phase: seatOf(me)?.[1] === 0 ? 'plan' : 'walk', car: seatOf(me)?.[0] || null, t0: now(), last: now(), still: 0, a: null }
+  const hold = () => { if (st.car && st.a) { const k = st.a.lock; if (k && trafficState?.locks.get(k) === st.car.id) trafficState.locks.delete(k) } }
+  const sub = { abort: hold, tick: t => {
+    const m = selfChar(), dt = clamp((t - st.last) / 1000, 0.001, 0.1); st.last = t
+    if (!m || m.dead > 0) throw new Error('drive: you died')
+    if (st.phase === 'walk') {
+      if (!st.car) {
+        st.car = autoCarNear(m)
+        if (!st.car) throw new Error('drive: no free car within 100 m (try /give car, or whistle with H)')
+        if (st.car.traffic) GAME.traffic.cancel(st.car.id)            // an ambient car stops where it is
+        st.go = AUTO_STEPS.go(R, { x: st.car.x, z: st.car.z, radius: 4.5, pace: 'run' })
+      }
+      if (!objs.includes(st.car) || st.car.riders[0] !== undefined) throw new Error('drive: the car was taken')
+      if (!st.go.tick(t)) return false
+      const i = st.car.riders.findIndex((r, k) => r === undefined && fits(m, st.car, k))
+      if (i !== 0) throw new Error('drive: no driver\'s seat free')
+      sit(m, st.car, 0); st.phase = 'plan'
+      return false
+    }
+    const s = seatOf(m)
+    if (!s || s[1] !== 0 || (st.car && s[0] !== st.car)) throw new Error('drive: you left the car')
+    const o = st.car = s[0]
+    if (st.phase === 'plan') {
+      const riders = o.riders.slice(); o.riders.fill(undefined)
+      let ok = false
+      try { ok = trafficDriveTo(o, { x: gx, z: gz }, { driver: false, urgent: !!A.urgent, speed: Number(A.speed) || 12 }) } finally { riders.forEach((r, k) => { o.riders[k] = r }) }
+      if (!ok) throw new Error('drive: no road route from here to ' + what + ' (the car must be within 28 m of a street)')
+      st.a = o.traffic; o.traffic = null; st.phase = 'drive'; st.deadline = t + Math.min(1200, 60 + Math.hypot(gx - o.x, gz - o.z) / 2.5) * 1000
+    }
+    o.traffic = st.a
+    let inp
+    try { inp = trafficThink(o, dt, [...players.values()].filter(c => !c.bot && c.owner === undefined)) } finally { o.traffic = null }
+    const left = Math.hypot(gx - o.x, gz - o.z), v = speedOf(o)
+    if (st.a.arrived || left < 6 && v < 0.6) { hold(); sub.out = { arrived: true, x: Math.round(o.x), z: Math.round(o.z), left: Math.round(left * 10) / 10, ms: Math.round(t - st.t0), what }; input.j = true; return true }
+    input.f = inp.f; input.r = inp.r; input.j = inp.j
+    st.still = v < 0.3 ? st.still + dt : 0
+    if (st.still > 25) throw new Error('stuck at ' + Math.round(o.x) + ' ' + Math.round(o.z) + ' (waiting 25 s), ' + Math.round(left) + ' m from ' + what)
+    if (t > st.deadline) throw new Error('timeout at ' + Math.round(o.x) + ' ' + Math.round(o.z) + ', ' + Math.round(left) + ' m from ' + what)
     return false
   } }
   return sub
@@ -28184,6 +28252,17 @@ const goCommand = a => {
   })
 }
 Object.assign(GAME.commands, { go: { args: '<x> <z> | <thing> [pace]', help: 'host only, test: walk, run or sprint there by the bots\' way', run: goCommand } })
+// card #75: /drive <x> <z> | <thing>: take the nearest free car and drive it there on the roads
+const driveCommand = a => {
+  if (!isHost || serving || !selfChar()) return sysMsg('§cOnly the host, with a character.')
+  const w = String(a || '').trim().replace(/,/g, ' ').split(/\s+/).filter(Boolean), n = w.map(Number), pt = w.length === 2 && n.every(Number.isFinite)
+  if (!pt && w.length !== 1) return sysMsg('§cUsage: §f/drive <x> <z> | <thing> §7(things: ' + testTools.things() + ')')
+  gameHooks.auto.run([{ drive: pt ? { x: n[0], z: n[1] } : { thing: w[0] } }]).then(r => {
+    const g = r.log?.at(-1)?.drive
+    sysMsg(r.ok && g ? '§7Arrived at §f' + g.what + '§7 (' + g.left + ' m off) in §f' + Math.round(g.ms / 1000) + ' s' : '§c/drive: ' + (r.error || 'stopped'))
+  })
+}
+Object.assign(GAME.commands, { drive: { args: '<x> <z> | <thing>', help: 'host only, test: take the nearest free car and drive there by the roads', run: driveCommand } })
 Object.assign(GAME.commands, {
   tp:    { args: '<x> <z>', help: 'host only, test: teleport to the street under a point', run: testTools.tp },
   near:  { args: '<thing> [go]', help: 'host only, test: find the nearest (' + testTools.things() + '), go to teleport beside it', run: testTools.near },
