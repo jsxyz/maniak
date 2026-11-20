@@ -726,6 +726,10 @@ const CHARS = [
     color: 0x30323a, enter: 'is here to collect.', role: 'One of Faust\'s men · a bat, and a shotgun past arm\'s length' },
   { name: 'Pacifier', side: 'freaks', hidden: true, atk: 'Rifle', model: 'pacifier', r: 0.4, h: 0.55, speed: 6.2, jump: 8, hp: 150, color: 0x2c2f2a,
     role: 'A mercenary paid to kill superheroes · a rifle, in a squad' },
+  // card #59, the brief: "another type of freak and call it a street performer. It dances and stabs people. It has a cup and
+  // demands money", ragged and homeless. A shank in one hand, a tin cup in the other (MODELS.street_performer cup)
+  { name: 'Street performer', side: 'freaks', hidden: true, atk: 'Shank', model: 'street_performer', r: 0.35, h: 0.55, speed: 6.8, jump: 8.2, hp: 80,
+    color: 0x5b5246, enter: 'sets up on the corner.', role: 'Faustland\'s own busker · a dance, a tin cup and a shank' },
 ]
 // rate: s/shot, spread: rad, range: m. Gun 0 never runs dry. look: line|beam|slash|blast; held: glow, heldScale, tether
 // kind: ray|pierce|chain|radius. dive: speed m/s, pull m/s²; dmg, knock × clamp(impact/ref, 1, cap), range × its root
@@ -822,6 +826,9 @@ const GUNS = [
   // card #55: his punt (the kick, on what he drops from his hands), and a body or thing he sent flying hitting someone
   { name:'Punt', rate:0.6, dmg:34, range:2.2, knock:0, color:0xe8e2d4, special:true, melee:true, held:false },
   { name:'Flung', rate:0.6, dmg:26, range:1, knock:10, color:0xe8e2d4, special:true, melee:true, held:false },
+  // card #59, the street performer's: quick stabs with a crude blade; and its tin cup, which only shows (never fired, never dropped)
+  { name:'Shank',        rate:0.42, dmg: 8, spread:0.20, pellets:1, range: 2.2, knock: 1.6, color:0x7d7468, melee:true, punch:'stab', grip:'knife', model:'Shank' },
+  { name:'Tin cup',      rate:1.00, dmg: 0, range: 0, knock: 0, color:0x8b877c, melee:true, model:'Tin cup' },
 ].map(G => ({ ...GUN_ROW, ...G }))
 // POWERS: dur s, then scales of move jump rate give take fuel jet reach lift (jet 0 grounds; reach 0 spares melee)
 // drop:false: by `apply` only. look: an EFFECT_LOOKS overlay
@@ -853,17 +860,26 @@ const TEARDROP = { char: 'Teardrop', cid: 'Teardrop', crew: 'teardrops', range: 
 const THUG = { char: 'Thug', cid: 'Thug', crew: 'mob', range: 2.2, fireRange: 4.5, aimErr: 0.06, jumpy: 0.4 }
 const SHOOTER = { ...THUG, far: 'Pistol', farAt: 7, range: 11, fireRange: 30, aimErr: 0.07, jumpy: 0.3, cover: { hold: 1.4, peek: 1.6 } }
 const PACIFIER = { char: 'Pacifier', cid: 'Pacifier', crew: 'pacifiers', range: 13, fireRange: 40, aimErr: 0.05, jumpy: 0.1, turn: 4, drill: { gap: 3, bound: 1.8 } }
+// card #59, the street performer: no crew; busk (buskThink): it keeps a pitch on the pavement and dances there; whoever comes within
+// ask m (a player, a passer-by) gets the cup and a demand (once in askEvery s each); a passer-by it then stabs; a player it can see
+// within engage m, or who hurt it in the last mad s, it dances in on at walk (a share of its walk) and fights, holding the cup out
+// for hold s and dancing between s after each stab; pedEvery s between passers-by
+const PERFORMER = { char: 'Street performer', cid: 'Street performer', range: 1.3, fireRange: 2.4, aimErr: 0.06, jumpy: 0, turn: 7,
+  busk: { ask: 4.5, askEvery: 14, engage: 14, mad: 8, walk: 0.45, hold: 1.2, between: 0.8, pedEvery: 6 } }
 const BOTS = [
   TEARDROP, TEARDROP, TEARDROP,
   THUG, SHOOTER, THUG,
   PACIFIER, PACIFIER, PACIFIER, PACIFIER,
+  PERFORMER,
   TEARDROP, { ...THUG, atk: 'Pipe' }, TEARDROP, SHOOTER,
+  PERFORMER,
   { char: 'Freak', cid: 'Freak', crew: 'street', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 1.1 },
   { char: 'Brute', cid: 'Brute', crew: 'street', range: 2.4, fireRange: 5, aimErr: 0.05, jumpy: 0.3, turn: 5 },
   { char: 'Freak', cid: 'Freak', crew: 'street', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 1.1 },
   { char: 'Misery Master', cid: 'Misery Master', crew: 'teardrops', boss: true, rare: true, visits: 6, range: 2.2, fireRange: 20, aimErr: 0.04, jumpy: 0.7,
     turn: 8, hitRun: [1.0, 0.5] },
   { char: 'Tony', cid: 'Tony', crew: 'mob', boss: true, rare: true, visits: 8, range: 7, fireRange: 18, aimErr: 0.05, jumpy: 0.2, turn: 4 },
+  { ...PERFORMER, rare: true, visits: 4 },
 ]
 // a LEVELS row's `theme` overrides THEME. TOR_TOP: tornado top (m), or the lid if lower
 const TOR_TOP = 25
@@ -1055,7 +1071,7 @@ const ASSETS =
 // decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
 // neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.c94c09ac.glb', maniak_moves: 'maniak_moves.a48768e9.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
+const RIG_FILES = { performer_anims: 'performer_anims.672d8111.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.c94c09ac.glb', maniak_moves: 'maniak_moves.a48768e9.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -1135,6 +1151,13 @@ const MODELS = {
   tony: { ...RIG_FREAK, file: RIG_FILES.tony, aims: { bat: 'bat_idle', Scatter: 'rifle_idle' }, shoots: { Scatter: 'rifle_shoot' }, punches: { swing: [['bat_swing', 0.05]] } },
   thug: { ...RIG_FREAK, file: RIG_FILES.thug, aims: { bat: 'bat_idle' }, punches: { swing: [['bat_swing', 0.05]] } },
   pacifier: { ...RIG_FREAK, file: RIG_FILES.pacifier, aims: { rifle: 'rifle_idle' }, shoots: { rifle: 'rifle_shoot' } },
+  // card #59, the street performer: its own clips (RIG_FILES.performer_anims: dances retargeted from CMU mocap, a dance step it
+  // closes in with, the cup shoved out, two quick stabs). dances: standing, it dances them in turn (perfDance), and running, their
+  // arms over its legs; demand: the cup shoved at someone (perfSay); cup: the GUNS row drawn in its left hand
+  street_performer: { ...RIG_FREAK, file: RIG_FILES.street_performer, anims: [RIG_FILES.anims, RIG_FILES.freak_anims, RIG_FILES.performer_anims],
+    clips: { ...RIG_FREAK.clips, walk: 'dance_walk' }, pace: { ...RIG_FREAK.pace, walk: 0.605 },
+    dances: ['dance_charleston', 'dance_lindy', 'dance_bear', 'dance_chicken', 'dance_charleston_fancy'], demand: 'perf_demand', cup: 'Tin cup',
+    punches: { stab: [['perf_stab_a', 0.02], ['perf_stab_b', 0.02]] } },
   man: {
     url: ASSETS + 'box_man.glb',
     yaw: Math.PI,
@@ -1771,6 +1794,22 @@ const PROP_MODELS = {
     k.add({ g: ['lathe', [[0.0, -0.13], [0.024, -0.13], [0.024, -0.085], [0.019, -0.075], [0.019, 0.56], [0.027, 0.57], [0.027, 0.64], [0.0, 0.64]], 10],
       m: 'accent', tag: 'pipe' })
   },
+  // card #59: the street performer's shank, a ground-down strip of scrap with a rag bound round the grip; and its tin cup, a dented
+  // food tin with the label long gone and a few coins in it, held upright round its middle (the origin)
+  Shank(k) {
+    k.box('dark', [0.026, 0.11, 0.032], [0, 0.0, 0], 'grip')
+    for (const y of [-0.035, 0.0, 0.035]) k.add({ g: ['cylinder', 0.02, 0.021, 0.022, 8], m: 'wood', p: [0, y, 0], r: [0.12 * Math.sign(y + 0.01), 0, 0.1], tag: 'rag' })
+    k.add({ g: ['outline', [[-0.012, 0.05], [0.014, 0.05], [0.016, 0.11], [0.01, 0.145], [0.017, 0.19], [0.003, 0.262], [-0.006, 0.232], [-0.008, 0.17],
+      [-0.014, 0.12]], 0.005], m: 'accent', r: [0, Math.PI / 2, 0], tag: 'blade' })
+  },
+  'Tin cup'(k) {
+    k.add({ g: ['lathe', [[0.0, -0.055], [0.036, -0.055], [0.038, -0.051], [0.038, -0.025], [0.0355, -0.02], [0.038, -0.015], [0.038, 0.015], [0.0355, 0.02],
+      [0.038, 0.025], [0.038, 0.05], [0.0355, 0.054], [0.0335, 0.05], [0.0335, -0.049], [0.0, -0.049]], 14], m: 'accent', tag: 'tin' })
+    k.add({ g: ['cylinder', 0.0385, 0.0385, 0.022, 14], m: 'dark', p: [0, -0.034, 0], tag: 'label' })
+    k.add({ g: ['sphere', 0.012, 8, 6], m: 'dark', p: [0.03, 0.012, 0.016], s: [0.5, 1.4, 1], tag: 'dent' })
+    for (const [x, y, z, a] of [[0.008, -0.036, 0.004, 0.3], [-0.01, -0.034, -0.006, -0.5], [0.002, -0.03, 0.012, 0.9], [-0.004, -0.025, -0.002, 1.2]])
+      k.add({ g: ['cylinder', 0.0115, 0.0115, 0.0025, 10], m: 'gold', p: [x, y, z], r: [a, 0, a * 0.6], tag: 'coin' })
+  },
   // card #35: the Brute's sledgehammer, held two-handed: the right fist at the origin, the left lower down the haft (GUNS offGrip);
   // a hickory haft swelling to its end, and a forged head on it with a striking face each end
   Sledge(k) {
@@ -1855,6 +1894,9 @@ const SOUNDS = {
   Bat: { say: 'a wooden baseball bat swung hard: a low whoosh and a hollow wooden crack', seed: 0 },
   Pipe: { say: 'a steel pipe swung hard: a heavy whoosh and a ringing metal clang', seed: 0 },
   Rifle: { say: 'a three-round rifle burst: three tight, hard cracks', seed: 0 },
+  // card #59 (the performer's demand is heard now by perfVoice; these rows are for the sound card's generator)
+  Shank: { say: 'a quick jab of a crude blade: a short scuff of cloth and a wet stab', seed: 0 },
+  'Street performer demand': { say: 'a hoarse, wheedling street voice demanding money, and coins rattled in a tin cup', seed: 0 },
 
   Punt: { say: 'a big boot punting something heavy: a deep leathery thump and a rush of air after it', seed: 0 },
   Flung: { say: 'a body slamming into another at speed: a heavy, meaty collision', seed: 0 },
@@ -7377,6 +7419,7 @@ function botThink(b, all, dt) {
 
   const seat = seatOf(b)
   if (seat && !seat[1]) return driveThink(b, seat[0], tgt, dt, all)
+  if (spec.busk && !seat) { const o = buskThink(b, tgt, sd, sees, dt); if (o) return o }      // card #59, the street performer
   const car = carWant(b, seat, tgt, sd, dt)
   // card #7: a crew keeps together on the way to a fight (crewThink)
   ai.wait = false
@@ -7620,6 +7663,101 @@ function meleeTurns(all, dt) {
     for (const [b] of list) if (!b.ai.turn && free > 0) { b.ai.turn = true; b.ai.turnT = TURN_S; free-- }
     for (const [b] of list) b.ai.waitTurn = !b.ai.turn
   }
+}
+
+// card #59, the street performer (BOTS busk). It keeps a pitch on the pavement where passers-by walk, near where it came in, and
+// dances there (MODELS dances). Whoever comes within busk.ask m, a player or a passer-by, gets the cup shoved at them and a demand
+// for money (perfSay: shown over it and heard, on every machine). A passer-by it then stabs, by the engine's own hit rules (slAim
+// gives its shots the street's people). A player it can see within busk.engage m, or one who has just hurt it, it fights by the bot
+// rules: it dances in (its dance step, at a walk) until it has made its demand, then goes at them, dancing a beat after each stab
+const PERF_LINES = ['Spare change for the arts?', 'Tip the talent!', 'Faust taxes the sun. I tax you.', 'Applause is free. Coins aren\'t.',
+  'You watched. You pay.', 'Pay the performer, citizen!', 'Coins in the cup, or a hole in the gut.', 'Support the arts. Or bleed.',
+  'That dance cost you a dollar.', 'A coin for the show, friend?', 'The cup is hungry!', 'Nobody walks past my show for free.']
+const PERF_SAY_MS = 2800, PERF_DANCE_MS = 7000
+function buskThink(b, tgt, sd, sees, dt) {
+  const ai = b.ai, B = b.bot.busk, T = tickAt || now()
+  const k = ai.busk ||= { asked: new Map(), hp: b.hp, mad: 0, hold: 0, dance: 0, ped: null, pedT: 0, look: 0, home: null, cool: 0 }
+  if (b.hp < k.hp) k.mad = B.mad
+  if (b.hp > k.hp) k.home = null                       // a respawn: a new pitch where it came in
+  k.hp = b.hp; k.mad -= dt; k.hold -= dt; k.dance -= dt; k.pedT -= dt
+  const fired = b.cool > k.cool + 0.05; k.cool = b.cool          // its stab went off this tick
+  if (fired) k.dance = B.between
+  if (!k.home) k.home = perfPitch(b, T)
+  if (k.asked.size > 64) for (const [id, at] of k.asked) if (T - at > 30000) k.asked.delete(id)
+  // a player near enough: the cup, then the fight
+  if (tgt && tgt.id >= 0 && (sees && sd < B.engage || k.mad > 0)) {
+    k.ped = null
+    if (!sees) return null
+    if (T - (k.asked.get(tgt.id) ?? -Infinity) > B.askEvery * 1000) {
+      if (sd > B.ask && k.mad <= 0) return buskTo(b, tgt.x, tgt.z, B.walk, dt)        // dancing in
+      k.asked.set(tgt.id, T); k.hold = B.hold; perfSay(b, tgt.id, T)
+    }
+    return k.hold > 0 || k.dance > 0 ? buskTo(b, tgt.x, tgt.z, 0, dt) : null       // the cup out, or a beat danced, facing them
+  }
+  // a passer-by: the cup, then the shank
+  if (k.ped) {
+    const p = perfFind(b, k.ped.id, T), age = T - k.ped.at
+    if (!p || p.down || age > 7000 || fired) { k.ped = null; k.pedT = B.pedEvery }
+    else {
+      const d = Math.hypot(p.x - b.x, p.z - b.z), reach = GUNS[b.gun].range * 0.8, face = Math.atan2(-(p.x - b.x), -(p.z - b.z))
+      if (age < B.hold * 1000) return buskTo(b, p.x, p.z, 0, dt)
+      const pitch = clamp(Math.atan2(p.y + 0.95 - eyeOf(b), Math.max(d, 0.3)), -1, 0.6)
+      return buskTo(b, p.x, p.z, d > reach * 0.6 ? 1 : 0, dt, d < reach && Math.abs(wrapPi(face - ai.yaw)) < 0.3 && !(b.cool > 0), pitch)
+    }
+  }
+  if (k.dance > 0) return buskTo(b, b.x, b.z, 0, dt)
+  if (k.pedT <= 0 && (k.look -= dt) <= 0) {
+    k.look = 0.3
+    const p = perfPasser(b, T, B.ask, k.asked)
+    if (p) { k.ped = { id: p.id, at: T }; k.asked.set('s' + p.id, T); perfSay(b, -1, T); return buskTo(b, p.x, p.z, 0, dt) }
+  }
+  // its pitch: there, it dances
+  const dh = Math.hypot(k.home.x - b.x, k.home.z - b.z)
+  return dh > 1.2 ? buskTo(b, k.home.x, k.home.z, dh > 6 ? 1 : B.walk, dt) : buskTo(b, b.x, b.z, 0, dt)
+}
+// toward (x, z) at f (0: on the spot, turning to face it), on foot, never sprinting: a performer goes at a dance step or a trot
+function buskTo(b, x, z, f, dt, fire = false, pitch = 0) {
+  const ai = b.ai, turn = (b.bot.turn || 6) * dt
+  if (Math.hypot(x - b.x, z - b.z) > 0.05) ai.yaw += clamp(wrapPi(Math.atan2(-(x - b.x), -(z - b.z)) - ai.yaw), -turn, turn)
+  ai.pitch = pitch
+  return { f, r: 0, j: false, descend: false, fire, yaw: ai.yaw, pitch, sprint: false }
+}
+// a pitch on the pavement: where the nearest passer-by within 35 m is (on its route), else where it stands
+function perfPitch(b, T) {
+  let best = null, bd = Infinity
+  if (slState && LV.faust) slAround(b.x, b.z, 35, T, (ag, p) => {
+    if (p.rec || ![SL_K.ped, SL_K.idle, SL_K.walker, SL_K.pram].includes(ag.kind)) return
+    const d = Math.hypot(p.x - b.x, p.z - b.z)
+    if (d < bd) { bd = d; best = { x: p.x, z: p.z } }
+  })
+  return best || { x: b.x, z: b.z }
+}
+// the nearest passer-by within R m, on its feet, not asked in the last 30 s
+function perfPasser(b, T, R, asked) {
+  let best = null, bd = R
+  if (slState && LV.faust) slAround(b.x, b.z, R, T, (ag, p) => {
+    if (p.down || p.hidden || p.scale < 0.5 || ![SL_K.ped, SL_K.idle, SL_K.walker, SL_K.pram].includes(ag.kind) || T - (asked.get('s' + ag.id) ?? -Infinity) < 30000) return
+    const d = Math.hypot(p.x - b.x, p.z - b.z)
+    if (d < bd) { bd = d; best = { id: ag.id, x: p.x, z: p.z } }
+  })
+  return best
+}
+function perfFind(b, id, T) {
+  let out = null
+  if (slState && LV.faust) slAround(b.x, b.z, 14, T, (ag, p) => { if (ag.id === id) out = { x: p.x, y: p.y, z: p.z, down: p.down } })
+  return out
+}
+// the demand: one of PERF_LINES, to a player's id or a passer-by (-1); the host says it, every machine shows and hears it
+const perfSays = new Map()
+function perfSay(b, to, T) {
+  const n = Math.random() * PERF_LINES.length | 0
+  perfHeard({ id: b.id, n, to, at: T })
+  if (conns.size) broadcast({ k: 'pd', id: b.id, n, to, at: Math.round(T) })
+}
+function perfHeard(d) {
+  const id = d.id | 0, n = d.n | 0
+  if (!botOf(id)?.busk || !(n >= 0 && n < PERF_LINES.length) || !Number.isFinite(+d.at)) return
+  perfSays.set(id, { n, to: d.to | 0, at: +d.at, shown: false })
 }
 
 // card #7, crews: a crew's leader is its boss while it's about, else its first member. A member still far from the fight (over
@@ -15454,6 +15592,8 @@ function rigAnimate(a, want, dt, t) {
     const [lo, hi] = Gt?.rates?.[R.gait] || [0.55, 1.6]
     name = K[R.gait]; rate = clamp(v / (P[R.gait] * H), lo, hi)
   }
+  // card #59: a performer standing dances, its dances in turn
+  if (M.dances && name === K.idle && !(a.dying >= 0)) { name = perfDance(a); fade = 0.35 }
   // landing from a charged jump or a dive: the two-arm smash over everything
   if (airborne && !R.wasAir) R.airAt = t
   if (R.wasAir && !airborne && t - (R.charged ?? -Infinity) < 4000 && want !== 'crouch') { R.charged = -Infinity; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
@@ -15488,8 +15628,10 @@ function rigAnimate(a, want, dt, t) {
     R.plantPh = ph
   } else R.plantPh = undefined
   // arms held over the legs' clip: a lifted object overhead, a held gun's stance
-  const HG = GUNS[a.heldGun], upper = hold === 'lift' ? rigClip(M, K.lift) : a.held?.visible && !(a.dying >= 0) ? rigClip(M, M.aims?.[HG?.grip] ?? M.aims?.[HG?.name] ?? K.aim) : null
+  const HG = GUNS[a.heldGun], upper = hold === 'lift' ? rigClip(M, K.lift) : a.held?.visible && !(a.dying >= 0) && !M.dances ? rigClip(M, M.aims?.[HG?.grip] ?? M.aims?.[HG?.name] ?? K.aim) : null
   if (upper) rigPose(R, upper, (t / 1000) % upper.duration, 1, RIG_UPPER)
+  // card #59: a performer at a run dances from the waist up
+  if (M.dances && !(a.dying >= 0) && (R.name === K.run || R.name === K.sprint)) { const c = rigClip(M, perfDance(a)); if (c) rigPose(R, c, (t / 1000) % c.duration, 0.6, RIG_UPPER) }
   // punches: the gun's punch kind, a combo for jabs (a gun without one: its shot); then hit reactions
   const wind = GUNS[a.chargeGun], HAY = M.hay || { clip: 'haymaker', rate: 1.4, end: 1.3 }
   if (wind?.hayWind && a.chargeAt !== R.windSeen && t - a.chargeAt < wind.hayWind * 1000) {
@@ -15510,6 +15652,11 @@ function rigAnimate(a, want, dt, t) {
     R.shotSeen = a.shotAt
     const clip = rigClip(M, M.shoots?.[G.grip] ?? M.shoots?.[G.name] ?? K.shoot)
     if (clip) R.over = { clip, t0: 0, at: t, speed: 1.6 }
+  }
+  // card #59: the cup shoved at someone with its demand (perfDraw sets sayAt when the line shows)
+  if (M.demand && a.sayAt !== undefined && a.sayAt !== R.saySeen) {
+    R.saySeen = a.sayAt; const clip = rigClip(M, M.demand)
+    if (clip && !(R.over && !R.over.hit)) R.over = { clip, t0: 0, at: t, speed: 1 }
   }
   if (a.struckAt !== undefined && a.struckAt !== R.struckSeen && t - a.struckAt < 200 && K.hits && !(R.over && !R.over.hit)) {
     R.struckSeen = a.struckAt
@@ -15561,6 +15708,8 @@ function rigHopLand(a, R) {
   if (R.lod < 2) for (const side of ['l', 'r']) { const b = R.bones.get('ball_' + side); if (b) { b.getWorldPosition(rigV); burst('dust', rigV.x, floor + 0.06, rigV.z, 0, 1.1, 0, 0xc9c0ae, 0.5) } }
   moveSound('stomp', mine ? { id: myId } : { x: p.x, y: floor, z: p.z }, 0.9)
 }
+// card #59: the dance a performer dances now: its dances in turn, PERF_DANCE_MS each, from the room clock (the same on every machine)
+const perfDance = a => { const D = a.rig.M.dances; return D[(Math.floor((isHost ? now() : renderT) / PERF_DANCE_MS) + (a.perfN | 0)) % D.length] }
 // a sprinting footfall (card #30): the ball of the foot hits the road. Your own thumps your camera; a near one kicks up dust
 function rigFootfall(a, R, side) {
   const b = R.bones.get('ball_' + side)
@@ -16094,6 +16243,7 @@ function dropAvatar(id) {
   if (a.mixer) a.mixer.stopAllAction()
   if (a.rig) a.rig.mixer.stopAllAction()
   clearHeld(a)
+  perfDrop(a)
   if (a.runTrail) {
     const m = a.runTrail.mesh
     m.removeFromParent(); m.geometry.dispose(); m.material.dispose()
@@ -16108,6 +16258,113 @@ function dropAvatar(id) {
   avatars.delete(id)
 }
 
+// card #59, the street performer. Its tin cup, upright in its left fist, shaken when it demands and jiggling to its dance, the
+// coins rattling when you're near; its demand (perfSays) shown over its head for PERF_SAY_MS and heard once where it stands
+function perfDraw(id, state, t) {
+  const a = avatars.get(id), M = a?.rig?.M
+  if (!M?.cup) return
+  const T = isHost ? now() : renderT, s = perfSays.get(id), up = !!state && !(state.dead > 0) && a.mesh.visible
+  a.perfN = id
+  if (s && !s.shown && T >= s.at) { s.shown = true; if (up && T - s.at < 1500) { a.sayAt = s.at; perfVoice(a.mesh.position, s.n) } }
+  if (!a.cup) { a.cup = propModel('gun', gunNamed(M.cup)).clone(); ownMaterials(a.cup); avatarGroup.add(a.cup) }
+  a.cup.visible = up
+  if (!up) return
+  handAt(a, a.cup.position, 1)
+  const ask = s && T - s.at < 1400 && T >= s.at, dancing = a.rig.name.startsWith('dance'), w = ask ? 0.35 : dancing ? 0.12 : 0.03, f = ask ? 0.031 : 0.011
+  a.cup.rotation.set(Math.sin(T * f) * w, a.mesh.rotation.y, Math.sin(T * f * 1.3 + 1) * w * 0.7, 'YXZ')
+  a.cup.scale.setScalar(Math.min(1.1, Math.max(0.8, (a.spec.h + a.spec.r) / 0.9)))
+  ghost(a.cup, state.prot || 0)
+  if ((dancing || ask) && T > (a.rattleAt || 0) && camera && a.mesh.position.distanceTo(camera.position) < 14) {
+    a.rattleAt = T + (ask ? 500 : 900 + Math.random() * 700); perfRattle(a.mesh.position, ask ? 0.7 : 0.3)
+  }
+}
+function perfDrop(a) {
+  if (a.cup) { a.cup.removeFromParent(); freeMaterials(a.cup); a.cup = null }
+}
+const perfEls = [], perfAt = new THREE.Vector3()
+function perfBubbles() {
+  const T = isHost ? now() : renderT, view = renderer?.domElement?.getBoundingClientRect()
+  let k = 0
+  for (const [id, s] of perfSays) {
+    const age = T - s.at, a = avatars.get(id)
+    if (age > PERF_SAY_MS + 1000 || !a) { perfSays.delete(id); continue }
+    if (age < 0 || age > PERF_SAY_MS || !a.mesh.visible || !camera || !view) continue
+    perfAt.copy(a.mesh.position); perfAt.y += a.spec.h + a.spec.r + 0.5
+    const d = perfAt.distanceTo(camera.position)
+    if (d > 45 || perfAt.project(camera).z > 1 || Math.abs(perfAt.x) > 1.1 || Math.abs(perfAt.y) > 1.1) continue
+    let el = perfEls[k]
+    if (!el) {
+      el = perfEls[k] = document.createElement('div')
+      el.className = 'perf-say'
+      el.style.cssText = 'position:fixed;left:0;top:0;z-index:4;pointer-events:none;max-width:210px;padding:7px 12px 8px;background:#f3f0e8;color:#111;' +
+        'border:3px solid #0c0c0d;border-radius:46% / 52%;box-shadow:3px 3px 0 #0c0c0d;text-align:center;text-transform:uppercase;letter-spacing:.02em;' +
+        "font:400 15px/1.05 'Maniak Display',Impact,'Arial Black',sans-serif;white-space:normal;transform-origin:50% 100%"
+      const tail = document.createElement('div')
+      tail.style.cssText = 'position:absolute;left:42%;bottom:-13px;width:0;height:0;border-left:7px solid transparent;border-right:9px solid transparent;border-top:13px solid #0c0c0d'
+      el.appendChild(tail); el.appendChild(document.createElement('span'))
+      document.body.appendChild(el)
+    }
+    k++
+    if (el.lastChild.textContent !== PERF_LINES[s.n]) el.lastChild.textContent = PERF_LINES[s.n]
+    const x = view.left + (perfAt.x + 1) / 2 * view.width, y = view.top + (1 - perfAt.y) / 2 * view.height, sc = clamp(9 / Math.max(d, 1), 0.55, 1.15)
+    const pop = Math.min(1, age / 120), fade = Math.min(1, (PERF_SAY_MS - age) / 300)
+    el.style.display = ''
+    el.style.opacity = fade.toFixed(2)
+    el.style.transform = `translate(${(x).toFixed(1)}px, ${(y).toFixed(1)}px) translate(-50%, -100%) scale(${(sc * (0.7 + 0.3 * pop)).toFixed(3)})`
+  }
+  for (; k < perfEls.length; k++) perfEls[k].style.display = 'none'
+}
+// the voice: a hoarse mumble, a syllable a few letters, through two formant filters, then coins rattled in the tin; placed as
+// sfxPlay places sounds (the game's generated sounds wait on card #11; card #13 may give these lines voices)
+let perfNoise = null
+function perfBus(p, reach, lvl) {
+  if (!sfxLive() || !sfxOut) return null
+  const P = sfxPlace(p.x, p.y + 0.8, p.z, reach), gain = P.gain * lvl
+  if (!(gain >= SFX_FLOOR)) return null
+  const out = actx.createGain(), lp = actx.createBiquadFilter()
+  out.gain.value = gain; lp.type = 'lowpass'; lp.frequency.value = P.cut; out.connect(lp)
+  let to = lp
+  if (actx.createStereoPanner) { const pan = actx.createStereoPanner(); pan.pan.value = P.pan; lp.connect(pan); to = pan }
+  to.connect(sfxOut)
+  return out
+}
+function perfRattle(p, lvl, t0, out = perfBus(p, 0.8, lvl)) {
+  if (!out) return
+  let t = t0 ?? actx.currentTime + 0.01
+  for (let i = 0, n = 3 + (Math.random() * 4 | 0); i < n; i++) {
+    const o = actx.createOscillator(), g = actx.createGain(), f = 2400 + Math.random() * 3200
+    o.type = 'triangle'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.22, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.07)
+    o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.08)
+    t += 0.025 + Math.random() * 0.06
+  }
+  setTimeout(() => out.disconnect(), (t - actx.currentTime + 0.2) * 1000)
+}
+function perfVoice(p, n) {
+  const out = perfBus(p, 1.6, 0.9)
+  if (!out) return
+  const t0 = actx.currentTime + 0.03, rnd = genRng(n * 7919 + 17)
+  const osc = actx.createOscillator(), f1 = actx.createBiquadFilter(), f2 = actx.createBiquadFilter(), env = actx.createGain()
+  osc.type = 'sawtooth'; f1.type = f2.type = 'bandpass'; f1.Q.value = 5; f2.Q.value = 8; env.gain.value = 0
+  osc.connect(f1); osc.connect(f2); f1.connect(env); f2.connect(env); env.connect(out)
+  if (!perfNoise) { perfNoise = actx.createBuffer(1, actx.sampleRate / 4, actx.sampleRate); const c = perfNoise.getChannelData(0); for (let i = 0; i < c.length; i++) c[i] = Math.random() * 2 - 1 }
+  const V = [[730, 1090], [530, 1840], [570, 840], [300, 870], [390, 2300], [660, 1700]]
+  const syl = PERF_LINES[n].split(/\s+/).flatMap(w => { const k = Math.max(1, Math.round(w.replace(/[^a-z]/gi, '').length / 3)); return Array.from({ length: k }, (_, i) => i === k - 1) })
+  let t = t0
+  syl.forEach((end, i) => {
+    const v = V[rnd() * V.length | 0], d = 0.07 + rnd() * 0.07, f0 = 132 - 34 * i / syl.length + rnd() * 20
+    osc.frequency.setValueAtTime(f0, t); osc.frequency.linearRampToValueAtTime(f0 * 0.88, t + d)
+    f1.frequency.setValueAtTime(v[0], t); f2.frequency.setValueAtTime(v[1], t)
+    env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(0.55, t + 0.016); env.gain.setValueAtTime(0.5, t + d); env.gain.linearRampToValueAtTime(0, t + d + 0.03)
+    if (rnd() < 0.6) {
+      const ns = actx.createBufferSource(), hp = actx.createBiquadFilter(), g = actx.createGain()
+      ns.buffer = perfNoise; hp.type = 'highpass'; hp.frequency.value = 3000; g.gain.setValueAtTime(0.18, t - 0.01); g.gain.linearRampToValueAtTime(0, t + 0.02)
+      ns.connect(hp); hp.connect(g); g.connect(out); ns.start(Math.max(t0, t - 0.012)); ns.stop(t + 0.03)
+    }
+    t += d + 0.04 + (end ? 0.06 : 0)
+  })
+  osc.start(t0); osc.stop(t + 0.05)
+  perfRattle(p, 1, t + 0.05, out)
+}
 function clearHeld(a) {
   if (!a.held) return
   a.held.removeFromParent()
@@ -21288,6 +21545,8 @@ const GUEST_MSGS = {
   },
   lag: { apply: d => { onLag(d.n) } },
   sys: { apply: d => { sysMsg(String(d.m || '').slice(0, 200)) } },
+  // card #59: a street performer's demand, by the host (its line by number: PERF_LINES)
+  pd: { apply: d => { perfHeard(d) } },
   kicked: { apply: d => { kickedBy = String(d.by || 'the host').slice(0, 16) } },
   full: { apply: d => { endSession('Room full', 'The room takes ' + (d.n | 0) + ' players.', false) } },
   hostgone: { apply: () => { endSession('Host left', 'The host closed the game.', true) } },
@@ -21468,6 +21727,7 @@ function reconcile(a) {
 
 function clearSession() {
   pauseOpen = false; closeSettings(); helloDue = false
+  perfSays.clear(); perfBubbles()                // card #59: no demand left over the menu
   if (isHost) hookMatchEnd('stop', null)
   endServing()                       // first: nothing below may think it serves
   const pe = el('#pause')
@@ -23648,7 +23908,7 @@ function slHostTick() {
 // the engine's hit rules see people as targets: proxies within reach of a player's shot, where they are at the shot's view
 // time; strike() hands a proxy to slStruck instead of damaging it
 function slAim(shooter, list, viewT, G) {
-  if (!isHost || !slState || !shooter || shooter.bot || !LV.faust) return list
+  if (!isHost || !slState || !shooter || shooter.bot && !shooter.bot.busk || !LV.faust) return list
   const T = viewT ?? (tickAt || now()), reach = Math.min(80, (G?.range ?? 3) * 1.6 + 2.5), add = []
   slAround(shooter.x, shooter.z, reach, T, (ag, p) => {
     if (p.down || p.scale < 0.5 || Math.hypot(p.x - shooter.x, p.z - shooter.z) > reach) return
@@ -27514,6 +27774,7 @@ function draw(dt, t) {
     drawStruck(o.id, t)
     drawAura(o.id, o.anim || 0, dt)
     drawHeld(o.id, (!sits.has(o.id) || armed) && o, t)        // cosmetic, never a capsule
+    perfDraw(o.id, (!sits.has(o.id) || armed) && o, t)        // card #59: a street performer's cup and its demand
   }
   partsDraw(me, others, t, dt, meD)          // card #55: held bodies in their holders' hands, flights tumbling
   for (const id of [...avatars.keys()]) if (id >= 0 && !live.has(id)) dropAvatar(id)
@@ -27556,6 +27817,7 @@ function draw(dt, t) {
   drawLooks()
   drawHeld(myId, (!sits.has(myId) || myArmed) && me, t, firstPerson ? camera : null, cam.fade)
   drawTracers(t, me, others, firstPerson ? myId : undefined)
+  perfBubbles()
 
   GAME.view.hud(me, others, t)
 

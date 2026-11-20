@@ -104,3 +104,15 @@ Source pack, by Quaternius and dedicated to the public domain under CC0 1.0 (htt
 | `monorail_track.<hash>.glb` | The track: a stepped Art Deco pylon plinth, a fluted column section that stretches to height, a T-head with saddles for the twin beams, a 1 m beam section with chrome guide rails and a red line, a streamlined buffer stop with a red lamp, and a switch-motor housing (LODs of each but the beam). Flat PBR materials, no textures | Made for The MANIAK: modelled procedurally in Blender | CC0 1.0 |
 
 Both files are original work. They contain no third-party meshes, textures, fonts or brand marks.
+
+
+# The street performer (card #59)
+
+The body is made for The MANIAK from public-domain (CC0 1.0) sources: the same Quaternius packs as cards #7, #10 and #23
+(listed above). Its dances are retargeted from the CMU Graphics Lab Motion Capture Database, whose terms allow use in any
+product (the raw data itself may not be resold). Its knife and tin cup are drawn by the page's own code, with no asset file.
+
+| File | What it is | Made from | License |
+|---|---|---|---|
+| `street_performer.<hash>.glb` | The street performer: a ragged, homeless, slightly hunched figure in a long stained olive overcoat with a torn hem, holes and patches, worn over a moth-eaten grey sweater with a faded roll collar, patched trousers, dark gloves, worn boots and a crushed, battered brown top hat; long greasy hair and a scraggly beard, grimed skin. LOD0/1/2 (9,024 / 5,612 / 1,913 triangles), the shared 65-joint skeleton, sockets `grip_l` and `grip_r`. 1024 WebP colour, 512 WebP normal and 256 WebP occlusion/roughness/metal maps | Quaternius "Universal Base Characters" (Superhero male body, long hair, beard), re-proportioned, dressed and painted for The MANIAK | CC0 1.0 (source); modifications CC0 1.0 |
+| `performer_anims.<hash>.glb` | 9 clips for the street performer on the shared 65-joint skeleton, no mesh: `dance_charleston`, `dance_charleston_fancy`, `dance_lindy`, `dance_bear`, `dance_chicken` (in-place dance loops), `dance_walk` (a strutting dance step), `perf_demand` (shoving a tin cup at someone), `perf_stab_a`, `perf_stab_b` (knife stabs); a knife grip in the right hand and a cup grip in the left | The five dances are retargeted from CMU Graphics Lab Motion Capture Database trials 93_03 (charleston_01), 93_08 (xtra fancy charleston), 93_06 (lindyHop2), 55_12 (dancing bear, human subject) and 18_15 (chicken dance), in the B. Hahne "MotionBuilder-friendly" BVH conversion; each cut to a loop, crossfaded at the seam, smoothed, its yaw and root drift removed, and retargeted with a world-delta retarget written for The MANIAK. `dance_walk`, `perf_demand` and the stabs are authored for The MANIAK on the shared `walk` and `idle` clips, the knife grip copied from `freak_anims`' `knife_idle` | CMU motion capture data (mocap.cs.cmu.edu): free for all uses, including in commercial products; the raw data may not be resold. Authored clips and modifications CC0 1.0 |
