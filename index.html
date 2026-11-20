@@ -10576,7 +10576,7 @@ function vehicleCamera(o, me, inp, cam, firstPerson) {
   const off = drawnOff, L = V.l || 2 * o.R, H = V.h || o.R, x0 = X + off[0], z0 = Z + off[2]
   const ground = Y + off[1] + o.low, py = ground + H
   const pull = 1 + drive(V, 'chase') * clamp(chase.v / V.speed, 0, 1), up = (1.5 + 0.15 * L) * pull
-  const wantBack = 1.3 * L * pull + chase.lag, tf = now(), fdt = chase.camT === chase.camT ? clamp((tf - chase.camT) / 1000, 0, 0.25) : -1
+  const wantBack = 1.3 * L * pull + chase.lag, tf = frameT || now(), fdt = chase.camT === chase.camT ? clamp((tf - chase.camT) / 1000, 0, 0.25) : -1
   if (fdt < 0 || !(chase.camB === chase.camB)) { chase.camB = wantBack; chase.camBV = 0 }
   else { const w = CHASE_CAM.w, e = chase.camB - wantBack, g = chase.camBV + w * e, k = Math.exp(-w * fdt)
     chase.camB = wantBack + (e + g * fdt) * k; chase.camBV = (chase.camBV - w * g * fdt) * k }
@@ -11471,6 +11471,7 @@ function leave(c, o, i) {
   if (!i) o.V.wheels.at.forEach((w, k) => { o.car.applyEngineForce(0, k); o.car.setBrake(o.K.mass * drive(o.V, 'bail') * TICK / o.V.wheels.at.length, k) })
   c.body.clearForces()
   world.addRigidBody(c.body, ...COLLIDE.capsule)
+  c.warp = (c.warp || 0) + 1      // drawn at the door at once, not slid there from the seat
   restoreChar(c, ...p, v.x(), v.y(), v.z())
 }
 // seat 0 drives, forward = -Z
@@ -12035,12 +12036,12 @@ function trafficSeatFit(v, K) {
 }
 function trafficDraw(list) {
   if (!objGroup) return
-  const rows = isHost ? trafficRows() : [...trafficRemote.values()], active = new Set(), t = trafficClock(), M = MODELS.trafficDriver
+  const rows = isHost ? trafficRows() : [...trafficRemote.values()], active = new Set(), t = drawNow() / 1000, M = MODELS.trafficDriver
   trafficDrawSignals()
   if (!M.proto) return
   for (const r of rows) {
     const o = list.find(v => v.id === r[0]); if (!o) continue
-    const age = r.length === 7 ? t - r[2] : -1, exiting = age >= 0 && age < 8
+    const age = r.length === 7 ? Math.max(0, t - r[2]) : -1, exiting = age >= 0 && age < 8
     if (!r[1] && !exiting) continue
     let x, y, z, yaw
     if (exiting) {
@@ -18325,7 +18326,7 @@ function rigFootfall(a, R, side) {
   if (!b || !a.mesh.visible) return
   b.getWorldPosition(rigV)
   const mine = a === avatars.get(myId), floor = a.mesh.position.y - a.spec.h - a.spec.r
-  if (mine) kick(0.05, rigV.x, rigV.y, rigV.z, 9, 150)
+  if (mine) kick(0.03, rigV.x, rigV.y, rigV.z, 9, 150, now(), true)
   if (R.lod < 2) { rigF.set(0, 0, 1).applyQuaternion(a.mesh.quaternion); burst('dust', rigV.x, floor + 0.06, rigV.z, rigF.x, 0.9, rigF.z, 0xc9c0ae, 0.42) }
   moveSound('stomp', mine ? { id: myId } : { x: rigV.x, y: rigV.y, z: rigV.z }, 0.55)
 }
@@ -20401,18 +20402,21 @@ const boomTake = (list, live) => { const ids = [6, 7].map(k => new Set(live.filt
     const s = ids[f[7] - 6], i = f[f[7] === 6 ? 10 : 8]
     return Number.isInteger(i) && (f[7] === 7 ? i >= -1 : i >= 0 && i < OBJ_MAX + SL_BOOM_IDS) && s.size < 16 && !s.has(i) && s.add(i) }) }
 // camera shake: a ring of kicks, each fading over its ms and to nothing at far m from where it struck
-const kicks = Array.from({ length: 16 }, () => ({ a: 0, x: 0, y: 0, z: 0, far: 1, ms: 0, born: -Infinity }))
+// dip: a thump, one half sine down over its ms (a footfall); else a shake, at 14-22 Hz
+const kicks = Array.from({ length: 16 }, () => ({ a: 0, x: 0, y: 0, z: 0, far: 1, ms: 0, born: -Infinity, dip: false }))
 let kickAt = 0
-function kick(a, x, y, z, far, ms, born = now()) {
+function kick(a, x, y, z, far, ms, born = now(), dip = false) {
   const k = kicks[kickAt++ % kicks.length]
-  k.a = a; k.x = x; k.y = y; k.z = z; k.far = far; k.ms = ms; k.born = born
+  k.a = a; k.x = x; k.y = y; k.z = z; k.far = far; k.ms = ms; k.born = born; k.dip = dip
 }
 function shake(cam, t) {
   if (!settings.shake) return
-  let a = 0
-  for (const k of kicks) { const T = t - k.born
-    if (T < k.ms) a = Math.max(a, k.a * Math.max(0, 1 - Math.hypot(cam.position.x - k.x, cam.position.y - k.y, cam.position.z - k.z) / k.far) * (1 - T / k.ms)) }
-  if (a > 0) cam.position.set(cam.position.x + a * Math.sin(t * 0.091), cam.position.y + a * Math.sin(t * 0.137), cam.position.z + a * Math.cos(t * 0.113))
+  let a = 0, dy = 0
+  for (const k of kicks) { const T = Math.max(0, t - k.born)
+    if (T >= k.ms) continue
+    const near = Math.max(0, 1 - Math.hypot(cam.position.x - k.x, cam.position.y - k.y, cam.position.z - k.z) / k.far)
+    if (k.dip) dy -= k.a * near * Math.sin(Math.PI * T / k.ms); else a = Math.max(a, k.a * near * (1 - T / k.ms)) }
+  if (a > 0 || dy) cam.position.set(cam.position.x + a * Math.sin(t * 0.091), cam.position.y + a * Math.sin(t * 0.137) + dy, cam.position.z + a * Math.cos(t * 0.113))
 }
 
 // a landed blow, drawn only: the camera kicks, both fighters' animations hold a beat, and the one struck glows
@@ -21161,7 +21165,7 @@ function drawChains(me, others, t) {
   for (const v of chainViews.values()) v.root.visible = false
   const live = new Set()
   for (const p of [me, ...others]) {
-    const id = p === me ? myId : p.id, raw = p === me && isHost ? chainPack(p) : p.chainNet, g = chainRead(raw)
+    const id = p === me ? myId : p.id, raw = p === me && isHost ? drawnChain(p, myId) : p.chainNet, g = chainRead(raw)
     if (!g || p.dead > 0) continue
     live.add(id)
     const v = chainView(id), points = Array.from({ length: CHAIN_N }, (_, i) => g.slice(11 + i * 3, 14 + i * 3))
@@ -22010,6 +22014,7 @@ function drawDebug(me, fps) {
     row('display', p(innerWidth, 4) + 'x' + p(innerHeight, 4) + ' @' + f(renderer.getPixelRatio(), 4, 2) +
         '  touch ' + String(IS_TOUCH).padEnd(5) + ' shadows ' + String(renderer.shadowMap.enabled).padEnd(5)) +
     row('look', LOOKS[settings.look].label + '  post ' + lookStats.passes + '  targets ' + (lookStats.targetBytes / 1048576).toFixed(1) + ' MiB') +
+    row('weather', weather.kind + '  rain ' + weather.rain.toFixed(2) + '  fog ' + weather.fog.toFixed(2) + '  wind ' + weather.wind.toFixed(2) + '  storm ' + weather.storm.toFixed(2) + '  wet ' + weather.wet.toFixed(2) + (weather.override ? '  (host: ' + weather.override.kind + ')' : '')) +
     row('cost', 'sim ' + v(f(msSim, 5, 2)) + 'ms  phys ' + v(f(msPhys, 5, 2)) +
         'ms  draw ' + v(f(msDraw, 5, 2)) + 'ms  steps ' + p(lastSteps, 2)) +
     (joinLog.length ? row('joins', esc(joinLog.join('  '))) : '') +
@@ -24300,6 +24305,8 @@ function motionResult(J, err) {
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   // card #75: a sequence of frames and their debug rows in one call (a promise): { n, every, width, quality }
   capture: captureFrames,
+  // card #85: the weather: .state (live), .at(ms, seed), .schedule(seed, from, to, step), .set(kind, strength) (host)
+  get weather() { return weatherApi() },
   // card #75: frame by frame, what moved wrongly near the host: await gameHooks.motion({ ms: 5000, radius: 40 }); the last result is gameHooks.motion.last
   motion: captureMotion,
   // No argument: current seed. A uint32 sets the next room, or restarts this host's city. Blank rolls one.
@@ -25946,7 +25953,7 @@ GAME.lifecycle = {
   populate() {
     spawnBots(BOT_COUNT)
   },
-  sessionEnd() { resultsLeft = 0; matchLeft = 0; lastResSig = null },
+  sessionEnd() { resultsLeft = 0; matchLeft = 0; lastResSig = null; weatherOv = null },
   left(id) { if (dropMates(id)) teamsChanged() },
   empty() { resetMatch() },
   // a snapshot's match fields, in their wire order, and a guest taking them
@@ -25955,7 +25962,7 @@ GAME.lifecycle = {
     mo: resultsLeft > 0 ? r2(resultsLeft) : 0,
     ml: timeLimit ? r2(matchLeft) : 0,
     fl: fragLimit, md: 'ffa', bl: settings.balance !== false ? 1 : 0,
-    tw: tornadoNow()?.map(r2), ...eventOn && { ev: eventOn.name },
+    tw: tornadoNow()?.map(r2), ...eventOn && { ev: eventOn.name }, ...weatherWire(),
   }),
   takeItems(d) {
     if (d.cb !== undefined) chainMarksTake(d.cb,d.t)
@@ -25975,6 +25982,7 @@ GAME.lifecycle = {
     fragLimit = d.fl | 0
     if (d.bl !== undefined) balanceOn = !!d.bl
     setEvent(typeof d.ev === 'string' && EVENTS.find(E => E.name === d.ev) || null)
+    weatherTake(d.wx)
     if (helloDue && phase === 'playing') { hello(); prepareRows(GAME.rows.visitors()) }
   },
 }
@@ -28078,7 +28086,7 @@ function slFrame(t, dt, obl) {
     // The shared background queue advances the bake and compilation.
     return
   }
-  const T = isHost ? now() : renderT, kit = slKit, cam = camera
+  const T = isHost ? drawNow() : renderT, kit = slKit, cam = camera
   if (st.view) { cam.position.set(...st.view.p); cam.lookAt(...st.view.t) }          // debug: a free camera (streetLife.view)
   cam.updateMatrixWorld(); slPM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); slFrus.setFromProjectionMatrix(slPM)
   for (const c of kit.root.children) if (c.isInstancedMesh) c.count = 0
@@ -28768,7 +28776,7 @@ function dsSignalLook(L, i, n, s) {
   if (!pole) return
   const K = dsSigKit ||= { q: new THREE.Quaternion(), v: new THREE.Vector3(), a: new THREE.Vector3(), s: new THREE.Vector3(1, 1, 1), m: new THREE.Matrix4() }
   const w = (pole.info >> 3 & 63) / 64 * 2 * Math.PI, fx = Math.cos(w), fz = Math.sin(w)
-  const age = Number.isFinite(pole.t) ? Math.max(0, (dsNow() - pole.t) / 1000) : 99, u = Math.min(1, age / DS_SIG.fallS), phi = (Math.PI / 2 - 0.04) * u * u
+  const age = Number.isFinite(pole.t) ? Math.max(0, (drawNow() - pole.t) / 1000) : 99, u = Math.min(1, age / DS_SIG.fallS), phi = (Math.PI / 2 - 0.04) * u * u
   K.q.setFromAxisAngle(K.a.set(fz, 0, -fx), phi)
   const x = n.x + s * 9, z = n.z + s * 9, lift = DS_SIG.pole * u
   for (const [mesh, h] of [[L.poles, 2.3], [L.lamps, DS_SIG.y]]) {
@@ -29560,7 +29568,7 @@ function dsFallenStep() {
       for (const r of ch.recs.values()) if (r.kind === DS_KIND.post && K.list.length * 3 < DS_FALLEN.cap) K.list.push(r)
   }
   if (!K.list.length) { K.mesh.count = 0; return }
-  const T = dsNow()
+  const T = drawNow()
   let n = 0
   for (const r of K.list) {
     const P = r.p, w = (r.info >> 3 & 63) / 64 * 2 * Math.PI, fx = Math.cos(w), fz = Math.sin(w)
@@ -32492,7 +32500,7 @@ let acc = 0, last = now(), snapAcc = 0, tickAt = 0      // ms: when the last tic
 // this frame's ticks of each player simulated here, for the drawn side to step through; fresh: moved by a reconcile, not a tick
 const tickSamples = new Map()
 // each tick's start pose of what is simulated here; drawn between it and the tick's end at drawAlpha
-const prevPose = new WeakMap(), accRing = [], objDrawn = new Map()
+const prevPose = new WeakMap(), accRing = [], objDrawn = new Map(), prevChain = new Map()
 let drawD = 0, drawAt = 0, drawAlpha = 1
 function keepPose(e, q) {
   let p = prevPose.get(e)
@@ -32501,7 +32509,7 @@ function keepPose(e, q) {
   if (q) { p[3] = q[0]; p[4] = q[1]; p[5] = q[2]; p[6] = q[3] }
 }
 function keepPoses() {
-  if (isHost) for (const c of players.values()) keepPose(c)
+  if (isHost) for (const [id, c] of players) { keepPose(c); prevChain.set(id, c.chain ? chainPack(c) : null) }
   else if (predicted) keepPose(predicted)
   for (const o of objs) keepPose(o, o.q)
 }
@@ -32519,6 +32527,11 @@ function drawDelay(t) {
   drawAlpha = acc >= TICK ? 1 : clamp(1 + (acc * 1000 - drawD) / (TICK * 1000), 0, 1)
 }
 const drawnT = () => tickAt - (1 - drawAlpha) * TICK * 1000
+// the drawn clock, ms: the host's drawn time (between its last two ticks, as its bodies are drawn), a guest's renderT
+const drawNow = () => isHost ? (tickAt ? drawnT() : now()) : renderT || now()
+// a host-simulated character's chain, drawn between its last two ticks as its body is
+const drawnChain = (c, id) => { const cur = chainPack(c); if (!cur || drawAlpha >= 1) return cur
+  const m = chainBetween(prevChain.get(id), cur, drawAlpha); return m && chainRead(m) ? m : cur }
 // where e is drawn: between its last two ticks (null: at its tick, or it jumped or was put somewhere)
 function drawnPose(e) {
   const p = drawAlpha < 1 && prevPose.get(e)
@@ -32938,10 +32951,13 @@ function frameFailed(where, e) {
   try { console.error('[SKs] frame failed in ' + where, e) } catch (err) {}
 }
 
-let drawT0 = 0
+let drawT0 = 0, frameT = 0
 function frameBody() {
   if (document.hidden || serving) return   // the ticker owns the sim then
-  const t = now()
+  // the frame's vsync time: performance.now() here is when the script got round to it, up to a few ms late and never
+  // the same twice, and drawn time (t - D) moved everything drawn by that jitter times its speed
+  const tl = document.timeline?.currentTime, t = Number.isFinite(tl) && tl >= last && now() - tl < 100 ? tl : now()
+  frameT = t
   const _s0 = now()
   let dt = 0
   background.sec(null)
@@ -32973,6 +32989,155 @@ function hud(key, node, prop, value) {
   else node.style[prop] = value
 }
 const lifts = new Set(), sits = new Map(), carries = new Set()
+// ---------------------------------------------------------------- weather (card #85)
+// The weather is a pure function of the city seed and the room clock (host ms: the host's tickAt, a guest's renderT), so every
+// player sees the same sky and it costs no bandwidth. The host's /weather overrides the schedule, and its snapshots carry the
+// override (wx), so guests follow it. The clock is cut into slots; a slot's kind and strength come from a hash of (seed, slot),
+// and the levels cross-fade over WEATHER.blend as a slot begins. Levels are 0..1: rain, fog (banks), wind, storm (lightning),
+// cloud (overcast). wet (streets and walls) rises with rain and dries after it over WEATHER.dry. Every look reads `weather`.
+// edit the odds and the levels here: each kind's [rain, fog, wind, storm, cloud] from its strength s (0..1)
+const WEATHER = {
+  slot: 150000, blend: 30000, fade: 10000, dry: 100000, bolt: 5000,
+  odds: [['clear', 0.4], ['rain', 0.28], ['storm', 0.12], ['fog', 0.2]],
+  levels: {
+    clear: () => [0, 0, 0.12, 0, 0],
+    rain: s => [s, 0.25 * s, 0.25 + 0.35 * s, 0, 0.5 + 0.5 * s],
+    storm: s => [0.55 + 0.45 * s, 0.15, 0.55 + 0.45 * s, s, 1],
+    fog: s => [0, s, 0.1, 0, 0.35 + 0.4 * s],
+  },
+}
+const weatherMix = (a, b, k) => a + (b - a) * k
+const weatherEase = k => k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k)
+const weatherWet = rain => Math.min(1, rain * 1.5)
+function weatherHash(a, b) {
+  let h = Math.imul((a | 0) ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul((b | 0) + 0x7f4a7c15, 0xc2b2ae35)
+  h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d); h ^= h >>> 12; h = Math.imul(h, 0x297a2d39); h ^= h >>> 15
+  return h >>> 0
+}
+const weatherUnit = (a, b) => weatherHash(a, b) / 4294967296
+const weatherLevels = (kind, s) => WEATHER.levels[kind](Math.min(1, Math.max(0, s)))
+// slot n: its kind and strength
+function weatherSlot(seed, n) {
+  const r = weatherUnit(seed, n), s = 0.4 + 0.6 * weatherUnit(seed ^ 0x5bd1e995, n)
+  let acc = 0
+  for (const [kind, p] of WEATHER.odds) { acc += p; if (r < acc) return { kind, s } }
+  return { kind: 'clear', s }
+}
+// the schedule alone: the seed picks where in the slots a game's clock begins
+function weatherSched(seed, t) {
+  const off = (weatherHash(seed, -7) % 8) * WEATHER.slot, u = t + off, n = Math.floor(u / WEATHER.slot)
+  const a = weatherSlot(seed, n - 1), b = weatherSlot(seed, n), k = weatherEase((u - n * WEATHER.slot) / WEATHER.blend)
+  const A = weatherLevels(a.kind, a.s), B = weatherLevels(b.kind, b.s), lv = A.map((v, i) => weatherMix(v, B[i], k))
+  let wet = weatherWet(lv[0])
+  for (let j = 1; j <= 6; j++) {          // what earlier slots left on the streets, drying from the end of each
+    const S = weatherSlot(seed, n - j), L = weatherLevels(S.kind, S.s)[0], age = u - (n - j + 1) * WEATHER.slot
+    wet = Math.max(wet, weatherWet(L) * Math.exp(-Math.max(0, age) / WEATHER.dry))
+  }
+  return { lv, wet, n, k }
+}
+// the state at room time t (ms): ov is the host's override { kind: a kind or 'auto', s, t0, from: [rain, fog, wind, storm, cloud, wet] } or null
+function weatherAt(seed, t, ov) {
+  t = Math.max(0, +t || 0)
+  const S = weatherSched(seed, t)
+  let lv = S.lv, wet = S.wet, k = 1
+  if (ov) {
+    k = weatherEase((t - ov.t0) / WEATHER.fade)
+    const target = ov.kind === 'auto' ? S.lv : weatherLevels(ov.kind, ov.s)
+    lv = target.map((v, i) => weatherMix(ov.from[i], v, k))
+    wet = Math.max(weatherWet(lv[0]), ov.from[5] * Math.exp(-Math.max(0, t - ov.t0) / WEATHER.dry), ov.kind === 'auto' ? S.wet * k : 0)
+  }
+  const [rain, fog, wind, storm, cloud] = lv
+  const kind = storm > 0.3 ? 'storm' : rain > 0.2 ? 'rain' : fog > 0.3 ? 'fog' : 'clear'
+  return { kind, rain, fog, wind, storm, cloud, wet: Math.min(1, wet), slot: S.n, blend: k }
+}
+// lightning: at most one bolt in each WEATHER.bolt window, if the storm then allows it (a pure function of the seed and the window).
+// start: ms; power 0.4..1 (how bright the flash); dist m (the thunder comes dist / 0.34 ms later)
+function weatherBolt(seed, w, ov) {
+  const start = w * WEATHER.bolt + Math.floor(weatherUnit(seed ^ 0x2545f491, w) * WEATHER.bolt * 0.8)
+  if (weatherUnit(seed ^ 0x1b873593, w) >= 0.8 * weatherAt(seed, start, ov).storm) return null
+  const dist = 300 + Math.floor(weatherUnit(seed ^ 0x68e31da4, w) * 2600)
+  return { w, start, power: 0.4 + 0.6 * weatherUnit(seed ^ 0x3c6ef372, w), dist, thunderAt: start + Math.round(dist / 0.34) }
+}
+// a bolt's flash at time t: a hard first strike and two weaker returns, each 0..1 and short; never more than the bolt's power
+function weatherFlash(b, t) {
+  const d = t - b.start
+  if (d < 0 || d > 700) return 0
+  const pulse = (at, peak, tau) => d >= at ? peak * Math.exp(-(d - at) / tau) : 0
+  return Math.min(1, b.power * Math.max(pulse(0, 1, 70), pulse(160, 0.55, 90), pulse(340, 0.3, 120)))
+}
+// the flash at time t, and the bolts whose thunder falls in (t0, t]
+function weatherSky(seed, t, ov, t0) {
+  const w = Math.floor(t / WEATHER.bolt)
+  let flash = 0
+  const thunder = []
+  for (let j = 0; j <= 3; j++) {
+    const b = weatherBolt(seed, w - j, ov)
+    if (!b) continue
+    if (j <= 1) flash = Math.max(flash, weatherFlash(b, t))
+    if (t0 !== undefined && b.thunderAt > t0 && b.thunderAt <= t) thunder.push(b)
+  }
+  return { flash, thunder }
+}
+// wind: m/s along x and z, with its gusts (a deterministic function of time too); wind is the level 0..1
+function weatherWind(seed, t, wind) {
+  const dir = weatherUnit(seed, -11) * 6.2832 + 0.35 * Math.sin(t / 61000), s = t / 1000
+  const gust = 0.55 + 0.25 * Math.sin(s * 0.9) + 0.15 * Math.sin(s * 2.3 + 1.7) + 0.05 * Math.sin(s * 5.1)
+  const speed = wind * (2 + 16 * gust)
+  return { gust, speed, x: Math.cos(dir) * speed, z: Math.sin(dir) * speed }
+}
+// the live state every look reads: weather.rain, .fog, .wind, .storm, .cloud, .wet (0..1), .flash (0..1: a lightning flash now),
+// .windX/.windZ (m/s), .gust, .thunder (bolts whose thunder just arrived, for the sound), .kind, .override (the host's, or null)
+const weather = { kind: 'clear', rain: 0, fog: 0, wind: 0, storm: 0, cloud: 0, wet: 0, flash: 0, gust: 0, windX: 0, windZ: 0, thunder: [], blend: 1, slot: 0, t: 0, override: null }
+let weatherOv = null, weatherSentAt = -1e9, weatherBurst = 0, weatherLastT = -1
+const weatherSeed = () => levelGen ? levelGen.seed >>> 0 : 0
+// once a frame: the state at the room clock
+function weatherFrame() {
+  const t = trafficClock() * 1000, seed = weatherSeed(), S = weatherAt(seed, t, weatherOv), W = weatherWind(seed, t, S.wind)
+  const last = weatherLastT >= 0 && t - weatherLastT < 1500 && t >= weatherLastT ? weatherLastT : undefined   // a jump in the clock fires no old thunder
+  const sky = weatherSky(seed, t, weatherOv, last)
+  Object.assign(weather, S, { flash: sky.flash, thunder: sky.thunder, gust: W.gust, windX: W.x, windZ: W.z, t, override: weatherOv })
+  weatherLastT = t
+}
+// the host's choice, carried in its snapshots (wx) until a guest has it: [kind, strength, t0, ...the levels it started from]
+function weatherSet(kind, s) {
+  const t = Math.round(trafficClock() * 1000), { rain, fog, wind, storm, cloud, wet } = weather
+  weatherOv = { kind, s: Math.round(s * 1000) / 1000, t0: t, from: [rain, fog, wind, storm, cloud, wet].map(v => Math.round(v * 1000) / 1000) }
+  weatherBurst = 8
+}
+function weatherWire() {
+  if (!weatherOv) return null
+  const t = now()
+  if (weatherBurst > 0) weatherBurst--
+  else if (t - weatherSentAt < 1000) return null
+  weatherSentAt = t
+  return { wx: [weatherOv.kind, weatherOv.s, weatherOv.t0, ...weatherOv.from] }
+}
+// a guest takes the host's override; the later t0 wins (the channel is unordered)
+function weatherTake(wx) {
+  if (!Array.isArray(wx) || wx.length !== 9) return
+  const [kind, s, t0, ...from] = wx
+  if ((kind !== 'auto' && !Object.hasOwn(WEATHER.levels, kind)) || ![s, t0, ...from].every(Number.isFinite)) return
+  if (weatherOv && t0 < weatherOv.t0) return
+  weatherOv = { kind, s: clamp(s, 0, 1), t0, from: from.map(v => clamp(v, 0, 1)) }
+}
+function weatherCommand(a) {
+  const w = String(a || '').trim().toLowerCase().split(/\s+/).filter(Boolean), pct = v => Math.round(v * 100)
+  const say = () => sysMsg('§7Weather §f' + weather.kind + ' §7rain §f' + pct(weather.rain) + ' §7fog §f' + pct(weather.fog) + ' §7wind §f' + pct(weather.wind) + ' §7storm §f' + pct(weather.storm) +
+    ' §7wet §f' + pct(weather.wet) + ' §7' + (weatherOv && weatherOv.kind !== 'auto' ? '(set by the host: ' + weatherOv.kind + ' ' + pct(weatherOv.s) + ')' : '(from the seed and the clock)'))
+  if (!w.length) return say()
+  if (!isHost) return sysMsg('§cOnly the host sets the weather.')
+  const kind = w[0], s = w[1] === undefined ? 0.8 : parseFloat(w[1])
+  if ((kind !== 'auto' && !Object.hasOwn(WEATHER.levels, kind)) || !(s >= 0 && s <= 1)) return sysMsg('§cUsage: §f/weather <' + [...Object.keys(WEATHER.levels), 'auto'].join('|') + '> [0-1]')
+  weatherSet(kind, s)
+  sysMsg('§7Weather: §f' + (kind === 'auto' ? 'back to the schedule' : kind + ' ' + s) + '§7, in ' + WEATHER.fade / 1000 + ' s')
+}
+Object.assign(GAME.commands, { weather: { args: '[clear|rain|storm|fog|auto] [0-1]', help: 'host only, test: set the weather and its strength (auto: the seed\'s own); alone: show it', run: weatherCommand } })
+// gameHooks.weather: the state, and the schedule at any time: weather.at(ms) with this seed, weather.schedule(seed, fromMs, toMs, stepMs)
+function weatherApi() {
+  return { state: weather, at: (t, seed = weatherSeed()) => weatherAt(seed, t, null), seedNow: weatherSeed,
+    set: (kind, s = 0.8) => isHost && (kind === 'auto' || Object.hasOwn(WEATHER.levels, kind)) ? (weatherSet(kind, s), true) : false,
+    schedule(seed, from, to, step = 10000) { const out = []; let was = ''; for (let t = from; t <= to; t += step) { const S = weatherAt(seed, t, null), key = S.kind + '/' + S.slot; if (key !== was) { was = key; out.push([t, S.kind, S.slot, +S.rain.toFixed(2), +S.fog.toFixed(2), +S.storm.toFixed(2), +S.wet.toFixed(2)]) } } return out } }
+}
 function draw(dt, t) {
   let me, others, pkl
   shotSkip = null
@@ -32984,7 +33149,7 @@ function draw(dt, t) {
     if (!me) { frameFailed('draw', new Error('the host has no player 0')); return }
     others = [...players].filter(([id]) => id !== 0)
       .map(([id, c]) => ({ id, ...(P => P ? { x: P[0], y: P[1], z: P[2], sim: c } : { x: c.x, y: c.y, z: c.z })(drawnPose(c)), yaw: c.yaw, wy: c.wy, vx: c.vx, vz: c.vz, dead: c.dead,
-                           cid: looksCid(c), disg: c.disguised ? 1 : 0, smk: c.smk || 0, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: chainPack(c), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
+                           cid: looksCid(c), disg: c.disguised ? 1 : 0, smk: c.smk || 0, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: drawnChain(c, id), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
                            gun: c.gun, pitch: c.pitch, hp: c.hp, kills: c.kills | 0, mark: c.mark, markT: c.markT, vy: c.vy, jl: c.jLock }))
     pkl = GAME.view.pickups()
   } else {
@@ -33082,6 +33247,7 @@ function draw(dt, t) {
   for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP))
   shake(camera, t)
   followSun()
+  weatherFrame()
   background.sec('camera')
   slFrameSafe(t, dt, obl)
   background.sec('street life')
@@ -33110,7 +33276,7 @@ function draw(dt, t) {
   drawLooks()
   drawHeld(myId, (!sits.has(myId) || myArmed) && me, t, firstPerson ? camera : null, cam.fade)
   bodyDraw(myId, me, t, dt, firstPerson ? camera : null, cam.fade)
-  drawTracers(t, me, others, firstPerson ? myId : undefined)
+  drawTracers(t, meD, others, firstPerson ? myId : undefined)     // drawn: his chain, webs and whirl with his body
   perfBubbles()
 
   background.sec('view')
@@ -33336,6 +33502,7 @@ function faceYaw(id, c, anim, own, t, dt, firing, ticks) {
   if (!a) return c.yaw
   const G = GUNS[a.shotGun], C = GUNS[a.chargeGun], n = ticks ? ticks.length : 1
   for (let i = 0; i < n; i++) {
+    if (ticks && i === n - 1) a.face0 = a.face ?? c.yaw
     const s = i < n - 1 ? ticks[i] : c, an = s === c ? anim : s.anim, at = ticks ? tickAt - (n - 1 - i) * TICK * 1000 : t, y = a.face ?? s.yaw, mine = own || an > 3
     const tied = a.chainState?.[0] === 3 && Math.hypot(a.chainState[4] - s.x, a.chainState[6] - s.z) > 0.5     // card #43: he faces the caught block
     const attack = a.chainState?.[0] === 1 || (s === c ? firing : s.fire) || at - a.shotAt < Math.max(FACE_MS, G?.punchMs ?? G?.rate * 1000) || at - a.chargeAt < (C?.windup ?? 0) * 1000
@@ -33343,7 +33510,8 @@ function faceYaw(id, c, anim, own, t, dt, firing, ticks) {
     const want = tied ? Math.atan2(s.x - a.chainState[4], s.z - a.chainState[6]) : attack ? s.yaw : mine && flyWant === null ? s.yaw : flyWant ?? (an === 0 ? s.yaw : an === 1 && Math.hypot(s.vx, s.vz) > 0.8 ? Math.atan2(-s.vx, -s.vz) : y), k = (ticks ? TICK : dt) * FACE_RATE * (mine ? 4 : attack ? 2 : 1)
     a.face = y + clamp(Math.atan2(Math.sin(want - y), Math.cos(want - y)), -k, k)
   }
-  return a.face ?? c.yaw
+  // host: stepped a tick at a time; drawn between its last two ticks, as the body is
+  return ticks && a.face0 !== undefined && a.face !== undefined ? a.face0 + wrapPi(a.face - a.face0) * drawAlpha : a.face ?? c.yaw
 }
 // GTA's radar while seated: each static chunk baked top-down once, then one rotated drawImage apiece; up is where the
 // camera looks (world north, the N on the rim, is -z)
@@ -33941,7 +34109,7 @@ function mcLook(o, wheelsAt) {
     if (right) g.quaternion.multiply(mcFlip)
   }
   // the ejector: the hatch blown open and the seat gone up, until it re-arms; a wreck's hatch hangs open
-  const T = mcClock(), e = mcEjects.get(key), age = e === undefined ? Infinity : T - e, R = MCAR.eject.rearm * 1000
+  const T = drawNow(), e = mcEjects.get(key), age = e === undefined ? Infinity : T - e, R = MCAR.eject.rearm * 1000
   const open = wreck ? 1.9 : age < 0 || age >= R ? 0 : age < 90 ? 2.05 * age / 90 : age > R - 300 ? 2.05 * (R - age) / 300 : 2.05 - 0.1 * Math.sin(Math.min(1, (age - 90) / 400) * Math.PI)
   v.hatch.quaternion.setFromAxisAngle(mcAxisX, open)
   if (e !== undefined && age >= 0 && age < R && mcPlayed.get('e' + key) !== e) { mcPlayed.set('e' + key, e); mcBlast(o, v, age) }
