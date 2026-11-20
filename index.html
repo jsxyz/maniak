@@ -21469,13 +21469,17 @@ function autoEnd(R, error) {
   for (const b of ['fire', 'alt']) if (R.set[b]) input[b] = false
   clearInterval(R.dog)
   for (const [ev, fn, o] of R.listen) removeEventListener(ev, fn, o)
-  R.resolve({ ok: !error, ...error ? { error } : {}, ms: Math.round(now() - R.t0), steps: Math.min(R.i + (error ? 0 : 1), R.steps.length), log: R.log })
+  const res = { ok: !error, ...error ? { error } : {}, ms: Math.round(now() - R.t0), steps: Math.min(R.i + (error ? 0 : 1), R.steps.length), log: R.log }
+  autoApi.last = res
+  R.resolve(res)
 }
 // card #75, { go }: walk, run or sprint the host's character to a point or the nearest thing (#71's list), on foot. The route is
 // the bots' own in Faustland (the navmesh worker is not fed there): faustNav's avenue corners outside, faustInNav's rooms and
 // stairs inside, then their steering: two rays ahead, the shin blocked and the head clear -> jump, a wall -> slide along it.
 // { go: { x, z, pace, radius } | { thing, pace, radius } | 'thing' }; pace walk | run | sprint (run). Ends on arrival or throws
 // 'stuck at x z' (less than 1.2 m moved in 6 s) or 'timeout'; the step's out: { arrived, x, z, left (m), ms }.
+const AUTO_SAID = []
+function autoSay(m) { sysMsg(m); AUTO_SAID.push(m.replace(/§./g, '')); if (AUTO_SAID.length > 40) AUTO_SAID.shift() }
 const AUTO_PACE = { walk: 0.5, run: 1, sprint: 1 }
 // A* over a 1 m (2 m past 500 m) grid of the plan's solid boxes at body height, inflated by the body's radius, in a window round the
 // trip (40 m margin); the way is then cut to the corners it needs by line of sight. null: no way (the nearest reachable cell is more
@@ -21593,6 +21597,7 @@ function autoGoTick(s, me, t, ray, nav) {
 const autoBoxes = (ci, cj) => { const S = LV.grow.S; if (ci < 0 || cj < 0 || ci >= S || cj >= S) return []; const c = faustGet(ci, cj); return typeof dsStanding === 'function' ? dsStanding(c.plan) : c.plan.boxes }
 AUTO_STEPS.go = (R, a) => {
   const me = selfChar(), s = autoGoNew(me, a, (k, c) => testTools.find(k, c))
+  autoSay('§7go: ' + s.pace + ' to §f' + s.what + '§7, ' + Math.round(s.d0) + ' m')
   // outside: the route; in a building, or bound into one (to its street door first): the bots' rooms and stairs
   const nav = (c, T) => {
     const here = inAt(c.x, c.y - c.h - c.r, c.z), there = inAt(T.x, T.y, T.z)
@@ -21629,20 +21634,22 @@ AUTO_STEPS.drive = (R, a) => {
   if (!LV.faust || !isHost || !me) throw new Error('drive: Faustland host only')
   const A = typeof a === 'string' ? { thing: a } : a || {}
   let gx = Number(A.x), gz = Number(A.z), what = 'x ' + gx + ' z ' + gz
+  const pre = seatOf(me)?.[0] || autoCarNear(me)          // the car it will take: 'car' means another one, not this
   if (A.thing) {
-    const t = testTools.find(String(A.thing).toLowerCase(), me)
-    if (!t) throw new Error('drive: no ' + A.thing + ' yet')
+    const t = testTools.find(String(A.thing).toLowerCase(), me, q => pre && Math.hypot(q.x - pre.x, q.z - pre.z) < 10)
+    if (!t) throw new Error('drive: no ' + A.thing + ' yet (other than the car it takes)')
     const p = t.spot || t; gx = p.x; gz = p.z; what = t.what
   }
   if (!Number.isFinite(gx) || !Number.isFinite(gz)) throw new TypeError('drive: needs x and z, or a thing')
   const st = { phase: seatOf(me)?.[1] === 0 ? 'plan' : 'walk', car: seatOf(me)?.[0] || null, t0: now(), last: now(), still: 0, a: null }
+  autoSay('§7drive: to §f' + what + '§7, ' + Math.round(Math.hypot(gx - me.x, gz - me.z)) + ' m' + (st.phase === 'walk' ? ', finding a car' : ''))
   const hold = () => { if (st.car && st.a) { const k = st.a.lock; if (k && trafficState?.locks.get(k) === st.car.id) trafficState.locks.delete(k) } }
   const sub = { abort: hold, tick: t => {
     const m = selfChar(), dt = clamp((t - st.last) / 1000, 0.001, 0.1); st.last = t
     if (!m || m.dead > 0) throw new Error('drive: you died')
     if (st.phase === 'walk') {
       if (!st.car) {
-        st.car = autoCarNear(m)
+        st.car = pre && objs.includes(pre) ? pre : autoCarNear(m)
         if (!st.car) throw new Error('drive: no free car within 100 m (try /give car, or whistle with H)')
         if (st.car.traffic) GAME.traffic.cancel(st.car.id)            // an ambient car stops where it is
         st.go = AUTO_STEPS.go(R, { x: st.car.x, z: st.car.z, radius: 4.5, pace: 'run' })
@@ -21652,6 +21659,7 @@ AUTO_STEPS.drive = (R, a) => {
       const i = st.car.riders.findIndex((r, k) => r === undefined && fits(m, st.car, k))
       if (i !== 0) throw new Error('drive: no driver\'s seat free')
       sit(m, st.car, 0); st.phase = 'plan'
+      autoSay('§7drive: in the §f' + (st.car.K?.name || 'car').toLowerCase())
       return false
     }
     const s = seatOf(m)
@@ -21662,6 +21670,7 @@ AUTO_STEPS.drive = (R, a) => {
       let ok = false
       try { ok = trafficDriveTo(o, { x: gx, z: gz }, { driver: false, urgent: !!A.urgent, speed: Number(A.speed) || 12 }) } finally { riders.forEach((r, k) => { o.riders[k] = r }) }
       if (!ok) throw new Error('drive: no road route from here to ' + what + ' (the car must be within 28 m of a street)')
+      autoSay('§7drive: on the road, §f' + Math.round(Math.hypot(gx - o.x, gz - o.z)) + ' m §7to go')
       st.a = o.traffic; o.traffic = null; st.phase = 'drive'; st.deadline = t + Math.min(1200, 60 + Math.hypot(gx - o.x, gz - o.z) / 2.5) * 1000
     }
     o.traffic = st.a
@@ -21724,6 +21733,8 @@ const AUTO_ROUTINES = {
 const autoApi = {
   routines: AUTO_ROUTINES,          // name -> steps, or (options, me) -> steps; gameHooks.auto.run('name', options)
   steps: AUTO_STEPS,
+  said: AUTO_SAID,       // the lines /go and /drive printed (chat fades), the last 40
+  last: null,            // the last run's result
   get running() { return !!autoRun },
   cancel(why = 'cancelled') { if (autoRun) autoEnd(autoRun, why); return true },
   run(steps, opt = {}) {          // a name, or steps; opt is a routine's options (stall: ms with no frames before it gives up)
@@ -28441,11 +28452,11 @@ const testTools = (() => {
     const car = seatOf(c) || rideOf(c), yaw = car && chase.yaw === chase.yaw ? chase.yaw + chase.look : input.yaw
     sysMsg('§7At x §f' + c.x.toFixed(1) + ' §7z §f' + c.z.toFixed(1) + ' §7y §f' + feet(c).toFixed(1) + ' §7heading §f' + rose(((Math.round(-yaw * R2D) % 360) + 360) % 360) + ' §7cell §f' + ci + ' ' + cj + block)
   }
-  const find = (key, c) => {
+  const find = (key, c, skip) => {
     key = ALIAS[key] || key
     if (!Object.hasOwn(NEAR, key)) throw new TypeError('no thing ' + key + ' (' + things() + ')')
     let t = null
-    for (const q of NEAR[key](c)) { q.d = Math.hypot(q.x - c.x, q.z - c.z); if (!t || q.d < t.d) t = q }
+    for (const q of NEAR[key](c)) { if (skip?.(q)) continue; q.d = Math.hypot(q.x - c.x, q.z - c.z); if (!t || q.d < t.d) t = q }
     if (t?.resolve) t.resolve(t)
     return t
   }
@@ -28478,7 +28489,7 @@ const goCommand = a => {
   if (!pt && w.length !== 1) return sysMsg('§cUsage: §f/go <x> <z> | <thing> [walk|run|sprint] §7(things: ' + testTools.things() + ')')
   gameHooks.auto.run([{ go: pt ? { x: n[0], z: n[1], pace } : { thing: w[0], pace } }]).then(r => {
     const g = r.log?.at(-1)?.go
-    sysMsg(r.ok && g ? '§7Arrived at §f' + g.what + '§7 (' + g.left + ' m off) in §f' + Math.round(g.ms / 1000) + ' s' : '§c/go: ' + (r.error || 'stopped'))
+    autoSay(r.ok && g ? '§7go: arrived at §f' + g.what + '§7 (' + g.left + ' m off) in §f' + Math.round(g.ms / 1000) + ' s' : '§cgo: ' + (r.error || 'stopped'))
   })
 }
 Object.assign(GAME.commands, { go: { args: '<x> <z> | <thing> [pace]', help: 'host only, test: walk, run or sprint there by the bots\' way', run: goCommand } })
@@ -28489,7 +28500,7 @@ const driveCommand = a => {
   if (!pt && w.length !== 1) return sysMsg('§cUsage: §f/drive <x> <z> | <thing> §7(things: ' + testTools.things() + ')')
   gameHooks.auto.run([{ drive: pt ? { x: n[0], z: n[1] } : { thing: w[0] } }]).then(r => {
     const g = r.log?.at(-1)?.drive
-    sysMsg(r.ok && g ? '§7Arrived at §f' + g.what + '§7 (' + g.left + ' m off) in §f' + Math.round(g.ms / 1000) + ' s' : '§c/drive: ' + (r.error || 'stopped'))
+    autoSay(r.ok && g ? '§7drive: arrived at §f' + g.what + '§7 (' + g.left + ' m off) in §f' + Math.round(g.ms / 1000) + ' s' : '§c' + (/^drive/.test(r.error || '') ? '' : 'drive: ') + (r.error || 'stopped'))
   })
 }
 Object.assign(GAME.commands, { drive: { args: '<x> <z> | <thing>', help: 'host only, test: take the nearest free car and drive there by the roads', run: driveCommand } })
