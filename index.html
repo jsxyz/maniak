@@ -22579,6 +22579,7 @@ let kickedBy = null, droppedWhy = null          // droppedWhy: the host let this
 // the host's effects this tick, sent once as the snapshot's fx
 let tracers = []
 const LINK_DEAD_MS = 8000        // guest: host silence
+let lastGapMs = 0                 // the last frame's gap, before the sim's clamp (a stall's length)
 const ICE_GRACE_MS = 4000        // 'disconnected' can recover; 'failed' cannot
 const GUEST_DEAD_MS = 12000      // host: guest silence
 const GUEST_LOAD_MS = 60000      // host: a joiner's silence before its first input, while its level builds (it was 3 min)
@@ -23199,6 +23200,7 @@ function onHostData(id, d) {
 }
 
 function startJoin(code) {
+  if (phase !== 'menu') return          // one join at a time: a link's auto-join and a Join click are the same join
   background.cancel('world'); worldPreparing = false; landingReady = ''
   isHost = false; phase = 'connecting'
   scarsLater = false; if (!scarMesh) prepareScars()
@@ -23535,7 +23537,9 @@ function endSession(title, msg, rejoinable) {
   if (phase === 'ended') return
   phase = 'ended'
   const canRejoin = rejoinable && !!roomCodeStr
-  clearSession()
+  // why, for a page read by a script; and the screen comes up even if the teardown throws
+  try { console.warn('[maniak] session ended: ' + title + ': ' + msg) } catch (e) {}
+  try { clearSession() } catch (e) { frameFailed('end of session', e) }
   el('#end-title').textContent = title
   el('#end-msg').textContent = msg
   el('#end-rejoin').style.display = canRejoin ? '' : 'none'
@@ -23543,7 +23547,7 @@ function endSession(title, msg, rejoinable) {
 }
 
 function resetToMenu() {
-  clearSession()
+  try { clearSession() } catch (e) { frameFailed('menu', e) }
   phase = 'menu'
   roomCodeStr = ''
   show('endmodal')
@@ -30785,9 +30789,13 @@ function dropGuest(id, reason, why) {
 function checkLiveness(t, own) {
   if (!connected) return
   if (!isHost) {
-    // its own stall is forgiven once in 30 s, not every frame: a page that stalls every frame still notices a silent host
-    if (own && t - (checkLiveness.gforgave || 0) > 30000) { checkLiveness.gforgave = t; lastRecvAt = t; return }
-    if (lastRecvAt && t - lastRecvAt > LINK_DEAD_MS) {
+    // its own stalls are not the host's silence: their time is credited (what came meanwhile is handled after the stalled
+    // frame), reset by each message; silence past 4x the limit by the clock still ends it, so a page that stalls every
+    // frame notices a silent host too
+    if (lastRecvAt !== checkLiveness.seen) { checkLiveness.seen = lastRecvAt; checkLiveness.credit = 0 }
+    if (own) checkLiveness.credit = (checkLiveness.credit || 0) + lastGapMs
+    const silent = lastRecvAt ? t - lastRecvAt : 0
+    if (silent - (checkLiveness.credit || 0) > LINK_DEAD_MS || silent > 4 * LINK_DEAD_MS) {
       endSession('Disconnected', 'The host stopped responding.', true)
     }
     return
@@ -30807,6 +30815,7 @@ function checkLiveness(t, own) {
 
 function stepSim(t) {
   let dt = (t - last) / 1000, own = dt > 1
+  lastGapMs = dt * 1000
   last = t
   if (dt > 0.25) dt = 0.25
   fps += (1 / Math.max(dt, 1e-4) - fps) * timeShare(dt, 0.08)
