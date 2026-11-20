@@ -27653,13 +27653,13 @@ const testTools = (() => {
   const rose = d => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(d / 45) % 8] + ' ' + d + '°'
   const feet = c => c.y - c.h - c.r
   // the street (or the surface y0) under x, z: the city grown there first, a ray down for the floor, else 3 m above y0 to fall
-  function tpTo(c, x, z, y0, face) {
+  function tpTo(c, x, z, y0, face, up = 4) {
     const lim = WORLD - 8
     x = clamp(x, -lim, lim); z = clamp(z, -lim, lim)
     const s = seatOf(c); if (s) leave(c, s[0], s[1])
     if (LV.grow) growNear([[x, z]], true)
     const hit = []
-    staticRay(x, y0 + 4, z, 0, -1, 0, 12, hit)
+    staticRay(x, y0 + up, z, 0, -1, 0, 12, hit)
     const y = hit.length && hit[4] > 0.5 ? hit[1] + c.h + c.r + 0.05 : y0 + 3
     setCharPos(c, x, y, z)
     c.vx = c.vy = c.vz = 0; c.carryV = null
@@ -27684,6 +27684,26 @@ const testTools = (() => {
     const got = (GAME.streetLife?.around(c.x, c.z, r) || []).filter(a => a.kind === kind)
     if (got.length) return got.map(a => ({ x: a.x, z: a.z, y0: 0, what: kind })) }
     return [] }
+  // the lots (not the transit towers') of the cells round the player, widening to 3 cells until some are in reach
+  const lotsAround = (c, ok) => {
+    if (!LV.faust || !LV.grow || !faustState) return []
+    const S = LV.grow.S, ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96)
+    for (let r = 1; r <= 3; r++) {
+      const out = []
+      for (let i = Math.max(0, ci - r); i <= Math.min(S - 1, ci + r); i++) for (let j = Math.max(0, cj - r); j <= Math.min(S - 1, cj + r); j++)
+        faustGet(i, j).plan.lots.forEach((l, li) => { if (!l.stop && ok(l)) out.push({ id: i + ' ' + j + ' ' + li, x: l.x, z: l.z, y0: 0 }) })
+      if (out.length) return out
+    }
+    return []
+  }
+  // a building's ground storey open and built now, so a teleport inside lands on its floor (false: it stays shut)
+  const openIn = B => {
+    if (LV.grow) growNear([[B.x, B.z]], true)
+    const O = inOpen(B.id)
+    if (!O) return false
+    O.seen = performance.now(); inStoreyBodies(O, 0, true)
+    return true
+  }
   const NEAR = {
     car: cars(() => true), parked: cars(o => o.parked && !o.traffic), traffic: cars(o => o.traffic), object: () => objs.filter(o => !o.V).map(o => ({ x: o.x, z: o.z, y0: 0, what: o.K.name || 'object' })),
     station: c => (railState?.rail.stations || []).map(t => {                  // #60: street level beside the platform, facing its pavilion
@@ -27694,6 +27714,27 @@ const testTools = (() => {
     stop: () => { const seen = new Map()                                       // #5: the platform on the tower's roof, by its mast
       for (const l of GAME.air?.lines || []) for (const s of l.stops) seen.set(s.id, { x: s.x, z: s.z, y0: s.y, what: 'stop ' + s.id + ', roof ' + Math.round(s.y) + ' m (' + l.name + ')' })
       return [...seen.values()] },
+    // #38: the lots round the player (nearest ring with any), a building planned only once one is picked (resolve)
+    stairs: c => lotsAround(c, () => true).map(t => ({ ...t, what: 'stairs', resolve(q) {
+      const B = inBuilding(q.id), C = B.core, K = FAUST_IN
+      q.x = C.stairX + K.stair.width + K.stair.well / 2; q.z = C.z1 - K.part - 0.6
+      q.what = 'stairs of a ' + B.style + ' building, ' + B.storeys.length + ' storeys'
+      q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B } } })),
+    lift: c => lotsAround(c, l => l.height >= 48 && (l.district === 'core' || l.district === 'civic')).map(t => ({ ...t, what: 'lift', resolve(q) {
+      const B = inBuilding(q.id), C = B.core, K = FAUST_IN, lx0 = C.stairX + 2 * K.stair.width + K.stair.well + K.part
+      q.x = lx0 + K.lift - 0.9; q.z = C.z1 - K.part - 0.7
+      q.what = 'express lift (UP panel) of a ' + B.style + ' tower, ' + B.storeys.length + ' storeys'
+      q.spot = { x: q.x, z: q.z, face: [0, 1], up: 2.5, enter: B } } })),
+    window: c => {                                                              // #46's breaches, else the nearest shopfront panes
+      const out = [], add = (B, w, broken) => {
+        const n = [[0, 1], [0, -1], [1, 0], [-1, 0]][w.face], a = (w.a0 + w.a1) / 2, x = w.face < 2 ? a : w.plane, z = w.face < 2 ? w.plane : a
+        out.push({ x, z, y0: 0, what: (broken ? 'broken' : 'intact') + ' window' + (w.k ? ', storey ' + w.k + ', ' + Math.round((w.y0 + w.y1) / 2) + ' m up' : '') + ', of a ' + B.style + ' building',
+          spot: { x: x + n[0] * 2, z: z + n[1] * 2, face: [-n[0], -n[1]] } }) }
+      if (faustState && faustIn.broken.size) for (const id of faustIn.broken.keys()) { const B = inBuilding(id); for (const w of inBrokenWindows(B)) add(B, w, true) }
+      if (out.length) return out
+      for (const t of lotsAround(c, () => true).sort((p, q) => Math.hypot(p.x - c.x, p.z - c.z) - Math.hypot(q.x - c.x, q.z - c.z)).slice(0, 8)) {
+        const B = inBuilding(t.id); for (const w of inWindowsOf(B, 0)) add(B, { ...w, k: 0 }, false) }
+      return out },
     performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk), enforcer: bots(b => b.enforcer),
     squad: () => objs.filter(o => squadIds.has(o.id) && o.squadKind !== 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'squad car (' + (o.V ? o.squadState || 'driving' : 'wrecked') + ')' })),
     roadblock: () => objs.filter(o => squadIds.has(o.id) && o.squadKind === 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'roadblock car' })),
@@ -27709,7 +27750,7 @@ const testTools = (() => {
       }
       return [] },
   }
-  const ALIAS = { interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
+  const ALIAS = { stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
   const things = () => Object.keys(NEAR).join(', ')
   const tp = a => {
     const c = me(true); if (!c) return
@@ -27727,8 +27768,11 @@ const testTools = (() => {
     let t = null
     for (const q of list) { q.d = Math.hypot(q.x - c.x, q.z - c.z); if (!t || q.d < t.d) t = q }
     if (!t) return sysMsg('§7' + key + ': §fnone yet')
+    if (t.resolve) { try { t.resolve(t); t.d = Math.hypot(t.x - c.x, t.z - c.z) } catch (e) { console.warn('/near ' + key, e); return sysMsg('§7' + key + ': §fnone yet') } }
     if (w[1] === 'go') {
-      const [x, , z] = t.spot ? tpTo(c, t.spot.x, t.spot.z, t.y0, t.spot.face) : beside(c, t)
+      let s = t.spot
+      if (s?.enter && !openIn(s.enter)) s = { x: s.enter.door.out[0], z: s.enter.door.out[2], face: [0, -1] }          // shut: at its door
+      const [x, , z] = s ? tpTo(c, s.x, s.z, t.y0, s.face, s.up) : beside(c, t)
       return sysMsg('§7Beside §f' + t.what + ' §7at x §f' + Math.round(x) + ' §7z §f' + Math.round(z))
     }
     sysMsg('§7Nearest §f' + t.what + '§7: x §f' + Math.round(t.x) + ' §7z §f' + Math.round(t.z) + ' §7· §f' + Math.round(t.d) + ' m §7· §f' + rose(bearing(t.x - c.x, t.z - c.z)) + ' §7· §f/near ' + key + ' go')
