@@ -23329,6 +23329,7 @@ function applyRoster(list) {
 
 function startHost() {
   if (startingGame) return
+  enforcersHostOff = false
   let citySeed
   try { citySeed = faustParseSeed(el('#host-seed')?.value ?? faustRequestedSeed) ?? landingSeed ?? crypto.getRandomValues(new Uint32Array(1))[0] }
   catch (e) { document.body.classList.remove('starting'); setStatus(e.message, 'err'); return }
@@ -29013,7 +29014,8 @@ const HEAT = {
 // host: player id -> { pts, stars, state (0 clear, 1 wanted, 2 searching), seenAt (ms), last {x, y, z}, left (s of search), at {kind: ms}, spawnAt }
 const heat = new Map()
 let enforcersGuest = true       // what the host's snapshot said (`en`); the host's own is settings.enforcers
-const enforcersEnabled = () => isHost ? settings.enforcers !== false : enforcersGuest
+let enforcersHostOff = false     // /enforcers off: this hosting session only, never saved; every new host session starts on
+const enforcersEnabled = () => isHost ? !enforcersHostOff : enforcersGuest
 let heatMine = { stars: 0, state: 0, left: 0 }, heatAt = -Infinity, heatAcc = 0, heatRoster = false
 const heatStars = pts => { let n = 0; for (let k = 1; k < HEAT.stars.length; k++) if (pts >= HEAT.stars[k]) n = k; return n }
 const heatFor = id => heat.get(id) || heat.set(id, { pts: 0, stars: 0, state: 0, seenAt: 0, last: { x: 0, y: 0, z: 0 }, left: 0, at: {}, spawnAt: 0 }).get(id)
@@ -29150,7 +29152,7 @@ function enforcersPurge() {
   if (heatRoster) { heatRoster = false; if (conns.size) pushRoster() }
 }
 function enforcersSet(on) {
-  settings.enforcers = !!on; saveSettings()
+  enforcersHostOff = !on
   if (!on) enforcersPurge()
 }
 function heatTick(dt, all) {
