@@ -6050,7 +6050,7 @@ const GAME = { faustland: FAUSTLAND_API, interiors: FAUSTLAND_API.interiors }
 // units, yield 'frame' after a GPU upload, or yield a Promise to await a dependency.
 // Work runs after paint, shares one 4 ms budget, and never holds scene state over a yield.
 const background = (() => {
-  const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [] }
+  const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [], lateCount: 0 }
   let scheduled = false, order = 0, current = null
   const alive = j => !j.valid || j.valid()
   function finish(j, value, error) {
@@ -14483,6 +14483,7 @@ function buildWorld() {
       lookRender(render, s, cam)
       if (phase === 'playing' && renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) {
         const k = String(p.cacheKey).split(','), hook = k[k.length - 1]
+        background.stats.lateCount++
         background.stats.late.push((p.name || k[0] || '?') + (hook && !hook.startsWith('function') ? ' ' + hook.slice(0, 32) : '')); if (background.stats.late.length > 12) background.stats.late.shift() }
       if (graphics.state === 'restoring' && s === scene && !graphics.rebuild) {
         graphics.state = 'ready'; clearTimeout(graphics.timer); el('#graphics-notice').hidden = true
@@ -19641,12 +19642,12 @@ function drawDebug(me, fps) {
     (joinLog.length ? row('joins', esc(joinLog.join('  '))) : '') +
     (startLog ? row('start', startLog.marks.map(([k, t]) => k + ' ' + v(Math.round(t))).join('  ') + '  frames 2-30 max ' +
         v(Math.round(Math.max(0, ...startLog.frames.slice(1)))) + ' ms  programs +' + v(i.programs.length - startLog.progs) +
-        (startLog.warmProgs != null ? ' (in play +' + v(i.programs.length - startLog.warmProgs) + ')' : '')) : '') +
+        (startLog.warmProgs != null ? ' (in play +' + v(background.stats.lateCount) + ')' : '')) : '') +
     (rescues.n ? row('rescue', v(rescues.n) + '  last ' + esc(rescues.last.who + ' at ' + [rescues.last.x, rescues.last.y, rescues.last.z].map(Math.round).join(' ') +
         ' vy ' + Math.round(rescues.last.vy) + (rescues.last.cell ? '  cell ' + rescues.last.cell : '') + ' (' + rescues.last.cause + ')')) : '') +
     row('bg', 'max step ' + v(Math.round(background.stats.maxStepMs)) + ' ms  jobs ' + v(background.pending.length) +
         (background.stats.long.length ? '  long ' + esc(background.stats.long.join(', ')) : '') + (background.stats.late.length ? '  late programs ' + esc(background.stats.late.join(', ')) : '')) +
-    row('js', (jit.off ? '<span class="w">optimizer off</span>' : jit.off === null ? 'checking' : 'optimizer on') + '  x' + f(jit.cold / jit.best, 1, 1)) +
+    row('js', (jit.off ? '<span class="w">optimizer off</span>' : jit.off === null ? 'checking' : 'optimizer on') + (jit.cold > 0 && jit.best > 0 ? '  x' + f(jit.cold / jit.best, 1, 1) : '')) +
     (isHost ? '' : row('predict', 'pending ' + v(p(pending.length, 2)) +
         '  replayed ' + v(p(replaySteps, 2)) + '  err ' +
         v(p(reconcileErr === Infinity ? 'resync' : reconcileErr.toFixed(3), 6)) + ' m' +
@@ -21621,6 +21622,7 @@ function startHost() {
     worldPreparing = false
     if (!serving) { background.mark('look'); yield requestLook(settings.look); yield* warmSceneSteps(activeLook || 'plain'); background.mark('open'); yield 'frame' }
     if (startLog) startLog.warmProgs = renderer?.info.programs.length
+    background.stats.lateCount = 0; background.stats.late.length = 0
     el('#stage-menu').style.display = 'none'; el('#stage-host').style.display = ''
     setStatus('Waiting for players…'); openHostPeer(0)
     startingGame = false; document.body.classList.remove('starting')
@@ -27788,17 +27790,22 @@ function airKitLoad(kind = 'zep') {
       n.geometry.userData.shared = true; n.receiveShadow = true
       n.material = mats.get(n.material) || (mats.set(n.material, airMaterial(n.material)), n.material) })
     K.scene = g.scene
-    airWarm(g.scene)
-    if (airView) airViewBuild()
+    return background.run('air:' + kind, function* () {
+      yield* airWarmSteps(g.scene)
+      background.mark('fleet'); if (airView) airViewBuild()
+    }, { gpu: true })
   }).catch(e => { K.ask = false; console.warn(kind + ' model failed, drawing its stand-in:', e?.message || e) })
 }
 // its programs, ahead of the first one in view: each LOD's meshes in the city's pass and in the sky's
-function airWarm(kit) {
+function* airWarmSteps(kit) {
   if (!renderer?.compileAsync || !scene || !camera) return
-  for (const target of [scene, faustState?.skyScene].filter(Boolean)) {
+  const name = activeLook || 'plain', R = realState, out = name === 'realistic' ? R?.t?.hdr || null : name === 'ink' ? inkPost?.target || null : null
+  for (const [target, cam] of [[scene, camera], [faustState?.skyScene, faustState?.skyCamera || camera]]) {
+    if (!target) continue
     const probe = new THREE.Group(); probe.add(kit.clone())
     probe.traverse(n => { n.visible = true; n.frustumCulled = false })
-    renderer.compileAsync(probe, camera, target).catch(() => {})
+    inkPrepare(probe)
+    yield* compileObjects(probe, cam, target, warmSetup(name, out, R))
   }
 }
 // until its model is here: the airship's collider, the biplane's hull
