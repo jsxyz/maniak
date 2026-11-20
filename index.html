@@ -22559,6 +22559,7 @@ function autoEnd(R, error) {
 // 'stuck at x z' (less than 1.2 m moved in 6 s) or 'timeout'; the step's out: { arrived, x, z, left (m), ms }.
 const AUTO_SAID = []
 function autoSay(m) { sysMsg(m); AUTO_SAID.push(m.replace(/§./g, '')); if (AUTO_SAID.length > 40) AUTO_SAID.shift() }
+// AUTO_VIA: a spot's via list is walked in order, straight once the first is reached (the lift's door)
 const AUTO_PACE = { walk: 0.5, run: 1, sprint: 1 }
 // A* over a 1 m (2 m past 500 m) grid of the plan's solid boxes at body height, inflated by the body's radius, in a window round the
 // trip (40 m margin); the way is then cut to the corners it needs by line of sight. null: no way (the nearest reachable cell is more
@@ -22626,34 +22627,35 @@ function autoGoNew(me, A, find) {
   if (!LV.faust || !faustState) throw new Error('go: Faustland only')
   if (seatOf(me)) throw new Error('go: on foot only, get out of the car (or use drive)')
   A = typeof A === 'string' ? { thing: A } : A || {}
-  let x = Number(A.x), z = Number(A.z), what = 'x ' + x + ' z ' + z, y = Number(A.y) || 0, rad
+  let x = Number(A.x), z = Number(A.z), what = 'x ' + x + ' z ' + z, y = Number(A.y) || 0, rad, via
   if (A.thing) {
     const t = find(String(A.thing).toLowerCase(), me)
     if (!t) throw new Error('go: no ' + A.thing + ' yet')
     const p = t.spot || t
-    x = p.x; z = p.z; y = t.y0 || 0; what = t.what; rad = p.radius
+    x = p.x; z = p.z; y = t.y0 || 0; what = t.what; rad = p.radius; via = p.via          // AUTO_VIA: waypoints on the way to the spot
   }
   if (!Number.isFinite(x) || !Number.isFinite(z)) throw new TypeError('go: needs x and z, or a thing')
   if (y > 5) throw new Error('go: ' + what + ' is on a roof: not reachable on foot (tp to it)')
   const pace = A.pace === undefined ? 'run' : String(A.pace)
   if (!Object.hasOwn(AUTO_PACE, pace)) throw new TypeError('go: pace is walk, run or sprint')
   const d0 = Math.hypot(x - me.x, z - me.z), t0 = now()
-  return { x, z, y, what, pace, radius: Number(A.radius) || (A.thing ? rad ?? 2.5 : 1.5), d0, t0, last: t0, ax: me.x, az: me.z, progT: t0, blocked: 0, side: 1, kick: 0, deadline: t0 + Math.min(900, 30 + d0 / 1.5) * 1000 }
+  return { via: via ? via.map(v => ({ ...v })) : null, straight: false, x, z, y, what, pace, radius: Number(A.radius) || (A.thing ? rad ?? 2.5 : 1.5), d0, t0, last: t0, ax: me.x, az: me.z, progT: t0, blocked: 0, side: 1, kick: 0, deadline: t0 + Math.min(900, 30 + d0 / 1.5) * 1000 }
 }
 // one frame of it: writes `input`; true on arrival. ray(y, ux, uz) is the distance to the level along a horizontal ray from the
 // feet's x, z (Infinity: none within 8 m); nav(me, target) the bots' way ({ corner, there, pad })
 function autoGoTick(s, me, t, ray, nav) {
   if (!me || me.dead > 0) throw new Error('go: you died')
   const dt = clamp((t - s.last) / 1000, 0.001, 0.1); s.last = t
-  const left = Math.hypot(s.x - me.x, s.z - me.z)
-  if (left < s.radius) return { arrived: true, x: Math.round(me.x), z: Math.round(me.z), left: Math.round(left * 10) / 10, ms: Math.round(t - s.t0) }
+  const left = Math.hypot(s.x - me.x, s.z - me.z), wp = s.via?.length ? s.via[0] : null
+  if (wp && Math.hypot(wp.x - me.x, wp.z - me.z) < 0.6) { s.via.shift(); s.straight = true; s.progT = t; return null }
+  if (!wp && left < s.radius) return { arrived: true, x: Math.round(me.x), z: Math.round(me.z), left: Math.round(left * 10) / 10, ms: Math.round(t - s.t0) }
   if (Math.hypot(me.x - s.ax, me.z - s.az) > 1.2) { s.ax = me.x; s.az = me.z; s.progT = t }          // moving: 1.2 m in 6 s
   if (t - s.progT > 6000) throw new Error('stuck at ' + Math.round(me.x) + ' ' + Math.round(me.z) + ', ' + Math.round(left) + ' m from ' + s.what)
   if (t > s.deadline) throw new Error('timeout at ' + Math.round(me.x) + ' ' + Math.round(me.z) + ', ' + Math.round(left) + ' m from ' + s.what)
-  const T = { id: -1, x: s.x, y: s.y, z: s.z, h: 0, r: 0 }, plan = nav(me, T) || { corner: null }, way = plan.corner || T
+  const T = { id: -1, x: wp ? wp.x : s.x, y: s.y, z: wp ? wp.z : s.z, h: 0, r: 0 }, plan = nav(me, T) || { corner: null }, way = plan.corner || T
   let dx = way.x - me.x, dz = way.z - me.z, hop = false
   const lead = Math.hypot(dx, dz), foot = me.y - me.h - me.r, up = (way.y || 0) - foot
-  if (lead > 0.5 && !plan.corner?.stairs) {
+  if (lead > 0.5 && !s.straight && !plan.corner?.stairs) {
     const probe = Math.min(3.2, lead), ux = dx / lead, uz = dz / lead, low = ray(foot + 0.45, ux, uz)
     if (low < probe) {
       if (plan.corner && up > 0.4) hop = low < 1.2
@@ -29612,7 +29614,8 @@ const testTools = (() => {
       const B = inBuilding(q.id), C = B.core, K = FAUST_IN, lx0 = C.stairX + 2 * K.stair.width + K.stair.well + K.part
       q.x = lx0 + K.lift - 0.9; q.z = C.z1 - K.part - 0.7
       q.what = 'express lift (UP panel) of a ' + B.style + ' tower, ' + B.storeys.length + ' storeys'
-      q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B, radius: 0.5 } } })),
+      const cx = lx0 + K.lift / 2          // the door's centre line: 0.2 m clear of a jamb each side, so in by it, then across to the UP half
+      q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B, radius: 0.5, via: [{ x: cx, z: C.z1 + 1.5 }, { x: cx, z: q.z }] } } })),
     window: c => windowsNear(c, false), brokenwindow: c => windowsNear(c, true),             // intact panes a punch reaches (#77); #46's breaches
     performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk), enforcer: bots(b => b.enforcer),
     squad: () => objs.filter(o => squadIds.has(o.id) && o.squadKind !== 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'squad car (' + (o.V ? o.squadState || 'driving' : 'wrecked') + ')' })),
