@@ -5760,7 +5760,7 @@ const GAME = { faustland: FAUSTLAND_API, interiors: FAUSTLAND_API.interiors }
 // units, yield 'frame' after a GPU upload, or yield a Promise to await a dependency.
 // Work runs after paint, shares one 4 ms budget, and never holds scene state over a yield.
 const background = (() => {
-  const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '' }
+  const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [] }
   let scheduled = false, order = 0
   const alive = j => !j.valid || j.valid()
   function finish(j, value, error) {
@@ -5807,7 +5807,9 @@ const background = (() => {
           Promise.resolve(r.value).then(v => { j.value = v; j.waiting = false; schedule() }, e => { j.error = e; j.waiting = false; schedule() })
         } else if (r.value === 'frame' || r.value === 'wait') deferred.add(j)
       } catch (e) { finish(j, false, e) }
-      stats.last = j.key; stats.maxStepMs = Math.max(stats.maxStepMs, performance.now() - t); stats.steps++; steps++
+      const stepMs = performance.now() - t
+      if (stepMs >= 50) { stats.long.push(j.key + ' ' + Math.round(stepMs)); if (stats.long.length > 12) stats.long.shift() }
+      stats.last = j.key; stats.maxStepMs = Math.max(stats.maxStepMs, stepMs); stats.steps++; steps++
       if (navigator.scheduling?.isInputPending?.()) break
     }
     stats.slices++; stats.maxSliceMs = Math.max(stats.maxSliceMs, performance.now() - start)
@@ -12416,6 +12418,7 @@ function inkPrepare(root) {
   root?.traverse(o => {
     for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
       if (!m || inkPatched.has(m)) continue
+      if (m.onBeforeCompile?.inkHook) { inkPatched.add(m); continue }          // a clone carrying an Ink hook already
       if (!(m.isMeshStandardMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial || m.isMeshBasicMaterial || m.isSpriteMaterial)) {
         // Points and custom effects keep their original colour. Transparent effects leave
         // the MRT normal attachment alone instead of outlining particles or glow textures.
@@ -12427,6 +12430,7 @@ function inkPrepare(root) {
           if (shader.fragmentShader.includes('inkNormalOutput')) return
           shader.fragmentShader = 'layout(location = 1) out highp vec4 inkNormalOutput;\n' + shader.fragmentShader.replace(/void\s+main\s*\(\s*\)\s*\{/, 'void main() { inkNormalOutput = vec4(0.0);')
         }
+        m.onBeforeCompile.inkHook = true
         m.customProgramCacheKey = () => cache + '|ink-output-1'; m.needsUpdate = true
         continue
       }
@@ -12604,6 +12608,7 @@ function inkPrepare(root) {
             gl_FragColor.rgb *= 1.0 - edgeFade;
           }`)
       }
+      m.onBeforeCompile.inkHook = true
       m.customProgramCacheKey = () => key + '|ink-6|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight) + Number(character) + Number(signal) + Number(vehicleLamp) + Number(vehicleLamps)
       m.needsUpdate = true
     }
@@ -14107,7 +14112,10 @@ function buildWorld() {
     try {
       if ((worldPreparing || startingGame) && s === scene) { loadingScene ||= new THREE.Scene(); loadingScene.background = scene.background; render(loadingScene, cam); return }
       if (graphics.rebuild && s === scene) rebuildGraphics()
+      const programsBefore = renderer.info.programs.length
       lookRender(render, s, cam)
+      if (phase === 'playing' && renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) {
+        background.stats.late.push((p.name || '?') + ' ' + String(p.cacheKey).split(',').pop().slice(0, 32)); if (background.stats.late.length > 12) background.stats.late.shift() }
       if (graphics.state === 'restoring' && s === scene && !graphics.rebuild) {
         graphics.state = 'ready'; clearTimeout(graphics.timer); el('#graphics-notice').hidden = true
       }
@@ -19219,7 +19227,10 @@ function drawDebug(me, fps) {
         'ms  draw ' + v(f(msDraw, 5, 2)) + 'ms  steps ' + p(lastSteps, 2)) +
     (joinLog.length ? row('joins', esc(joinLog.join('  '))) : '') +
     (startLog ? row('start', startLog.marks.map(([k, t]) => k + ' ' + v(Math.round(t))).join('  ') + '  frames 2-30 max ' +
-        v(Math.round(Math.max(0, ...startLog.frames.slice(1)))) + ' ms  programs +' + v(i.programs.length - startLog.progs)) : '') +
+        v(Math.round(Math.max(0, ...startLog.frames.slice(1)))) + ' ms  programs +' + v(i.programs.length - startLog.progs) +
+        (startLog.warmProgs != null ? ' (in play +' + v(i.programs.length - startLog.warmProgs) + ')' : '')) : '') +
+    row('bg', 'max step ' + v(Math.round(background.stats.maxStepMs)) + ' ms  jobs ' + v(background.pending.length) +
+        (background.stats.long.length ? '  long ' + esc(background.stats.long.join(', ')) : '') + (background.stats.late.length ? '  late programs ' + esc(background.stats.late.join(', ')) : '')) +
     row('js', (jit.off ? '<span class="w">optimizer off</span>' : jit.off === null ? 'checking' : 'optimizer on') + '  x' + f(jit.cold / jit.best, 1, 1)) +
     (isHost ? '' : row('predict', 'pending ' + v(p(pending.length, 2)) +
         '  replayed ' + v(p(replaySteps, 2)) + '  err ' +
@@ -21189,7 +21200,8 @@ function startHost() {
     warmEffects()
     yield* warmSceneSteps('plain')
     worldPreparing = false
-    if (!serving) { yield requestLook(settings.look); yield 'frame' }
+    if (!serving) { yield requestLook(settings.look); yield* warmSceneSteps(activeLook || 'plain'); yield 'frame' }
+    if (startLog) startLog.warmProgs = renderer?.info.programs.length
     el('#stage-menu').style.display = 'none'; el('#stage-host').style.display = ''
     setStatus('Waiting for players…'); openHostPeer(0)
     startingGame = false; document.body.classList.remove('starting')
@@ -21492,6 +21504,7 @@ function guestLoad(lv, gen) {
     warmEffects()
     yield* warmSceneSteps('plain')
     yield requestLook(settings.look)
+    yield* warmSceneSteps(activeLook || 'plain')
   }, { priority: 3, valid: () => !isHost && phase === 'playing' })
   job.catch(e => frameFailed('guest level', e)).finally(() => {
     if (guestLoading !== job) return
