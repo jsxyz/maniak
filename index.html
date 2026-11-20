@@ -30703,7 +30703,25 @@ const testTools = (() => {
       }
       return [] },
   }
-  { const cityDoors = NEAR.door; NEAR.door = c => [...cityDoors(c), ...faustRingDoors(c)] }      // card #78: the ring houses' and shacks' doors too
+  { const cityDoors = NEAR.door; NEAR.door = c => [...cityDoors(c), ...faustRingDoors(c)]      // card #78: the ring houses' and shacks' doors too
+    // card #78: the nearest suburban houses (any, or two-storey ones) and shacks, the cells searched outward in rings round the player
+    const ringNear = (c, kind, two) => {
+      const F = faustState, plan = F && faustRoadsReady(F), C = FAUST_RINGS.cell, i0 = Math.floor(c.x / C), j0 = Math.floor(c.z / C), band = kind === 'shack' ? 'shanty' : 'suburb'
+      if (!plan) return []
+      for (let r = 0; r <= Math.ceil(FAUST_RINGS.edge / C) + 2; r++) {
+        const out = []
+        for (let i = i0 - r; i <= i0 + r; i++) for (let j = j0 - r; j <= j0 + r; j++) {
+          if (Math.max(Math.abs(i - i0), Math.abs(j - j0)) !== r || faustRingBand(F.seed, F.S, i, j) !== band) continue
+          for (const b of faustRingPlan(F, plan, i, j).buildings) if (b.kind === kind && (!two || b.storeys > 1)) {
+            const [nx, nz] = b.door.face
+            out.push({ x: b.door.x, z: b.door.z, y0: 0, what: kind + (two ? ', two storeys' : '') + ' (' + b.id + ')', spot: { x: b.door.x + nx * 3, z: b.door.z + nz * 3, face: [-nx, -nz] } })
+          }
+        }
+        if (out.length) return out
+      }
+      return []
+    }
+    NEAR.house = c => ringNear(c, 'house'); NEAR.house2 = c => ringNear(c, 'house', true); NEAR.shack = c => ringNear(c, 'shack') }
   // card #18: a road's points as /near things (every 5th, 100 m apart; a ramp's middle only)
   const roadSpots = (ok, at = null, middle = false) => {
     const plan = faustState && faustRoadsReady(faustState), out = []
