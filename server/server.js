@@ -199,23 +199,30 @@ function worldClear(kind, msg) { if (worldTrouble.has(kind)) { worldTrouble.dele
 // can never land on a newer one; a write R2 didn't take stays waiting (and is listed in WORLD_DIR/r2-waiting.json, to be
 // tried again after a restart) until a try takes it
 const r2Latest = new Map(), r2Chains = new Map(), R2_WAITING = WORLD_DIR && path.join(WORLD_DIR, 'r2-waiting.json')
+// since when each name has waited for R2, R2's last answer to it, and the wait before the next try (5 s, doubling to 60)
+const r2Since = new Map(), r2LastFor = new Map(), r2Told = new Map(), R2_STUCK_MS = 20000, R2_BOUND_MS = 20000
+let r2Backoff = 5000
 async function r2Put(name, body) {
   try {
     const r = await r2Request('PUT', name, body)
     await r.arrayBuffer().catch(() => {})
-    worldStatus.r2Last = String(r.status)
-    if (r.status >= 200 && r.status < 300) { worldStatus.r2Puts++; worldClear('r2put', 'world: R2 takes saves again'); return true }
+    worldStatus.r2Last = String(r.status); r2LastFor.set(name, String(r.status))
+    if (r.status >= 200 && r.status < 300) { worldStatus.r2Puts++; r2Backoff = 5000; worldClear('r2put', 'world: R2 takes saves again'); return true }
     worldSay('r2put', 'world: R2 answered ' + r.status + ' to a save')
-  } catch (e) { const why = e.name === 'TimeoutError' ? 'gave no answer in 15 s' : 'is unreachable (' + (e.cause?.code || e.name) + ')'; worldStatus.r2Last = why; worldSay('r2put', 'world: R2 ' + why + ' for a save') }
+  } catch (e) { const why = e.name === 'TimeoutError' ? 'gave no answer in 15 s' : 'is unreachable (' + (e.cause?.code || e.name) + ')'; worldStatus.r2Last = why; r2LastFor.set(name, why); worldSay('r2put', 'world: R2 ' + why + ' for a save') }
   return false
 }
 function r2Write(name, body) {
+  if (!r2Latest.has(name)) r2Since.set(name, Date.now())
   r2Latest.set(name, body); r2Waiting()                 // listed before the try: a stop that kills it mid-write loses nothing
   const p = (r2Chains.get(name) || Promise.resolve()).then(async () => {
     const newest = r2Latest.get(name)
     if (newest === undefined) return true                  // a write before this one took the newest already
-    const ok = await r2Put(name, newest)
-    if (ok && r2Latest.get(name) === newest) r2Latest.delete(name)
+    // bounded (fetch has its own 15 s too): a request that never comes back can't hold this name's writes
+    let settled = false
+    const ok = await Promise.race([r2Put(name, newest).then(v => { settled = true; return v }), sleep(R2_BOUND_MS).then(() => { if (!settled) r2LastFor.set(name, 'no answer in ' + R2_BOUND_MS / 1000 + ' s'); return false })])
+    if (!ok) r2Backoff = Math.min(60000, r2Backoff * 2)
+    if (ok && r2Latest.get(name) === newest) { r2Latest.delete(name); r2Since.delete(name); r2Told.delete(name) }
     return ok
   })
   r2Chains.set(name, p.catch(() => false))
@@ -224,7 +231,7 @@ function r2Write(name, body) {
 let r2WaitingSaid = ''
 function r2Waiting() {
   worldStatus.waiting = r2Latest.size
-  if (r2Latest.size && !r2Retry) r2Retry = setTimeout(r2RetryAll, 30000)
+  if (r2Latest.size && !r2Retry) r2Retry = setTimeout(r2RetryAll, r2Backoff)
   if (!R2_WAITING) return
   const list = JSON.stringify([...r2Latest.keys()].sort())
   if (list === r2WaitingSaid) return
@@ -234,11 +241,14 @@ function r2Waiting() {
 let r2Retry = null
 async function r2RetryAll() {
   r2Retry = null
+  // what R2 hasn't taken for over a minute: said with its name, its age and R2's last answer to it, once in 5 min
+  for (const [name, since] of r2Since) { const age = Date.now() - since
+    if (age > 60000 && Date.now() - (r2Told.get(name) || 0) > 300000) { r2Told.set(name, Date.now()); say('world: R2 hasn\'t taken ' + name + ' for ' + Math.round(age / 1000) + ' s (its last answer: ' + (r2LastFor.get(name) || 'none yet') + ')') } }
   await Promise.all([...r2Latest.keys()].map(name => r2Write(name, r2Latest.get(name))))
 }
 // after a restart: what R2 hadn't taken before it, from the files (the newest copies)
 if (R2 && R2_WAITING) try {
-  for (const name of JSON.parse(fs.readFileSync(R2_WAITING, 'utf8'))) if (typeof name === 'string' && WORLD_KEY.test(name)) try { r2Latest.set(name, fs.readFileSync(worldFile(name), 'utf8')) } catch (e) {}
+  for (const name of JSON.parse(fs.readFileSync(R2_WAITING, 'utf8'))) if (typeof name === 'string' && WORLD_KEY.test(name)) try { r2Latest.set(name, fs.readFileSync(worldFile(name), 'utf8')); r2Since.set(name, Date.now()) } catch (e) {}
   if (r2Latest.size) { say('world: ' + r2Latest.size + (r2Latest.size === 1 ? ' save' : ' saves') + ' R2 hadn\'t taken before the restart: trying again'); setTimeout(r2RetryAll, 1000) }
 } catch (e) {}
 // the page saves a kept thing: its file (written whole, then moved into place) and its R2 object; true when either took it
@@ -300,9 +310,15 @@ async function worldFlush() {
 }
 // a line a minute while things are kept or read: what this server did with the world since the last
 let worldLast = '', worldLineAt = 0
+// the saves R2 hasn't taken for more than R2_STUCK_MS (a PUT just sent isn't one), and the oldest of them
+function r2Stuck() {
+  let n = 0, oldest = null
+  for (const [name, since] of r2Since) if (Date.now() - since > R2_STUCK_MS) { n++; if (!oldest || since < oldest[1]) oldest = [name, since] }
+  return n + (oldest ? ' (the oldest ' + oldest[0] + ', for ' + Math.round((Date.now() - oldest[1]) / 1000) + ' s)' : '')
+}
 function worldTick() {
   if (!WORLD_DIR && !R2 || Date.now() - worldLineAt < 60000) return
-  const s = worldStatus, line = 'saved ' + s.saves + ', read ' + s.loads + ' (none there ' + s.absent + ', failed ' + s.failed + ')' + (R2 ? ', R2 waiting ' + s.waiting : '') + (WORLD_DIR && R2 ? ', files dropped ' + s.dropped : '')
+  const s = worldStatus, line = 'saved ' + s.saves + ', read ' + s.loads + ' (none there ' + s.absent + ', failed ' + s.failed + ')' + (R2 ? ', R2 waiting ' + r2Stuck() : '') + (WORLD_DIR && R2 ? ', files dropped ' + s.dropped : '')
   if (line === worldLast) return
   worldLast = line; worldLineAt = Date.now(); say('world: ' + line)
 }
