@@ -11425,9 +11425,11 @@ function leapCamTerms(me) {
 }
 // the drawn camera's leap terms: eased toward the sim's (a critically damped spring, w rad/s, in frame time), so the view
 // pulls out and back in over about 0.35 s rather than in one frame
-const LEAP_CAM = { w: 12 }, leapCam = { m: 0, mv: 0, l: 0, lv: 0, t: NaN }
+const LEAP_CAM = { w: 12, hold: 0.5 }, leapCam = { m: 0, mv: 0, l: 0, lv: 0, t: NaN }      // hold: the smash view waits while smashCam > hold
+// a heavy landing's dip depth: by his impact speed (0.06 m at the 8.9 m/s of a 1.8 m drop, 0.03..0.14 m)
+const landDepth = () => clamp(0.06 * Math.abs(selfChar()?.fallVy || 8.9) / 8.9, 0.03, 0.14)
 function leapCamEase(me, tf = frameT || now()) {
-  const [m, l] = leapCamTerms(me), C = leapCam, dt = C.t === C.t ? clamp((tf - C.t) / 1000, 0, 0.25) : -1
+  const [m, l0] = leapCamTerms(me), l = (me.smashCam || 0) > LEAP_CAM.hold ? 0 : l0, C = leapCam, dt = C.t === C.t ? clamp((tf - C.t) / 1000, 0, 0.25) : -1
   C.t = tf
   if (dt < 0) { C.m = m; C.l = l; C.mv = C.lv = 0; return C }
   const w = LEAP_CAM.w, k = Math.exp(-w * dt), ease = (x, v, to) => { const e = x - to, g = v + w * e; return [to + (e + g * dt) * k, (v - w * g * dt) * k] }
@@ -19240,7 +19242,7 @@ function rigAnimate(a, want, dt, t) {
   // landing from a charged jump or a dive: the two-arm smash over everything
   if (airborne && !R.wasAir) R.airAt = t
   if (R.wasAir && !airborne && t - (R.charged ?? -Infinity) < 4000 && want !== 'crouch') { R.charged = -Infinity; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true }
-    if (a === avatars.get(myId)) kick(clamp(0.06 * (t - (R.airAt ?? t)) / 405, 0.03, 0.14), a.mesh.position.x, a.mesh.position.y, a.mesh.position.z, 1e4, 220, now(), 'land') }    // his own smash landing: the heavy dip
+    if (a === avatars.get(myId)) kick(landDepth(), a.mesh.position.x, a.mesh.position.y, a.mesh.position.z, 1e4, 220, now(), 'land') }    // his own smash landing: the heavy dip
   // card #50: a hop or a fall of a quarter second or more lands heavily: the land clip's absorb over everything (lighter and
   // quicker if he lands moving), your camera thumps, and dust and a stomp at his feet. A kerb's step down is shorter
   else if (K.hopLand && R.wasAir && !airborne && t - (R.airAt ?? t) > 250 && want !== 'crouch' && a.dying < 0) {
@@ -19349,7 +19351,7 @@ function rigAnimate(a, want, dt, t) {
 function rigHopLand(a, R, air = 405) {     // air: ms off the ground
   if (!a.mesh.visible) return
   const mine = a === avatars.get(myId), p = a.mesh.position, floor = p.y - a.spec.h - a.spec.r
-  if (mine) kick(clamp(0.06 * air / 405, 0.03, 0.14), p.x, floor, p.z, 1e4, 220, now(), 'land')      // a thump: one dip, deeper the longer he fell
+  if (mine) kick(landDepth(), p.x, floor, p.z, 1e4, 220, now(), 'land')      // a thump: one dip, deeper the longer he fell
   if (R.lod < 2) for (const side of ['l', 'r']) { const b = R.bones.get('ball_' + side); if (b) { b.getWorldPosition(rigV); burst('dust', rigV.x, floor + 0.06, rigV.z, 0, 1.1, 0, 0xc9c0ae, 0.5) } }
   moveSound('stomp', mine ? { id: myId } : { x: p.x, y: floor, z: p.z }, 0.9)
 }
