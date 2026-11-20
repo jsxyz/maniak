@@ -21547,13 +21547,57 @@ AUTO_STEPS.drive = (R, a) => {
   } }
   return sub
 }
+// card #75, the named routines QA keeps asking for: await gameHooks.auto.run('sprint-film') or run('junction-watch', { ... }). Each
+// is steps (data) made from where the host stands now; the second argument is its options. Frames come back in the log's
+// `capture` entries. Starts are best effort: a routine that needs a place moves there with /tp or /near.
+const AUTO_AVE = v => Math.round(v / 96) * 96              // the avenues' lines (and junctions) are on 96 m multiples
+const AUTO_ROUTINES = {
+  // a straight run: from behind 3 sprint cycles' worth, then a strafing run for the side. o: { heading (compass, 0), x, z (tp there first), width }
+  'sprint-film': (o = {}) => [
+    ...o.x !== undefined && o.z !== undefined ? [{ cmd: '/tp ' + o.x + ' ' + o.z }, { wait: 800 }] : [],
+    { look: [o.heading ?? 0, 0] }, { wait: 400 },
+    { hold: { keys: ['w', 'sprint'], ms: 1200 } },
+    { hold: { keys: ['w', 'sprint'], ms: 2400 }, capture: { n: 48, every: 3, width: o.width ?? 480 } },
+    { hold: { keys: ['w'], ms: 400 } }, { wait: 800 },
+    { hold: { keys: ['d', 'sprint'], ms: 1200 } },
+    { hold: { keys: ['d', 'sprint'], ms: 2400 }, capture: { n: 48, every: 3, width: o.width ?? 480 } },
+  ],
+  // stand at the nearest junction's kerb, facing it, and watch: o: { seconds (15), frames (30), width }
+  'junction-watch': (o = {}, me) => {
+    const jx = AUTO_AVE(me.x), jz = AUTO_AVE(me.z), n = o.frames ?? 30, secs = o.seconds ?? 15
+    return [{ cmd: '/tp ' + (jx + 6) + ' ' + (jz + 6) }, { wait: 1000 }, { look: [315, 6] },
+      { capture: { n, every: Math.max(1, Math.round(secs * 60 / n)), width: o.width ?? 480 } }]
+  },
+  // the nearest door, its lobby, the stairs up a flight, then the lift and a ride: stills at each stop
+  'interior-tour': (o = {}) => {
+    const shot = { capture: { n: 3, every: 20, width: o.width ?? 480 } }
+    return [{ cmd: '/near door go' }, { wait: 1200 }, shot,
+      { go: { thing: 'door', radius: 1.2, pace: 'walk' } }, { hold: { keys: 'w', ms: 1800 } }, { wait: 800 }, shot,
+      { go: { thing: 'stairs', radius: 1.2, pace: 'walk' } }, { look: [0, 8] }, shot, { hold: { keys: 'w', ms: 3000 } }, { wait: 500 }, shot,
+      { cmd: '/near lift go' }, { wait: 1500 }, shot, { hold: { keys: 'e', ms: 250 } }, { wait: 1500 }, shot]
+  },
+  // a charged leap-smash where he stands, then to the avenue junction 1 km off and back: o: { km (1) }
+  'smash-return': (o = {}, me) => {
+    const km = (o.km ?? 1) * 1000, gx = AUTO_AVE(me.x + (me.x > 0 ? -km : km)), gz = AUTO_AVE(me.z)
+    return [{ look: [0, 0] }, { hold: { keys: ['jump', 'w', 'sprint'], ms: 1250 } }, { wait: 2500 }, { capture: { n: 6, every: 12, width: o.width ?? 480 } },
+      { go: { x: gx, z: gz, pace: 'sprint' } }, { capture: { n: 3, every: 20, width: o.width ?? 480 } },
+      { go: { x: AUTO_AVE(me.x), z: AUTO_AVE(me.z), pace: 'sprint' } }, { look: [0, 10] }, { capture: { n: 6, every: 12, width: o.width ?? 480 } }]
+  },
+  // /give a car, punch it, tear at a door (E held, then back), then drive it round a corner to the next junction
+  'car-tests': (o = {}, me) => [
+    { cmd: '/give car' }, { wait: 800 }, { hold: { keys: 'w', ms: 1500 } },
+    { hold: { keys: 'punch', ms: 200 } }, { wait: 500 }, { hold: { keys: 'punch', ms: 200 } }, { wait: 500 }, { capture: { n: 4, every: 15, width: o.width ?? 480 } },
+    { hold: { keys: 'e', ms: 1200 } }, { hold: { keys: 's', ms: 700 } }, { wait: 800 }, { capture: { n: 4, every: 15, width: o.width ?? 480 } },
+    { drive: { x: AUTO_AVE(me.x) + 96, z: AUTO_AVE(me.z) + 96 } }, { capture: { n: 4, every: 15, width: o.width ?? 480 } },
+  ],
+}
 const autoApi = {
-  routines: {},          // name -> steps (data); gameHooks.auto.run('name')
+  routines: AUTO_ROUTINES,          // name -> steps, or (options, me) -> steps; gameHooks.auto.run('name', options)
   steps: AUTO_STEPS,
   get running() { return !!autoRun },
   cancel(why = 'cancelled') { if (autoRun) autoEnd(autoRun, why); return true },
-  run(steps, opt = {}) {
-    if (typeof steps === 'string') { const r = autoApi.routines[steps]; hookCheck(Array.isArray(r), 'no routine ' + steps + ' (' + Object.keys(autoApi.routines).join(', ') + ')'); steps = r }
+  run(steps, opt = {}) {          // a name, or steps; opt is a routine's options (stall: ms with no frames before it gives up)
+    if (typeof steps === 'string') { const r = autoApi.routines[steps]; hookCheck(Array.isArray(r) || typeof r === 'function', 'no routine ' + steps + ' (' + Object.keys(autoApi.routines).join(', ') + ')'); steps = typeof r === 'function' ? r(opt, selfChar() || {}) : r }
     hookCheck(Array.isArray(steps) && steps.length <= 500, 'auto.run(steps): an array of at most 500 steps')
     if (!isHost || serving || !selfChar() || phase !== 'playing') return Promise.resolve({ ok: false, error: 'host only, in the game, with a character', log: [] })
     if (autoRun) autoEnd(autoRun, 'replaced by a new run')
