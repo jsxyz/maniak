@@ -8061,6 +8061,9 @@ const GAME = { faustland: FAUSTLAND_API, interiors: FAUSTLAND_API.interiors }
 // Work runs after paint, shares one 4 ms budget, and never holds scene state over a yield.
 const background = (() => {
   const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [], lateCount: 0 }
+  // frame by frame: what ran before each frame and what its draw linked (the last 900 frames)
+  const frameLog = []
+  let open = { steps: [], programs: [] }, lastFrameT = 0
   let scheduled = false, order = 0, current = null
   // a check that throws ends its own job (reported once), never the pump
   const alive = j => { try { return !j.valid || !!j.valid() } catch (e) { if (typeof frameFailed === 'function') frameFailed('background ' + j.key, e); return false } }
@@ -8100,7 +8103,7 @@ const background = (() => {
         if (!j.waiting && !deferred.has(j) && !(j.gpu && (graphics.state === 'lost' || renderer?.getContext().isContextLost()))) { next = j; break }
       }
       if (!next) break
-      const j = next, t = performance.now(); current = j; j.n = (j.n || 0) + 1
+      const j = next, t = performance.now(), progs0 = renderer?.info.programs?.length || 0; current = j; j.n = (j.n || 0) + 1
       try {
         j.gen ||= typeof j.steps === 'function' ? j.steps() : j.steps
         const r = j.error ? j.gen.throw(j.error) : j.gen.next(j.value)
@@ -8111,7 +8114,8 @@ const background = (() => {
           Promise.resolve(r.value).then(v => { j.value = v; j.waiting = false; schedule() }, e => { j.error = e; j.waiting = false; schedule() })
         } else if (r.value === 'frame' || r.value === 'wait') deferred.add(j)
       } catch (e) { finish(j, false, e) }
-      const stepMs = performance.now() - t; current = null
+      const stepMs = performance.now() - t, linked = (renderer?.info.programs?.length || 0) - progs0; current = null
+      if ((stepMs >= 1 || linked > 0) && open.steps.length < 40) open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + (linked > 0 ? ' +' + linked + 'p' : ''))
       if (stepMs >= 50) { stats.long.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs)); if (stats.long.length > 12) stats.long.shift() }
       stats.last = j.key; stats.maxStepMs = Math.max(stats.maxStepMs, stepMs); stats.steps++; steps++
       if (navigator.scheduling?.isInputPending?.()) break
@@ -8133,6 +8137,14 @@ const background = (() => {
     // inside a step: name what the running job does now (F3's bg row shows a long step as key/phase)
     mark(text) { if (current) current.phase = text },
     wake: schedule,
+    noteProgram(name) { if (open.programs.length < 40) open.programs.push(name) },
+    frameEnd(i, draw, phase) {
+      const t = performance.now()
+      frameLog.push({ i, t: Math.round(t), ms: lastFrameT ? Math.round(t - lastFrameT) : 0, draw: Math.round(draw), phase, steps: open.steps, programs: open.programs })
+      if (frameLog.length > 900) frameLog.shift()
+      open = { steps: [], programs: [] }; lastFrameT = t
+    },
+    frames(n = 300) { return frameLog.slice(-n) },
   }
 })()
 GAME.background = background
@@ -16613,6 +16625,7 @@ function buildWorld() {
       const programsBefore = renderer.info.programs.length
       lookRender(render, s, cam)
       if (capJobs.length && s === scene) try { capAfterDraw() } catch (e) { for (const j of [...capJobs]) j.done('capture failed: ' + (e?.message || e)) }       // card #75: the canvas is only valid in this task
+      if (renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) background.noteProgram(p.name || String(p.cacheKey).split(',')[0] || '?')
       if (phase === 'playing' && renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) {
         const k = String(p.cacheKey).split(','), hook = k[k.length - 1]
         background.stats.lateCount++
@@ -21919,10 +21932,11 @@ function drawDebug(me, fps) {
         (startLog.warmProgs != null ? ' (in play +' + v(background.stats.lateCount) + ')' : '')) : '') +
     (rescues.n ? row('rescue', v(rescues.n) + '  last ' + esc(rescues.last.who + ' at ' + [rescues.last.x, rescues.last.y, rescues.last.z].map(Math.round).join(' ') +
         ' vy ' + Math.round(rescues.last.vy) + (rescues.last.cell ? '  cell ' + rescues.last.cell : '') + ' (' + rescues.last.cause + ')')) : '') +
-    row('bg', 'max step ' + v(Math.round(background.stats.maxStepMs)) + ' ms  jobs ' + v(background.pending.length) +
+    row('bg', 'jobs ' + v(background.pending.length) +
         (background.pending.length ? ' (' + esc(background.jobs.slice(0, 8).join(' ')) + (background.pending.length > 8 ? ' …' : '') + ')' : '') +
         (compileSignal.cuts ? '  compile waits cut ' + v(compileSignal.cuts) + (compileSignal.broken ? ' (no ready signal)' : '') : '') +
-        (background.stats.long.length ? '  long ' + esc(background.stats.long.join(', ')) : '') + (background.stats.late.length ? '  late programs ' + esc(background.stats.late.join(', ')) : '')) +
+        (background.stats.long.length ? '  long ' + esc(background.stats.long.join(', ')) : '') + (background.stats.late.length ? '  late programs ' + esc(background.stats.late.join(', ')) : '') +
+        ((s => s.length ? '  slow frames ' + esc(s.map(f => '#' + f.i + ' @' + f.t + ' ' + f.ms + 'ms draw ' + f.draw + (f.steps.length ? ' [' + f.steps.slice(0, 4).join(', ') + (f.steps.length > 4 ? ' …' : '') + ']' : '') + (f.programs.length ? ' +' + f.programs.length + 'p' : '')).join('; ')) : '')(background.frames(900).filter(f => f.ms >= 50).slice(-6)))) +
     row('js', (jit.off ? '<span class="w">optimizer off</span>' : jit.off === null ? 'checking' : 'optimizer on') + (jit.cold > 0 && jit.best > 0 ? '  x' + f(jit.cold / jit.best, 1, 1) : '')) +
     (isHost ? '' : row('predict', 'pending ' + v(p(pending.length, 2)) +
         '  replayed ' + v(p(replaySteps, 2)) + '  err ' +
@@ -24170,7 +24184,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   // a stream every viewer plays on the level's screens: an https URL, or null to stop
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
-  background: () => ({ jobs: GAME.background.jobs, steps: GAME.background.stats.steps, maxStepMs: Math.round(GAME.background.stats.maxStepMs), long: [...GAME.background.stats.long],
+  // frames: the last n frames, each {i, t, ms, draw, phase, steps, programs} (frame by frame; no aggregate)
+  background: (n = 300) => ({ frames: GAME.background.frames(n), jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
     phase, startingGame, worldPreparing, guestLoading: !!guestLoading, look: activeLook, wanted: settings.look }),
   room() {
     const all = [...players.values()]
@@ -30866,14 +30881,19 @@ const testTools = (() => {
           if (Math.max(Math.abs(i - i0), Math.abs(j - j0)) !== r || faustRingBand(F.seed, F.S, i, j) !== band) continue
           for (const b of faustRingPlan(F, plan, i, j).buildings) if (b.kind === kind && (!two || b.storeys > 1)) {
             const [nx, nz] = b.door.face
-            out.push({ x: b.door.x, z: b.door.z, y0: 0, what: kind + (two ? ', two storeys' : '') + ' (' + b.id + ')', spot: { x: b.door.x + nx * 3, z: b.door.z + nz * 3, face: [-nx, -nz] } })
+            out.push({ x: b.door.x, z: b.door.z, y0: 0, id: b.id, what: kind + (two ? ', two storeys' : '') + ' (' + b.id + ')', spot: { x: b.door.x + nx * 3, z: b.door.z + nz * 3, face: [-nx, -nz] } })
           }
         }
         if (out.length) return out
       }
       return []
     }
-    NEAR.house = c => ringNear(c, 'house'); NEAR.house2 = c => ringNear(c, 'house', true); NEAR.shack = c => ringNear(c, 'shack') }
+    NEAR.house = c => ringNear(c, 'house'); NEAR.house2 = c => ringNear(c, 'house', true); NEAR.shack = c => ringNear(c, 'shack')
+    // the two-storey houses' stairs: the spot is outside the door; the doorway to the stair is just inside it, at the front of the hall
+    const cityStairs = NEAR.stairs
+    NEAR.stairs = c => [...cityStairs(c), ...ringNear(c, 'house', true).map(t => ({ ...t, what: 'stairs', resolve(q) {
+      const b = FAUSTLAND_API.ring.building(q.id), S = faustRingInterior(b).stairs, right = b.door.face[1] * ((S.x0 + S.x1) / 2 - b.door.x) > 0
+      q.what = 'stairs of a two-storey house (' + b.id + '): in at the door, the doorway on your ' + (right ? 'right' : 'left') + ' within 2 m of it, the stair beyond' } }))] }
   // card #18: a road's points as /near things (every 5th, 100 m apart; a ramp's middle only)
   const roadSpots = (ok, at = null, middle = false) => {
     const plan = faustState && faustRoadsReady(faustState), out = []
@@ -34268,7 +34288,9 @@ class Arena extends ENABLE3D.Scene3D {
 
   postRender() {
     pageLife.frames++
-    if (drawT0) { msDraw = msDraw * 0.9 + (now() - drawT0) * 0.1; drawT0 = 0 }
+    const drawMs = drawT0 ? now() - drawT0 : 0
+    try { background.frameEnd(pageLife.frames, drawMs, phase + (startingGame ? ' start' : '')) } catch (e) {}
+    if (drawT0) { msDraw = msDraw * 0.9 + drawMs * 0.1; drawT0 = 0 }
     if (blackbox.on) try { blackbox.frame() } catch (e) { blackbox.on = false; console.warn('blackbox', e) }
     if (stats) stats.end()
   }
