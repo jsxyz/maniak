@@ -9324,6 +9324,21 @@ function trafficExitBlocked(o, e) {
     return Math.abs(dx*e.dx+dz*e.dz)<length+o.V.l/2+2 && Math.abs(dx*-e.dz+dz*e.dx)<width+o.V.w/2+0.6
   })
 }
+// card #67: people crossing the exit arm's crosswalk (4-24 m out of the junction) within a lane's width of the car's exit lane,
+// now or in 2.5 s; a car turning (or going straight) on to that arm waits at the stop line, not in the junction. Riders: yield rules.
+function trafficWalkersBlock(e, n) {
+  const J = e.to, list = GAME.streetLife?.obstacles?.(J.x + n.dx * 15, J.z + n.dz * 15, 18)
+  if (!list?.length) return false
+  const bx = J.x + n.ox, bz = J.z + n.oz
+  for (const p of list) {
+    if (p.kind === 'cyclist') continue
+    for (const s of [0, 1.2, 2.5]) {
+      const x = p.x + (p.vx || 0) * s - bx, z = p.z + (p.vz || 0) * s - bz, al = x * n.dx + z * n.dz, lat = x * -n.dz + z * n.dx
+      if (al > 4 && al < 24 && Math.abs(lat) < 4.2 + (p.radius || 0.5)) return true
+    }
+  }
+  return false
+}
 // A car already waiting at an eligible entry gets the next reservation before a new arrival.
 // A red signal, blocked exit or cyclist gap keeps it out of this choice, so it cannot hold up another open approach.
 function trafficOlderWaiting(o, e) {
@@ -9332,7 +9347,7 @@ function trafficOlderWaiting(o, e) {
     if (p === o || !p.V || !a || a.urgent || a.path || a.lock || !a.next || a.edge.to !== e.to || a.wait < o.traffic.wait + 0.2) continue
     const n = a.edge, left = n.length - ((p.x - n.from.x) * n.dx + (p.z - n.from.z) * n.dz)
     if (left > trafficStop(n) + p.V.l / 2 + 2 || trafficSignalled(n.to) && trafficSignal(n.to.x, n.to.z, n.dx ? 'x' : 'z') !== 'green') continue
-    if (!trafficExitBlocked(p, a.next) && !trafficYieldBlocked(p, n, a.next)) return true
+    if (!trafficExitBlocked(p, a.next) && !trafficYieldBlocked(p, n, a.next) && !trafficWalkersBlock(n, a.next)) return true
   }
   return false
 }
@@ -9362,7 +9377,7 @@ function trafficThink(o, dt, people) {
     const junction = e.to, key = junction.key
     const owner = trafficState.locks.get(key), green = !trafficSignalled(junction) || trafficSignal(junction.x, junction.z, e.dx ? 'x' : 'z') === 'green'
     const stopLine = trafficStop(e)
-    const crossing = trafficJunction(junction), blockedExit = !a.urgent && crossing && a.next && (trafficExitBlocked(o, a.next) || trafficYieldBlocked(o, e, a.next)
+    const crossing = trafficJunction(junction), blockedExit = !a.urgent && crossing && a.next && (trafficExitBlocked(o, a.next) || trafficYieldBlocked(o, e, a.next) || trafficWalkersBlock(e, a.next)
       || green && owner === undefined && !a.lock && trafficOlderWaiting(o, e))
     if ((!a.next && !a.goal) || (!a.urgent && crossing && !a.lock && (!green || owner !== undefined && owner !== o.id || blockedExit))) stop = Math.min(stop, Math.max(0, left - stopLine - o.V.l / 2))
     else if (!a.urgent && crossing && a.next && left < stopLine + o.V.l / 2 + 2 && !a.lock) { trafficState.locks.set(key, o.id); a.lock = key }
@@ -9383,7 +9398,23 @@ function trafficThink(o, dt, people) {
     const f = rotq(p.q, [0, 0, -1]), along = Math.abs(f[0] * fw[0] + f[2] * fw[2]), across = Math.abs(f[0] * -fw[2] + f[2] * fw[0])
     obstacle(p.x, p.y, p.z, across * p.V.l / 2 + along * p.V.w / 2, along * p.V.l / 2 + across * p.V.w / 2)
   }
-  for (const c of GAME.streetLife?.obstacles?.(o.x + fw[0] * 15, o.z + fw[2] * 15, 25) || []) obstacle(c.x, c.y || 1, c.z, c.radius || 0.6)
+  // card #67: street people also where they will be in 0.8 and 1.6 s (a crosser steps into the lane), and along a turn's path
+  const pathGap = (x, z, r) => {
+    let px = o.x, pz = o.z, s = 0
+    for (let i = a.index; i < a.path.length; i++) {
+      const q = a.path[i], sx = q.x - px, sz = q.z - pz, L2 = sx * sx + sz * sz, L = Math.sqrt(L2)
+      const u = L2 > 1e-6 ? clamp(((x - px) * sx + (z - pz) * sz) / L2, 0, 1) : 0
+      if (Math.hypot(px + sx * u - x, pz + sz * u - z) < o.V.w / 2 + r + 0.5) { stop = Math.min(stop, Math.max(0, s + L * u - o.V.l / 2 - r - 2)); return }
+      s += L; px = q.x; pz = q.z
+      if (s > 38) return
+    }
+  }
+  for (const c of GAME.streetLife?.obstacles?.(o.x + fw[0] * 15, o.z + fw[2] * 15, 25) || []) {
+    const r = c.radius || 0.6, y = c.y || 1
+    obstacle(c.x, y, c.z, r)
+    if (c.kind !== 'cyclist' && Math.hypot(c.vx || 0, c.vz || 0) > 0.3) for (const s of [0.8, 1.6]) obstacle(c.x + c.vx * s, y, c.z + c.vz * s, r)
+    if (a.path) pathGap(c.x, c.z, r)
+  }
   // Static obstacles and thrown props use real collision rays. A swerve stays within the avenue's motor lane.
   const reach = 5 + speed * speed / 10, y = o.y + 0.2
   const rays = [-0.7, 0, 0.7].map(s => castRay(o.x - fw[2] * s + fw[0] * (o.V.l / 2 + 0.3), y,
@@ -23900,8 +23931,8 @@ function slHostTick() {
   for (const o of objs) {
     if (!o.V || !o.body) continue
     const v = o.body.getLinearVelocity(), vx = v.x(), vz = v.z(), sp = Math.hypot(vx, vz)
-    if (sp < 1.5 || !who.some(c => Math.abs(c.x - o.x) < 120 && Math.abs(c.z - o.z) < 120)) continue
-    slFlocksNear(o.x, o.z, STREET.carR, f => slScatter(f, o.x, o.z, T))
+    if (sp < 0.3 || !who.some(c => Math.abs(c.x - o.x) < 120 && Math.abs(c.z - o.z) < 120)) continue
+    if (sp >= 1.5) slFlocksNear(o.x, o.z, STREET.carR, f => slScatter(f, o.x, o.z, T))
     const fx = vx / sp, fz = vz / sp, hl = (o.V.l || 4.8) / 2 + 0.3, hw = (o.V.w || 1.9) / 2 + 0.3
     slAround(o.x, o.z, hl + 2, T, (ag, p) => {
       if (p.down || ag.kind === SL_K.exit && p.rec?.t > T - 500) return
@@ -23913,6 +23944,7 @@ function slHostTick() {
       }
       if (!hit) return
       const side = ac >= 0 ? 1 : -1
+      if (sp < 1.5) return slDodge(ag, p, fx + -fz * side * 0.6, fz + fx * side * 0.6, T)          // card #67: creeping contact, step clear
       slKnock(ag, p, fx + -fz * side * 0.6, fz + fx * side * 0.6, sp * 0.45, players.get(o.riders?.[0]), T)
     })
   }
