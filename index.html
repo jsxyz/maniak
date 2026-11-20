@@ -8525,7 +8525,7 @@ function buildScenery(boxes, unit = ARENA / 72) {
 // ---------------------------------------------------------------- comic ink
 // LOOKS entries may provide render(rawRender, scene, camera), scale(quality), setup and teardown.
 // A look owns its temporary render state and releases targets in teardown. Plain uses faustRender unchanged.
-const inkUniforms = { inkEnabled: { value: false }, inkExtent: { value: 960 } }
+const inkUniforms = { inkScreenLines: { value: false }, inkWriteNormals: { value: false }, inkEnabled: { value: false }, inkExtent: { value: 960 } }
 const inkPatched = new WeakSet()
 let activeLook = null, inkPost = null
 const lookStats = { look: 'plain', passes: 0, calls: 0, triangles: 0, targetBytes: 0 }
@@ -8545,12 +8545,24 @@ function lookRender(render, s, cam) {
   const draw = LOOKS[activeLook]?.render || faustRender
   draw(render, s, cam)
   Object.assign(lookStats, { look: activeLook, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
-    passes: activeLook === 'ink' && inkPost ? inkPost.outlines ? 2 : 1 : 0, targetBytes: activeLook === 'ink' && inkPost ? inkPost.target.width * inkPost.target.height * (inkPost.outlines ? 12 : 8) : 0 })
+    passes: activeLook === 'ink' && inkPost ? inkPost.outlines ? inkPost.field ? 3 : 2 : 1 : 0, targetBytes: activeLook === 'ink' && inkPost ? inkPost.target.width * inkPost.target.height * (inkPost.outlines ? inkPost.field ? 20 : inkPost.separateNormals ? 12 : 16 : 8) + (inkPost.separateNormals ? inkPost.normalTarget.width * inkPost.normalTarget.height * 8 : 0) : 0 })
 }
 function inkPrepare(root) {
   root?.traverse(o => {
     for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
-      if (!m || inkPatched.has(m) || !(m.isMeshStandardMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial || m.isMeshBasicMaterial || m.isSpriteMaterial)) continue
+      if (!m || inkPatched.has(m)) continue
+      if (!(m.isMeshStandardMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial || m.isMeshBasicMaterial || m.isSpriteMaterial)) {
+        // Points and custom effects keep their original colour. Transparent effects leave
+        // the MRT normal attachment alone instead of outlining particles or glow textures.
+        inkPatched.add(m)
+        const previous = m.onBeforeCompile, cache = m.customProgramCacheKey()
+        m.onBeforeCompile = function(shader, r) {
+          previous.call(this, shader, r)
+          shader.fragmentShader = 'layout(location = 1) out highp vec4 inkNormalOutput;\n' + shader.fragmentShader.replace(/void\s+main\s*\(\s*\)\s*\{/, 'void main() { inkNormalOutput = vec4(0.0);')
+        }
+        m.customProgramCacheKey = () => cache + '|ink-output-1'; m.needsUpdate = true
+        continue
+      }
       inkPatched.add(m)
       const before = m.onBeforeCompile, key = m.customProgramCacheKey(), lit = !m.isMeshBasicMaterial && !m.isSpriteMaterial
       const facade = m === faustState?.materials?.facade || m === faustState?.materials?.far
@@ -8575,7 +8587,8 @@ function inkPrepare(root) {
  #endif`)
         // Sprite shaders form mvPosition themselves.
         if (m.isSpriteMaterial) shader.vertexShader = shader.vertexShader.replace('gl_Position = projectionMatrix * mvPosition;', 'inkViewPosition = mvPosition.xyz; inkPoint = position; inkWorldPoint = (modelMatrix * vec4(position, 1.0)).xyz;\n gl_Position = projectionMatrix * mvPosition;')
-        shader.fragmentShader = `uniform bool inkEnabled;
+        shader.fragmentShader = `layout(location = 1) out highp vec4 inkNormalOutput;
+          uniform bool inkScreenLines, inkWriteNormals; uniform bool inkEnabled;
           uniform float inkExtent;
           varying vec3 inkViewPosition, inkPoint, inkWorldPoint;
           float inkLuma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -8593,7 +8606,7 @@ function inkPrepare(root) {
           vec3 eye = normalize(-inkViewPosition);
           float facing = abs(dot(normal, eye));
           float rim = (1.0 - smoothstep(0.13, 0.25, facing)) * smoothstep(0.0002, 0.004, length(fwidth(normal)));
-          // Black cloth keeps a narrow white edge; pale surfaces get a black silhouette.
+          // Black cloth keeps its white highlight; the display-resolution pass draws silhouettes.
           float keyLight = dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)));
           if (${paper || sky ? 'false' : 'true'} && base < 0.035) tone = keyLight > 0.55 && facing > 0.18 && facing < 0.27 ? 0.95 : 0.003;
           // Stable surface coordinates. Skins use their bind pose so marks bend with the rig;
@@ -8614,7 +8627,7 @@ function inkPrepare(root) {
           tone = mix(tone, 0.004, strokes * middle * (1.0 - paving));
           if (paving > 0.5) tone = min(tone, base < 0.06 ? 0.30 : base < 0.20 ? 0.52 : 0.90);
 
-          tone = mix(tone, 0.006, rim);
+          if (!inkScreenLines) tone = mix(tone, 0.006, rim);
           ${sky && !globe ? `
           // The stone face stays below the white eye band. A dark rim around its emissive map
           // makes the eyes readable even where the moon lights the forehead and cheeks.
@@ -8663,58 +8676,129 @@ function inkPrepare(root) {
               }
             #endif`)
           .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n if (inkEnabled) totalEmissiveRadiance *= 1.0 - inkGridFade;')
-        shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `if (inkEnabled) { ${shade} }\n#include <opaque_fragment>`)
+        const normalOutput = m.depthWrite && !m.isSpriteMaterial
+          ? `inkNormalOutput = inkWriteNormals ? vec4(${lit ? 'inkSurfaceNormal' : 'normalize(cross(dFdx(inkViewPosition), dFdy(inkViewPosition)))'} * 0.5 + 0.5, 1.0) : vec4(0.0);`
+          : `inkNormalOutput = vec4(${m.blending === THREE.MultiplyBlending ? '1.0' : '0.0'});`
+        shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `${normalOutput}\nif (inkEnabled) { ${shade} }\n#include <opaque_fragment>`)
         if (!sky) shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', `#include <fog_fragment>
           if (inkEnabled) {
             float edgeFade = smoothstep(inkExtent - 288.0, inkExtent - 96.0, max(abs(inkWorldPoint.x), abs(inkWorldPoint.z)));
             gl_FragColor.rgb *= 1.0 - edgeFade;
           }`)
       }
-      m.customProgramCacheKey = () => key + '|ink-4|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight)
+      m.customProgramCacheKey = () => key + '|ink-5|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight)
       m.needsUpdate = true
     }
   })
 }
-function inkDispose() {
+let inkCanvas = null
+function inkDisplaySize(css) {
+  const ratio = devicePixelRatio || 1
+  if (!inkCanvas) {
+    const state = inkCanvas = { pixels: null, css: null, ratio: 0, observer: null, imageRendering: renderer.domElement.style.imageRendering }
+    if (typeof ResizeObserver !== 'undefined') {
+      state.observer = new ResizeObserver(entries => {
+        const entry = entries[0], box = entry?.devicePixelContentBoxSize?.[0]
+        // A few emulated displays report CSS pixels here; reject those instead of shrinking the pen buffer.
+        if (box && box.inlineSize > 0 && box.blockSize > 0 &&
+            Math.abs(box.inlineSize - entry.contentRect.width * (devicePixelRatio || 1)) <= 1.01 &&
+            Math.abs(box.blockSize - entry.contentRect.height * (devicePixelRatio || 1)) <= 1.01) {
+          state.pixels = new THREE.Vector2(box.inlineSize, box.blockSize)
+          state.css = renderer.getSize(new THREE.Vector2()); state.ratio = devicePixelRatio || 1
+        }
+      })
+      try { state.observer.observe(renderer.domElement, { box: 'device-pixel-content-box' }) }
+      catch (_) { state.observer.disconnect(); state.observer = null }
+    }
+  }
+  const exact = inkCanvas.pixels && inkCanvas.css.equals(css) && inkCanvas.ratio === ratio
+  // The observer supplies the compositor's snapped pixel box. Nearest filtering is only
+  // the fallback while the first measurement is pending or the browser lacks that box.
+  renderer.domElement.style.imageRendering = exact ? inkCanvas.imageRendering : 'pixelated'
+  return exact ? inkCanvas.pixels.clone() : css.clone().multiplyScalar(ratio).round()
+}
+function inkDispose(keepDisplay = false) {
+  if (!keepDisplay && inkCanvas) {
+    inkCanvas.observer?.disconnect(); renderer.domElement.style.imageRendering = inkCanvas.imageRendering; inkCanvas = null
+  }
   if (!inkPost) return
-  inkPost.target.dispose(); inkPost.aaTarget.dispose(); inkPost.mesh.geometry.dispose()
+  inkPost.target.dispose(); inkPost.aaTarget.dispose(); inkPost.separateNormals && inkPost.normalTarget.dispose()
+  inkPost.normalMaterial?.dispose(); inkPost.lineTarget?.dispose(); inkPost.composeMesh?.material.dispose(); inkPost.mesh.geometry.dispose()
   inkPost.mesh.material.dispose(); inkPost.aaMesh.material.dispose()
+  // The display canvas belongs to the renderer again when this look releases it.
+  const size = renderer.getSize(new THREE.Vector2())
+  renderer.setSize(size.x, size.y, false)
   inkPost = null
 }
-function inkTarget(width, height, outlines) {
-  if (inkPost && inkPost.outlines !== outlines) inkDispose()
+function inkTarget(width, height, outlines, displayWidth = width, displayHeight = height, separateNormals = false, field = false) {
+  if (inkPost && (inkPost.outlines !== outlines || inkPost.separateNormals !== separateNormals || inkPost.field !== field)) inkDispose(outlines)
   if (!inkPost) {
-    const target = new THREE.WebGLRenderTarget(width, height, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true })
+    const target = new THREE.WebGLRenderTarget(width, height, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true, count: outlines && !separateNormals ? 2 : 1 })
     target.texture.colorSpace = THREE.SRGBColorSpace
-    target.depthTexture = new THREE.DepthTexture(width, height, THREE.UnsignedIntType)
+    if (outlines && !separateNormals) {
+      target.depthTexture = new THREE.DepthTexture(width, height, THREE.UnsignedIntType)
+      target.textures[1].minFilter = target.textures[1].magFilter = THREE.NearestFilter
+    }
+    const aaTarget = new THREE.WebGLRenderTarget(width, height, { depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter })
+    aaTarget.texture.colorSpace = THREE.SRGBColorSpace
+    // Medium writes normals beside the shaded colour in the SAME geometry draw (MRT).
+    // High only needs another geometry draw when its shading is below display resolution.
+    const normalTarget = separateNormals ? new THREE.WebGLRenderTarget(displayWidth, displayHeight, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true }) : outlines ? target : null
+    if (separateNormals) normalTarget.depthTexture = new THREE.DepthTexture(displayWidth, displayHeight, THREE.UnsignedIntType)
+    const normalMaterial = separateNormals ? new THREE.MeshNormalMaterial({ toneMapped: false }) : null
     const material = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, toneMapped: false,
-      uniforms: { colour: { value: target.texture }, depth: { value: target.depthTexture }, texel: { value: new THREE.Vector2() }, nearFar: { value: new THREE.Vector2() }, penScale: { value: 1 } },
+      uniforms: { fieldOnly: { value: field }, colour: { value: aaTarget.texture }, normals: { value: separateNormals ? normalTarget.texture : target.textures[1] }, depth: { value: normalTarget?.depthTexture },
+        texel: { value: new THREE.Vector2() }, nearFar: { value: new THREE.Vector2() }, projection: { value: new THREE.Vector2() }, geometryTexel: { value: new THREE.Vector2() }, up: { value: new THREE.Vector3() } },
       vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
-      fragmentShader: `uniform sampler2D colour, depth;
-        uniform vec2 texel, nearFar; uniform float penScale; varying vec2 vUv;
+      fragmentShader: `uniform sampler2D colour, normals, depth; uniform bool fieldOnly;
+        uniform vec2 texel, geometryTexel, nearFar, projection; uniform vec3 up; varying vec2 vUv;
         float distanceAt(vec2 p) { float d = texture2D(depth, p).x; return nearFar.x * nearFar.y / (nearFar.y - d * (nearFar.y - nearFar.x)); }
-        float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+        vec3 pointAt(vec2 p, float z) { p = (floor(p / geometryTexel) + 0.5) * geometryTexel; return vec3((p * 2.0 - 1.0) * projection * z, -z); }
+        float boundary(vec2 offset, vec4 centre, float z, bool forward) {
+          vec2 p = vUv + offset * texel;
+          vec4 adjacent = texture2D(normals, p);
+          float nextZ = distanceAt(p), occupied = centre.a * adjacent.a;
+          vec3 n = centre.rgb * 2.0 - 1.0, nextN = adjacent.rgb * 2.0 - 1.0;
+          // Reject the depth slope of a continuous plane. Only a separation from both
+          // tangent planes counts as a depth break; smooth curved surfaces keep their bands.
+          vec3 delta = pointAt(p, nextZ) - pointAt(vUv, z);
+          float separation = min(abs(dot(delta, n)), abs(dot(delta, nextN))) / max(min(z, nextZ), 1.0);
+          float silhouette = max(step(0.5, abs(centre.a - adjacent.a)),
+            occupied * step(0.015, abs(nextZ - z) / max(min(z, nextZ), 1.0)) * step(0.004, separation));
+          // Far silhouettes own only their foreground pixel. Within 24 m they may also
+          // own the adjacent background pixel: 1–2 physical display pixels, never a wider stencil.
+          float front = centre.a > adjacent.a || (centre.a == adjacent.a && z < nextZ) ? 1.0 : 0.0;
+          float nearEdge = (centre.a > 0.5 && z < 24.0) || (adjacent.a > 0.5 && nextZ < 24.0) ? 1.0 : 0.0;
+          float crease = occupied * (1.0 - silhouette) * step(0.30, 1.0 - dot(n, nextN));
+          // Tiny raised paint/paving sides must not become distant black stipple. Compare
+          // their height above an adjoining upward-facing surface, in metres. The floor
+          // grows from 1.5 cm nearby to 10 cm at 25 m; a 15 cm kerb still inks close up.
+          float ground = occupied * step(0.95, max(dot(n, up), dot(nextN, up)));
+          float stepHeight = abs(dot(delta, up));
+          float minimumStep = mix(0.015, 0.10, smoothstep(3.0, 25.0, min(z, nextZ)));
+          float detail = ground > 0.5 && stepHeight < minimumStep ? 0.0 : 1.0;
+          // 1: one pixel on this side; 2: on the other side; 3: both sides.
+          // Recording ownership lets a scaled geometry cell retain a physical-pixel pen.
+          if (detail < 0.5) return 0.0;
+          if (silhouette > 0.5) return nearEdge > 0.5 ? 3.0 : front > 0.5 ? 1.0 : 2.0;
+          return crease > 0.5 ? forward ? 1.0 : 2.0 : 0.0;
+        }
         void main() {
-          vec3 c = texture2D(colour, vUv).rgb;
-          float z = distanceAt(vUv), weight = mix(0.7, 2.5, exp(-z / 160.0));
-          vec2 dx = vec2(texel.x, 0.0) * weight * penScale, dy = vec2(0.0, texel.y) * weight * penScale;
-          float l = distanceAt(vUv - dx), r = distanceAt(vUv + dx), u = distanceAt(vUv + dy), d = distanceAt(vUv - dy);
-          float bend = max(abs(l + r - 2.0 * z), abs(u + d - 2.0 * z)) / max(z, 1.0);
-          float edge = smoothstep(0.008, 0.04, bend);
-          // Colour edges also reach the sky, whose depth is cleared before the city draw.
-          float contrast = max(abs(lum(texture2D(colour, vUv + dx).rgb) - lum(texture2D(colour, vUv - dx).rgb)),
-                               abs(lum(texture2D(colour, vUv + dy).rgb) - lum(texture2D(colour, vUv - dy).rgb)));
-          edge = max(edge, smoothstep(0.48, 0.85, contrast) * 0.65);
-          gl_FragColor = vec4(mix(c, vec3(0.004), edge * 0.96), 1.0);
+          vec4 n = texture2D(normals, vUv); float z = distanceAt(vUv);
+          vec4 sides = vec4(boundary(vec2(1.0, 0.0), n, z, true), boundary(vec2(0.0, 1.0), n, z, true),
+                            boundary(vec2(-1.0, 0.0), n, z, false), boundary(vec2(0.0, -1.0), n, z, false));
+          if (fieldOnly) { gl_FragColor = sides / 3.0; return; }
+          vec4 inside = abs(sides - vec4(2.0));
+          float edge = max(max(inside.x == 1.0 ? 1.0 : 0.0, inside.y == 1.0 ? 1.0 : 0.0),
+                           max(inside.z == 1.0 ? 1.0 : 0.0, inside.w == 1.0 ? 1.0 : 0.0));
+          gl_FragColor = vec4(mix(texture2D(colour, vUv).rgb, vec3(0.004), edge), 1.0);
           #include <colorspace_fragment>
         }` })
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material), postScene = new THREE.Scene()
     mesh.frustumCulled = false; postScene.add(mesh)
-    const aaTarget = new THREE.WebGLRenderTarget(width, height, { depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter })
-    aaTarget.texture.colorSpace = THREE.SRGBColorSpace
-    // FXAA follows the outline composite, so it reaches both the new lines and cloud/window edges.
+    // FXAA touches the shaded image only. Lines are composited afterwards at display resolution.
     const aaMaterial = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, toneMapped: false,
-      uniforms: { colour: { value: outlines ? aaTarget.texture : target.texture }, texel: { value: new THREE.Vector2() } },
+      uniforms: { colour: { value: target.texture }, texel: { value: new THREE.Vector2() } },
       vertexShader: material.vertexShader,
       fragmentShader: `uniform sampler2D colour; uniform vec2 texel; varying vec2 vUv;
         float luma(vec3 c) { return dot(sqrt(max(c, vec3(0.0))), vec3(0.299, 0.587, 0.114)); }
@@ -8739,39 +8823,126 @@ function inkTarget(width, height, outlines) {
         }` })
     const aaMesh = new THREE.Mesh(mesh.geometry, aaMaterial), aaScene = new THREE.Scene()
     aaMesh.frustumCulled = false; aaScene.add(aaMesh)
-    inkPost = { target, mesh, scene: postScene, camera: new THREE.Camera(), aaTarget, aaMesh, aaScene, outlines }
+    const lineTarget = field ? new THREE.WebGLRenderTarget(width, height, { depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter }) : null
+    let composeMesh = null, composeScene = null
+    if (field) {
+      const composeMaterial = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, toneMapped: false,
+        uniforms: { colour: { value: aaTarget.texture }, lines: { value: lineTarget.texture }, geometrySize: { value: new THREE.Vector2() }, cellPixels: { value: new THREE.Vector2() } },
+        vertexShader: material.vertexShader,
+        fragmentShader: `uniform sampler2D colour, lines; uniform vec2 geometrySize, cellPixels; varying vec2 vUv;
+          float coverage(float code, float distance) {
+            float mode = floor(code * 3.0 + 0.5);
+            if (mode < 0.5) return 0.0;
+            float lo = mode >= 2.0 ? -1.0 : 0.0, hi = mode == 2.0 ? 0.0 : 1.0;
+            // Exact overlap of this display pixel with the one-pixel interval at the cell
+            // boundary. Only the edge pixel gets partial coverage; no colour blur or FXAA.
+            return clamp(min(distance + 0.5, hi) - max(distance - 0.5, lo), 0.0, 1.0);
+          }
+          void main() {
+            vec4 sides = texture2D(lines, vUv); vec2 p = fract(vUv * geometrySize) * cellPixels;
+            float edge = max(max(coverage(sides.r, cellPixels.x - p.x), coverage(sides.g, cellPixels.y - p.y)),
+                             max(coverage(sides.b, p.x), coverage(sides.a, p.y)));
+            gl_FragColor = vec4(mix(texture2D(colour, vUv).rgb, vec3(0.004), edge), 1.0);
+            #include <colorspace_fragment>
+          }` })
+      composeMesh = new THREE.Mesh(mesh.geometry, composeMaterial); composeScene = new THREE.Scene()
+      composeMesh.frustumCulled = false; composeScene.add(composeMesh)
+    }
+    inkPost = { target, mesh, scene: postScene, camera: new THREE.Camera(), aaTarget, aaMesh, aaScene, outlines, normalTarget, normalMaterial, separateNormals, field, lineTarget, composeMesh, composeScene, zeroNormal: new Float32Array(4) }
   }
   if (inkPost.target.width !== width || inkPost.target.height !== height) {
-    inkPost.target.setSize(width, height); inkPost.aaTarget.setSize(width, height)
+    inkPost.target.setSize(width, height); inkPost.aaTarget.setSize(width, height); inkPost.lineTarget?.setSize(width, height)
   }
+  if (inkPost.separateNormals && (inkPost.normalTarget.width !== displayWidth || inkPost.normalTarget.height !== displayHeight)) inkPost.normalTarget.setSize(displayWidth, displayHeight)
   return inkPost
+}
+function inkNormals(render, s, cam, post) {
+  const sky = faustState?.skyScene, hidden = [], previous = s.overrideMaterial, skyPrevious = sky?.overrideMaterial
+  const background = s.background, clear = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha()
+  const shadowUpdate = renderer.shadowMap.autoUpdate, shadowNeeds = renderer.shadowMap.needsUpdate
+  const beforeRender = s.onBeforeRender, skyDraw = faustState?.lastSkyDraw
+  for (const root of [s, sky]) root?.traverse(o => {
+    const materials = Array.isArray(o.material) ? o.material : [o.material]
+    if (o.visible && o.material && (!o.isMesh || materials.every(m => !m.depthWrite || m.alphaTest > 0))) { hidden.push(o); o.visible = false }
+  })
+  try {
+    // Reuse the shaded pass's culling and poses; do not advance drawSeen a second time.
+    s.onBeforeRender = () => {}
+    s.overrideMaterial = post.normalMaterial; if (sky) sky.overrideMaterial = post.normalMaterial
+    s.background = null; renderer.setClearColor(0x000000, 0)
+    renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = false
+    renderer.setRenderTarget(post.normalTarget)
+    faustRender(render, s, cam)
+  } finally {
+    s.onBeforeRender = beforeRender; if (faustState) faustState.lastSkyDraw = skyDraw
+    s.overrideMaterial = previous; if (sky) sky.overrideMaterial = skyPrevious
+    s.background = background; renderer.setClearColor(clear, alpha)
+    renderer.shadowMap.autoUpdate = shadowUpdate; renderer.shadowMap.needsUpdate = shadowNeeds
+    for (const o of hidden) o.visible = true
+  }
 }
 function inkRender(render, s, cam) {
   inkPrepare(faustState?.skyScene)
   const background = s.background, fog = s.fog?.color.clone(), target = renderer.getRenderTarget()
-  const autoClear = renderer.autoClear, reset = renderer.info.autoReset
-  const size = renderer.getDrawingBufferSize(new THREE.Vector2())
+  const autoClear = renderer.autoClear, reset = renderer.info.autoReset, viewport = renderer.getViewport(new THREE.Vector4())
+  const clear = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha(), clearColour = renderer.autoClearColor
+  const size = renderer.getDrawingBufferSize(new THREE.Vector2()), css = renderer.getSize(new THREE.Vector2())
+  const outlines = settings.quality !== 'low', display = outlines && !target ? inkDisplaySize(css) : size
   inkUniforms.inkExtent.value = ARENA
   s.background = new THREE.Color(0x050607)
   if (s.fog) s.fog.color.setHex(0x050607)
-  const post = !target ? inkTarget(size.x, size.y, settings.quality !== 'low') : null
+  // Touch keeps the shaded geometry pass even at High; only the pen composite uses device pixels.
+  const field = outlines && (IS_TOUCH || settings.quality === 'medium')
+  const separate = outlines && !IS_TOUCH && settings.quality === 'high' && (size.x !== display.x || size.y !== display.y)
+  const post = !target ? inkTarget(size.x, size.y, outlines, display.x, display.y, separate, field) : null
   if (!post && inkPost) inkDispose()
+  inkUniforms.inkScreenLines.value = !!post?.outlines
   try {
     if (reset) renderer.info.reset()
     renderer.info.autoReset = false
-    if (post) renderer.setRenderTarget(post.target)
-    faustRender(render, s, cam)
     if (post) {
-      const u = post.mesh.material.uniforms
-      u.texel.value.set(1 / size.x, 1 / size.y); u.nearFar.value.set(cam.near, cam.far); u.penScale.value = Math.max(0.7, renderer.getPixelRatio())
+      // Keep the renderer's logical size/pixel ratio as the scene-quality contract. Only
+      // the canvas backing store and the final viewport use physical display pixels.
+      const canvas = renderer.domElement
+      if (canvas.width !== display.x || canvas.height !== display.y) { canvas.width = display.x; canvas.height = display.y }
+      inkUniforms.inkWriteNormals.value = post.outlines && !post.separateNormals
+      renderer.setRenderTarget(post.target)
+      if (inkUniforms.inkWriteNormals.value) {
+        // Clear colour through the renderer's colour-space handling, then clear only
+        // attachment 1's occupancy. The sky draw clears depth without clearing these colours.
+        s.background = null; renderer.setClearColor(0x050607, 1); renderer.clear()
+        const gl = renderer.getContext(); gl.clearBufferfv(gl.COLOR, 1, post.zeroNormal)
+        renderer.autoClearColor = false
+      }
+    }
+    faustRender(render, s, cam)
+    renderer.autoClearColor = clearColour
+    if (post) {
       renderer.autoClear = true
-      if (post.outlines) { renderer.setRenderTarget(post.aaTarget); render(post.scene, post.camera) }
       post.aaMesh.material.uniforms.texel.value.set(1 / size.x, 1 / size.y)
-      renderer.setRenderTarget(target); render(post.aaScene, post.camera)
+      if (post.outlines) {
+        renderer.setRenderTarget(post.aaTarget); render(post.aaScene, post.camera)
+        inkUniforms.inkWriteNormals.value = false
+        if (post.separateNormals) inkNormals(render, s, cam, post)
+        const u = post.mesh.material.uniforms
+        u.texel.value.set(1 / (post.field ? size.x : display.x), 1 / (post.field ? size.y : display.y)); u.nearFar.value.set(cam.near, cam.far)
+        u.projection.value.set(1 / cam.projectionMatrix.elements[0], 1 / cam.projectionMatrix.elements[5])
+        u.geometryTexel.value.set(1 / post.normalTarget.width, 1 / post.normalTarget.height)
+        u.up.value.set(0, 1, 0).transformDirection(cam.matrixWorldInverse)
+        if (post.field) {
+          renderer.setRenderTarget(post.lineTarget); render(post.scene, post.camera)
+          const c = post.composeMesh.material.uniforms
+          c.geometrySize.value.copy(size); c.cellPixels.value.set(display.x / size.x, display.y / size.y)
+        }
+      }
+      renderer.setRenderTarget(target)
+      renderer.setViewport(0, 0, display.x / renderer.getPixelRatio(), display.y / renderer.getPixelRatio())
+      render(post.field ? post.composeScene : post.outlines ? post.scene : post.aaScene, post.camera)
     }
   } finally {
+    inkUniforms.inkWriteNormals.value = false; renderer.setClearColor(clear, alpha); renderer.autoClearColor = clearColour
     s.background = background; if (s.fog && fog) s.fog.color.copy(fog)
-    renderer.setRenderTarget(target); renderer.autoClear = autoClear; renderer.info.autoReset = reset
+    renderer.setRenderTarget(target); if (post) renderer.setViewport(viewport); renderer.autoClear = autoClear; renderer.info.autoReset = reset
   }
 }
 GAME.look = { table: LOOKS, stats: lookStats, set(name) { if (!Object.hasOwn(LOOKS, name)) return false; settings.look = name; applySettings(); saveSettings(); return true },
