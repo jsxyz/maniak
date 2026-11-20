@@ -2907,6 +2907,8 @@ function faustFeatures(seed, gx, gz, c) {
   const kinds = ['news', 'phone', 'clock', 'mail']
   for (const [dx, dz, q] of [[32.5, 0, 3], [-32.5, 0, 1], [0, 32.5, 2], [0, -32.5, 0]]) out.push({ k: kinds[rng() * 4 | 0], x: cx + dx, z: cz + dz, s: 1, q, h: rng() * 4 | 0 })
   if (rng() < 0.45) out[out.length - 1 - (rng() * 4 | 0)].k = 'subway'      // at most one subway entrance a plaza
+  // free-standing billboards: on a plaza that is no park, two of four spots, 34 m out and 12 m along an edge, facing the middle
+  if (!park) for (const [dx, dz, q] of [[34, 12, 3], [-34, -12, 1], [12, 34, 2], [-12, -34, 0]]) if (rng() < 0.5) out.push({ k: 'board', x: cx + dx, z: cz + dz, s: 1, q, h: rng() * 4 | 0 })
   // a park's trees: a row along each edge of the paving, the middle left to the edge's feature (the walkers' ring stays inside 28.5 m)
   if (park) for (const [ux, uz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) for (const u of [-24, -16, -8, 8, 16, 24])
     out.push({ k: 'tree', x: cx + (ux ? ux * 35.5 : u), z: cz + (uz ? uz * 35.5 : u), s: 0.85 + rng() * 0.4, q: 0, h: rng() * 4 | 0 })
@@ -2916,6 +2918,20 @@ function faustFeatures(seed, gx, gz, c) {
 // collider only }, { u: [a, b], r: [r0, r1], n, t, turn, cap, dbl } a tube or cone between two points, { v: [3 points], t } a flat
 // triangle seen from both sides
 const faustFeatShade = (c, m) => Math.round((c >> 16 & 255) * m) << 16 | Math.round((c >> 8 & 255) * m) << 8 | Math.round((c & 255) * m)
+// Faust's propaganda poster (no text): a lit field with his dark silhouette (cranium, long wavy hair past the pauldrons) and a bar of red
+// light for eyes, bars for the slogan; red, cream, gold or red. B and P are faustFeatParts' box and part adders
+const FAUST_POSTERS = [[0x8a1f1f, 0xf0e4c8], [0xd9ccb0, 0x7a1c1c], [0xc9b27a, 0x2b2318], [0x8a1f1f, 0xf0e4c8]]
+const FAUST_POSTER_HEAD = [[-0.95, -1], [-0.95, -0.5], [-0.62, -0.38], [-0.72, -0.22], [-0.6, -0.08], [-0.55, 0.1], [-0.5, 0.28], [-0.4, 0.62], [-0.2, 0.85], [0, 0.92],
+  [0.2, 0.85], [0.4, 0.62], [0.5, 0.28], [0.55, 0.1], [0.6, -0.08], [0.72, -0.22], [0.62, -0.38], [0.95, -0.5], [0.95, -1]]
+function faustPosterArt(B, P, cy, hw, hh, zf, h) {
+  const [field, ink] = FAUST_POSTERS[h & 3], e = 0.02, z = zf + 3 * e, sy = hh * 0.9, sx = Math.min(hw * 0.6, sy * 0.6), x0 = -hw * 0.35, y0 = cy - hh * 0.05
+  B(0, cy, zf, hw, hh, e, field, 0.35)
+  const O = FAUST_POSTER_HEAD.map(([a, b]) => [x0 + a * sx, y0 + b * sy, z]), c = [x0, y0 - 0.1 * sy, z]
+  for (let i = 0; i < O.length; i++) P.push({ v: [c, O[i], O[(i + 1) % O.length]], t: 0x0d0f14 })
+  B(x0, y0 + 0.42 * sy, z + e, 0.3 * sx, 0.04 * sy, e, 0xff3322, 1.5)
+  for (const [i, w] of [[0, 0.5], [1, 0.4], [2, 0.55], [3, 0.35]]) B(hw * 0.4, cy + hh * (0.55 - i * 0.3), zf + e, hw * w * 0.5, 0.07 * hh, e, ink, 0.25)
+  B(hw * 0.4, cy - hh * 0.65, zf + e, hw * 0.18, 0.15 * hh, e, 0xc9a85a, 0.4)
+}
 function faustFeatParts(f) {
   const k = f.s, P = [], T = FAUST_FEAT
   const B = (cx, cy, cz, ex, ey, ez, t, g = 0, solid = 0) => P.push({ b: [cx, cy, cz, ex, ey, ez], t, g, solid })
@@ -3019,6 +3035,14 @@ function faustFeatParts(f) {
   } else if (f.k === 'meter') {
     U([0, 0, 0], [0, 1.15, 0], 0.045, 0.045, 6, 0x6c747d); B(0, 1.28, 0, 0.1, 0.14, 0.07, 0x6c747d); B(0, 1.3, 0.075, 0.07, 0.08, 0.005, T.warm, 0.8)
     B(0, 0.65, 0, 0.1, 0.65, 0.1, 0, 0, 2)
+  } else if (f.k === 'board') {
+    // a billboard: two posts and a 7 x 3 m panel, with the poster on its front and the dark back
+    for (const a of [-1, 1]) B(a * 3.3, 2.1, -0.1, 0.15, 2.1, 0.15, T.iron, 0, 1)
+    B(0, 5.7, 0, 3.6, 1.6, 0.1, T.iron); faustPosterArt(B, P, 5.7, 3.45, 1.5, 0.11, f.h)
+  } else if (f.k === 'poster') {
+    // a wall poster: 7 m wide and 11 m tall, its foot 5.5 m up (above the belt course) on the wall (z = 0), flat, no collider
+    B(0, f.y, 0.03, 3.6, 5.7, 0.03, T.iron); faustPosterArt(B, P, f.y, 3.5, 5.5, 0.07, f.h)
+    B(0, f.y + 5.9, 0.55, 3.5, 0.05, 0.3, T.warm, 1.6); for (const a of [-1, 1]) B(a * 3, f.y + 5.75, 0.25, 0.04, 0.12, 0.25, T.iron)      // lit from above
   } else if (f.k === 'pond') {
     // a park's pond (an octagon with a gold spout) over two paths crossing the grass
     const R = 4.4
@@ -3111,9 +3135,23 @@ function faustProps(P, rail) {
   }
   return out
 }
+// a lot's wall poster (about a third of them): in the middle of the gap between two piers on a side wall, its foot 5.5 m up. Pure in the lot.
+function faustPosters(P) {
+  const out = []
+  for (const lot of P.lots) {
+    if (lot.stop || lot.district === 'industrial') continue
+    const rng = genRng(lot.seed ^ 0x706f7374), h0 = lot.mass[0].cy + lot.mass[0].ey
+    if (rng() > 0.35 || h0 < 24) continue
+    const side = rng() < 0.5 ? 1 : -1, z = lot.z + (rng() < 0.5 ? 1 : -1) * 0.43 * lot.d
+    out.push({ k: 'poster', x: lot.x + side * (lot.w + 0.03), z, y: 11.2, s: 1, q: side > 0 ? 1 : 3, h: rng() * 4 | 0 })
+  }
+  return out
+}
 function faustPropsDraw(g, P) {
-  if (!P.props?.length || g.room !== undefined && g.room < P.props.length * 400) return
-  for (const f of P.props) faustFeatDraw(g, f)
+  const posters = faustPosters(P)
+  if (g.room !== undefined && g.room < (P.props?.length || 0) * 400 + posters.length * 300) return
+  for (const f of P.props || []) faustFeatDraw(g, f)
+  for (const f of posters) faustFeatDraw(g, f)
 }
 // a local (lx, lz) in the world: the feature's centre and quarter turns
 const faustFeatAt = (f, lx, lz) => { const q = f.q & 3; return q === 0 ? [f.x + lx, f.z + lz] : q === 1 ? [f.x + lz, f.z - lx] : q === 2 ? [f.x - lx, f.z - lz] : [f.x - lz, f.z + lx] }
@@ -3278,7 +3316,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 9, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props }
+  const content = { version: 10, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
