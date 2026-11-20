@@ -8153,11 +8153,12 @@ const background = (() => {
       if (name && secT && t - secT >= 3 && open.parts.length < 40) open.parts.push((current ? current.key + '/' : '') + name + ' ' + Math.round(t - secT))
       secT = t
     },
-    frameEnd(i, draw, phase) {
+    frameEnd(i, draw, phase, q = 0) {
       const t = performance.now()
       const ms = lastFrameT ? Math.round(t - lastFrameT) : 0
       gpuOpen.upKB = Math.round(gpuOpen.upKB)
-      frameLog.push({ i, t: Math.round(t), ms, draw: Math.round(draw), phase, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen })
+      frameLog.push({ i, t: Math.round(t), ms, draw: Math.round(draw), phase, q, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen })
+      if (q >= 3 && !(gpuLog.at(-1)?.kind === 'queue' && gpuLog.at(-1).q >= q)) gpuLog.push({ t: Math.round(t), i, kind: 'queue', q })
       if (ms >= 50) gpuLog.push({ t: Math.round(t), i, kind: 'frame', ms, parts: open.parts.slice(0, 4), links: gpuOpen.links, upKB: gpuOpen.upKB })
       gpuLast = gpuOpen; gpuOpen = { ...gpuNone }; frameNo = i
       if (frameLog.length > 900) frameLog.shift()
@@ -8250,7 +8251,7 @@ function prepareLanding(seed) {
   worldPreparing = true
   const ownSeed = landingSeed
   worldPreparation = background.run('world', function* () {
-    try { yield* loadLevelSteps(0, { seed: ownSeed }); yield* warmSceneSteps('plain'); landingReady = levelGen ? levelGen.seed + '/' + levelGen.size : '' }
+    try { yield* loadLevelSteps(0, { seed: ownSeed }); background.mark('floors'); yield* floorsSteps(); yield* warmSceneSteps('plain'); landingReady = levelGen ? levelGen.seed + '/' + levelGen.size : '' }
     finally { worldPreparing = false }
   }, { priority: 1 }).then(ok => { if (ok && phase === 'menu') applyLook(); return ok }).catch(e => { frameFailed('world preparation', e); return false })
   return worldPreparation
@@ -16695,6 +16696,11 @@ function buildWorld() {
     if (graphics.state === 'lost') return
     try {
       renderer.debug.checkShaderErrors = phase !== 'playing'      // in play: no four waiting queries at each program's first draw
+      if (fpsCap && s === scene && !startingGame && !landingBusy()) {      // card #53: the A/B cap; an undrawn frame keeps the last one shown
+        const t = performance.now()
+        if (t - fpsDrawnAt < 1000 / fpsCap - 2) return
+        fpsDrawnAt = t
+      }
       if ((landingBusy() || startingGame) && s === scene) { loadingScene ||= new THREE.Scene(); loadingScene.background = scene.background; render(loadingScene, cam); return }
       if (graphics.rebuild && s === scene) rebuildGraphics()
       const programsBefore = renderer.info.programs.length
@@ -17297,6 +17303,15 @@ function avatarDetail(id, far) {
 
 const shadowRing = Array.from({ length: 16 }, (_, i) => [Math.cos(i * Math.PI / 8), Math.sin(i * Math.PI / 8)])
 const floors = { boxes: null, n: 0, lo: Infinity, stamp: 0, cells: new Map() }    // every box by pad cell; lo: the lowest top
+// card #53: the grid filed ahead of the first draw (filing the whole city in one call held host start for 2 s)
+const floorsAdd = b => { const F = floors; b.fo = F.n; padsAdd([b], F.cells); F.lo = Math.min(F.lo, b.cy + b.ey); F.n++ }
+function* floorsSteps() {
+  const F = floors
+  if (F.boxes !== BOXES) Object.assign(F, { boxes: BOXES, n: 0, lo: Infinity }).cells.clear()
+  if (BOXES.length <= 128) return
+  let t0 = performance.now()
+  while (F.boxes === BOXES && F.n < BOXES.length) { floorsAdd(BOXES[F.n]); if (performance.now() - t0 > 8) { yield; t0 = performance.now() } }
+}
 // posed only inside the camera's or the sun shadow camera's frustum
 let cullT = null, culling = false
 function cullFrom(cam) {
@@ -17311,7 +17326,11 @@ function drawAvatarShadow(a) {
   if (a.shadow) a.shadow.visible = false
   const F = floors, many = BOXES.length > 128
   if (F.boxes !== BOXES) Object.assign(F, { boxes: BOXES, n: 0, lo: Infinity }).cells.clear()
-  for (; many && F.n < BOXES.length; F.n++) { const b = BOXES[F.n]; b.fo = F.n; padsAdd([b], F.cells); F.lo = Math.min(F.lo, b.cy + b.ey) }
+  if (many && F.n < BOXES.length) {      // boxes streamed in since: at most 1 ms here; the shadow waits for the rest
+    const end = performance.now() + 1
+    while (F.n < BOXES.length && performance.now() < end) floorsAdd(BOXES[F.n])
+    if (F.n < BOXES.length) return
+  }
   if (!a.far || !a.mesh.visible || !sunLight || IS_TOUCH || !settings.shadows ||
     renderer && renderer.shadowMap && !renderer.shadowMap.enabled) return
   const C = a.spec, p = a.mesh.position, H = 2 * (C.h + C.r), foot = p.y - H / 2
@@ -24404,7 +24423,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
   // frames: the last n frames, each {i, t, ms, draw, phase, steps, programs} (frame by frame; no aggregate)
-  background: (n = 300) => ({ frames: GAME.background.frames(n), gpu: GAME.background.gpuEvents(), rests: GAME.background.stats.rests || 0, jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
+  fps(n) { if (n !== undefined) fpsCap = +n >= 5 && +n <= 240 ? +n : 0; return fpsCap },
+  background: (n = 300) => ({ fps: fpsCap, frames: GAME.background.frames(n), gpu: GAME.background.gpuEvents(), rests: GAME.background.stats.rests || 0, jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
     phase, startingGame, worldPreparing, guestLoading: !!guestLoading, look: activeLook, wanted: settings.look }),
   room() {
     const all = [...players.values()]
@@ -24426,6 +24446,8 @@ let kickedBy = null, droppedWhy = null          // droppedWhy: the host let this
 // the host's effects this tick, sent once as the snapshot's fx
 let tracers = []
 const LINK_DEAD_MS = 8000        // guest: host silence
+// card #53: ?fps=N caps the render rate (an A/B with another tab's GPU probe); gameHooks.fps(N) sets it, 0 is off
+let fpsCap = (n => n >= 5 && n <= 240 ? n : 0)(+new URLSearchParams(location.search).get('fps') || 0), fpsDrawnAt = 0
 let lastGapMs = 0                 // the last frame's gap, before the sim's clamp (a stall's length)
 const ICE_GRACE_MS = 4000        // 'disconnected' can recover; 'failed' cannot
 const GUEST_DEAD_MS = 12000      // host: guest silence
@@ -24783,6 +24805,7 @@ function startHost() {
     landingReady = ''
     if (!ready) yield* loadLevelSteps(0, { seed: citySeed })
     else yield* spawnObjectsSteps()
+    background.mark('floors'); yield* floorsSteps()
     markStart('level')
     background.mark('match'); GAME.lifecycle.matchStart()
     loadingText('Bringing the streets to life…')
@@ -25103,6 +25126,7 @@ function guestLoad(lv, gen) {
   startingGame = true; document.body.classList.add('starting'); loadingText('Building Faustland…')
   const job = guestLoading = background.run('guest-level', function* () {
     yield* loadLevelSteps(lv, gen)
+    background.mark('floors'); yield* floorsSteps()
     loadingText('Preparing the view…')
     warmEffects()
     yield* warmWithin(3000, 'plain')
@@ -34704,13 +34728,24 @@ class Arena extends ENABLE3D.Scene3D {
   postRender() {
     pageLife.frames++
     const drawMs = drawT0 ? now() - drawT0 : 0
-    try { background.frameEnd(pageLife.frames, drawMs, phase + (startingGame ? ' start' : '')) } catch (e) {}
+    try { background.frameEnd(pageLife.frames, drawMs, phase + (startingGame ? ' start' : ''), gpuQueueTick(pageLife.frames)) } catch (e) {}
     if (drawT0) { msDraw = msDraw * 0.9 + drawMs * 0.1; drawT0 = 0 }
     if (blackbox.on) try { blackbox.frame() } catch (e) { blackbox.on = false; console.warn('blackbox', e) }
     if (stats) stats.end()
   }
 }
 
+// card #53: one fence a frame; how many frames the oldest one not yet signalled is behind (WebGL updates a fence's status
+// between tasks, so 1 is the least); none on a lost context
+const gpuQ = { list: [], epoch: -1 }
+function gpuQueueTick(i) {
+  const gl = renderer?.getContext()
+  if (!gl?.fenceSync || gl.isContextLost()) { gpuQ.list.length = 0; return 0 }
+  if (gpuQ.epoch !== graphics.lost) { gpuQ.list.length = 0; gpuQ.epoch = graphics.lost }
+  while (gpuQ.list.length && gl.getSyncParameter(gpuQ.list[0][1], gl.SYNC_STATUS) === gl.SIGNALED) gl.deleteSync(gpuQ.list.shift()[1])
+  if (gpuQ.list.length < 60) { const s = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); if (s) gpuQ.list.push([i, s]) }
+  return gpuQ.list.length > 1 ? i - gpuQ.list[0][0] : 0
+}
 const pickCard = (wrap, d) => { for (const c of wrap.children) c.classList.remove('sel'); d.classList.add('sel') }
 const members = t => CHARS.flatMap((C, i) => C.team === t ? [i] : [])
 // what a Host draws first: The Maniak and his team, and the bots
