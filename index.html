@@ -5872,14 +5872,15 @@ function* uploadTextures(root) {
 }
 // Use the final render state for compilation, but restore it before waiting for
 // the driver. compileAsync's context-generation guard is installed below.
+const sceneLights = target => { const lights = []; target.traverseVisible(o => { if (o.isLight) lights.push(o) }); return lights }
 // Programs warmed in this context, by material, object kind and render state: a second warm-up skips them.
 const warmedPrograms = new Set()
-function* compileObjects(root, cam = camera, target = scene, setup = null) {
+function* compileObjects(root, cam = camera, target = scene, setup = null, lit = null) {
   if (!root || renderHeadless) return
   const objects = []; root.traverse(o => { if (o.material) objects.push(o) })
   const seen = new Set(), epoch = graphics.lost
   // three's compile walks the whole target scene for its lights on every call: hand it the lights, collected once
-  const lights = []; target.traverseVisible(o => { if (o.isLight) lights.push(o) })
+  const lights = lit || sceneLights(target)
   const ownWalk = Object.hasOwn(target, 'traverseVisible'), walk = target.traverseVisible
   // Programs already built resolve at once: issue about 2 ms of compiles a step, then await them together.
   let batch = [], t0 = performance.now()
@@ -12375,7 +12376,8 @@ function* warmSceneSteps(name, roots = null) {
     if (renderer.shadowMap.enabled) {
       const shadows = []; root.traverse(o => { if (o.isMesh && o.castShadow) shadows.push(o) })
       const depth = warmDepth ||= new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.BackSide })
-      const seen = new Set()
+      const seen = new Set(), lights = sceneLights(scene)
+      let t0 = performance.now()
       for (const o of shadows) {
         const mat = o.customDepthMaterial || depth, key = mat.uuid + '/' + o.type
         if (seen.has(key)) continue
@@ -12383,7 +12385,8 @@ function* warmSceneSteps(name, roots = null) {
         yield* compileObjects(o, camera, scene, () => {
           const previous = o.material; o.material = mat
           return () => { o.material = previous }
-        })
+        }, lights)
+        if (performance.now() - t0 > 2) { yield; t0 = performance.now() }
       }
     }
   }
@@ -12503,7 +12506,7 @@ function inkPrepare(root) {
       const character = !!(o.geometry?.attributes.skinIndex && o.geometry?.attributes.skinWeight)
       const signal = typeof trafficLights !== 'undefined' && o === trafficLights?.lamps
       const facade = m === faustState?.materials?.facade || m === faustState?.materials?.far
-      const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe, groundLight = !!m.userData.inkGroundLight, vehicleLamp = m.name === 'vehicle-headlamp' || m.name === 'vehicle-taillamp' || !!m.userData.vehicleLamps, vehicleLamps = !!m.userData.vehicleLamps
+      const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = !!m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe, groundLight = !!m.userData.inkGroundLight, vehicleLamp = m.name === 'vehicle-headlamp' || m.name === 'vehicle-taillamp' || !!m.userData.vehicleLamps, vehicleLamps = !!m.userData.vehicleLamps
       m.onBeforeCompile = function(shader, r) {
         before.call(this, shader, r)
         // A material whose onBeforeCompile was copied from an Ink material carries an Ink wrapper already, and that
@@ -14179,7 +14182,8 @@ function buildWorld() {
       const programsBefore = renderer.info.programs.length
       lookRender(render, s, cam)
       if (phase === 'playing' && renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) {
-        background.stats.late.push((p.name || '?') + ' ' + String(p.cacheKey).split(',').pop().slice(0, 32)); if (background.stats.late.length > 12) background.stats.late.shift() }
+        const k = String(p.cacheKey).split(','), hook = k[k.length - 1]
+        background.stats.late.push((p.name || k[0] || '?') + (hook && !hook.startsWith('function') ? ' ' + hook.slice(0, 32) : '')); if (background.stats.late.length > 12) background.stats.late.shift() }
       if (graphics.state === 'restoring' && s === scene && !graphics.rebuild) {
         graphics.state = 'ready'; clearTimeout(graphics.timer); el('#graphics-notice').hidden = true
       }
@@ -27136,8 +27140,18 @@ function airKitLoad() {
       n.geometry.userData.shared = true; n.receiveShadow = true
       n.material = mats.get(n.material) || (mats.set(n.material, airMaterial(n.material)), n.material) })
     airKit = g.scene
+    airWarm(g.scene)
     if (airView) airViewBuild()
   }).catch(e => { airKitAsk = false; console.warn('zeppelin model failed, drawing its collider:', e?.message || e) })
+}
+// its programs, ahead of the first one in view: each LOD's meshes in the city's pass and in the sky's
+function airWarm(kit) {
+  if (!renderer?.compileAsync || !scene || !camera) return
+  for (const target of [scene, faustState?.skyScene].filter(Boolean)) {
+    const probe = new THREE.Group(); probe.add(kit.clone())
+    probe.traverse(n => { n.visible = true; n.frustumCulled = false })
+    renderer.compileAsync(probe, camera, target).catch(() => {})
+  }
 }
 let airStand = null
 function airStandIn() {
