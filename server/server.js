@@ -146,6 +146,76 @@ const HOOKS = webhooks()
 const LOOPBACK = /^(127\.\d+\.\d+\.\d+|::1|localhost)$/
 if (CFG.api.port && !LOOPBACK.test(CFG.api.host) && !CFG.api.token)
   die(`the action API on ${CFG.api.host} is beyond loopback: set ACTION_TOKEN or ACTION_TOKEN_FILE, or keep ACTION_HOST=127.0.0.1`)
+// ---- the city's changes (card #46: broken glass, lamps knocked out, and later whatever else this server keeps), saved where
+// this server runs. WORLD_DIR, a directory (a volume), keeps a file a city; R2 keeps a copy as an object (R2_ENDPOINT,
+// R2_BUCKET, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY or its _FILE; R2_REGION, default auto; R2_PREFIX, default none).
+// Neither set: nothing is kept. The page saves a few seconds after a change and when the server stops (gameHooks.saveWorld);
+// a room starting on a city loads that city's save back. Each request to R2 is signed (AWS Signature Version 4), with no
+// library; its secret is never printed, and neither are the paths.
+const WORLD_KEY = /^world-\d{1,10}-\d{1,2}$/
+const WORLD_DIR = blank(env.WORLD_DIR) ? '' : path.resolve(env.WORLD_DIR)
+// made if missing, but only the last directory (a volume's mount gives the rest): a recursive mkdir can loop on a special
+// filesystem's parents
+if (WORLD_DIR) try { if (!fs.existsSync(WORLD_DIR)) fs.mkdirSync(WORLD_DIR); fs.accessSync(WORLD_DIR, fs.constants.W_OK) } catch (e) { die('WORLD_DIR: cannot write there (' + (e.code || e.name) + ')') }
+const R2 = (() => {
+  const names = ['R2_ENDPOINT', 'R2_BUCKET', 'R2_ACCESS_KEY_ID'], given = names.filter(k => !blank(env[k]))
+  const secret = env.R2_SECRET_ACCESS_KEY_FILE ? read(env.R2_SECRET_ACCESS_KEY_FILE, 'R2_SECRET_ACCESS_KEY_FILE') : env.R2_SECRET_ACCESS_KEY || ''
+  if (!given.length && !secret) return null
+  if (given.length < names.length || !secret) die('R2: set R2_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY (or R2_SECRET_ACCESS_KEY_FILE), or none of them')
+  let u
+  try { u = new URL(env.R2_ENDPOINT) } catch (e) { die('R2_ENDPOINT: not a URL') }
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && LOOPBACK.test(u.hostname))) die('R2_ENDPOINT: an https URL (http only on loopback, for a stand-in)')
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(env.R2_BUCKET)) die('R2_BUCKET: not a bucket name')
+  const r = { origin: u.origin, host: u.host, bucket: env.R2_BUCKET, id: env.R2_ACCESS_KEY_ID, region: env.R2_REGION || 'auto', prefix: (env.R2_PREFIX || '').replace(/^\/+/, '') }
+  Object.defineProperty(r, 'secret', { value: secret, enumerable: false })
+  return r
+})()
+const sha256 = d => crypto.createHash('sha256').update(d).digest('hex'), hmac = (k, d) => crypto.createHmac('sha256', k).update(d).digest()
+// one signed request to R2 for a save's object: GET it, or PUT a body
+function r2Request(method, name, body) {
+  const t = new Date().toISOString().replace(/[-:]|\.\d{3}/g, ''), day = t.slice(0, 8), scope = day + '/' + R2.region + '/s3/aws4_request'
+  const esc = s => encodeURIComponent(s).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+  const uri = '/' + [R2.bucket, ...(R2.prefix + name + '.json').split('/')].map(esc).join('/'), hash = sha256(body || '')
+  const headers = { host: R2.host, 'x-amz-content-sha256': hash, 'x-amz-date': t, ...body ? { 'content-type': 'application/json' } : {} }
+  const names = Object.keys(headers).sort(), signed = names.join(';')
+  const canonical = [method, uri, '', ...names.map(n => n + ':' + headers[n]), '', signed, hash].join('\n')
+  const key = hmac(hmac(hmac(hmac('AWS4' + R2.secret, day), R2.region), 's3'), 'aws4_request')
+  const signature = crypto.createHmac('sha256', key).update(['AWS4-HMAC-SHA256', t, scope, sha256(canonical)].join('\n')).digest('hex')
+  headers.authorization = 'AWS4-HMAC-SHA256 Credential=' + R2.id + '/' + scope + ', SignedHeaders=' + signed + ', Signature=' + signature
+  delete headers.host
+  return fetch(R2.origin + uri, { method, headers, body, signal: AbortSignal.timeout(15000) })
+}
+const worldStatus = { saves: 0, loads: 0, r2Puts: 0, r2Gets: 0, failing: '' }
+// the page saves a city: its file (written whole, then moved into place) and its R2 object; true when either took it
+async function worldSave(name, json) {
+  if (typeof name !== 'string' || !WORLD_KEY.test(name) || typeof json !== 'string' || json.length > 64 << 20) return false
+  let ok = false
+  if (WORLD_DIR) try { const f = path.join(WORLD_DIR, name + '.json'), tmp = f + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, json); fs.renameSync(tmp, f); ok = true }
+  catch (e) { say('world: cannot write the save (' + (e.code || e.name) + ')') }
+  if (R2) try {
+    const r = await r2Request('PUT', name, json)
+    await r.arrayBuffer().catch(() => {})
+    if (r.status >= 200 && r.status < 300) { ok = true; worldStatus.r2Puts++; if (worldStatus.failing) { worldStatus.failing = ''; say('world: R2 takes saves again') } }
+    else if (worldStatus.failing !== 'answered ' + r.status) say('world: R2 answered ' + r.status + ' to a save'), worldStatus.failing = 'answered ' + r.status
+  } catch (e) { const why = e.name === 'TimeoutError' ? 'no answer in 15 s' : 'unreachable (' + (e.cause?.code || e.name) + ')'; if (worldStatus.failing !== why) say('world: R2 ' + why), worldStatus.failing = why }
+  if (ok) worldStatus.saves++
+  return ok
+}
+// a room starting on a city: its save, from the file, else from R2; null when there is none
+async function worldLoad(name) {
+  if (typeof name !== 'string' || !WORLD_KEY.test(name)) return null
+  if (WORLD_DIR) try { const text = fs.readFileSync(path.join(WORLD_DIR, name + '.json'), 'utf8'); worldStatus.loads++; return text }
+  catch (e) { if (e.code !== 'ENOENT') say('world: cannot read the save (' + (e.code || e.name) + ')') }
+  if (R2) try {
+    const r = await r2Request('GET', name)
+    if (r.status === 200) { worldStatus.loads++; worldStatus.r2Gets++; return await r.text() }
+    await r.arrayBuffer().catch(() => {})
+    if (r.status !== 404) say('world: R2 answered ' + r.status + ' to a load')
+  } catch (e) { say('world: R2 unreachable (' + (e.cause?.code || e.name) + ')') }
+  return null
+}
+if (WORLD_DIR || R2) say('world: the city\'s changes are kept' + (WORLD_DIR ? ' in WORLD_DIR' : '') + (WORLD_DIR && R2 ? ' and' : '') + (R2 ? ' in R2' : ''))
+
 let html
 try { html = fs.readFileSync(CFG.game) } catch (e) { die((env.GAME_FILE ? 'GAME_FILE' : 'the game') + ': cannot read the file (' + e.code + ')') }
 
@@ -237,6 +307,7 @@ async function stop(code) {
   if (stopping) return
   stopping = true
   say('server: stopping')
+  if (WORLD_DIR || R2) try { await page?.evaluate(() => gameHooks.saveWorld?.()) } catch (e) {}
   try { await page?.evaluate(() => gameHooks.stop()) } catch (e) {}
   await sleep(500)                     // the guests' goodbye, and the match's end
   for (const until = Date.now() + 7000; HOOKS.some(h => h.queue.length) && Date.now() < until;) await sleep(100)
@@ -259,6 +330,7 @@ let page = null
   page.on('pageerror', e => say('page: ' + e.message))
   page.on('console', m => { if (m.type() === 'error') say('page: ' + m.text()) })
   await page.exposeFunction('serverOut', onEvent)
+  if (WORLD_DIR || R2) { await page.exposeFunction('serverWorldSave', worldSave); await page.exposeFunction('serverWorldLoad', worldLoad) }
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load', timeout: 180000 })
   await page.waitForFunction(() => globalThis.gameHooks?.room().ready || /fail|broke/i.test(document.getElementById('status')?.textContent || ''),
     null, { timeout: 180000, polling: 500 }).catch(() => {})

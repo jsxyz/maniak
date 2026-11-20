@@ -61,12 +61,33 @@ Everything is an environment variable (`-e NAME=value`).
 | `ACTION_TOKEN` (or `ACTION_TOKEN_FILE`) | | required whenever `ACTION_HOST` is not loopback |
 | `GAME_FILE` | the game in the image | run another copy of the game, mounted into the container |
 | `BROADCAST_URL` | | a stream for the city's screens (see Broadcasts) |
+| `WORLD_DIR` | | a directory (a volume) where the city's changes are kept, a file a city (see Keeping the city's changes) |
+| `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (or `R2_SECRET_ACCESS_KEY_FILE`) | | a bucket on Cloudflare R2 (or any S3-compatible store) where they are kept too; `R2_REGION` (default `auto`) and `R2_PREFIX` (default none) |
 
 Every game is free-for-all: players fight the enemies and each other. `MODE` is gone; a server started with it still
 starts, says the setting is ignored, and plays free-for-all.
 
 An event type list is `*` for every type, a comma list such as `kill,player.join`, or a list of types to leave out such as
 `-damage,-chat`.
+
+## Keeping the city's changes
+
+Glass the players break, and the street lamps they shoot out or knock over, stay that way. Set `WORLD_DIR` to a directory
+on a volume, and the server keeps them there, a file for each city (its seed and size), so a server started again on the
+same seed finds the city as it was left:
+
+```sh
+docker run -d --name maniak --network host -v maniak-world:/world -e WORLD_DIR=/world -e SEED=3501965595 ghcr.io/jsxyz/maniak-server
+```
+
+Set the four R2 variables as well, or instead, to keep a copy in a bucket: then a server on another machine, or a fresh
+container without the volume, finds it there. The server signs each request itself; the access key needs read and write on
+the bucket. `R2_ENDPOINT` is the bucket's S3 API address (`https://<account>.r2.cloudflarestorage.com`); other
+S3-compatible stores work too, with `R2_REGION` set to theirs. With none of these set, nothing is kept.
+
+The page saves a few seconds after a change, and the server saves once more when it stops. A save is a small JSON file,
+versioned, which loads into the same city only; a host playing in a browser keeps its own in the browser, and can save
+it to a file and load one back from the menu.
 
 ## Events
 
