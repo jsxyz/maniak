@@ -22664,12 +22664,12 @@ function dashStrikes(list, credit) {
 function objectStrikes(o, c, credit) {
   const W = o.K.weakens, e = W && weakFx(c, o.K)
   if (e) { c.mark = e; c.markT = Math.max(c.markT, W.struck) }
-  const by = players.get(o.thrownBy), D = by && (o.puntDmg ?? (o.K.dmg ?? hurlOf(by)?.dmg))
+  const by = players.get(o.thrownBy), D = by && (o.puntDmg !== undefined ? partsImpact(o.K.mass, Math.max(o.partsV || 0, PARTS_HIT.min)) : (o.K.dmg ?? hurlOf(by)?.dmg))
   if (!D || c.prot > 0) return
   const was = hookHitOn && [c.hp, c.mark, c.markT]
   c.hp -= stat(c, 'take', stat(by, 'give', D))
   if (was && !hookHit(by, c, o.puntDmg ? 'Punt' : 'Hurl', was)) return
-  if (c.hp <= 0 && downed(c) && credit) credit(by.id, by)(c, o.puntDmg ? GUNS[gunNamed('Punt')] : { name: 'Hurl' })
+  if (c.hp <= 0 && downed(c) && credit) credit(by.id, by)(c, o.puntDmg !== undefined ? { name: o.K.name } : { name: 'Hurl' })
 }
 
 // a host tick's rules, in its order around the engine's own steps (see hostTick); t: the tick's dt, all (players), cur (their
@@ -23283,7 +23283,9 @@ function partsAfter(all, dt, credit) {
       if (P.struck.has(v.id) || v.dead > 0 || v.prot > 0 || seatOf(v) || v.grabBy !== undefined) continue
       if (Math.hypot(v.x - h.x, v.z - h.z) > h.r + v.r + GRAB.fly.r || Math.abs(v.y - h.y) > h.h + v.h + 0.3) continue
       P.struck.add(v.id)
-      strike(by, v, { ...FG, dmg: FG.dmg * clamp(sp / 25, 0.5, 1.3) }, h.vx / sp, 0.3, h.vz / sp)
+      const D = partsImpact(PARTS.person.mass, sp)          // fix 55b: by mass and speed; the flier takes a share
+      strike(by, v, { ...FG, dmg: D }, h.vx / sp, 0.3, h.vz / sp)
+      if (h.dead <= 0) { strike(by, h, { ...FG, dmg: D * PARTS_HIT.self, knock: 0 }, -h.vx / sp, 0, -h.vz / sp); if (downed(h) && credit) credit(by.id, by)(h, FG) }
       if (downed(v) && credit) credit(by.id, by)(v, FG)
     }
     if (slState && LV.faust && h.y - h.h - h.r < 2.2) slAround(h.x, h.z, 2, T, (ag, p) => {
@@ -23320,6 +23322,50 @@ function partsAfter(all, dt, credit) {
     })
   }
   for (const o of objs) if (o.thrownBy === undefined && o.puntDmg !== undefined) o.puntDmg = undefined
+}
+// fix 55b: things in flight from a throw or a punt hit what they pass. Damage by mass and impact speed, once a target a flight
+const PARTS_HIT = { k: 2.2, max: 260, knock: 0.3, knockMax: 22, min: 6, self: 1 / 3 }
+const partsImpact = (m, v) => Math.min(PARTS_HIT.max, PARTS_HIT.k * m * v)
+// the nearest distance between segments ab and cd (each [x, y, z] pairs)
+function partsSegDist(a, b, c, d) {
+  const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [d[0] - c[0], d[1] - c[1], d[2] - c[2]], w = [a[0] - c[0], a[1] - c[1], a[2] - c[2]]
+  const dot = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2], A = dot(u, u), B = dot(u, v), C = dot(v, v), D = dot(u, w), E = dot(v, w), den = A * C - B * B
+  let s = den > 1e-9 ? clamp((B * E - C * D) / den, 0, 1) : 0, t = C > 1e-9 ? clamp((B * s + E) / C, 0, 1) : 0
+  s = A > 1e-9 ? clamp((B * t - D) / A, 0, 1) : 0
+  return Math.hypot(w[0] + u[0] * s - v[0] * t, w[1] + u[1] * s - v[1] * t, w[2] + u[2] * s - v[2] * t)
+}
+function partsSweep(all, credit) {
+  if (!isHost) return
+  const T = tickAt || now()
+  for (const o of objs) {
+    if (o.thrownBy === undefined || o.heldBy !== undefined) { o.partsAt = null; continue }
+    const by = players.get(o.thrownBy), v = o.body.getLinearVelocity(), now3 = [o.x, o.y, o.z], was = o.partsAt || now3
+    const sp = Math.max(Math.hypot(v.x(), v.y(), v.z()), o.partsV || 0)
+    o.partsAt = now3; o.partsV = Math.hypot(v.x(), v.y(), v.z())
+    if (!by || sp < PARTS_HIT.min) continue
+    const m = o.K.mass, D = partsImpact(m, sp), dir = partsUnit(now3[0] - was[0], now3[1] - was[1], now3[2] - was[2]), R = (o.R || objR(o.K)) * 0.8
+    const G = { ...GUNS[gunNamed('Punt')], name: o.K.name, dmg: D, knock: clamp(PARTS_HIT.knock * m * sp, 4, PARTS_HIT.knockMax), special: true }
+    o.struck ||= new Set([o.thrownBy])
+    for (const c of all) {
+      if (o.struck.has(c.id) || c.dead > 0 || c.prot > 0 || seatOf(c) || c.grabBy !== undefined) continue
+      if (partsSegDist(was, now3, [c.x, c.y - c.h, c.z], [c.x, c.y + c.h, c.z]) > c.r + R) continue
+      o.struck.add(c.id)
+      strike(by, c, G, dir[0], Math.max(dir[1], 0.2), dir[2])
+      if (downed(c) && credit) credit(by.id, by)(c, G)
+    }
+    if (slState && LV.faust && Math.min(was[1], now3[1]) < 2.6) slAround((was[0] + now3[0]) / 2, (was[2] + now3[2]) / 2, Math.hypot(now3[0] - was[0], now3[2] - was[2]) / 2 + 2, T, (ag, p) => {
+      if (p.down || o.struck.has('s' + ag.id)) return
+      if (partsSegDist([was[0], 0, was[2]], [now3[0], 0, now3[2]], [p.x, 0, p.z], [p.x, 0, p.z]) > 0.4 + R) return
+      o.struck.add('s' + ag.id); slKnock(ag, p, dir[0], dir[2], Math.max(1, D * 0.05), by, T)
+    })
+    for (const q of objs) {
+      if (q === o || !q.V || o.struck.has('o' + q.id) || q.heldBy !== undefined) continue
+      if (partsSegDist(was, now3, [q.x, q.y, q.z], [q.x, q.y, q.z]) > (q.R || objR(q.K)) * 0.7 + R) continue
+      o.struck.add('o' + q.id)
+      q.hp -= D * 0.5; q.by = by.id
+      try { GAME.cars?.blow?.(by, q, { ...G, name: D >= 80 ? 'Haymaker' : 'Fists' }, now3, dir) } catch (e) {}
+    }
+  }
 }
 const partsTmp = { x: 0, y: 0, z: 0 }
 const partsCentre = (ag, what) => what ? 0.45 : ag?.kind === SL_K.stray ? 0.3 : 0.9
@@ -23646,7 +23692,7 @@ MODELS.maniak.anims = [...[MODELS.maniak.anims].flat(), RIG_FILES.maniak_grab]
   const P = HOST_PHASES, bi = P.beforeIntent, bp = P.beforePhysics, ap = P.afterPhysics
   P.beforeIntent = t => { partsMask(t.cur); bi(t) }
   P.beforePhysics = t => { bp(t); partsHostRelease(t.all, t.credit) }
-  P.afterPhysics = t => { ap(t); partsAfter(t.all, t.dt, t.credit) }
+  P.afterPhysics = t => { partsSweep(t.all, t.credit); ap(t); partsAfter(t.all, t.dt, t.credit) }          // fix 55b: the sweep first
   const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems
   L.snapshot = () => ({ ...snap(), ...partsWireOut() })
   L.takeItems = function (d) { take.call(this, d); partsWireIn(d) }
