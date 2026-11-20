@@ -12285,6 +12285,8 @@ function inkPrepare(root) {
         const previous = m.onBeforeCompile, cache = m.customProgramCacheKey()
         m.onBeforeCompile = function(shader, r) {
           previous.call(this, shader, r)
+          // A chain that already holds an Ink wrapper has declared the output: declare it once.
+          if (shader.fragmentShader.includes('inkNormalOutput')) return
           shader.fragmentShader = 'layout(location = 1) out highp vec4 inkNormalOutput;\n' + shader.fragmentShader.replace(/void\s+main\s*\(\s*\)\s*\{/, 'void main() { inkNormalOutput = vec4(0.0);')
         }
         m.customProgramCacheKey = () => cache + '|ink-output-1'; m.needsUpdate = true
@@ -12298,6 +12300,9 @@ function inkPrepare(root) {
       const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe, groundLight = !!m.userData.inkGroundLight, vehicleLamp = m.name === 'vehicle-headlamp' || m.name === 'vehicle-taillamp' || !!m.userData.vehicleLamps, vehicleLamps = !!m.userData.vehicleLamps
       m.onBeforeCompile = function(shader, r) {
         before.call(this, shader, r)
+        // A material whose onBeforeCompile was copied from an Ink material carries an Ink wrapper already, and that
+        // one has patched this shader: patching it again redefines the Ink varyings and the program fails to compile.
+        if (shader.fragmentShader.includes('inkNormalOutput')) return
         Object.assign(shader.uniforms, inkUniforms)
         shader.vertexShader = 'varying vec3 inkViewPosition; varying vec3 inkPoint; varying vec3 inkWorldPoint;\n' + shader.vertexShader
         shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
