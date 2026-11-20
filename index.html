@@ -4209,7 +4209,7 @@ function faustStream(points, viewPoint) {
   if (F.materials) {
     for (const c of F.selection.visuals.splice(0)) background.run('city:' + c.key, function* () {
       yield* faustVisualSteps(c)
-    }, { valid: () => faustState === F && F.chunks.get(c.key) === c && F.selection.drawn.has(c.key) })
+    }, { valid: () => faustState === F && F.chunks.get(c.key) === c && !!F.selection?.drawn.has(c.key) })
       .catch(e => frameFailed('city preparation', e))
   }
   const work = performance.now() - t
@@ -6308,7 +6308,8 @@ const GAME = { faustland: FAUSTLAND_API, interiors: FAUSTLAND_API.interiors }
 const background = (() => {
   const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [], lateCount: 0 }
   let scheduled = false, order = 0, current = null
-  const alive = j => !j.valid || j.valid()
+  // a check that throws ends its own job (reported once), never the pump
+  const alive = j => { try { return !j.valid || !!j.valid() } catch (e) { if (typeof frameFailed === 'function') frameFailed('background ' + j.key, e); return false } }
   function finish(j, value, error) {
     if (jobs.get(j.key) !== j) return
     jobs.delete(j.key)
@@ -6330,6 +6331,9 @@ const background = (() => {
   }
   function pump(deadline) {
     scheduled = false
+    try { slice(deadline) } finally { if ([...jobs.values()].some(j => !j.waiting)) schedule() }
+  }
+  function slice(deadline) {
     // While the loading overlay is up nothing else is drawn: take 30 ms slices (each still one bounded task).
     const rush = typeof startingGame !== 'undefined' && startingGame
     const start = performance.now(), cap = rush ? 30 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
@@ -6342,7 +6346,7 @@ const background = (() => {
         if (!j.waiting && !deferred.has(j) && !(j.gpu && (graphics.state === 'lost' || renderer?.getContext().isContextLost()))) { next = j; break }
       }
       if (!next) break
-      const j = next, t = performance.now(); current = j
+      const j = next, t = performance.now(); current = j; j.n = (j.n || 0) + 1
       try {
         j.gen ||= typeof j.steps === 'function' ? j.steps() : j.steps
         const r = j.error ? j.gen.throw(j.error) : j.gen.next(j.value)
@@ -6359,11 +6363,12 @@ const background = (() => {
       if (navigator.scheduling?.isInputPending?.()) break
     }
     stats.slices++; stats.maxSliceMs = Math.max(stats.maxSliceMs, performance.now() - start)
-    if ([...jobs.values()].some(j => !j.waiting)) schedule()
   }
   return {
     stats,
     get pending() { return [...jobs.keys()] },
+    // each pending job: key/phase:steps, w while it waits on a promise
+    get jobs() { return [...jobs.values()].map(j => j.key + (j.phase ? '/' + j.phase : '') + ':' + (j.n || 0) + (j.waiting ? 'w' : '')) },
     run(key, steps, { valid, priority = 0, gpu = false } = {}) {
       if (jobs.has(key)) return jobs.get(key).promise
       const j = { key, steps, valid, priority, gpu, order: ++order }
@@ -6378,6 +6383,8 @@ const background = (() => {
 })()
 GAME.background = background
 let worldPreparing = false, startingGame = false, worldPreparation = Promise.resolve(true), loadingScene = null
+// the landing build holds the view only on the menu: in play (a Join may cancel it before it ever ran) it never blocks
+const landingBusy = () => worldPreparing && phase === 'menu'
 function loadingText(text) {
   document.body.dataset.loading = text
   const label = el('#loading-message'); if (label) label.textContent = text
@@ -9041,7 +9048,7 @@ function rayMesh(boxes, tris = [], solid, kind = 'ray') {
 let levelGen = null, lsLeft = 0, lsAt = 0
 const levelSeed = () => ({ ...levelGen && { ls: [levelGen.seed, levelGen.size], lh: LV.hash }, ...craterV && { cr: craters, cv: craterV } })
 const levelWire = () => (levelGen || craters.length || lsLeft) && (lsLeft > 0 ? lsLeft-- : now() - lsAt > 2000) ? (lsAt = now(), levelSeed()) : craterV ? { cv: craterV } : {}
-function loadLevel(id, gen) { background.cancel('world'); background.cancel('guest-level'); landingReady = ''; return drain(loadLevelSteps(id, gen)) }
+function loadLevel(id, gen) { background.cancel('world'); worldPreparing = false; background.cancel('guest-level'); landingReady = ''; return drain(loadLevelSteps(id, gen)) }
 function* loadLevelSteps(id, gen) {
   levelId = clamp(id | 0, 0, LEVELS.length - 1)
   const L = LEVELS[levelId], g = L.gen && { ...L.gen, ...['city', 'faustland'].includes(L.gen.kind) && CITY_SIZES[settings.city] && { size: CITY_SIZES[settings.city] }, ...gen }
@@ -12959,7 +12966,7 @@ let lookWatching = false
 function* lookWatchSteps() {
   for (;;) {
     yield new Promise(r => setTimeout(r, 1000))
-    if (lookPending || worldPreparing || startingGame) continue
+    if (lookPending || landingBusy() || startingGame) continue
     yield* warmSceneSteps(activeLook || 'plain')
   }
 }
@@ -13094,7 +13101,7 @@ function applyLook() {
     background.run('look-watch', lookWatchSteps, { priority: -1, gpu: true, valid: () => phase === 'playing' })
       .catch(e => frameFailed('look watch', e)).finally(() => { lookWatching = false })
   }
-  if (worldPreparing || startingGame) return
+  if (landingBusy() || startingGame) return
   if (lookPending?.name !== name || activeLook !== name || lookPreparedKey !== lookKey(name)) requestLook(name).catch(e => frameFailed('look preparation', e))
 }
 function lookRender(render, s, cam) {
@@ -14814,7 +14821,7 @@ function buildWorld() {
     if (renderer.getContext().isContextLost()) { graphicsLost(); return }
     if (graphics.state === 'lost') return
     try {
-      if ((worldPreparing || startingGame) && s === scene) { loadingScene ||= new THREE.Scene(); loadingScene.background = scene.background; render(loadingScene, cam); return }
+      if ((landingBusy() || startingGame) && s === scene) { loadingScene ||= new THREE.Scene(); loadingScene.background = scene.background; render(loadingScene, cam); return }
       if (graphics.rebuild && s === scene) rebuildGraphics()
       const programsBefore = renderer.info.programs.length
       lookRender(render, s, cam)
@@ -19931,6 +19938,7 @@ function drawDebug(me, fps) {
     (rescues.n ? row('rescue', v(rescues.n) + '  last ' + esc(rescues.last.who + ' at ' + [rescues.last.x, rescues.last.y, rescues.last.z].map(Math.round).join(' ') +
         ' vy ' + Math.round(rescues.last.vy) + (rescues.last.cell ? '  cell ' + rescues.last.cell : '') + ' (' + rescues.last.cause + ')')) : '') +
     row('bg', 'max step ' + v(Math.round(background.stats.maxStepMs)) + ' ms  jobs ' + v(background.pending.length) +
+        (background.pending.length ? ' (' + esc(background.jobs.slice(0, 8).join(' ')) + (background.pending.length > 8 ? ' …' : '') + ')' : '') +
         (compileSignal.cuts ? '  compile waits cut ' + v(compileSignal.cuts) + (compileSignal.broken ? ' (no ready signal)' : '') : '') +
         (background.stats.long.length ? '  long ' + esc(background.stats.long.join(', ')) : '') + (background.stats.late.length ? '  late programs ' + esc(background.stats.late.join(', ')) : '')) +
     row('js', (jit.off ? '<span class="w">optimizer off</span>' : jit.off === null ? 'checking' : 'optimizer on') + (jit.cold > 0 && jit.best > 0 ? '  x' + f(jit.cold / jit.best, 1, 1) : '')) +
@@ -22780,7 +22788,7 @@ function onHostData(id, d) {
 }
 
 function startJoin(code) {
-  background.cancel('world'); landingReady = ''
+  background.cancel('world'); worldPreparing = false; landingReady = ''
   isHost = false; phase = 'connecting'
   scarsLater = false; if (!scarMesh) prepareScars()
   roomCodeStr = code.trim().toUpperCase()
@@ -22830,7 +22838,7 @@ function startJoin(code) {
 const LEVEL_SWITCH_MS = 1000
 let levelSwitchAt = -Infinity, levelMissTold = false, guestLoading = null
 function guestLoad(lv, gen) {
-  background.cancel('world'); landingReady = ''
+  background.cancel('world'); worldPreparing = false; landingReady = ''
   startingGame = true; document.body.classList.add('starting'); loadingText('Building Faustland…')
   const job = guestLoading = background.run('guest-level', function* () {
     yield* loadLevelSteps(lv, gen)
@@ -30350,7 +30358,7 @@ function stepSim(t) {
   if (dt > 0.25) dt = 0.25
   fps += (1 / Math.max(dt, 1e-4) - fps) * timeShare(dt, 0.08)
   acc += dt
-  if (phase !== 'playing' || startingGame || worldPreparing) acc = 0
+  if (phase !== 'playing' || startingGame) acc = 0
   else checkLiveness(t, own)
   sampleInput()
 
@@ -30544,7 +30552,7 @@ function frameBody() {
   try { dt = stepSim(t) } catch (e) { frameFailed('sim', e) }
   msSim = msSim * 0.9 + (now() - _s0) * 0.1
   drawT0 = now()
-  try { if (!startingGame && !worldPreparing) draw(dt, t) } catch (e) { frameFailed('draw', e) }
+  try { if (!startingGame && !landingBusy()) draw(dt, t) } catch (e) { frameFailed('draw', e) }
   if (startLog && phase === 'playing' && startLog.frames.length < 30) {
     if (!startLog.frames.length) markStart('frame 1')
     startLog.frames.push(t - (startLog.last ?? t)); startLog.last = t
