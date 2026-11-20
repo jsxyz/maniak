@@ -19425,7 +19425,7 @@ function initInput() {
   })
 }
 
-function sampleInput() { INPUT_SCHEMA.sample() }
+function sampleInput() { INPUT_SCHEMA.sample(); if (autoRun) autoFrame() }          // card #75: the autopilot's keys over the real ones
 
 let shiftHeld = false, swapHeld = false, wheelSwap = false
 let disHeld = false, pipeHeld = false, tapDis = false, tapPipe = false     // cards #15 and #16
@@ -21240,6 +21240,124 @@ function capAfterDraw() {
     if (job.frames.length >= job.n) job.done()
   }
 }
+// card #75, the autopilot: gameHooks.auto.run(steps) runs a list of steps at full frame rate inside the page, on the host's own
+// character, and resolves { ok, error?, ms, log }. Input goes in at the game's own input layer (after sampleInput has read the
+// keys, before a tick reads `input`), so it is exact per frame and needs no focus or pointer lock. A step is an object; its
+// fields run together and it ends when all have: { look: [yaw°, pitch°] } (compass degrees, as /look), { hold: { keys, ms | frames } }
+// (keys: w a s d space shift(sprint) punch haymaker e q r f g p h, or KeyW...), { wait: ms | { frames } }, { capture: {n, every,
+// width, quality} } (gameHooks.capture, its frames in the log), { cmd: '/tp 0 0' } (the lines it printed). Real (trusted)
+// keys, clicks and mouse moves cancel a run. autoApi.steps takes more step kinds (#75's /go and /drive).
+const AUTO_NAMES = { fwd: ['w', 'forward', 'up'], back: ['s', 'back', 'backward'], left: ['a', 'left'], right: ['d', 'right'], jump: ['space', 'jump'],
+  sprint: ['shift', 'shiftleft', 'sprint'], descend: ['q', 'descend'], swap: ['r', 'swap'], power: ['f', 'power'], use: ['e', 'use', 'grab'], dis: ['g', 'disguise'],
+  pipe: ['p', 'pipe'], car: ['h', 'whistle', 'car'], fire: ['punch', 'fire', 'click', 'mouse0'], alt: ['haymaker', 'alt', 'mouse2'] }
+const AUTO_EDGE = ['use', 'swap', 'power', 'dis', 'pipe', 'car']                // pressed once when the hold starts
+const autoAct = k => {
+  const s = String(k).toLowerCase().replace(/^key/, '')
+  for (const a in AUTO_NAMES) if (AUTO_NAMES[a].includes(s)) return a
+  throw new TypeError('auto: no key ' + k + ' (' + Object.values(AUTO_NAMES).map(v => v[0]).join(' ') + ')')
+}
+let autoRun = null
+function autoLook(h, q) {                     // as /look: compass degrees, the chase camera's yaw in a car
+  const me = selfChar(), car = me && !(me.dead > 0) && (seatOf(me) || rideOf(me)) && chase.yaw === chase.yaw
+  input.yaw += wrapPi(-h * Math.PI / 180 - (car ? chase.yaw + chase.look : input.yaw))
+  input.pitch = clamp((q || 0) * Math.PI / 180, -PITCH_MAX, PITCH_MAX)
+}
+// each kind: start(R, arg, step) -> a sub { tick(t) -> true when done, out? }; a throw ends the run with the error
+const AUTO_STEPS = {
+  look: (R, a) => { const v = Array.isArray(a) ? a : typeof a === 'object' ? [a.yaw, a.pitch] : [a, 0]; autoLook(Number(v[0]) || 0, Number(v[1]) || 0); return { tick: () => true } },
+  wait: (R, a) => { const t0 = now(), ms = typeof a === 'object' ? a.ms : a, n = typeof a === 'object' ? a.frames : 0; let f = 0; return { tick: t => ++f > n && (!ms || t - t0 >= ms) } },
+  hold: (R, a) => {
+    const acts = new Set([].concat(a.keys).map(autoAct)), h = { acts, edge: new Set([...acts].filter(x => AUTO_EDGE.includes(x))) }, t0 = now(); let f = -1
+    R.holds.push(h)
+    return { tick: t => { if (a.frames ? ++f < a.frames : t - t0 < (a.ms ?? 0)) return false; R.holds.splice(R.holds.indexOf(h), 1); return true } }
+  },
+  capture: (R, a) => {
+    if (typeof captureFrames !== 'function') throw new Error('capture is not in this build')
+    const s = { tick: () => s.done }
+    captureFrames(a === true ? {} : a).then(r => { s.out = r; s.done = true })
+    return s
+  },
+  cmd: (R, a) => {
+    const line = String(a).trim()
+    if (!line.startsWith('/')) throw new TypeError('auto: a command starts with /')
+    const out = sysTap = []
+    try { runCommand(line) } finally { sysTap = null }
+    return { tick: () => true, out: out.map(m => m.replace(/§./g, '')) }
+  },
+}
+function autoStart(R) {
+  const step = R.steps[R.i], subs = []
+  if (!step || typeof step !== 'object') throw new TypeError('auto: step ' + R.i + ' is not an object')
+  for (const k of Object.keys(step)) {
+    if (!Object.hasOwn(AUTO_STEPS, k)) throw new TypeError('auto: no step kind ' + k + ' (' + Object.keys(AUTO_STEPS).join(' ') + ')')
+    const s = AUTO_STEPS[k](R, step[k], step); s.kind = k; subs.push(s)
+  }
+  R.cur = { i: R.i, step, subs, t0: now() }
+}
+// the frame's end of it: advance, then lay the held keys over what the real ones left in `input`
+function autoFrame() {
+  const R = autoRun, t = now()
+  if (!R) return
+  R.lastFrame = t
+  if (menuUp() || chatOpen || phase !== 'playing') return autoEnd(R, 'a menu or the chat opened')
+  try {
+    for (let guard = 0; guard < 16; guard++) {
+      if (!R.cur) { if (++R.i >= R.steps.length) return autoEnd(R); autoStart(R) }
+      let all = true
+      for (const s of R.cur.subs) if (!s.done && (s.done = !!s.tick(t)) === false) all = false
+      if (!all) break
+      const e = { i: R.cur.i, at: Math.round(t - R.t0), took: Math.round(t - R.cur.t0) }
+      for (const s of R.cur.subs) if (s.out !== undefined) e[s.kind] = s.out
+      R.log.push(e); R.cur = null
+    }
+  } catch (e) { return autoEnd(R, 'step ' + R.i + ': ' + (e?.message || e)) }
+  autoOverlay(R)
+}
+function autoOverlay(R) {
+  const H = new Set(), E = new Set()
+  for (const h of R.holds) { for (const a of h.acts) H.add(a); for (const a of h.edge) E.add(a); h.edge.clear() }
+  if (H.has('fwd') || H.has('back')) input.f = (H.has('fwd') ? 1 : 0) - (H.has('back') ? 1 : 0)
+  if (H.has('left') || H.has('right')) input.r = (H.has('right') ? 1 : 0) - (H.has('left') ? 1 : 0)
+  if (H.has('jump')) input.j = true
+  if (H.has('sprint')) input.sprint = true
+  if (H.has('descend')) input.descend = true
+  if (H.has('use')) input.grip = true
+  for (const b of ['fire', 'alt']) { if (H.has(b)) { input[b] = true; R.set[b] = true } else if (R.set[b]) { input[b] = false; R.set[b] = false } }
+  if (E.has('use')) input.use = true
+  if (E.has('swap')) input.sw = true
+  if (E.has('power')) input.sh = true
+  if (E.has('dis')) input.dis = true
+  if (E.has('pipe')) input.pipe = true
+  if (E.has('car')) { input.car = true; mcPress() }
+}
+function autoEnd(R, error) {
+  if (autoRun !== R) return
+  autoRun = null
+  R.holds.length = 0
+  for (const b of ['fire', 'alt']) if (R.set[b]) input[b] = false
+  clearInterval(R.dog)
+  for (const [ev, fn, o] of R.listen) removeEventListener(ev, fn, o)
+  R.resolve({ ok: !error, ...error ? { error } : {}, ms: Math.round(now() - R.t0), steps: Math.min(R.i + (error ? 0 : 1), R.steps.length), log: R.log })
+}
+const autoApi = {
+  routines: {},          // name -> steps (data); gameHooks.auto.run('name')
+  steps: AUTO_STEPS,
+  get running() { return !!autoRun },
+  cancel(why = 'cancelled') { if (autoRun) autoEnd(autoRun, why); return true },
+  run(steps, opt = {}) {
+    if (typeof steps === 'string') { const r = autoApi.routines[steps]; hookCheck(Array.isArray(r), 'no routine ' + steps + ' (' + Object.keys(autoApi.routines).join(', ') + ')'); steps = r }
+    hookCheck(Array.isArray(steps) && steps.length <= 500, 'auto.run(steps): an array of at most 500 steps')
+    if (!isHost || serving || !selfChar() || phase !== 'playing') return Promise.resolve({ ok: false, error: 'host only, in the game, with a character', log: [] })
+    if (autoRun) autoEnd(autoRun, 'replaced by a new run')
+    return new Promise(resolve => {
+      const R = autoRun = { steps, i: -1, cur: null, log: [], holds: [], set: {}, t0: now(), lastFrame: now(), resolve, listen: [] }
+      // a real (trusted) key, click or mouse move cancels it; a bridge's synthetic events do not
+      const real = e => { if (e.isTrusted && !(e.type === 'mousemove' && (!locked || Math.abs(e.movementX) + Math.abs(e.movementY) < 3))) autoEnd(R, 'player input') }
+      for (const ev of ['keydown', 'mousedown', 'wheel', 'mousemove']) { R.listen.push([ev, real, true]); addEventListener(ev, real, true) }
+      R.dog = setInterval(() => { if (now() - R.lastFrame > (opt.stall ?? 15000)) autoEnd(R, 'no frames for ' + Math.round((now() - R.lastFrame) / 1000) + ' s: tab hidden?') }, 1000)
+    })
+  },
+}
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   // card #75: a sequence of frames and their debug rows in one call (a promise): { n, every, width, quality }
   capture: captureFrames,
@@ -21262,6 +21380,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     hookFilters.set(kind, (hookFilters.get(kind) || new Set()).add(fn)); hookRelist()
     return () => { const s = hookFilters.get(kind); if (s?.delete(fn) && !s.size) hookFilters.delete(kind); hookRelist() }
   },
+  // card #75: scripted input on the host's own character: await gameHooks.auto.run([{ look: [90, 0] }, { hold: { keys: ['w', 'sprint'], ms: 3000 }, capture: { n: 20, every: 9 } }])
+  auto: autoApi,
   // a hook's own event, to whoever listens for its type or for '*'
   emit(type, data = {}) {
     hookCheck(!HOOK_TYPES.includes(type) && HOOK_TYPE.test(type) && type.length <= 40, 'not a type a hook may emit: ' + type)
