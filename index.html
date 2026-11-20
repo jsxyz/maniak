@@ -227,6 +227,11 @@
   /* only for characters that have them */
   #btn-alt,#btn-swap,#btn-shift,#btn-use{display:none}
   body.canalt #btn-alt,body.manyguns #btn-swap,body.canshift #btn-shift,body.canuse #btn-use{display:grid}
+  #btn-disguise,#btn-pipe{width:58px;height:58px;right:calc(268px + env(safe-area-inset-right));font-size:10px;display:none}
+  #btn-disguise{bottom:calc(126px + env(safe-area-inset-bottom))}
+  #btn-pipe{bottom:calc(192px + env(safe-area-inset-bottom))}
+  body.candis #btn-disguise,body.canpipe #btn-pipe{display:grid}
+  body.invehicle #btn-disguise,body.invehicle #btn-pipe{display:none}
   #btn-radio{width:58px;height:58px;right:calc(200px + env(safe-area-inset-right));bottom:calc(192px + env(safe-area-inset-bottom));font-size:10px;display:none}
   body.invehicle #btn-radio{display:grid}
   body.invehicle #btn-jump{right:calc(22px + env(safe-area-inset-right));bottom:calc(36px + env(safe-area-inset-bottom))}
@@ -442,6 +447,8 @@
   <div class="tbtn" id="btn-team">TEAM</div>
   <div class="tbtn" id="btn-shift">FORM</div>
   <div class="tbtn" id="btn-use">USE</div>
+  <div class="tbtn" id="btn-disguise">COAT</div>
+  <div class="tbtn" id="btn-pipe">PIPE</div>
   <div class="tbtn" id="btn-car">WHISTLE</div>
   <div class="tbtn" id="btn-sprint">SPRINT</div>
   <div class="tbtn" id="btn-radio">RADIO</div>
@@ -731,6 +738,10 @@ const CHARS = [
   { name: 'Street performer', side: 'freaks', hidden: true, atk: 'Shank', model: 'street_performer', r: 0.35, h: 0.55, speed: 6.8, jump: 8.2, hp: 80,
     color: 0x5b5246, enter: 'sets up on the corner.', role: 'Faustland\'s own busker · a dance, a tin cup and a shank' },
 ]
+// card #15: the disguise is a hidden copy of the Maniak's row that only the drawn body reads (the coat); `disguise` on his row
+// names it, and `pipe` is the glass pipe (card #16). Both are his alone
+const DISGUISE_CID = CHARS.push({ ...CHARS[0], name: 'Alistair', hidden: true, model: 'alistair', role: 'The Maniak, in a borrowed coat' }) - 1
+CHARS[0].disguise = DISGUISE_CID; CHARS[0].pipe = true
 // rate: s/shot, spread: rad, range: m. Gun 0 never runs dry. look: line|beam|slash|blast; held: glow, heldScale, tether
 // kind: ray|pierce|chain|radius. dive: speed m/s, pull m/s²; dmg, knock × clamp(impact/ref, 1, cap), range × its root
 // kind dash: held, runs along the aim at speed m/s through people and objects; each it passes takes dmg and knock once a hold
@@ -784,6 +795,8 @@ const PARTICLES = {
   chip: { n: 16, life: [0.35,0.75], speed: [2,6], size: [0.04,0.09], cone: 1.2, fall: 14, grow: 0.8, cell: 0, color: 0x9a9488 },
   dust: { n: 6, life: [0.45, 0.85], speed: [0.6, 1.8], size: [0.22, 0.36], cone: 1.2, fall: -0.4, grow: 2.6, cell: 0, color: 0xc9c0ae },
   claw: { n: 9, life: [0.12, 0.26], speed: [6, 11], size: [0.06, 0.1], cone: 0.35, fall: 6, grow: 0.3, add: true, cell: 0, stretch: 0.12, hot: 0.4 },
+  // card #16: the pipe's smoke: thin, pale, rising slowly as it swells, in the air for seconds
+  smoke: { n: 2, life: [1.8, 3.4], speed: [0.25, 0.8], size: [0.1, 0.17], cone: 0.7, fall: -0.32, grow: 5, cell: 0, color: 0xc9ced2 },
 }
 const GUN_ROW = { ammo: Infinity, drop: false, pellets: 1, spread: 0 }      // what a GUNS row is unless it says otherwise
 const GUNS = [
@@ -1071,7 +1084,7 @@ const ASSETS =
 // decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
 // neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { performer_anims: 'performer_anims.672d8111.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.c94c09ac.glb', maniak_moves: 'maniak_moves.a48768e9.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
+const RIG_FILES = { performer_anims: 'performer_anims.672d8111.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.c94c09ac.glb', maniak_moves: 'maniak_moves.a48768e9.glb', alistair: 'civ_alistair.e1c2a10b.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -1136,6 +1149,12 @@ const MODELS = {
       ['spine_03', -0.189, -0.002, -0.077, -0.192, 0.223, -0.09, 0.1], ['clavicle_l', 0, 0, 0, -0.015, 0.319, -0.052, 0.134], ['clavicle_r', 0, 0, 0, 0.015, 0.319, -0.052, 0.126],
       ['pelvis', 0.049, 0.039, -0.154, -0.081, 0.045, -0.124, 0.05], ['Head', 0, -0.026, 0, 0, 0.098, 0, 0.099]],
   },
+  // card #15, the disguise: Alistair's long white coat, shirt and tie, his own face and slicked hair, on the pedestrians' skeleton
+  // (assets/civ_alistair.*). His moves stay his own: the same punches, the shared clips for the rest; the coat has no cape
+  alistair: { ...RIG_CIV, file: RIG_FILES.alistair, anims: RIG_FILES.anims,
+    clips: { ...RIG_CIV.clips, idle: 'idle', walk: 'walk', crouch: 'smash_charge', dive: 'smash_air', lift: 'smash_air', leap: 'smash_air', land: 'smash_land', climb: 'chain_hang' },
+    pace: { walk: 0.62, run: 1.55, sprint: 3.25, crouch: 0.41 }, gaits: { rates: { run: [0.55, 2.1], sprint: [0.48, 2.1] } },
+    punches: { jab: [['jab', 0.12], ['cross', 0.18], ['hook', 0.04]], rise: [['haymaker', 0.36]], slam: [['smash_land', 0]] } },
   // the freaks until card #7 brings the comic's (card #23's stand-ins): the Freak hunched, gaunt and pale in a long ragged
   // coat, the Brute a broad butcher in cap and apron; a creeping walk, the freak's swipe for a shiv, a hook for anything else
   // swung. Card #35: the Brute carries his sledge on the shoulder and swings it two-handed, with the freaks' bat clips
@@ -1884,6 +1903,11 @@ const SOUNDS = {
   'Chain throw': { say: 'a heavy concrete block thrown hard: a strong rush of air and chain clatter', seed: 0 },
   'Chain catch': { say: 'concrete catches masonry and a steel chain snaps taut with a metallic clack', seed: 0 },
   'Move stomp': { say: 'one heavy sprinting footfall: a big boot slamming down on pavement, a deep short thud', seed: 0 },
+  // cards #15 and #16, placed at the player who does them
+  'Pipe flick': { say: 'a metal lighter flicked open and struck: a bright steel click, then a soft whoosh of flame', seed: 0 },
+  'Pipe sizzle': { say: 'a long slow draw on a glass pipe: a crackling, sizzling inhale, a faint bubbling hiss', seed: 0 },
+  'Pipe exhale': { say: 'a long, slow, satisfied exhale of smoke: a soft airy breath out, fading', seed: 0 },
+  'Disguise change': { say: 'a heavy coat shrugged on and a cowl pulled off: a quick swish of cloth and a brief rustle', seed: 0 },
   'Haymaker charge': { say: 'a short breath of effort and a rising heavy swing', seed: 0 },
   Shiv: { say: 'a fast, thin blade slash: a hiss of air and a scrape', seed: 0 },
   Sledge: { say: 'a sledgehammer swung through the air into a dull iron thud', seed: 0 },
@@ -2273,7 +2297,7 @@ const RAIL = { level: { low: 10, high: 17 }, gauge: 2.5, beam: [0.45, 1.5], R: 2
   car: { n: 3, half: 6.2, nose: 7.8, pitch: 13, width: 1.6, floor: 0.35, ceiling: 2.8, roof: 3.35, bogie: 4.5, doors: [-3.1, 3.1], door: 0.75, height: 2.1 },
   plat: { half: 22, inner: 4.3, outer: 9.4, depth: 0.5, rail: 1.1, canopy: 3.2 },
   pav: { stair: [14.5, 19.5], tower: [20, 34], half: 10, solid: 24, bridge: 4, step: 0.18 },
-  run: { vmax: 20, vcurve: 9, acc: 1, dec: 1.2, dwell: 22, open: [2, 3.2], close: [3.2, 2], ds: 0.5 },
+  run: { vmax: 34, vcurve: 9, acc: 1.3, dec: 1.3, dwell: 22, open: [2, 3.2], close: [3.2, 2], ds: 0.5 },
   light: { candela: 420, y: 3, along: [-16, 0, 16] },
   names: ['Sinclair Row', 'Hell Block', 'Pacifier Yard', 'Teardrop Lane', 'Cathedral Steps', 'Victory Arcade', 'Dynamo Works',
     'Meridian', 'Titan Court', 'Radiant Square', 'Zenith', 'Electra', 'Foundry Gate', 'Bastion', 'Monument', 'Exchange',
@@ -2572,8 +2596,9 @@ function faustRail(seed, S) {
     return off < 0.05 ? { station: t.id, side, s: at } : null
   }).filter(Boolean)).sort((a, b) => a.s - b.s)
   // the arcs, as spans of arc length the trains slow on
-  const slowOn = b => { const out = []; for (let i = 1; i + 1 < b.s.length; i++) { const ax = b.p[2 * i - 2], az = b.p[2 * i - 1], cx = b.p[2 * i + 2], cz = b.p[2 * i + 3]
-    if (!(ax === cx || az === cz)) { const last = out.at(-1); if (last && b.s[i - 1] <= last[1] + 0.01) last[1] = b.s[i + 1]; else out.push([b.s[i - 1], b.s[i + 1]]) } } return out }
+  // (an arc's chords run askew; the straights along an axis)
+  const slowOn = b => { const out = []; for (let i = 0; i + 1 < b.s.length; i++) { const ax = b.p[2 * i], az = b.p[2 * i + 1], cx = b.p[2 * i + 2], cz = b.p[2 * i + 3]
+    if (!(ax === cx || az === cz)) { const last = out.at(-1); if (last && b.s[i] <= last[1] + 0.01) last[1] = b.s[i + 1]; else out.push([b.s[i], b.s[i + 1]]) } } return out }
   // the loop's two beams: the outer one run with its points, the inner one against them; trains spaced in phase
   for (const [b, way] of [[outer, 1], [inner, -1]]) {
     const path = way > 0 ? b : { ...b, p: reversePts(b.p) }
@@ -7038,6 +7063,7 @@ function respawn(c) {
   c.ammo = Infinity; c.cool = 0; c.dead = 0
   c.charge = 0; c.burstLeft = 0
   c.pow = 0; c.powT = 0
+  c.smk = 0; c.smkHp = 0; c.chgT = 0; c.disguised = false
   c.knT = 0; c.knx = 0; c.knz = 0; c.knUp = 0
   // c.prof kept
   c.mark = 0; c.markT = 0
@@ -15737,6 +15763,7 @@ function rigAnimate(a, want, dt, t) {
     seatPose(a, R)
   } else R.inst.position.y = R.inst.userData.y
   rigMovePose(a, R, want, t)
+  rigSkirt(a, R, dt)
   rigCape(a, R, dt)
 }
 // card #50: a hop's landing. Your own thumps your camera (harder than a footfall); both feet kick up dust; a stomp
@@ -15769,11 +15796,12 @@ function restoreMovePose(R) {
   R.inst.position.y = R.moveSaved.y; R.inst.quaternion.copy(R.moveSaved.root); R.moveSaved.active = false
 }
 function rigMovePose(a, R, want, t) {
-  if (a.spec.model !== 'maniak' || a.dying >= 0) return
+  if (a.spec.model !== 'maniak' && a.spec.model !== 'alistair' || a.dying >= 0) return
+  const smk = a.smk || 0, chg = a.chgAt !== undefined ? (t - a.chgAt) / (DIS_S * 1000) : 2
   const charge = a.moveState === 1 ? clamp(a.moveCharge || 0, 0, 1) : -1, air = a.moveState === 2, age = a.hayAge || 0
   const whirl = Array.isArray(a.chainState) && a.chainState[0] === 1 ? clamp(a.chainState[1] || 0, 0, 1) : -1
   const reel = Array.isArray(a.chainState) && a.chainState.length >= 24 + CHAIN_N * 3 && a.chainState[0] >= 3 ? (a.chainState[10] ? 1 : 0) : -1       // card #43: 1 reeling, 0 held
-  if (whirl < 0 && reel < 0 && charge < 0 && !air && !(age > 0 && age < 0.9)) {
+  if (!(smk > 0) && !(chg >= 0 && chg < 1) && whirl < 0 && reel < 0 && charge < 0 && !air && !(age > 0 && age < 0.9)) {
     if(R.name==='idle'){const l=R.bones.get('foot_l'),r=R.bones.get('foot_r');l?.getWorldPosition(rigV);r?.getWorldPosition(rigU);R.moveFoot=Math.min(rigV.y,rigU.y)-a.mesh.position.y}
     return
   }
@@ -15812,7 +15840,37 @@ function rigMovePose(a, R, want, t) {
   }
   const feet = () => {R.bones.get('foot_l')?.getWorldPosition(leftFoot);R.bones.get('foot_r')?.getWorldPosition(rightFoot);return Math.min(leftFoot.y,rightFoot.y)}
   const moving = want === 1 || (a.v || 0) > 0.6, planted = !air && want !== 2 && want !== 3 && want !== 6 && !(whirl >= 0 && moving) && !(reel >= 0 && (moving || want === 4 || R.name === R.M.clips.climb)), floor = a.mesh.position.y + (R.moveFoot ?? -a.spec.h-a.spec.r+0.10)
-  if (whirl >= 0) {
+  if (smk > 0) {
+    // card #16, the pipe: the lighter's hand comes to the bowl, then the pipe to his lips for the draw (his head tipping back),
+    // held there, then lowered as the smoke goes out (head up, chest opening). He stands: his legs keep the idle clip
+    const P = S.p ||= [new THREE.Vector3(), new THREE.Vector3()], sm = THREE.MathUtils.smoothstep
+    const raise = sm(smk, 0, 0.7) * (1 - sm(smk, 3.5, 4.2)), inhale = sm(smk, 0.9, 1.5) * (1 - sm(smk, 2.7, 3.1))
+    const out = sm(smk, 2.9, 3.3) * (1 - sm(smk, 3.9, 4.4)), lit = sm(smk, 0.2, 0.5) * (1 - sm(smk, 1.0, 1.4))
+    turn('spine_02', [1, 0, 0], 0.05 * raise); turn('Head', [1, 0, 0], 0.04 * raise - 0.2 * inhale - 0.32 * out); turn('spine_03', [1, 0, 0], -0.07 * out)
+    R.inst.updateMatrixWorld(true); R.inst.getWorldQuaternion(rootQ)
+    const keep = ['upperarm_r', 'lowerarm_r', 'hand_r', 'upperarm_l', 'lowerarm_l', 'hand_l'].map(n => R.bones.get(n)).filter(Boolean), was = keep.map(b => b.quaternion.clone())
+    const head = R.bones.get('Head')
+    if (head) {
+      head.getWorldPosition(P[0]); R.inst.worldToLocal(P[0])
+      const mx = P[0].x, my = P[0].y + 0.05, mz = P[0].z + 0.1                       // his lips, in the body's own frame
+      arm('r', [mx - 0.015, my - 0.02, mz + 0.03], [mx - 0.5, my - 0.4, mz - 0.1])
+      if (lit > 0.01) arm('l', [mx + 0.1, my - 0.1, mz + 0.14], [mx + 0.5, my - 0.4, mz - 0.1])
+    }
+    keep.forEach((b, i) => b.quaternion.copy(was[i].slerp(b.quaternion, i < 3 ? raise : lit)))
+  } else if (chg >= 0 && chg < 1) {
+    // card #15, the quick change: both hands go to the collar and pull the coat on (or off), his shoulders working
+    const P = S.p ||= [new THREE.Vector3(), new THREE.Vector3()], w = Math.sin(Math.PI * chg), swing = Math.sin(2 * Math.PI * chg)
+    turn('spine_02', [0, 1, 0], 0.2 * swing); turn('spine_03', [0, 1, 0], -0.12 * swing); turn('spine_02', [1, 0, 0], 0.07 * w)
+    R.inst.updateMatrixWorld(true); R.inst.getWorldQuaternion(rootQ)
+    const keep = ['upperarm_r', 'lowerarm_r', 'hand_r', 'upperarm_l', 'lowerarm_l', 'hand_l'].map(n => R.bones.get(n)).filter(Boolean), was = keep.map(b => b.quaternion.clone())
+    const chest = R.bones.get('spine_03')
+    if (chest) {
+      chest.getWorldPosition(P[0]); R.inst.worldToLocal(P[0])
+      const x = P[0].x, y = P[0].y + 0.1, z = P[0].z + 0.16
+      arm('r', [x - 0.19, y + 0.02 * swing, z], [x - 0.6, y - 0.25, z - 0.2]); arm('l', [x + 0.19, y - 0.02 * swing, z], [x + 0.6, y - 0.25, z - 0.2])
+    }
+    keep.forEach((b, i) => b.quaternion.copy(was[i].slerp(b.quaternion, w)))
+  } else if (whirl >= 0) {
     // card #30, the whirl: his fist circles over his head inside the block's circle and a little ahead of it (whirlFist,
     // as the host's chain), elbow out, the fist gripping the chain's end; his left arm is out for balance. He leans off the
     // block as it comes round, his chest turning after the fist and his head holding on his aim; standing, he sinks into
@@ -18780,17 +18838,17 @@ const marksHit = f => f[7] === 1 || f[7] === 3 || f[7] === 7 && f[5]
 const keys = {}
 // Legacy input adapter: absent fields stay absent; consume edges only after a simulated tick.
 const INPUT_SCHEMA = {
-  bit: { j: 1, fire: 2, sh: 4, alt: 8, sw: 16, sprint: 64, descend: 128, use: 32, grip: 256, car: 512 },
+  bit: { j: 1, fire: 2, sh: 4, alt: 8, sw: 16, sprint: 64, descend: 128, use: 32, dis: 1024, pipe: 2048, grip: 256, car: 512 },
   empty: () => ({ f: 0, r: 0, j: false, fire: false, yaw: 0, pitch: 0 }),
   predict(input, aim, A) {
-    return { f: input.f, r: input.r, j: input.j, fire: input.fire, alt: input.alt, use: input.use, grip: input.grip, sprint: input.sprint, descend: input.descend,
+    return { f: input.f, r: input.r, j: input.j, fire: input.fire, alt: input.alt, use: input.use, grip: input.grip, sprint: input.sprint, descend: input.descend, dis: input.dis, pipe: input.pipe,
              yaw: (aim ? r4 : r2)(A.yaw), pitch: (aim ? r4 : r2)(A.pitch), ...input.descend && { d: r2(A.d || 0) } }
   },
   encode(inp, input, haveT, renderT, A) {
     const B = INPUT_SCHEMA.bit
     return [inp.f, inp.r,
             (inp.j ? B.j : 0) | (inp.fire ? B.fire : 0) |
-            (input.sh ? B.sh : 0) | (input.alt ? B.alt : 0) | (input.sw ? B.sw : 0) | (inp.sprint ? B.sprint : 0) | (input.descend ? B.descend : 0) | (input.use ? B.use : 0) | (input.grip ? B.grip : 0) | (input.car ? B.car : 0),
+            (input.sh ? B.sh : 0) | (input.alt ? B.alt : 0) | (input.sw ? B.sw : 0) | (inp.sprint ? B.sprint : 0) | (input.descend ? B.descend : 0) | (input.use ? B.use : 0) | (input.dis ? B.dis : 0) | (input.pipe ? B.pipe : 0) | (input.grip ? B.grip : 0) | (input.car ? B.car : 0),
             inp.yaw, inp.pitch, haveT ? r2(renderT) : 0, ...(inp.fire || input.alt || inp.descend ? [r2(A.d || 0)] : [])]
   },
   decode(t, seq) {
@@ -18800,11 +18858,11 @@ const INPUT_SCHEMA = {
     const nf = x => Number.isFinite(x = +x) ? x : 0
     return { s: seq, f: nf(t[0]), r: nf(t[1]), yaw: nf(t[3]), pitch: nf(t[4]), rt: nf(t[5]), d: nf(t[6]),
              j: !!(bits & B.j), fire: !!(bits & B.fire),
-             sh: !!(bits & B.sh), alt: !!(bits & B.alt), sw: !!(bits & B.sw), sprint: !!(bits & B.sprint), descend: !!(bits & B.descend), use: !!(bits & B.use), grip: !!(bits & B.grip), car: !!(bits & B.car) }
+             sh: !!(bits & B.sh), alt: !!(bits & B.alt), sw: !!(bits & B.sw), sprint: !!(bits & B.sprint), descend: !!(bits & B.descend), use: !!(bits & B.use), dis: !!(bits & B.dis), pipe: !!(bits & B.pipe), grip: !!(bits & B.grip), car: !!(bits & B.car) }
   },
-  consume(input) { input.sw = input.sh = input.use = input.car = false; jumpTapped = false },
+  consume(input) { input.sw = input.sh = input.use = input.dis = input.pipe = input.car = false; jumpTapped = false },
   key: { forward: 'KeyW', back: 'KeyS', right: 'KeyD', left: 'KeyA', jump: 'Space',
-         descend: 'KeyQ', swap: 'KeyR', shift: 'KeyF', use: 'KeyE', sprint: 'ShiftLeft', car: 'KeyH' },
+         descend: 'KeyQ', swap: 'KeyR', shift: 'KeyF', use: 'KeyE', sprint: 'ShiftLeft', disguise: 'KeyG', pipe: 'KeyP', car: 'KeyH' },
   keyDown(e) {
     if (e.code === 'Tab') { e.preventDefault(); tabOpen = true; return }
     if (e.code === 'KeyT' || (e.key === '/' && !e.ctrlKey && !e.metaKey)) {
@@ -18861,6 +18919,8 @@ const INPUT_SCHEMA = {
     tap('btn-swap', () => { tapSwap = true })
     tap('btn-shift', () => { tapShift = true })
     tap('btn-use', () => { tapUse = true })
+    tap('btn-disguise', () => { tapDis = true })
+    tap('btn-pipe', () => { tapPipe = true })
     tap('btn-car', () => { tapCar = true })
     tap('btn-sprint', sprintToggle)
     tap('btn-radio', () => GAME.audio.cycle())
@@ -18887,6 +18947,8 @@ const INPUT_SCHEMA = {
       input.sw ||= tapSwap; tapSwap = false
       input.sh ||= tapShift; tapShift = false
       input.use ||= tapUse; tapUse = false
+      input.dis ||= tapDis; tapDis = false
+      input.pipe ||= tapPipe; tapPipe = false
       if (tapCar) { input.car = true; mcPress() }
       tapCar = false
       input.grip = useDown          // card #55: the use button held
@@ -18904,6 +18966,10 @@ const INPUT_SCHEMA = {
     shiftHeld = !!keys[INPUT_SCHEMA.key.shift]
     input.use ||= !!keys[INPUT_SCHEMA.key.use] && !useHeld
     useHeld = !!keys[INPUT_SCHEMA.key.use]
+    input.dis ||= !!keys[INPUT_SCHEMA.key.disguise] && !disHeld
+    disHeld = !!keys[INPUT_SCHEMA.key.disguise]
+    input.pipe ||= !!keys[INPUT_SCHEMA.key.pipe] && !pipeHeld
+    pipeHeld = !!keys[INPUT_SCHEMA.key.pipe]
     if (keys[INPUT_SCHEMA.key.car] && !carHeld) { input.car = true; mcPress() }        // card #12: whistle, or the ejector at the wheel
     carHeld = !!keys[INPUT_SCHEMA.key.car]
     input.grip = useHeld          // card #55: E held
@@ -18999,6 +19065,7 @@ function initInput() {
 function sampleInput() { INPUT_SCHEMA.sample() }
 
 let shiftHeld = false, swapHeld = false, wheelSwap = false
+let disHeld = false, pipeHeld = false, tapDis = false, tapPipe = false     // cards #15 and #16
 let useHeld = false, tapUse = false, carHeld = false, tapCar = false, useDown = false
 let sprintOn = false, sprintHeld = false
 const sprintToggle = () => { sprintOn = !sprintOn; document.body.classList.toggle('sprinting', sprintOn) }
@@ -19964,7 +20031,7 @@ function keyHelp(c) {
     : 'Space jump' + (C.swing ? ' · Q zip' : '')
   return 'WASD move · Shift sprint · ' + space + '<br>' +
     'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
-    (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + '<br>' +
+    (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + (C.disguise !== undefined ? ' · G change coat' : '') + (C.pipe ? ' · P pipe' : '') + '<br>' +
     'H whistle for your car, at its wheel the ejector seat · T chat · Tab scores · V view · M sound · B radio · F3 debug · Esc menu'
 }
 
@@ -21762,7 +21829,7 @@ function reconcile(a) {
   for (let i = 0; i < n; i++) {
     const e = pending[i]
     carrierT = e.ct ?? carrierT
-    tickChars([predicted], () => e.inp, TICK)
+    tickChars([predicted], c => lockInput(c, e.inp), TICK)
     OWN_PREDICTION.take(predicted, e); e.ob = objs.map(o => [o.id, ...objState(o)]); e.sh = objs.filter(o => o.V).map(o => [o.id, o.steer || 0, o.hand || 0])
   }
   blend()
@@ -21870,7 +21937,7 @@ function remoteAt(t) {
     tr.ox = (tr.ox || 0) * fade; tr.oy = (tr.oy || 0) * fade; tr.oz = (tr.oz || 0) * fade
     const dy = Math.atan2(Math.sin(p[F.yaw] - q[F.yaw]), Math.cos(p[F.yaw] - q[F.yaw])) || 0
     out.push({ id, x: s.x + tr.ox, y: s.y + tr.oy, z: s.z + tr.oz,
-               yaw: q[F.yaw] + dy * k, vx: p[F.vx], vz: p[F.vz], hp: p[F.hp], dead: p[F.dead], cid: p[F.cid], kills: p[F.kills] | 0,
+               yaw: q[F.yaw] + dy * k, vx: p[F.vx], vz: p[F.vz], hp: p[F.hp], dead: p[F.dead], cid: looksCidOf(p[F.cid], p[F.disg]), disg: p[F.disg] || 0, smk: p[F.smk] >= q[F.smk] ? lerp(q[F.smk] || 0, p[F.smk] || 0, k) : p[F.smk] || 0, kills: p[F.kills] | 0,
                prot: p[F.prot] || 0, anim: p[F.anim] >= 0 && p[F.anim] < 7 ? p[F.anim] | 0 : 0, pow: p[F.pow] || 0, markT: p[F.markT] || 0, web: p[F.web] || 0, jl: p[F.jLock] || 0,
                cap: p[F.cap] || 0, gun: p[F.gun] | 0, move: p[F.move] || 0, springT: p[F.leapCharge] || 0, hayAge: p[F.hay] >= q[F.hay] ? lerp(q[F.hay] || 0, p[F.hay] || 0, k) : p[F.hay] || 0, chainNet: chainBetween(q[F.chain], p[F.chain], k),
                prof: p[F.prof] | 0, sprof: p[F.sprof] | 0, vy: p[F.vy], mark: effId(p[F.mark]), grab: p[F.grab] | 0, act: p[F.act] || 0 })
@@ -22210,6 +22277,7 @@ const HOST_PHASES = {
   for (const [id, c] of players) {
     const inp = cur.get(id) || IDLE_INPUT
     if (id !== 0) c.pitch = inp.pitch || 0
+    bodyStep(c, inp, dt)
     if (inp.fire || inp.alt || inp.descend) c.aimD = inp.d || 0   // kept for the burst
     c.cool = Math.max(0, c.cool - dt)
     for (const cm of [stepCharge(c, dt, inp), stepAltCharge(c, dt, inp)]) if (cm) { cm.push(id, 1, carHayLow(c, cm) ? 1 : 0); tracers.push(cm); GAME.audio.fx([cm]) }
@@ -22352,6 +22420,8 @@ const PLAYER_STATE = stateSchema([
   // card #55: held by (id + 1), or -1 flying from a punt or throw; his hands' act (code × 4 + age s)
   ['grab', c => partsPack(c), (c, v) => partsOwn(c, v | 0)],
   ['act', c => partsAct(c)],
+  ['disg', c => c.disguised ? 1 : 0, (c, v) => { c.disguised = !!v }],
+  ['smk', c => r2(c.smk || 0), (c, v) => { c.smk = Number.isFinite(v) ? clamp(v, 0, SMK_S) : 0 }],
 ])
 GAME.schema = PLAYER_STATE
 
@@ -23160,6 +23230,189 @@ MODELS.maniak.anims = [...[MODELS.maniak.anims].flat(), RIG_FILES.maniak_grab]
   const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems
   L.snapshot = () => ({ ...snap(), ...partsWireOut() })
   L.takeItems = function (d) { take.call(this, d); partsWireIn(d) }
+}
+
+// ---------------------------------------------------------------- the disguise and the glass pipe (cards #15 and #16)
+// The Maniak changes into Alistair's long white coat and back (G), and takes a hit of his glass pipe to heal (P).
+// Both are host-decided and ride the snapshot as two columns (`disg`, `smk`); every screen draws them from that, so a guest
+// sees the same coat, the same pipe and the same smoke, and plays the same sounds, with no extra traffic.
+//   c.disguised: in the coat, unrecognised (card #14 reads it; GAME.disguise.blow drops it)
+//   c.smk: seconds into the pipe (0 = not smoking). He stands still and can't attack while it runs; a hit ends it.
+// The coat is a second CHARS row (DISGUISE_CID), a hidden copy of his own: only the drawn body changes, never the player.
+const DIS_S = 0.9, DIS_COOL = 1.2                                 // the quick change (s), and the pause before the next
+const SMK_S = 4.4, SMK_HEAL = 60, SMK_FROM = 0.7, SMK_TO = 3.9    // the pipe: its length (s), the health it brings, and when it comes
+
+// the character a player is drawn as
+const looksCidOf = (cid, on) => on && CHARS[cid]?.disguise !== undefined ? CHARS[cid].disguise : cid
+const looksCid = c => looksCidOf(c.cid, c.disguised)
+
+// what the host and a guest's prediction take away from his input while the pipe is lit (he stands, turning only), or while
+// the coat goes on (he can't strike). The input's own one-shots (G, P) pass through
+function lockInput(c, inp) {
+  if (c.smk > 0) return { ...inp, f: 0, r: 0, j: false, fire: false, alt: false, descend: false, sprint: false, use: false, grip: false, sw: false, sh: false }
+  if (c.chgT > 0) return { ...inp, fire: false, alt: false, descend: false }
+  return inp
+}
+
+// the card #14 contract: host-side; blow() is idempotent
+GAME.disguise = {
+  is: c => !!c?.disguised,
+  set(c, on) {
+    on = !!on
+    if (!c || !!c.disguised === on) return false
+    c.disguised = on
+    if (on) c.disguisedSince = (tickAt || now()) / 1000
+    return true
+  },
+  blow(c, why) {
+    if (!c?.disguised) return false
+    c.disguised = false; c.blownAt = (tickAt || now()) / 1000; c.blownWhy = String(why || '')
+    c.disCool = DIS_COOL
+    return true
+  },
+}
+
+// can he change, or light the pipe, now: on his feet and his own man, not in a car, mid-move or dead
+const bodyFree = c => !(c.dead > 0) && !seatOf(c) && !c.leap && !(c.springT > SPRING_TAP) && !c.chain && !c.tie && !c.flying
+
+// one host tick of both, from his (locked) input
+function bodyStep(c, inp, dt) {
+  const C = CHARS[c.cid]
+  if (c.bot || C.disguise === undefined) return
+  if (c.disCool > 0) c.disCool -= dt
+  if (c.chgT > 0) c.chgT -= dt
+  // anything violent blows the coat: a punch, a haymaker, a leap-smash, the chain, a punt, a throw or tearing a part off (card #55's hands)
+  if (c.disguised && !seatOf(c) && !(c.dead > 0) && (inp.fire || inp.alt || inp.descend && chainSpec(c) || c.springT > SPRING_TAP || c.leap || c.chain || c.hayReady || c.parts?.act > 0))
+    GAME.disguise.blow(c, 'violence')
+  if (c.smk > 0) {
+    // a hit (or anything that takes him out of it) ends the pipe, keeping what it has healed so far
+    if (c.dead > 0 || seatOf(c) || c.hp < c.smkHp - 0.01) { c.smk = 0; c.smkHp = 0 }
+    else {
+      const from = c.smk, to = Math.min(SMK_S, from + dt), done = s => clamp((s - SMK_FROM) / (SMK_TO - SMK_FROM), 0, 1)
+      if (c.hp < C.hp) c.hp = Math.min(C.hp, c.hp + SMK_HEAL * (done(to) - done(from)))
+      c.smkHp = c.hp
+      c.smk = to >= SMK_S ? 0 : to
+    }
+  } else if (inp.pipe && bodyFree(c)) { c.smk = 0.001; c.smkHp = c.hp }
+  if (inp.dis && !(c.disCool > 0) && !(c.smk > 0) && bodyFree(c)) {
+    if (c.disguised) { c.disguised = false; c.blownAt = -1e9 } else GAME.disguise.set(c, true)
+    c.disCool = DIS_COOL; c.chgT = DIS_S
+  }
+}
+
+// ---- drawing, on every screen, from the synced state
+const bodySeen = new Map()
+const smoothS = THREE.MathUtils.smoothstep
+// a player's drawn state: the pipe's age on the avatar, and a flip of the coat (the change plays from the new body)
+function bodyState(id, st, t) {
+  const a = avatars.get(id)
+  if (!a) return
+  const on = !!(st.disg ?? st.disguised), was = bodySeen.get(id)
+  bodySeen.set(id, on)
+  a.smk = st.dead > 0 ? 0 : st.smk || 0
+  if (was !== undefined && was !== on && !(st.dead > 0)) {
+    a.chgAt = t
+    const p = a.mesh.position
+    if (a.mesh.visible) burst('dust', p.x, p.y + 0.2, p.z, 0, 1, 0, 0xe7e4db, 0.9)
+    sfxPlay('Disguise change', id === myId ? null : { x: p.x, y: p.y, z: p.z }, 'world', 0.8)
+    if (id === myId) kick(0.04, p.x, p.y, p.z, 9, 160)
+  }
+}
+// the glass pipe and the lighter's flame, at his hand while he smokes (a first-person view holds it low right on the screen)
+function makePipe() {
+  const g = new THREE.Group()
+  const glass = new THREE.MeshStandardMaterial({ color: 0xd6ecf2, transparent: true, opacity: 0.5, roughness: 0.05, metalness: 0.05, depthWrite: false })
+  const part = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m }
+  part(new THREE.CylinderGeometry(0.0085, 0.0085, 0.17, 10), glass, 0, 0.085, 0)             // the stem, mouthpiece at the origin
+  part(new THREE.CylinderGeometry(0.014, 0.0085, 0.02, 10), glass, 0, 0.005, 0)              // the mouthpiece's flare
+  const bowl = part(new THREE.SphereGeometry(0.028, 14, 10), glass, 0, 0.19, 0)             // the bulb
+  part(new THREE.SphereGeometry(0.0095, 8, 6), glass, 0.02, 0.15, 0)                         // the carb on its side
+  const ember = part(new THREE.SphereGeometry(0.014, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff7a2a }), 0, 0.185, 0)
+  const flame = new THREE.Group()
+  flame.add(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.045, 0.012), new THREE.MeshStandardMaterial({ color: 0x9aa0a8, metalness: 0.9, roughness: 0.35 })))
+  const tongue = new THREE.Mesh(new THREE.ConeGeometry(0.011, 0.045, 8), new THREE.MeshBasicMaterial({ color: 0xffc766 }))
+  tongue.position.y = 0.045
+  flame.add(tongue)
+  flame.position.set(0.035, 0.12, 0.02)
+  g.add(flame)
+  g.userData = { ember, flame, bowl }
+  g.traverse(m => { if (m.isMesh) m.frustumCulled = false })
+  return g
+}
+const bodyPipes = new Map()       // each player's pipe prop, by id (not on the avatar, which a change of coat replaces)
+const pipeQ = new THREE.Quaternion(), pipeV = new THREE.Vector3(), pipeM = new THREE.Vector3(), pipeC = new THREE.Color()
+function bodyDraw(id, st, t, dt, view = null, fade = 1) {
+  const a = avatars.get(id)
+  if (!a) return
+  const s = a.smk || 0
+  let P = bodyPipes.get(id)
+  if (s <= 0) { if (P) P.visible = false; a.smkStage = 0; return }
+  const at = id === myId ? null : a.mesh.position
+  // the sounds, each once from its moment: the lighter's flick, the sizzle of the draw, the long exhale
+  const stage = s < 0.12 ? 0 : s < 0.9 ? 1 : s < 2.9 ? 2 : 3
+  while ((a.smkStage || 0) < stage) {
+    a.smkStage = (a.smkStage || 0) + 1
+    sfxPlay(['', 'Pipe flick', 'Pipe sizzle', 'Pipe exhale'][a.smkStage], at && { x: at.x, y: at.y + 1, z: at.z }, 'world', 0.8)
+  }
+  if (!P) { P = makePipe(); avatarGroup.add(P); bodyPipes.set(id, P) }
+  const U = P.userData
+  const raise = smoothS(s, 0, 0.7) * (1 - smoothS(s, 3.5, 4.2)), flameOn = s > 0.15 && s < 1.15
+  const inhale = smoothS(s, 0.9, 1.5) * (1 - smoothS(s, 2.7, 3.1)), exhale = s > 2.9 && s < 4.3
+  P.visible = fade > 0.05
+  U.flame.visible = flameOn
+  U.flame.children[1].scale.y = 0.85 + 0.3 * Math.sin(t * 0.04)
+  U.ember.visible = s > 0.8 && s < 3.2
+  U.ember.material.color.setHex(0xff5a1a).lerp(pipeC.setRGB(1, 0.85, 0.45), 0.5 * inhale * (0.6 + 0.4 * Math.sin(t * 0.03)))
+  U.ember.scale.setScalar(0.7 + 0.8 * inhale)
+  const mouth = pipeV
+  if (view) {
+    view.updateWorldMatrix(true, false)
+    P.position.set(THREE.MathUtils.lerp(0.26, 0.05, raise), THREE.MathUtils.lerp(-0.34, -0.14, raise), THREE.MathUtils.lerp(-0.5, -0.34, raise)).applyMatrix4(view.matrixWorld)
+    P.quaternion.copy(view.getWorldQuaternion(pipeQ))
+    P.rotateX(0.9 - 0.25 * raise).rotateZ(0.5 * (1 - raise) - 0.15)
+    P.scale.setScalar(1.3)
+    mouth.set(0, -0.13, -0.3).applyMatrix4(view.matrixWorld)
+  } else {
+    handAt(a, P.position)
+    // the stem points up and forward of him from the fist, the bowl away from his face, whatever the arm does
+    P.rotation.set(-0.65, a.mesh.rotation.y, -0.25, 'YXZ')
+    P.scale.setScalar(Math.min(1.1, Math.max(0.65, (a.spec.h + a.spec.r) / 0.9)) * 1.25)
+    const head = a.rig?.bones.get('Head')
+    if (head) { head.getWorldPosition(mouth); mouth.y += 0.02 * P.scale.x } else mouth.copy(a.mesh.position).setY(a.mesh.position.y + 0.7)
+    mouth.x -= Math.sin(a.mesh.rotation.y) * 0.12; mouth.z -= Math.cos(a.mesh.rotation.y) * 0.12
+  }
+  // the smoke: a thin wisp off the bowl while he draws, then the long cloud out of his mouth, drifting up and fading
+  a.smkAcc = (a.smkAcc || 0) + dt * (exhale ? 16 * Math.sin(Math.PI * clamp((s - 2.9) / 1.4, 0, 1)) + 3 : inhale > 0.2 ? 4 : 0)
+  const fwd = pipeM.set(-Math.sin(a.mesh.rotation.y), 0, -Math.cos(a.mesh.rotation.y))
+  while (a.smkAcc >= 1 && a.mesh.visible) {
+    a.smkAcc -= 1
+    if (view) fwd.set(0, 0, -1).transformDirection(view.matrixWorld)
+    burst('smoke', mouth.x, mouth.y, mouth.z, fwd.x * 0.7, 0.45, fwd.z * 0.7, 0xc9ced2, exhale ? 1 : 0.5)
+  }
+  if (a.smkAcc >= 1) a.smkAcc = 0
+}
+
+// ---- the coat's skirt (card #15): two bones (skirt_l, skirt_r) on the hips that carry the skirt's panels. Each takes a share of
+// its thigh's swing off the idle, capped, and lags behind it on a damped step, so a heavy coat trails his legs and hangs
+// again when he stops (it never flies up as the thigh does)
+const SKIRT = { share: 0.6, cap: 0.7, rate: 6.5 }
+const skirtT = new THREE.Quaternion(), skirtI = new THREE.Quaternion()
+function rigSkirt(a, R, dt) {
+  const S = R.skirt ??= ['l', 'r'].map(side => {
+    const sk = R.bones.get('skirt_' + side), th = R.bones.get('thigh_' + side), pr = R.M.proto?.getObjectByName('thigh_' + side)
+    return sk && th && pr && { sk, th, rest: sk.quaternion.clone(), idle: pr.quaternion.clone().invert(), q: new THREE.Quaternion() }
+  }).filter(Boolean)
+  if (!S.length || !(dt > 0)) return
+  const k = 1 - Math.exp(-Math.min(dt, 0.05) * SKIRT.rate), far = R.lod === 2
+  for (const b of S) {
+    // the thigh's turn from the idle, in its own frame, a share of it, capped
+    skirtT.copy(b.idle).multiply(b.th.quaternion)
+    if (skirtT.w < 0) skirtT.set(-skirtT.x, -skirtT.y, -skirtT.z, -skirtT.w)
+    const ang = 2 * Math.acos(Math.min(1, skirtT.w)), want = far || a.dying >= 0 ? 0 : Math.min(ang * SKIRT.share, SKIRT.cap)
+    skirtT.slerp(skirtI.identity(), 1 - (ang > 1e-4 ? want / ang : 1))
+    b.q.slerp(skirtT, k)
+    b.sk.quaternion.copy(b.rest).multiply(b.q)
+  }
 }
 
 // ---------------------------------------------------------------- street life (card #26)
@@ -24174,7 +24427,86 @@ function slDrawSkinned(kitm, p, d, tint, scale = 1) {
   slFrameOf(kitm, p.clip, p.ct, im.userData.frame, i)
   if (tint) im.setColorAt(i, slCol.setRGB(tint[0], tint[1], tint[2]))
 }
-function slFrame(t, dt) {
+// The step-aside (card #63). Each person keeps an offset from their route that moves toward its target at a capped speed:
+// clear of every character drawn near them (a circle), and of every vehicle's footprint plus the road it will cover in the
+// next second (a box along its heading), measured from where the person is drawn now, so a pusher passing through never
+// flips the side. Inside a slightly wider band the offset holds (hysteresis); clear of all, it eases back to the route.
+// The pushers are what this client draws (the avatars; the drawn objects), the same on host and guest, the local player
+// included. Cosmetic: records, obstacles() and the host's hit tests keep the schedule's poses, and nothing pushes a
+// player. A walked dog keeps its owner's offset, so the lead holds.
+const SL_NUDGE = { char: 1.1, clear: 0.5, look: 1, lookMax: 10, hold: 0.35, out: 3, outCar: 4.5, back: 0.9, max: 2.6 }
+const slExtents = new WeakMap()
+function slCarExtent(K) {
+  let e = slExtents.get(K)
+  if (!e) { const H = hullOf(K); e = H ? [Math.max(...H.pts.map(p => Math.abs(p[0]))), Math.max(...H.pts.map(p => Math.abs(p[2])))] : [0.95, 2.4]; slExtents.set(K, e) }
+  return e
+}
+function slPushers(obl, dt, near, R) {
+  const st = slState, P = [], seen = st.carSeen || (st.carSeen = new Map()), h = Math.max(dt || 0, 1e-3), N = SL_NUDGE
+  for (const [id, a] of avatars) { const m = a.mesh; if (id >= 0 && m?.visible && near(m.position.x, m.position.z, R)) P.push({ car: false, x: m.position.x, z: m.position.z, r: N.char }) }
+  for (const o of obl || []) {
+    if (!vehicleOf(o.K) || !near(o.x, o.z, R)) continue
+    // heading and speed from where it is drawn, frame to frame: the same on a guest, whose drawn states carry no velocity
+    let s = seen.get(o.id); if (!s || s.f !== st.frame - 1) s = { x: o.x, z: o.z, vx: 0, vz: 0 }
+    const k = Math.min(1, h * 8), vx = s.vx + ((o.x - s.x) / h - s.vx) * k, vz = s.vz + ((o.z - s.z) / h - s.vz) * k
+    seen.set(o.id, { x: o.x, z: o.z, vx, vz, f: st.frame })
+    const v = Math.hypot(vx, vz), q = o.q || [0, 0, 0, 1]
+    let fx = vx / v, fz = vz / v
+    if (!(v > 0.5)) { fx = -2 * (q[0] * q[2] + q[3] * q[1]); fz = -(1 - 2 * (q[0] * q[0] + q[1] * q[1])); const n = Math.hypot(fx, fz) || 1; fx /= n; fz /= n }      // parked: its own facing (-z)
+    const [ex, ez] = slCarExtent(o.K), back = ez + 0.3, ahead = back + (v > 0.5 ? Math.min(v * N.look, N.lookMax) : 0), w = ex + 0.3 + N.clear
+    P.push({ car: true, x: o.x, z: o.z, fx, fz, back, ahead, w, r: Math.max(ahead, back) + w })
+  }
+  if (st.frame % 120 === 0) {
+    for (const [id, s] of seen) if (st.frame - s.f > 60) seen.delete(id)
+    if (st.nudge) for (const [id, n] of st.nudge) if (st.frame - n.f > 60) st.nudge.delete(id)
+  }
+  return P
+}
+function slNudge(ag, p, pushers, cell, dt) {
+  const st = slState, map = st.nudge || (st.nudge = new Map()), N = SL_NUDGE
+  if (ag.companion) {            // a walked dog: its owner's offset from this frame (the owner comes first in its cell)
+    const o = map.get(ag.companion.id)
+    if (!o || o.f !== st.frame || p.down || p.rec) return null
+    p.x += o.x; p.z += o.z; return o
+  }
+  let n = map.get(ag.id)
+  if (p.down || p.rec) { if (n) map.delete(ag.id); return null }
+  if (n && n.f !== st.frame - 1) n.x = n.z = 0            // not drawn last frame: from the route
+  const ox = n ? n.x : 0, oz = n ? n.z : 0, qx = p.x + ox, qz = p.z + oz
+  let tx = ox, tz = oz, near = false, car = false
+  for (const c of pushers) {
+    const dx = qx - c.x, dz = qz - c.z, B = c.r + N.hold
+    if (dx > B || dx < -B || dz > B || dz < -B) continue
+    if (!c.car) {
+      const d2 = dx * dx + dz * dz
+      if (d2 >= B * B) continue
+      near = true
+      if (d2 >= c.r * c.r) continue                         // in the band: hold
+      const d = Math.sqrt(d2)
+      if (d < 1e-3) { const a = slRnd(ag.id, 63) * 6.283; tx += Math.sin(a) * c.r; tz += Math.cos(a) * c.r }     // dead centre: a side of its own
+      else { const k = (c.r - d) / d; tx += dx * k; tz += dz * k }
+    } else {
+      const al = dx * c.fx + dz * c.fz, ac = dz * c.fx - dx * c.fz
+      if (al < -c.back - N.hold || al > c.ahead + N.hold || Math.abs(ac) > c.w + N.hold) continue
+      near = true; car = true
+      if (al < -c.back || al > c.ahead || Math.abs(ac) >= c.w) continue
+      const side = ac > 1e-3 ? 1 : ac < -1e-3 ? -1 : slRnd(ag.id, 64) < 0.5 ? -1 : 1, need = side * c.w - ac
+      tx -= c.fz * need; tz += c.fx * need                  // across its heading, to the nearer side of its path
+    }
+  }
+  if (!near) tx = tz = 0
+  const L = Math.hypot(tx, tz); if (L > N.max) { tx *= N.max / L; tz *= N.max / L }
+  const ex = tx - ox, ez = tz - oz, e = Math.hypot(ex, ez), step = (near ? car ? N.outCar : N.out : N.back) * Math.min(Math.max(dt || 0, 0), 0.1)
+  let nx = ox, nz = oz
+  if (e > 1e-4) { const f = Math.min(1, step / e); nx += ex * f; nz += ez * f }
+  if ((nx !== ox || nz !== oz) && cell.rings.some(g => slInside(g.body, p.x + nx, p.z + nz, SL_CLEAR.r))) { nx = ox; nz = oz }      // never into a building: hold
+  if (!near && Math.abs(nx) < 1e-3 && Math.abs(nz) < 1e-3) { if (n) map.delete(ag.id); return null }
+  if (!n) map.set(ag.id, n = { x: 0, z: 0, f: 0 })
+  n.x = nx; n.z = nz; n.f = st.frame
+  p.x += nx; p.z += nz
+  return n
+}
+function slFrame(t, dt, obl) {
   if (!LV.faust || !faustState || renderHeadless) return
   if (!slState || slState.seed !== faustState.seed || slState.S !== faustState.S) slReset()
   const st = slState, t0 = performance.now(); st.frame++
@@ -24190,10 +24522,8 @@ function slFrame(t, dt) {
   const qn = STREET.quality[settings.quality] ?? 1, qd = STREET.qualityDraw[settings.quality] ?? 1, D = Object.fromEntries(Object.entries(STREET.draw).map(([k, v]) => [k, v * qd]))
   const cx = cam.position.x, cz = cam.position.z, A = st.S * 48, seen = (x, y, z, r) => slFrus.intersectsSphere(slSph.set(slV.set(x, y, z), r))
   const near = (x, z, R) => Math.abs(x - cx) < R && Math.abs(z - cz) < R && Math.hypot(x - cx, z - cz) < R
-  // nudge: people step a little aside from the players and vehicles drawn near them (cosmetic, every client its own)
-  const pushers = []
-  for (const c of players.values()) pushers.push([c.x, c.z, 1.1])
-  for (const o of objs) if (o.V) pushers.push([o.x, o.z, 2.6])
+  // the step-aside (slNudge): from the characters and vehicles this client draws near the camera
+  const pushers = slPushers(obl, dt, near, D.ped + 12)
   let ln = 0; const lp = kit.leash.geometry.attributes.position.array
   const ci0 = Math.floor((cx + A) / 96), cj0 = Math.floor((cz + A) / 96), m = Math.ceil(D.ped / 96)
   let people = 0
@@ -24205,8 +24535,7 @@ function slFrame(t, dt) {
       if (ag.rank >= qn && !st.byId.has(ag.id)) continue          // thinned by the quality setting (never someone a record is about)
       const p = slPose(ag, T, slPoseA)
       if (p.hidden || p.scale <= 0.01 || !near(p.x, p.z, D.ped) || !seen(p.x, 1, p.z, 2.2)) continue
-      for (const [px, pz, r] of pushers) { const dx = p.x - px, dz = p.z - pz, d2 = dx * dx + dz * dz; if (d2 < r * r && d2 > 1e-6 && !p.down && !p.rec) { const d = Math.sqrt(d2), k = (r - d) / d * 0.6
-        p.x += dx * k; p.z += dz * k; if (cell.rings.some(g => slInside(g.body, p.x, p.z, SL_CLEAR.r))) { p.x -= dx * k; p.z -= dz * k } } }
+      const nudged = slNudge(ag, p, pushers, cell, dt)
       const d = Math.hypot(p.x - cx, p.z - cz)
       if (ag.kind === SL_K.stray) { if (d < D.dog) slDrawSkinned(kit.dog, p, d, ag.tint, ag.companion ? 0.9 : 0.95); continue }
       slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++
@@ -24221,6 +24550,7 @@ function slFrame(t, dt) {
       }
       if (ag.kind === SL_K.walker && ag.dog && d < D.dog) {
         const q = slPose(ag.dog, T, slPoseB), dy = q.yaw
+        if (nudged) { q.x += nudged.x; q.z += nudged.z }          // the lead's dog end: the dog keeps its owner's step-aside
         if (d < 30 && ln < 47 && !p.rec && !q.rec && !q.hidden) {
           const hx = p.x + Math.cos(p.yaw) * -0.24 + Math.sin(p.yaw) * 0.22, hz = p.z - Math.sin(p.yaw) * -0.24 + Math.cos(p.yaw) * 0.22, hy = 0.84
           const cx_ = q.x + Math.sin(dy) * 0.2, cz_ = q.z + Math.cos(dy) * 0.2, cy = 0.4 * 0.9
@@ -24338,7 +24668,7 @@ function slDrawLineup(kit, L, T, cx, cz) {
   { const [x, z] = at(8.6); slDrawSkinned(kit.dog, { ...q, x, z, clip: L.dog || 'walk', ct: t }, Math.hypot(x - cx, z - cz), null, 0.95) }
   for (let i = 0; i < 3; i++) { const [x, z] = at(9.4 + i * 0.4); slDrawSkinned(kit.pigeon, { ...q, x, z, clip: ['idle', 'peck', 'walk'][i], ct: t }, 0, null, 1) }
 }
-function slFrameSafe(t, dt) { try { slFrame(t, dt) } catch (e) { frameFailed('street', e) } }
+function slFrameSafe(t, dt, obl) { try { slFrame(t, dt, obl) } catch (e) { frameFailed('street', e) } }
 
 // ---- hooks into the engine and the game
 {
@@ -27398,6 +27728,7 @@ function hostTick(dt) {
     cur.set(id, id === 0 ? aimed(input)
                 : c.bot ? (inputs.set(id, GAME.think(c, all, dt)), inputs.get(id))
                 : takeInput(id))
+  for (const [id, c] of players) cur.set(id, lockInput(c, cur.get(id)))
 
   // sampled after this tick's takes: the depth left standing
   for (const [id, q] of inQ) {
@@ -27567,7 +27898,7 @@ function stepSim(t) {
       carrierT = carrierPredT = carrierLead()
       predictObjects(predicted, (Math.max(rtt, 0) + 100) / 1000)
       easeOffsets()
-      tickChars(predicted.ride || predicted.grabBy !== undefined ? [] : [predicted], () => inp, TICK)
+      tickChars(predicted.ride || predicted.grabBy !== undefined ? [] : [predicted], c => lockInput(c, inp), TICK)
       lookStep(predicted, input)
       sampleTick(myId, predicted, predJump, input.fire || input.alt); predJump = false
       msPhys = msPhys * 0.9 + (now() - _p1) * 0.1
@@ -27754,7 +28085,7 @@ function draw(dt, t) {
     if (!me) { frameFailed('draw', new Error('the host has no player 0')); return }
     others = [...players].filter(([id]) => id !== 0)
       .map(([id, c]) => ({ id, ...(P => P ? { x: P[0], y: P[1], z: P[2], sim: c } : { x: c.x, y: c.y, z: c.z })(drawnPose(c)), yaw: c.yaw, wy: c.wy, vx: c.vx, vz: c.vz, dead: c.dead,
-                           cid: c.cid, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: chainPack(c), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
+                           cid: looksCid(c), disg: c.disguised ? 1 : 0, smk: c.smk || 0, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: chainPack(c), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
                            gun: c.gun, pitch: c.pitch, hp: c.hp, kills: c.kills | 0, mark: c.mark, markT: c.markT, vy: c.vy, jl: c.jLock }))
     pkl = GAME.view.pickups()
   } else {
@@ -27779,7 +28110,8 @@ function draw(dt, t) {
   for (const [s, p] of objSeats) sits.set(p, [s >> 3, s & 7])
   if (isHost) for (const o of objs) o.riders?.forEach((p, i) => { if (p !== undefined) sits.set(p, [o.id, i]) })
   else { const s = seatOf(me); sits.delete(myId); if (s || me.ride) sits.set(myId, s ? [s[0].id, s[1]] : me.ride) }
-  const meMesh = avatarFor(myId, me.cid, me.cap | 0)
+  const meMesh = avatarFor(myId, looksCid(me), me.cap | 0)
+  bodyState(myId, me, t)
   meMesh.visible = rigShown(myId, me.dead) && !helloDue
   const meP = drawnPose(me), meD = carrierShift(me, meP ? { ...me, x: meP[0], y: meP[1], z: meP[2] } : me)
   meMesh.position.set(meD.x, meD.y, meD.z)
@@ -27799,6 +28131,7 @@ function draw(dt, t) {
   for (const o of others) {
     live.add(o.id)
     const m = avatarFor(o.id, o.cid, o.cap | 0)
+    bodyState(o.id, o, t)
     m.visible = rigShown(o.id, o.dead)
     ghost(m, o.prot || 0)
     m.position.set(o.x, o.y, o.z)
@@ -27819,10 +28152,13 @@ function draw(dt, t) {
     drawStruck(o.id, t)
     drawAura(o.id, o.anim || 0, dt)
     drawHeld(o.id, (!sits.has(o.id) || armed) && o, t)        // cosmetic, never a capsule
+    bodyDraw(o.id, o, t, dt)
     perfDraw(o.id, (!sits.has(o.id) || armed) && o, t)        // card #59: a street performer's cup and its demand
   }
   partsDraw(me, others, t, dt, meD)          // card #55: held bodies in their holders' hands, flights tumbling
   for (const id of [...avatars.keys()]) if (id >= 0 && !live.has(id)) dropAvatar(id)
+  for (const id of bodySeen.keys()) if (!live.has(id)) bodySeen.delete(id)
+  for (const [id, P] of bodyPipes) if (!live.has(id)) { P.removeFromParent(); bodyPipes.delete(id) }
   if (!offPlay()) clearPrepared(true)
 
   drawPickups(pkl, t)
@@ -27838,7 +28174,7 @@ function draw(dt, t) {
   for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP))
   shake(camera, t)
   followSun()
-  slFrameSafe(t, dt)
+  slFrameSafe(t, dt, obl)
   dsFrameSafe(t, dt)
   // reticle distance
   input.d = 0; input.view = null
@@ -27861,6 +28197,7 @@ function draw(dt, t) {
   drawStruck(myId, t)
   drawLooks()
   drawHeld(myId, (!sits.has(myId) || myArmed) && me, t, firstPerson ? camera : null, cam.fade)
+  bodyDraw(myId, me, t, dt, firstPerson ? camera : null, cam.fade)
   drawTracers(t, me, others, firstPerson ? myId : undefined)
   perfBubbles()
 
@@ -28016,6 +28353,7 @@ function drawHud(me, others, t) {
   const MK = (me.markT || 0) > 0 && POWERS[me.mark - 1]
   if (MK) pills.push([css(MK.color), MK.name.toUpperCase()])
   if (me.prot > 0) pills.push(['#d8cfb8', 'SAFE ' + Math.ceil(me.prot) + 's'])
+  if (me.disguised) pills.push(['#e7e4db', 'IN DISGUISE'])
   const key = pills.map(p => p.join()).join('|')
   if (lastHud.pills !== key) {
     lastHud.pills = key
@@ -28054,6 +28392,8 @@ function drawHud(me, others, t) {
     '" style="background:' + css(CHARS[cid].color) + '" title="' + CHARS[cid].name + '">' + (k + 1) + '</span>').join('')
   hud('strip', el('#teamstrip'), 'innerHTML', strip)
   hud('shift', document.body, '.canshift', FC.shift !== undefined)
+  hud('candis', document.body, '.candis', FC.disguise !== undefined)
+  hud('canpipe', document.body, '.canpipe', !!FC.pipe)
   hud('alt', document.body, '.canalt', !!P)
   hud('canuse', document.body, '.canuse', OBJECTS.some(K => K.carry || K.drive))
   hud('retic', el('#reticle'), 'display', me.dead > 0 ? 'none' : 'block')
