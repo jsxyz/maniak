@@ -171,8 +171,10 @@ export default function (hooks) {
   - `chat`: a chat line it would pass on;
   - `hit`: a hit it would deal.
 
-  Return `false` to refuse, `{ name, character }`, `{ text }` or `{ damage }` to change it, and anything else to let it
-  pass. A refused player is let go, a refused line goes nowhere, and a refused hit does no harm at all.
+  Return `false` to refuse, `{ name }`, `{ text }` or `{ damage }` to change it, and anything else to let it pass.
+  A refused player is let go, a refused line goes nowhere, and a refused hit does no harm at all. Every player is
+  The Maniak, so a `character` that a `join` filter returns is ignored, and events still give players
+  `"character": "The Maniak"`.
 - `emit(type, data)` sends an event of your own, a lowercase dotted name such as `league.goal`, with at most 8 KB of
   JSON. Your other hooks, stdout and the webhooks get it like any event.
 - `announce(text)`, `tell(id, text)` and `kick(id or name)` act on players. So do `command('/bots 4')` (any chat
