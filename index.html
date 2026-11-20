@@ -25678,6 +25678,7 @@ function dsPane(key) {
   if (ci >= F.S || u.face > 3) return null
   const P = dsPlan(ci, cj), li = P.lots.findIndex(l => dsSlot(l, ci, cj) === u.slot), lot = P.lots[li]
   if (!lot) return null
+  if (u.k === 0) { const w = dsGround(P, li).find(w => w.face === u.face && w.bay === u.bay); return w ? dsGroundPane(key, u, ci, cj, P, li, w) : null }
   for (const b of lot.mass) {
     const f = dsFace(b, u.face), r = dsRect(f, u.k, u.bay)
     if (!r) continue
@@ -25687,6 +25688,35 @@ function dsPane(key) {
   return null
 }
 // the pane at a point on a facade (x, y, z) facing (nx, nz): { key, along, ... dsPane } or null
+// ---- the ground floor's windows (k 0): #38's, its podium ring's bays (inWindows(B, 0): the shopfronts, and the ground
+// windows on the sides and back), keyed as #38 keys them; a building's worked out once a plan
+const dsGroundCache = new WeakMap(), DS_INSIDE = 1.0
+function dsGround(P, li) {
+  if (typeof faustInterior !== 'function' || typeof inWindows !== 'function') return []
+  let L = dsGroundCache.get(P)
+  if (!L) dsGroundCache.set(P, L = [])
+  if (L[li] === undefined) { let v = null; try { v = inWindows(faustInterior(P, li), 0) } catch (e) {} L[li] = v || [] }
+  return L[li]
+}
+// ground window w of lot li as a pane, as dsPane makes one (its face's plane, its rect, the way out)
+function dsGroundPane(key, u, ci, cj, P, li, w) {
+  const axis = w.face < 2 ? 0 : 1, side = w.face % 2 ? -1 : 1, f = { face: w.face, axis, side, plane: w.plane, ground: true }
+  const rect = { a0: w.a0, a1: w.a1, y0: w.y0, y1: w.y1 }, a = (rect.a0 + rect.a1) / 2, y = (rect.y0 + rect.y1) / 2
+  return { key, ...u, ci, cj, li, lot: P.lots[li], box: null, f, rect, n: axis ? [side, 0, 0] : [0, 0, side], at: axis ? [f.plane, y, a] : [a, y, f.plane] }
+}
+// a blast's reach over lot li's ground windows (as dsPanesNear does the storeys')
+function dsGroundNear(P, ci, cj, lot, li, x, y, z, r, out) {
+  if (y - r > 4) return
+  for (const w of dsGround(P, li)) {
+    const axis = w.face < 2 ? 0 : 1, side = w.face % 2 ? -1 : 1, off = ((axis ? x : z) - w.plane) * side
+    if (off < -0.3 || off > r) continue
+    const a = axis ? z : x, da = Math.max(0, w.a0 - a, a - w.a1), dy = Math.max(0, w.y0 - y, y - w.y1), d = Math.sqrt(da * da + dy * dy + off * off)
+    if (d <= r) out.push({ d, key: dsKey(ci * faustState.S + cj, dsSlot(lot, ci, cj), 0, w.face, w.bay), f: { axis, side, plane: w.plane }, R: { a0: w.a0, a1: w.a1, y0: w.y0, y1: w.y1 } })
+  }
+}
+// the pane at a point on a facade (x, y, z) facing (nx, nz): { key, along, inside, ... dsPane } or null. From outside the hit
+// is on the glass's face, its normal out; from inside a building (#38's rooms) it is on the wall's inner side, its normal into
+// the building: the face behind it, up to DS_INSIDE m in. The storeys' windows, then the ground floor's
 function dsPaneAt(x, y, z, nx, nz) {
   const F = faustState
   if (!F || !LV.faust || !dsState) return null
@@ -25694,14 +25724,26 @@ function dsPaneAt(x, y, z, nx, nz) {
   const ci = Math.floor((x + ARENA) / 96), cj = Math.floor((z + ARENA) / 96)
   if (ci < 0 || cj < 0 || ci >= F.S || cj >= F.S) return null
   const P = dsPlan(ci, cj)
-  for (let li = 0; li < P.lots.length; li++) for (const b of P.lots[li].mass) {
-    const f = dsFace(b, face), along = f.axis ? z : x, across = f.axis ? x : z
-    if (Math.abs(across - f.plane) > 0.1 || Math.abs(along - f.c) > f.hw + 1e-3 || y < f.y0 || y > f.y1) continue
-    const k = Math.floor(y / 4), a = along - f.c, j = f.bays.findIndex(B => a >= B[0] && a < B[1])
-    const r = dsRect(f, k, j)
-    if (!r || along <= r.a0 || along >= r.a1 || y <= r.y0 || y >= r.y1) return null
-    const pane = dsPane(dsKey(ci * F.S + cj, dsSlot(P.lots[li], ci, cj), k, face, j))
-    return pane && { ...pane, along }
+  for (const [fc, inside] of [[face, false], [face ^ 1, true]]) {
+    const near = off => inside ? off <= 0.1 && off >= -DS_INSIDE : Math.abs(off) <= 0.1
+    for (let li = 0; li < P.lots.length; li++) {
+      for (const b of P.lots[li].mass) {
+        const f = dsFace(b, fc), along = f.axis ? z : x, across = f.axis ? x : z
+        if (!near((across - f.plane) * f.side) || Math.abs(along - f.c) > f.hw + 1e-3 || y < f.y0 || y > f.y1) continue
+        const k = Math.floor(y / 4), a = along - f.c, j = f.bays.findIndex(B => a >= B[0] && a < B[1])
+        const r = dsRect(f, k, j)
+        if (!r || along <= r.a0 || along >= r.a1 || y <= r.y0 || y >= r.y1) continue
+        const pane = dsPane(dsKey(ci * F.S + cj, dsSlot(P.lots[li], ci, cj), k, fc, j))
+        if (pane) return { ...pane, along, inside }
+      }
+      if (y < 4) for (const w of dsGround(P, li)) {
+        if (w.face !== fc) continue
+        const axis = fc < 2 ? 0 : 1, side = fc % 2 ? -1 : 1, along = axis ? z : x, across = axis ? x : z
+        if (!near((across - w.plane) * side) || along <= w.a0 || along >= w.a1 || y <= w.y0 || y >= w.y1) continue
+        const pane = dsPane(dsKey(ci * F.S + cj, dsSlot(P.lots[li], ci, cj), 0, fc, w.bay))
+        if (pane) return { ...pane, along, inside }
+      }
+    }
   }
   return null
 }
@@ -25712,7 +25754,7 @@ function dsPanesNear(x, y, z, r, max = DESTRUCT.blastMax, sight = true) {
   const lo = v => Math.max(0, Math.floor((v - r + ARENA) / 96)), hi = v => Math.min(F.S - 1, Math.floor((v + r + ARENA) / 96))
   for (let ci = lo(x); ci <= hi(x); ci++) for (let cj = lo(z); cj <= hi(z); cj++) {
     const P = dsPlan(ci, cj)
-    P.lots.forEach((lot, li) => { for (const b of lot.mass) {
+    P.lots.forEach((lot, li) => { dsGroundNear(P, ci, cj, lot, li, x, y, z, r, out); for (const b of lot.mass) {
       if (Math.abs(x - b.cx) > b.ex + r || Math.abs(z - b.cz) > b.ez + r || Math.abs(y - b.cy) > b.ey + r) continue
       for (let face = 0; face < 4; face++) {
         const f = dsFace(b, face), off = ((f.axis ? x : z) - f.plane) * f.side
@@ -26222,7 +26264,7 @@ function dsWallHit(ox, oy, oz, dx, dy, dz, t, G) {
   staticRay(ox, oy, oz, dx, dy, dz, t + 0.05, h)
   if (h.length < 6) return false
   const p = dsPaneAt(h[0], h[1], h[2], h[3], h[5])
-  return !!p && dsBreak(DS_KIND.pane, p.key, dsInfo(p, dsGunPower(G), 0, p.along, h[1]))
+  return !!p && dsBreak(DS_KIND.pane, p.key, dsInfo(p, dsGunPower(G), p.inside ? 1 : 0, p.along, h[1]))
 }
 // a blast at (x, y, z) of radius r: every pane in reach and in sight
 function dsBlast(x, y, z, r, power = 3) {
@@ -26245,7 +26287,7 @@ function dsBlast(x, y, z, r, power = 3) {
 function dsBlockHit(point, n) {
   if (!isHost || !LV.faust || !dsCheck()) return false
   const p = dsPaneAt(point[0], point[1], point[2], n[0], n[2])
-  return !!p && dsBreak(DS_KIND.pane, p.key, dsInfo(p, 2, 0, p.along, point[1]))
+  return !!p && dsBreak(DS_KIND.pane, p.key, dsInfo(p, 2, p.inside ? 1 : 0, p.along, point[1]))
 }
 // before the step: each body's velocity going into it; after: one at speed into a facade breaks the panes it meets (his
 // sprint, a leap, a chain swing, a knock into a wall)
