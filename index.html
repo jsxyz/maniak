@@ -9399,6 +9399,20 @@ function trafficDrawSignals() {
   if(L.lamps.instanceColor)L.lamps.instanceColor.needsUpdate=true
 }
 // Existing civilian rig/clip assets: only nearby drivers are drawn, using their cheapest mesh. No new download.
+// card #54's seat fit for a traffic driver (the civ body at 1.72 m), in its vehicle's cabin as a player's rider is fitted;
+// seatTop: his fedora's top over the head bone, per m of stature
+const TRAFFIC_SEAT = { h: 0.56, r: 0.3, seatTop: 0.155 }
+function trafficSeatFit(v, K) {
+  const V = vehicleOf(K), C = V && VEHICLE_CABINS[V.name]
+  if (!C) return
+  if (v.fit?.name !== V.name) {
+    const bones = new Map(), s = V.seats[0], T = TRAFFIC_SEAT
+    v.inst.traverse(n => { if (n.isBone) bones.set(n.name, n) })
+    v.fit = { name: V.name, R: v.fit?.R || { bones, inst: v.inst }, a: { mesh: v.root, spec: { h: T.h, r: T.r }, seatTop: T.seatTop,
+      cabin: seatCabin(C, s, [s[0], s[1] + 0.06 * 2 * (T.h + T.r), s[2]], true) } }
+  }
+  seatPose(v.fit.a, v.fit.R)
+}
 function trafficDraw(list) {
   if (!objGroup) return
   const rows = isHost ? trafficRows() : [...trafficRemote.values()], active = new Set(), t = trafficClock(), M = MODELS.trafficDriver
@@ -9426,8 +9440,10 @@ function trafficDraw(list) {
     if (v.root.parent !== objGroup) objGroup.add(v.root)
     const clip = exiting ? 'run' : 'drive'
     if(v.clip!==clip) { v.mixer.stopAllAction(); const c=M.anims.find(c=>c.name===clip); if(c) v.mixer.clipAction(c).play(); v.clip=clip }
+    if (v.fit) restoreSeatPose(v.fit.R)
     v.inst.position.y=v.restY; v.mixer.setTime(exiting ? Math.max(0,age) : 0); v.root.position.set(x,y,z); v.root.rotation.y=yaw
     if(!exiting && v.pelvis) {v.root.updateMatrixWorld(true);v.pelvis.getWorldPosition(v.hip);v.inst.position.y+=y-v.hip.y}
+    if (!exiting) trafficSeatFit(v, OBJECTS[o.k])
     v.root.visible=true; active.add(r[0])
   }
   for (const [id,v] of trafficViews) if(!active.has(id)) { v.root.visible=false; if(!rows.some(r=>r[0]===id)) {v.mixer.stopAllAction();v.root.removeFromParent();trafficViews.delete(id)} }
@@ -15336,8 +15352,8 @@ function seatPose(a, R) {
   if (rear > 0) { R.inst.position.z -= rear; sync() }
   // 3. under the roof: sink into the cushion, lean back as far as the glass behind allows, then bow, until the head's top
   // clears it
-  const headTop = () => { at('Head', A); return A.y + P.headTop * st }, roof = toY(C.roof - P.roofGap)
-  const headBack = () => A.z + P.headTop * st * 0.9 - back(A.y + P.headTop * st)
+  const top = a.seatTop ?? P.headTop, headTop = () => { at('Head', A); return A.y + top * st }, roof = toY(C.roof - P.roofGap)
+  const headBack = () => A.z + top * st * 0.9 - back(A.y + top * st)
   // no deeper than the floor lets the seat of his trousers go
   let over = headTop() - roof
   at('pelvis', B); const room = B.y - P.seat * st - toY(C.floor)
