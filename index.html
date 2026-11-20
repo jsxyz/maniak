@@ -21205,7 +21205,44 @@ function hookSend() {
   return true
 }
 const hookCheck = (ok, what) => { if (!ok) throw new TypeError(what) }
+// card #75, gameHooks.capture({ n, every, width, quality }): n frames, one every `every` rendered frames (the next one first), copied
+// off the WebGL canvas in the frame that drew them (it is cleared after the frame, so only then), scaled to `width` px and
+// JPEG-coded; resolves { frames: [{ url, row }], ms, partial? } with a debug row each: fps, x y z, velocity, view heading and pitch.
+// One call returns a whole sequence. Jobs run side by side (a routine's {capture} and a QA call).
+const capJobs = []
+let capCanvas = null
+function captureFrames(o = {}) {
+  const num = (v, d, lo, hi) => clamp(Number.isFinite(+v) && v !== null && v !== undefined ? Math.round(+v) : d, lo, hi)
+  const q = Number(o.quality), job = { n: num(o.n, 1, 1, 150), every: num(o.every, 1, 1, 900), width: num(o.width, 480, 64, 1920),
+    q: clamp(q > 1 ? q / 100 : q > 0 ? q : 0.6, 0.1, 0.95), skip: 0, frames: [], t0: now(), rows: [] }
+  return new Promise(resolve => {
+    job.done = partial => { const i = capJobs.indexOf(job); if (i >= 0) capJobs.splice(i, 1); clearTimeout(job.timer); resolve({ frames: job.frames, ms: Math.round(now() - job.t0), ...partial ? { partial } : {} }) }
+    job.timer = setTimeout(() => job.done('no frames for ' + Math.round(job.n * job.every / 5 + 20) + ' s: tab hidden or the game stopped?'), (job.n * job.every / 5 + 20) * 1000)
+    capJobs.push(job)
+  })
+}
+// after the frame's draw (frameBody): the frames due now
+function capAfterDraw() {
+  const cv = renderer?.domElement, me = selfChar()
+  if (!cv || !cv.width) return
+  for (const job of [...capJobs]) {
+    if (job.skip-- > 0) continue
+    job.skip = job.every - 1
+    const w = Math.min(job.width, cv.width), h = Math.max(1, Math.round(cv.height * w / cv.width))
+    capCanvas ||= document.createElement('canvas')
+    if (capCanvas.width !== w || capCanvas.height !== h) { capCanvas.width = w; capCanvas.height = h }
+    const g = capCanvas.getContext('2d'); g.drawImage(cv, 0, 0, w, h)
+    const r = v => Math.round(v * 100) / 100, hd = headingOf(input.yaw)
+    job.frames.push({ url: capCanvas.toDataURL('image/jpeg', job.q), row: { t: Math.round(now() - job.t0), fps: Math.round(fps), w, h,
+      x: me && r(me.x), y: me && r(me.y), z: me && r(me.z), vx: me && r(me.vx || 0), vy: me && r(me.vy || 0), vz: me && r(me.vz || 0), speed: me && r(Math.hypot(me.vx || 0, me.vz || 0)),
+      heading: Math.round(hd), facing: facing(input.yaw), pitch: Math.round(input.pitch * 180 / Math.PI), look: lookStats.look, grounded: !!me?.grounded, seated: !!(me && seatOf(me)),
+      draws: renderer.info.render.calls, tris: renderer.info.render.triangles } })
+    if (job.frames.length >= job.n) job.done()
+  }
+}
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
+  // card #75: a sequence of frames and their debug rows in one call (a promise): { n, every, width, quality }
+  capture: captureFrames,
   // No argument: current seed. A uint32 sets the next room, or restarts this host's city. Blank rolls one.
   seed(value) { return arguments.length ? faustSetSeed(value) : phase === 'menu' ? faustParseSeed(el('#host-seed')?.value ?? faustRequestedSeed) : levelGen?.seed },
   // card #46: the city's changes saved now, where this server keeps them (the dedicated server asks before it stops); true once stored
@@ -29407,6 +29444,7 @@ function frameBody() {
   msSim = msSim * 0.9 + (now() - _s0) * 0.1
   drawT0 = now()
   try { if (!startingGame && !worldPreparing) draw(dt, t) } catch (e) { frameFailed('draw', e) }
+  if (capJobs.length) try { capAfterDraw() } catch (e) { for (const j of [...capJobs]) j.done('capture failed: ' + (e?.message || e)) }
   if (startLog && phase === 'playing' && startLog.frames.length < 30) {
     if (!startLog.frames.length) markStart('frame 1')
     startLog.frames.push(t - (startLog.last ?? t)); startLog.last = t
