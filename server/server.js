@@ -468,6 +468,8 @@ let page = null
   if (WORLD_DIR || R2) { await page.exposeFunction('serverWorldSave', worldSave); await page.exposeFunction('serverWorldLoad', worldLoad)
     await page.exposeFunction('serverWorldGet', worldGet); await page.exposeFunction('serverWorldDrop', worldDrop) }
   await page.exposeFunction('serverWorldSaveNow', worldSaveNow)
+  // the page knows it is a dedicated server from its first line: it fetches no models or textures it would never draw
+  await page.addInitScript(() => { globalThis.MANIAK_SERVER = true })
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load', timeout: 180000 })
   await page.waitForFunction(() => globalThis.gameHooks?.room().ready || /fail|broke/i.test(document.getElementById('status')?.textContent || ''),
     null, { timeout: 180000, polling: 500 }).catch(() => {})

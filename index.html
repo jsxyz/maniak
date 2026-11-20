@@ -12050,7 +12050,11 @@ function loadModels() {
 // either failing keeps the capsule fallback. One loader for all, each file fetched once
 let rigLib = null
 const rigGets = new Map()
+// a dedicated server draws nothing: no model is fetched there (the capsules stand in, as when one fails); the server tells
+// its page so before the page runs (MANIAK_SERVER), since the landing page prepares rows before serve()
+const serverPage = () => !!globalThis.MANIAK_SERVER || serving
 function rigFetch(file) {
+  if (serverPage()) return Promise.reject(new Error('a dedicated server draws no models'))
   if (!rigGets.has(file)) rigGets.set(file, rigLib.then(loader => {
     const at = base => new Promise((ok, no) => loader.load(base + file, ok, undefined, no))
     return at(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? at(RIG_SITE) : Promise.reject(e))
@@ -13818,6 +13822,7 @@ function realRigMaterial(orig) {
 // The texture arrays, loaded once per entry into the look: from assets/ beside the page, else the published site (as
 // the rigs are). Until they arrive, or if they fail, the city keeps its plain materials under the realistic light.
 function realFetch(file) {
+  if (serverPage()) return Promise.reject(new Error('a dedicated server draws nothing'))
   const at = base => fetch(base + file, { mode: 'cors', credentials: 'omit' }).then(r => r.ok ? r : Promise.reject(new Error(file + ': ' + r.status)))
   return at(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? at(RIG_SITE) : Promise.reject(e))
 }
@@ -29980,7 +29985,9 @@ function checkLiveness(t, own) {
     }
     return
   }
-  if (own) { for (const id of lastSeen.keys()) lastSeen.set(id, t); return }
+  // the host's own stall (a frame over a second late) is forgiven, but once in 30 s: a host that stalls every frame (a
+  // starved server) still drops a guest gone silent
+  if (own && t - (checkLiveness.forgave || 0) > 30000) { checkLiveness.forgave = t; for (const id of lastSeen.keys()) lastSeen.set(id, t); return }
   for (const [id, seen] of [...lastSeen]) {
     if (t - seen <= GUEST_DEAD_MS || !inputSeq.has(id) && t - seen <= GUEST_LOAD_MS) continue
     const c = conns.get(id)
