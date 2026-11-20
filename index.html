@@ -132,6 +132,15 @@
   /* on a phone the pills sit below that row */
   body.playing.touch #gun{top:calc(48px + env(safe-area-inset-top))}
   #hp{position:fixed;bottom:14px;left:16px;z-index:5;display:none;pointer-events:none}
+  /* card #14: the heat, in stars; they flash while the enforcers have lost him */
+  #wanted{position:fixed;top:56px;right:16px;z-index:5;display:none;pointer-events:none;text-align:right;font-size:clamp(20px,2.6vmin,34px);
+    line-height:1;letter-spacing:.1em;text-shadow:0 1px 4px #000}
+  #wanted i{font-style:normal;color:#3d3a34}
+  #wanted i.on{color:#d8b24a}
+  #wanted.search i.on{animation:wantedflash .8s steps(1) infinite}
+  @keyframes wantedflash{50%{color:#3d3a34}}
+  body.playing #wanted.live{display:block}
+  body.playing.touch #wanted{top:calc(96px + env(safe-area-inset-top))}
   #hpbar{width:190px;height:9px;border:1px solid #323236;border-radius:5px;overflow:hidden;background:#0f0f10}
   #hpfill{height:100%;background:#a3ad86;transition:width .12s linear}
   #fuelbar{width:190px;height:5px;margin-top:4px;border:1px solid #323236;border-radius:4px;
@@ -429,6 +438,7 @@
 <div id="veh"><span id="vspd">0</span> <span class="u"></span><div id="vname"></div>
   <div id="vhpbar"><div id="vhpfill"></div></div><div id="radio"></div></div>
 <div id="gun"><div id="pills"></div></div>
+<div id="wanted" aria-hidden="true"></div>
 <div id="tab"><div class="tabinner"><h3 id="tabhead">STANDINGS</h3><table id="tabrows"></table>
   <div id="prof"></div></div></div>
 <div id="results"><div class="tabinner">
@@ -737,6 +747,9 @@ const CHARS = [
   // demands money", ragged and homeless. A shank in one hand, a tin cup in the other (MODELS.street_performer cup)
   { name: 'Street performer', side: 'freaks', hidden: true, atk: 'Shank', model: 'street_performer', r: 0.35, h: 0.55, speed: 6.8, jump: 8.2, hp: 80,
     color: 0x5b5246, enter: 'sets up on the corner.', role: 'Faustland\'s own busker · a dance, a tin cup and a shank' },
+  // card #14: Faust's enforcers, hidden, never in the free-for-all fill: the heat system fields them (see HEAT)
+  { name: 'Enforcer', side: 'freaks', hidden: true, atk: 'Baton', model: 'enforcer', r: 0.36, h: 0.54, speed: 7.2, jump: 8.4, hp: 90, color: 0x1c1b1f,
+    role: 'Faust\'s enforcer · a baton, a revolver and a warrant' },
 ]
 // card #15: the disguise is a hidden copy of the Maniak's row that only the drawn body reads (the coat); `disguise` on his row
 // names it, and `pipe` is the glass pipe (card #16). Both are his alone
@@ -842,6 +855,9 @@ const GUNS = [
   // card #59, the street performer's: quick stabs with a crude blade; and its tin cup, which only shows (never fired, never dropped)
   { name:'Shank',        rate:0.42, dmg: 8, spread:0.20, pellets:1, range: 2.2, knock: 1.6, color:0x7d7468, melee:true, punch:'stab', grip:'knife', model:'Shank' },
   { name:'Tin cup',      rate:1.00, dmg: 0, range: 0, knock: 0, color:0x8b877c, melee:true, model:'Tin cup' },
+  // card #14, the enforcers': a baton held as a knife is, and a service revolver (held as the Pistol is)
+  { name:'Baton',        rate:0.70, dmg: 9, spread:0.34, pellets:3, range: 2.5, knock: 6.0, color:0x2a2a30, melee:true, punch:'slash', grip:'knife', model:'Baton' },
+  { name:'Revolver',     rate:0.85, dmg: 7, spread:0.045, range:50, knock: 2.0, color:0xd8cfb8, scar:'hole' },
 ].map(G => ({ ...GUN_ROW, ...G }))
 // POWERS: dur s, then scales of move jump rate give take fuel jet reach lift (jet 0 grounds; reach 0 spares melee)
 // drop:false: by `apply` only. look: an EFFECT_LOOKS overlay
@@ -879,6 +895,10 @@ const PACIFIER = { char: 'Pacifier', cid: 'Pacifier', crew: 'pacifiers', range: 
 // for hold s and dancing between s after each stab; pedEvery s between passers-by
 const PERFORMER = { char: 'Street performer', cid: 'Street performer', range: 1.3, fireRange: 2.4, aimErr: 0.06, jumpy: 0, turn: 7,
   busk: { ask: 4.5, askEvery: 14, engage: 14, mad: 8, walk: 0.45, hold: 1.2, between: 0.8, pedEvery: 6 } }
+// card #14: Faust's enforcers: `enforcer` rows are a pool the heat system adds and drops (never the free-for-all fill); each hunts the one
+// player whose heat it belongs to (ai.hunt). Baton: swarms round him. Armed: a revolver from farAt m. copies: the pool's size
+const ENFORCER = { char: 'Enforcer', cid: 'Enforcer', enforcer: true, range: 1.6, fireRange: 3.5, aimErr: 0.07, jumpy: 0.5, turn: 6, swarm: true, copies: 8 }
+const ENFORCER_ARMED = { ...ENFORCER, swarm: false, far: 'Revolver', farAt: 6, range: 11, fireRange: 28, aimErr: 0.06, jumpy: 0.3 }
 const BOTS = [
   TEARDROP, TEARDROP, TEARDROP,
   THUG, SHOOTER, THUG,
@@ -893,6 +913,7 @@ const BOTS = [
     turn: 8, hitRun: [1.0, 0.5] },
   { char: 'Tony', cid: 'Tony', crew: 'mob', boss: true, rare: true, visits: 8, range: 7, fireRange: 18, aimErr: 0.05, jumpy: 0.2, turn: 4 },
   { ...PERFORMER, rare: true, visits: 4 },
+  ENFORCER, ENFORCER_ARMED,
 ]
 // a LEVELS row's `theme` overrides THEME. TOR_TOP: tornado top (m), or the lid if lower
 const TOR_TOP = 25
@@ -1084,7 +1105,7 @@ const ASSETS =
 // decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
 // neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { performer_anims: 'performer_anims.672d8111.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.c94c09ac.glb', maniak_moves: 'maniak_moves.a48768e9.glb', alistair: 'civ_alistair.e1c2a10b.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
+const RIG_FILES = { enforcer: 'enforcer.1fea935d.glb', performer_anims: 'performer_anims.672d8111.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.c94c09ac.glb', maniak_moves: 'maniak_moves.a48768e9.glb', alistair: 'civ_alistair.e1c2a10b.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -1170,6 +1191,8 @@ const MODELS = {
   tony: { ...RIG_FREAK, file: RIG_FILES.tony, aims: { bat: 'bat_idle', Scatter: 'rifle_idle' }, shoots: { Scatter: 'rifle_shoot' }, punches: { swing: [['bat_swing', 0.05]] } },
   thug: { ...RIG_FREAK, file: RIG_FILES.thug, aims: { bat: 'bat_idle' }, punches: { swing: [['bat_swing', 0.05]] } },
   pacifier: { ...RIG_FREAK, file: RIG_FILES.pacifier, aims: { rifle: 'rifle_idle' }, shoots: { rifle: 'rifle_shoot' } },
+  // card #14: the enforcer holds his baton as the Teardrops hold a knife
+  enforcer: { ...RIG_FREAK, file: RIG_FILES.enforcer, aims: { knife: 'knife_idle' }, punches: { slash: [['knife_a', 0.02], ['knife_b', 0.02]] } },
   // card #59, the street performer: its own clips (RIG_FILES.performer_anims: dances retargeted from CMU mocap, a dance step it
   // closes in with, the cup shoved out, two quick stabs). dances: standing, it dances them in turn (perfDance), and running, their
   // arms over its legs; demand: the cup shoved at someone (perfSay); cup: the GUNS row drawn in its left hand
@@ -1804,6 +1827,11 @@ const PROP_MODELS = {
     // salt caked along the edge
     k.add({ g: ['outline', [[0.004, 0.085], [0.0135, 0.085], [0.0135, 0.2], [-0.001, 0.27], [0.002, 0.2]], 0.0065], m: 'white', r: [0, Math.PI / 2, 0], tag: 'salt' })
   },
+  // card #14: a police baton with a brass cap, the grip at the origin, up +Y like the knife's blade
+  Baton(k) {
+    k.add({ g: ['lathe', [[0.0, -0.1], [0.021, -0.1], [0.021, -0.07], [0.017, -0.06], [0.017, 0.0], [0.019, 0.02], [0.019, 0.38], [0.021, 0.4], [0.021, 0.42], [0.0, 0.425]], 10], m: 'dark', tag: 'baton' })
+    k.add({ g: ['cylinder', 0.0225, 0.0225, 0.025, 10], m: 'gold', p: [0, 0.395, 0], tag: 'cap' })
+  },
   Bat(k) {
     k.add({ g: ['lathe', [[0.0, -0.075], [0.024, -0.072], [0.025, -0.062], [0.016, -0.05], [0.016, 0.2], [0.026, 0.38], [0.034, 0.56], [0.035, 0.66],
       [0.03, 0.69], [0.0, 0.695]], 12], m: 'accent', tag: 'bat' })
@@ -1918,6 +1946,8 @@ const SOUNDS = {
   Bat: { say: 'a wooden baseball bat swung hard: a low whoosh and a hollow wooden crack', seed: 0 },
   Pipe: { say: 'a steel pipe swung hard: a heavy whoosh and a ringing metal clang', seed: 0 },
   Rifle: { say: 'a three-round rifle burst: three tight, hard cracks', seed: 0 },
+  Baton: { say: 'a police baton swung hard: a short whoosh and a hard, hollow crack', seed: 0 },
+  Revolver: { say: 'a heavy revolver shot: a loud, flat crack with a short echo', seed: 0 },
   // card #59 (the performer's demand is heard now by perfVoice; these rows are for the sound card's generator)
   Shank: { say: 'a quick jab of a crude blade: a short scuff of cloth and a wet stab', seed: 0 },
   'Street performer demand': { say: 'a hoarse, wheedling street voice demanding money, and coins rattled in a tin cup', seed: 0 },
@@ -2268,7 +2298,7 @@ function cityChunk(seed, S, ci, cj, B = [], scenery = [], spot = [[], [], [], []
 // ---------------------------------------------------------------- Faustland: seeded city, streaming and skyline
 // Metres, Y up. The room sends only seed + size. Every cell is a pure integer-seeded plan.
 // v1 budget (city only, shadows included): 220 draw calls / 180,000 submitted triangles.
-// The skyline has two instanced boxes per lot; detail and Bullet bodies are disposable.
+// The skyline has five instanced boxes per lot (card #69: a tower's masses, crown and spire; two for other lots); detail and Bullet bodies are disposable.
 // card #18: the world is 32 km across, ±16 km about the city's centre (Bullet here is single precision: keep within it),
 // and its lid clears the globe's top (3,540 m), so the whole sky set is inside the world. The navmesh keeps 1,200 m.
 const FAUST = { cell: 96, lid: 3800, world: 16000, navTop: 1200, detail: 2, physics: 1, retain: 3, calls: 220, triangles: 180000,
@@ -4448,29 +4478,40 @@ function faustHouse(g, b, tint, B) {
   g.box(faustBox(b.cx, top - cap / 2, b.cz, b.ex, cap / 2, b.ez), tint)
 }
 const inHouseDoor = B => B.core.stairX + (2 * FAUST_IN.stair.width + FAUST_IN.stair.well) / 2
+// card #69: a core or civic tower's far boxes are its three masses, the crown's drum over the roof (patch 1's faustDecoTower
+// sizes) and its spire; any other lot keeps its skyMass pair. FAUST_SKY boxes a lot, four lots a cell.
+const FAUST_SKY = 5
+function faustSkyBoxes(lot) {
+  const { x, z, height: H, mass, seed, stop } = lot
+  if (mass.length < 3 || lot.district === 'industrial' || lot.district === 'tenement') return lot.skyMass
+  if (stop) return mass
+  const [m0, m1, m2] = mass, kind = (seed >>> 7) % 3, tiers = kind === 2 ? 2 : kind === 1 ? 3 : 4, th = Math.min(5, Math.max(2.5, H * 0.012))
+  const top = H + 6.7 + tiers * th, spire = kind === 0 ? Math.max(6, H * 0.04) + Math.max(6, H * 0.025) * 2 : kind === 1 ? th * 2.6 + th : Math.max(14, H * 0.07)
+  return [m0, m1, m2, faustBox(x, (H + top) / 2, z, m2.ex * 0.6, (top - H) / 2, m2.ez * 0.6), faustBox(x, top + spire / 2, z, 0.6, spire / 2, 0.6)]
+}
 function faustSkyCell(c, visible) {
   const sky = faustState.skyline
   faustIn.doorsDirty = true; if (faustIn.mode) visible = true
   if (!sky) return
-  const pose = new THREE.Object3D(), offset = (c.ci * faustState.S + c.cj) * 8
-  for (let i = 0; i < 8; i++) {
-    const b = c.plan.lots[i / 2 | 0]?.skyMass[i % 2]
+  const pose = new THREE.Object3D(), offset = (c.ci * faustState.S + c.cj) * FAUST_SKY * 4
+  for (let i = 0; i < FAUST_SKY * 4; i++) {
+    const b = c.plan.lots[i / FAUST_SKY | 0] && faustSkyBoxes(c.plan.lots[i / FAUST_SKY | 0])[i % FAUST_SKY]
     if (visible && b) { pose.position.set(b.cx, b.cy, b.cz); pose.scale.set(b.ex * 2, b.ey * 2, b.ez * 2) }
     else { pose.position.set(0, -100, 0); pose.scale.set(0, 0, 0) }
     pose.updateMatrix(); sky.setMatrixAt(offset + i, pose.matrix)
   }
-  sky.instanceMatrix.addUpdateRange(offset * 16, 8 * 16); sky.instanceMatrix.needsUpdate = true
+  sky.instanceMatrix.addUpdateRange(offset * 16, FAUST_SKY * 4 * 16); sky.instanceMatrix.needsUpdate = true
 }
 function faustSkyline() { return drain(faustSkylineSteps()) }
 function* faustSkylineSteps() {
-  const F = faustState, sky = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), F.materials.far, F.S * F.S * 8)
+  const F = faustState, sky = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), F.materials.far, F.S * F.S * FAUST_SKY * 4)
   sky.instanceMatrix.setUsage(THREE.DynamicDrawUsage); F.skyline = sky
   const col = new THREE.Color()
   for (let x = 0; x < F.S; x++) for (let z = 0; z < F.S; z++) {
     if ((x * F.S + z) % 8 === 0) yield
     const plan = faustPlan(F.seed, x, z, F.S)
     faustSkyCell({ ci: x, cj: z, plan }, true)
-    for (let i = 0; i < 8; i++) { col.setHex(FAUST_COLORS[plan.lots[i / 2 | 0]?.tint || 0]); sky.setColorAt((x * F.S + z) * 8 + i, col) }
+    for (let i = 0; i < FAUST_SKY * 4; i++) { const lot = plan.lots[i / FAUST_SKY | 0]; col.setHex(lot && faustSkyBoxes(lot).length === FAUST_SKY && i % FAUST_SKY > 2 ? i % FAUST_SKY === 3 ? FAUST_DECO.crown : FAUST_DECO.steel : FAUST_COLORS[lot?.tint || 0]); sky.setColorAt((x * F.S + z) * FAUST_SKY * 4 + i, col) }
   }
   sky.instanceMatrix.clearUpdateRanges(); sky.instanceMatrix.needsUpdate = true
   sky.computeBoundingSphere(); sky.receiveShadow = false; sky.castShadow = false
@@ -5827,6 +5868,9 @@ for (const [i, B] of BOTS.entries()) {
   if (B.alt) BOTS[i].altRow = { ...CHARS[ref(B.alt[0])], ...B, cid: ref(B.alt[0]) }
 }
 for (const C of CHARS) C.shift &&= ref(C.shift)
+// the pool's BOTS indexes, by kind
+const ENFORCER_ROWS = { baton: [], armed: [] }
+BOTS.forEach((B, i) => { if (B.enforcer) ENFORCER_ROWS[B.far ? 'armed' : 'baton'].push(i) })
 const START = ref('The Maniak')
 // the dated event the room plays, null if none; its rows play only while it is on
 let eventOn = null
@@ -5840,7 +5884,7 @@ const botPairs = list => list.flatMap(i => [[BOT_ID0 + i, BOTS[i].cid], ...BOTS[
 
 const RARE_ONE_IN = 20
 // rare: out of free-for-all; visits: in anyway, on its own roll
-const regulars = () => BOTS.filter(b => !b.rare && !offEvent(b)).length
+const regulars = () => BOTS.filter(b => !b.rare && !b.enforcer && !offEvent(b)).length
 const ENTITY_MAX = MAX_PLAYERS + BOTS.length + CHARS.filter(C => C.team).length - Object.keys(TEAMS).length
 let BOT_COUNT = 3
 
@@ -7118,7 +7162,7 @@ const gunsOf = c => !gunless(CHARS[c.cid])
 const atksOf = c => [].concat(CHARS[c.cid].atk ?? [])
 function armRow(c) { c.gun = handsOf(CHARS[c.cid]); c.ammo = Infinity }
 function respawn(c) {
-  const s = crewSpawn(c) || pickSpawn(c)
+  const s = c.bot?.enforcer && ENFORCER_AT || crewSpawn(c) || pickSpawn(c)       // an enforcer comes in where heatTick put it
   if (LV.grow) growNear([[s[0], s[2]]], true)       // before anyone stands there
   c.prot = SPAWN_PROT
   setCharPos(c, s[0], s[1], s[2])
@@ -7395,7 +7439,7 @@ function carWant(b, seat, tgt, sd, dt) {
   if (ai.seated && !seat) ai.carCd = 4, ai.roam = null, carNav(ai)
   ai.seated = !!seat
   if (seat) { const o = seat[0]; return { use: o.fuse !== undefined || o.riders[0] === undefined || upOf(o) < 0.3 || speedOf(o) < 5 && (!tgt || sd < 30) } }
-  if ((ai.carCd = (ai.carCd || 0) - dt) > 0 || tgt && sd < (ai.car ? 50 : BOARD_FAR) || !tgt && !(ai.roam ||= parked.size && roamSpot(b, b.y - b.h - b.r)) || objs.some(o => o.heldBy === b.id)) return ai.car = null
+  if (b.bot.enforcer || (ai.carCd = (ai.carCd || 0) - dt) > 0 || tgt && sd < (ai.car ? 50 : BOARD_FAR) || !tgt && !(ai.roam ||= parked.size && roamSpot(b, b.y - b.h - b.r)) || objs.some(o => o.heldBy === b.id)) return ai.car = null
   const free = (o, i) => o.riders[i] === undefined && fits(b, o, i), by = o => players.get(o.riders[0])
   // empty, or a same-side driver's while it waits
   const usable = o => o.V && o.car && o.heldBy === undefined && o.thrownBy === undefined && o.fuse === undefined && upOf(o) > 0.7 && !canLift(b, o) &&
@@ -7476,7 +7520,7 @@ function botThink(b, all, dt) {
   const STICKY_GAIN = 0.7, d = botD, low = i => all[i].id === ai.tgt ? d[i] * STICKY_GAIN : d[i]
   let tgt = null, best = Infinity, at = -1, sees = false
   d.length = all.length
-  all.forEach((c, i) => d[i] = c === b || c.dead > 0 || c.prot > 0 || sideOf(c) === sideOf(b) ? Infinity
+  all.forEach((c, i) => d[i] = c === b || c.dead > 0 || c.prot > 0 || sideOf(c) === sideOf(b) || spec.enforcer && c.id !== ai.hunt ? Infinity
                                 : Math.hypot(c.x - b.x, c.y - b.y, c.z - b.z))
   for (;;) {
     let i = -1
@@ -7490,6 +7534,8 @@ function botThink(b, all, dt) {
     if (score < best || (score === best && i < at)) { best = score; tgt = c; at = i; sees = seen }
     d[i] = Infinity
   }
+  // card #14: an enforcer knows where its quarry is only while he's wanted (or in its sight), else where he was last seen
+  if (spec.enforcer) { const m = enforcerMind(b, tgt, sees); if (m !== tgt) { tgt = m; sees = false; best = tgt ? Math.hypot(tgt.x - b.x, tgt.z - b.z) : Infinity } }
   ai.tgt = tgt ? tgt.id : -1
 
   const sd = tgt ? Math.hypot(b.x - tgt.x, b.z - tgt.z) : 0
@@ -9822,7 +9868,7 @@ const wallAt = staticRay
 
 function strikeObject(c, o, G, ux, uy, uz, px = o.x, py = o.y, pz = o.z) {
   inWorld(o)
-  if (o.V && isHost) { o.hp -= G.dmg * profDmg(c, G.name); o.by = c.id }
+  if (o.V && isHost) { o.hp -= G.dmg * profDmg(c, G.name); o.by = c.id; if (!c.bot && !o.riders.includes(c.id)) heatCrime(c, 'property', o.x, o.z) }
   const m = G.knock * o.K.hit
   impVec.setValue(ux * m, uy * m, uz * m); relVec.setValue(px - o.x, py - o.y, pz - o.z)
   o.body.activate(); o.body.applyImpulse(impVec, relVec)
@@ -22155,7 +22201,7 @@ document.addEventListener('visibilitychange', () => {
 GAME.participant = rowFor
 GAME.participantOf = rowOf
 function spawnList(rows) {
-  for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && c.owner === undefined) dropBot(c)
+  for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && !c.bot.enforcer && c.owner === undefined) dropBot(c)
   rows.forEach(addBot)
   if (conns.size) pushRoster()
 }
@@ -22192,12 +22238,12 @@ function spawnBots(n) {
 
 function foesWanted() {
   const on = fieldedTeams()
-  return BOTS.flatMap((B, i) => !B.squad && !on.has(B.team) && !offEvent(B) ? [i] : []).sort((a, b) => !!BOTS[a].rare - !!BOTS[b].rare || !BOTS[a].event - !BOTS[b].event).slice(0, BOT_COUNT)
+  return BOTS.flatMap((B, i) => !B.squad && !B.enforcer && !on.has(B.team) && !offEvent(B) ? [i] : []).sort((a, b) => !!BOTS[a].rare - !!BOTS[b].rare || !BOTS[a].event - !BOTS[b].event).slice(0, BOT_COUNT)
 }
 
 function teamsChanged() {
   const want = foesWanted()
-  for (const c of [...players.values()]) if (c.id >= BOT_ID0 && !c.bot.squad && !want.includes(c.id - BOT_ID0)) dropBot(c)
+  for (const c of [...players.values()]) if (c.id >= BOT_ID0 && !c.bot.squad && !c.bot.enforcer && !want.includes(c.id - BOT_ID0)) dropBot(c)
   want.forEach(addBot)
   if (conns.size) pushRoster()
 }
@@ -24193,6 +24239,7 @@ function slKnock(ag, p, ux, uz, power, by, T) {
   if (ag.kind === SL_K.cyclist) { const [bx, bz] = slRunTo(p.x, p.z, ux / n, uz / n, d * 0.6); a.push(slR2(bx), slR2(bz), slR2(p.yaw + (slRnd(ag.id) - 0.5))) }
   slAddRec(a)
   slPanic(p.x, p.z, T)
+  if (by && !by.bot && ag.kind !== SL_K.stray) heatCrime(by, seatOf(by) ? 'ram' : 'civilian', p.x, p.z)       // card #14
   if (by && hooked['street.knock']) hookEmit('street.knock', { attacker: hookWho(by), kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: slR2(p.x), z: slR2(p.z) })
 }
 // The same knock-down rules apply to every street agent.
@@ -26600,6 +26647,206 @@ function slBabyFrame(dt) {
   })
 }
 
+// ---------------------------------------------------------------- heat and Faust's enforcers (card #14, pin rule 14)
+// His crimes in public raise his heat, shown as stars. Each player has their own, decided by the host and synced (`he`).
+// Enforcers (the BOTS rows tagged `enforcer`, a fixed pool of rows added and dropped as heat asks) hunt only the player whose
+// heat they belong to (ai.hunt). They come in out of sight, and as heat rises there are more of them and some are armed.
+// Out of their sight, the search runs out and the heat clears; disguised and out of sight, it runs out much sooner (#15).
+//
+// HEAT.stars: points to reach each star. crime: points per kind (a civilian knocked down, a car rammed or a person knocked
+// down from a seat, someone else's vehicle struck, an enforcer hurt, an enforcer put down). A crime counts if a street
+// person is within witness.people m or an enforcer within witness.enforcers m. limit: s between crimes of a kind.
+// sight: m an enforcer sees him from with a clear line. seen: s he is still "wanted" after the last sight; then the search
+// lasts hide + hideStar * stars s (disguised: that much faster, x `disguised`). force: enforcers wanted per star, armed the
+// share of them with a revolver from star 2. spawn: s between arrivals, the ring m they appear in, keep m from him they stay in
+const HEAT = {
+  stars: [0, 1, 3.5, 7, 12, 20], cap: 26,
+  crime: { civilian: 1, ram: 1, property: 0.5, hurt: 0.6, kill: 2.5 }, limit: { property: 2.5, hurt: 0.8 },
+  witness: { people: 40, enforcers: 60 },
+  sight: 70, seen: 3, hide: 14, hideStar: 4, disguised: 5,
+  force: [0, 2, 3, 4, 5, 6], armed: 0.5,
+  spawn: { gap: 2.2, near: 42, far: 78, keep: 140 },
+}
+// host: player id -> { pts, stars, state (0 clear, 1 wanted, 2 searching), seenAt (ms), last {x, y, z}, left (s of search), at {kind: ms}, spawnAt }
+const heat = new Map()
+let heatMine = { stars: 0, state: 0, left: 0 }, heatAt = -Infinity, heatAcc = 0, heatRoster = false
+const heatStars = pts => { let n = 0; for (let k = 1; k < HEAT.stars.length; k++) if (pts >= HEAT.stars[k]) n = k; return n }
+const heatFor = id => heat.get(id) || heat.set(id, { pts: 0, stars: 0, state: 0, seenAt: 0, last: { x: 0, y: 0, z: 0 }, left: 0, at: {}, spawnAt: 0 }).get(id)
+const seeLine = (x, y, z, tx, ty, tz) => { const dx = tx - x, dy = ty - y, dz = tz - z, d = Math.hypot(dx, dy, dz) || 1; return staticRay(x, y, z, dx / d, dy / d, dz / d, d) >= d }
+const enforcerList = () => [...players.values()].filter(c => c.bot?.enforcer)
+
+// a street person within reach, or an enforcer, to have seen it
+function heatWitnessed(x, z, T) {
+  for (const c of players.values()) if (c.bot?.enforcer && !(c.dead > 0) && Math.hypot(c.x - x, c.z - z) < HEAT.witness.enforcers) return true
+  let seen = false
+  if (slState) slAround(x, z, HEAT.witness.people, T, ag => { if (ag.kind !== SL_K.stray) seen = true })
+  return seen
+}
+// sure: the crime was seen by the enforcer it was done to
+function heatCrime(c, kind, x = c?.x, z = c?.z, n = 1, sure = false) {
+  if (!isHost || !LV.faust || !c || c.bot || c.id >= BOT_ID0 || c.dead > 0) return false
+  const T = tickAt || now(), H = heatFor(c.id), lim = HEAT.limit[kind]
+  if (lim && T - (H.at[kind] || -1e9) < lim * 1000) return false
+  if (!sure && !heatWitnessed(x, z, T)) return false
+  H.at[kind] = T
+  GAME.disguise?.blow?.(c, 'crime')
+  const was = H.stars
+  H.pts = Math.min(HEAT.cap, H.pts + (HEAT.crime[kind] ?? 1) * n)
+  H.stars = heatStars(H.pts)
+  if (H.stars) { H.state = 1; H.seenAt = T; H.last = { x: c.x, y: c.y, z: c.z }; H.left = HEAT.hide + HEAT.hideStar * H.stars }
+  if (!was && H.stars) tell(c.id, "§cFaust's enforcers are after you")
+  return true
+}
+// he's clear: the stars go, and the enforcers on him stand down (heatDismiss takes them away)
+function heatClear(id) {
+  const H = heat.get(id)
+  if (H) { H.pts = 0; H.stars = 0; H.state = 0; H.left = 0 }
+}
+function heatSet(id, n) {
+  const c = players.get(id), T = tickAt || now()
+  if (!c || c.bot) return false
+  n = clamp(n | 0, 0, 5)
+  if (!n) { heatClear(id); return true }
+  const H = heatFor(id)
+  H.pts = HEAT.stars[n]; H.stars = n; H.state = 1; H.seenAt = T; H.last = { x: c.x, y: c.y, z: c.z }; H.left = HEAT.hide + HEAT.hideStar * n
+  return true
+}
+
+// where an enforcer comes in: a pavement the street's people walk (a lot's ring), HEAT.spawn.near to far from him, out of his sight if one can be found
+function enforcerSpot(p) {
+  const st = slState; if (!st) return null
+  const S = st.S, A = S * 48, ci = Math.floor((p.x + A) / 96), cj = Math.floor((p.z + A) / 96), K = HEAT.spawn, cand = []
+  for (let i = Math.max(0, ci - 1); i <= Math.min(S - 1, ci + 1); i++) for (let j = Math.max(0, cj - 1); j <= Math.min(S - 1, cj + 1); j++)
+    for (const g of slCell(i, j).rings) for (let k = 0; k < 4; k++) {
+      const a = g.pts[k], b = g.pts[(k + 1) % 4], f = Math.random(), x = a[0] + (b[0] - a[0]) * f, z = a[1] + (b[1] - a[1]) * f, d = Math.hypot(x - p.x, z - p.z)
+      if (d >= K.near && d <= K.far && Math.abs(x) < A - 8 && Math.abs(z) < A - 8) cand.push({ x, z, d })
+    }
+  for (let i = cand.length; i > 1; i--) { const j = Math.random() * i | 0; [cand[i - 1], cand[j]] = [cand[j], cand[i - 1]] }
+  const ey = p.y + p.h * 0.3
+  let pick = cand.slice(0, 14).find(c => !seeLine(c.x, 1.6, c.z, p.x, ey, p.z))
+  if (!pick) pick = cand.filter(c => c.d > K.far - 14).sort((a, b) => b.d - a.d)[0]
+  return pick && { x: pick.x, y: 3, z: pick.z, yaw: Math.atan2(-(p.x - pick.x), -(p.z - pick.z)) }
+}
+let ENFORCER_AT = null          // respawn() puts the enforcer being added here, not at a spawn point
+// at: where, if not out of the way of his sight; crew: out of a squad car (not counted in the foot force)
+function enforcerAdd(p, armed, at, crew) {
+  const rows = ENFORCER_ROWS[armed ? 'armed' : 'baton'], i = rows.find(i => !players.has(BOT_ID0 + i)), spot = i !== undefined && (at || enforcerSpot(p))
+  if (!spot) return false
+  ENFORCER_AT = [spot.x, spot.y, spot.z, spot.yaw]
+  const ok = addBot(i)
+  ENFORCER_AT = null
+  if (!ok) return false
+  const c = players.get(BOT_ID0 + i)
+  c.prot = 0; c.ai.hunt = p.id; c.ai.hp0 = c.hp; c.ai.crew = !!crew
+  heatRoster = true
+  return true
+}
+function enforcerDrop(e) { clearSeat(e); dropBot(e); heatRoster = true }
+// where its quarry is, as an enforcer knows it: him while he's wanted (or it can see him), else the last place he was seen, and
+// there it mills about
+function enforcerMind(b, tgt, sees) {
+  const H = heat.get(b.ai.hunt)
+  if (!tgt || !H?.stars) return null
+  if (H.state === 1 || sees && Math.hypot(b.x - tgt.x, b.z - tgt.z) < HEAT.sight) return tgt
+  const L = H.last
+  return Math.hypot(L.x - b.x, L.z - b.z) < 6 ? null : { id: -5, x: L.x, y: L.y, z: L.z, h: 0, r: 0, vx: 0, vy: 0, vz: 0 }
+}
+// the enforcers' hurts and falls are crimes of the nearest player (within 35 m)
+function heatWatch(all, humans) {
+  for (const e of all) {
+    if (!e.bot?.enforcer) continue
+    const ai = e.ai, hurt = ai.hp0 !== undefined && e.hp < ai.hp0 - 0.01, fell = e.dead > 0 && !ai.fell
+    ai.hp0 = e.hp
+    if (!hurt && !fell) continue
+    if (fell) ai.fell = true
+    let who = null, wd = 35
+    for (const p of humans) { const d = Math.hypot(p.x - e.x, p.z - e.z); if (!(p.dead > 0) && d < wd) { who = p; wd = d } }
+    if (who) heatCrime(who, fell ? 'kill' : 'hurt', e.x, e.z, 1, true)
+  }
+}
+function heatStep(p, all, dt, T) {
+  const H = heat.get(p.id)
+  if (!H?.stars) return
+  if (p.dead > 0) return heatClear(p.id)
+  const mine = all.filter(e => e.bot?.enforcer && e.ai.hunt === p.id && !(e.dead > 0))
+  const sees = mine.some(e => !seatOf(e) && Math.hypot(e.x - p.x, e.z - p.z) < HEAT.sight && clearLine(e, p))
+  if (sees) { H.seenAt = T; H.state = 1; H.left = HEAT.hide + HEAT.hideStar * H.stars }
+  if (sees || T - H.seenAt <= HEAT.seen * 1000) H.last = { x: p.x, y: p.y, z: p.z }
+  if (!sees && T - H.seenAt > HEAT.seen * 1000) {
+    H.state = 2
+    H.left -= dt * (p.disguised ? HEAT.disguised : 1)
+    if (H.left <= 0) return heatClear(p.id)
+  }
+  // the force: those still near him count; one more arrives each HEAT.spawn.gap s till it's whole
+  const want = HEAT.force[H.stars], armedWant = H.stars >= 2 ? Math.floor(want * HEAT.armed) : 0
+  const near = mine.filter(e => !e.ai.crew && Math.hypot(e.x - p.x, e.z - p.z) < HEAT.spawn.keep), armedHave = near.filter(e => e.bot.far).length
+  if (T - H.spawnAt >= HEAT.spawn.gap * 1000 && near.length < want) {
+    H.spawnAt = T
+    enforcerAdd(p, armedHave < armedWant)
+  }
+  if (typeof heatCars === 'function') heatCars(p, H, T, dt)
+}
+// enforcers with no one to hunt, or left far behind, go once nobody can see them (60 s at the latest)
+function heatDismiss(all, humans, T) {
+  for (const e of all) {
+    if (!e.bot?.enforcer) continue
+    const ai = e.ai, H = heat.get(ai.hunt), owner = players.get(ai.hunt)
+    const lost = !owner || !H?.stars, far = !lost && Math.hypot(owner.x - e.x, owner.z - e.z) > HEAT.spawn.keep + 30
+    if (!lost && !far) { ai.gone = undefined; continue }
+    ai.gone ??= T
+    const shown = humans.some(h => !(h.dead > 0) && (Math.hypot(h.x - e.x, h.z - e.z) < 25 || Math.hypot(h.x - e.x, h.z - e.z) < 90 && clearLine(h, e)))
+    if (!shown && T - ai.gone > 4000 || T - ai.gone > 60000) enforcerDrop(e)
+  }
+}
+function heatTick(dt, all) {
+  if (!isHost || !LV.faust) return
+  heatAcc += dt
+  if (heatAcc < 0.1) return
+  const step = heatAcc, T = tickAt || now()
+  heatAcc = 0
+  const humans = all.filter(c => !c.bot && c.id < BOT_ID0)
+  for (const id of [...heat.keys()]) if (!players.has(id)) heat.delete(id)
+  heatWatch(all, humans)
+  for (const p of humans) heatStep(p, all, step, T)
+  heatDismiss(all, humans, T)
+  if (typeof squadDismiss === 'function') squadDismiss(T)
+  if (heatRoster) { heatRoster = false; if (conns.size) pushRoster() }
+}
+// a death takes an enforcer off the field, not back to a spawn point
+function enforcerDown(c) { enforcerDrop(c); if (conns.size) pushRoster() }
+{
+  const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems, ms = L.matchStart, left = L.left, ap = HOST_PHASES.afterPhysics
+  L.snapshot = () => ({ ...snap(), ...isHost && { he: [...heat].filter(([, H]) => H.stars).map(([id, H]) => [id, H.stars, H.state, Math.round(H.left)]) } })
+  L.takeItems = function (d) {
+    take.call(this, d)
+    // absent = none, versioned by packet time (the channel is unordered)
+    if (isHost || !Number.isFinite(d.t) || d.t <= heatAt) return
+    heatAt = d.t
+    const m = Array.isArray(d.he) && d.he.length <= 32 && d.he.find(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] === myId)
+    heatMine = m ? { stars: clamp(m[1] | 0, 0, 5), state: clamp(m[2] | 0, 0, 2), left: clamp(m[3], 0, 99) } : { stars: 0, state: 0, left: 0 }
+  }
+  L.matchStart = function () { ms.call(this); if (isHost) { heat.clear(); for (const e of enforcerList()) dropBot(e); if (conns.size) pushRoster() } }
+  L.left = function (id) { heat.delete(id); return left.call(this, id) }
+  HOST_PHASES.afterPhysics = t => { ap(t); heatTick(t.dt, t.all) }
+}
+function heatHud() {
+  const W = isHost ? heat.get(myId) : heatMine, stars = W?.stars | 0, state = stars ? W.state : 0, key = stars + ':' + state
+  if (lastHud.wanted === key) return
+  lastHud.wanted = key
+  const n = el('#wanted'); if (!n) return
+  n.className = stars ? (state === 2 ? 'live search' : 'live') : ''
+  n.innerHTML = Array.from({ length: 5 }, (_, i) => '<i' + (i < stars ? ' class="on"' : '') + '>★</i>').join('')
+}
+GAME.heat = {
+  stars: id => heat.get(id)?.stars | 0, state: id => ['clear', 'wanted', 'searching'][heat.get(id)?.state | 0],
+  crime: heatCrime, clear: heatClear, set: heatSet, table: HEAT,
+  // tests and the debug panel
+  get enforcers() { return enforcerList().map(e => ({ id: e.id, x: e.x, z: e.z, dead: e.dead, hunt: e.ai.hunt, armed: !!e.bot.far, hp: e.hp })) },
+  get mine() { return isHost ? { ...heat.get(myId) } : heatMine },
+}
+GAME.heat.fn = { witnessed: heatWitnessed, spot: enforcerSpot, mind: enforcerMind }
+GUN_PROFILES.Revolver = GUN_PROFILES.Pistol
+
 function rollRare(c) {
   if (!isHost) return
   BOTS.forEach((B, i) => {
@@ -26662,7 +26909,8 @@ function teamDown(c, dt) {
 }
 // back up: a visitor leaves, else its team respawns together (the player last), rebalanced, and a rare bot may turn up
 function teamUp(c, team) {
-  if (c.bot && c.owner === undefined && !c.bot.squad && c.bot.rare) leaveRare(c)
+  if (c.bot?.enforcer) enforcerDown(c)
+  else if (c.bot && c.owner === undefined && !c.bot.squad && c.bot.rare) leaveRare(c)
   else {      // player last
     for (const m of team.length ? team.filter(m => m.dead > 0 || m === c).sort((a, b) => !a.bot - !b.bot) : [c]) { m.downT = 0; if (isHost && !m.bot) rebalance(m); respawn(m); if (hooked.spawn) hookEmit('spawn', { who: hookWho(m) }) }
     rollRare(c)
@@ -26695,14 +26943,19 @@ GAME.commands = {
   spawn:  { args: '<name|all>', help: 'host only, bring enemies in now', run: a => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
               const want = String(a || '').trim().toLowerCase()
-              const on = fieldedTeams(), rows = BOTS.map((b, i) => i).filter(i => !on.has(BOTS[i].team)).filter(i => want === 'all' ||
+              const on = fieldedTeams(), rows = BOTS.map((b, i) => i).filter(i => !on.has(BOTS[i].team) && !BOTS[i].enforcer).filter(i => want === 'all' ||
                 BOTS[i].name.toLowerCase() === want)
               if (!want || !rows.length)
-                return sysMsg('§cEnemies: §f' + [...new Set(BOTS.map(b => b.name))].join(', ') + ' §7or §fall')
+                return sysMsg('§cEnemies: §f' + [...new Set(BOTS.filter(b => !b.enforcer).map(b => b.name))].join(', ') + ' §7or §fall')
               const got = rows.filter(addBot)
               if (got.length && conns.size) pushRoster()
               sysMsg(got.length ? '§7Spawned §f' + got.map(i => BOTS[i].name).join(', ')
                                 : '§7Already out.') } },
+  wanted: { args: '<0-5>', help: 'host only, set your own heat in stars', run: a => {
+              if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
+              const n = parseInt(a, 10)
+              if (isNaN(n) || n < 0 || n > 5) return sysMsg('§cUsage: §f/wanted <0-5>')
+              GAME.heat.set(myId, n); sysMsg('§7Heat: §f' + n) } },
   despawn:{ args: '', help: 'host only, remove every enemy', run: () => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
               BOT_COUNT = 0; stepSquad()
@@ -28312,7 +28565,7 @@ let lastTabSig = null, lastProfSig = null
 function standings(others) {
   const me = selfChar()
   return (me ? [{ id: myId, kills: me.kills }] : [])
-    .concat(others.filter(o => roster.has(o.id) || !CHARS[o.cid]?.team).map(o => ({ id: o.id, kills: o.kills || 0 })))
+    .concat(others.filter(o => (roster.has(o.id) || !CHARS[o.cid]?.team) && !botOf(o.id)?.enforcer).map(o => ({ id: o.id, kills: o.kills || 0 })))
     .sort((a, b) => b.kills - a.kills)
 }
 function scoreRows(rows) {
@@ -28457,6 +28710,7 @@ function drawHud(me, others, t) {
       .map(([c, txt]) => '<span style="color:' + c + '">' + esc(txt) + '</span>').join('')
   }
 
+  heatHud()
   hud('hpW', el('#hpfill'), 'width', (frac * 100).toFixed(1) + '%')
   hud('hpC', el('#hpfill'), 'background',
       frac > 0.5 ? '#a3ad86' : frac > 0.22 ? '#b8913f' : '#d0453a')
