@@ -4937,7 +4937,7 @@ function faustRingsFrame() {
     }
     cells.sort((a, b) => a[0] - b[0])
     const S = F.ringShapes ||= faustRingShapes(), caps = R.caps, col = new THREE.Color()
-    const pools = {}
+    const pools = {}, idx = new Map()      // idx: 'id/role' -> an enterable building's wall or door instance in its pool (card #78 hides them when it opens)
     const KINDS = ['flat', 'pool', 'far', 'body', 'roof', 'light', 'pane', 'lit', 'shed']
     for (const k of KINDS) pools[k] = { m: new Float32Array(caps[k] * 16), c: new Float32Array(caps[k] * 3), n: 0 }
     // an instance: scale, then roll about z, then yaw about y, then the place (alongZ: a quarter turn of yaw)
@@ -4954,15 +4954,18 @@ function faustRingsFrame() {
     for (let n = 0; n < cells.length; n++) {
       const c = faustRingPlan(F, plan, cells[n][1], cells[n][2])
       for (const [b, tint] of c.far) put('far', b.ex, b.ey, b.ez, b.cx, b.cy, b.cz, tint)
-      for (const [b, tint] of c.body) put('body', b.ex, b.ey, b.ez, b.cx, b.cy, b.cz, tint)
+      const bm = new Map(); for (const q of c.buildings) if (q.kind === 'house') bm.set(q.box, q.id)
+      for (const [b, tint] of c.body) { const id = bm.get(b); if (id !== undefined && pools.body.n < caps.body) idx.set(id + '/body', pools.body.n); put('body', b.ex, b.ey, b.ez, b.cx, b.cy, b.cz, tint) }
       for (const [x, y, z, ex, h, ez, alongZ, tint] of c.roof) alongZ ? put('roof', ez, h, ex, x, y, z, tint, true) : put('roof', ex, h, ez, x, y, z, tint)
       for (const [a, b, c2, d, y, tint] of c.flat) put('flat', (c2 - a) / 2, 1, (d - b) / 2, (a + c2) / 2, y, (b + d) / 2, tint)
       for (const b of c.light) put('light', b.ex, b.ey, b.ez, b.cx, b.cy, b.cz, 0xffffff)
-      for (const [k, sx, sy, sz, x, y, z, yaw, roll, tint] of c.part) put(k, sx, sy, sz, x, y, z, tint, false, yaw, roll)
+      const roles = faustRingInRoles(c)
+      c.part.forEach(([k, sx, sy, sz, x, y, z, yaw, roll, tint], pi) => { const role = roles.get(pi); if (role !== undefined && pools[k].n < caps[k]) idx.set(role, pools[k].n); put(k, sx, sy, sz, x, y, z, tint, false, yaw, roll) })
       if (n % R.part === R.part - 1) yield
     }
     // the swap: new meshes in, the old ones out (their geometry is shared; only the instance buffers go)
     const old = F.ringMeshes || []
+    F.ringIdx = idx
     F.ringMeshes = []
     for (const k of KINDS) {
       const P = pools[k]
@@ -4975,6 +4978,7 @@ function faustRingsFrame() {
       worldGroup.add(mesh); F.ringMeshes.push(mesh)
     }
     for (const m of old) { worldGroup.remove(m); m.dispose() }
+    faustRingInRehide(F)
     F.ringCounts = Object.fromEntries(Object.entries(pools).map(([k, P]) => [k, P.n]))
     yield 'frame'
   }, { valid: () => faustState === F && F.ringStamp === stamp }).catch(e => frameFailed('rings', e))
@@ -5026,6 +5030,523 @@ function faustRingsMapLayer() {
   } })
 }
 
+// ---------------------------------------------------------------- Faustland ring interiors: houses and shacks (card #78)
+// The outskirts' houses and shacks (faustRingCell's buildings, kind 'house' | 'shack') can be entered. What is inside is a pure
+// function of the building (its seed, its box and its door), like the city's interiors (#38): the same on the host, every guest and
+// a dedicated server, nothing on the wire. faustRingInterior gives the whole building: the shell (walls with the door's gap and
+// the roof slab: the colliders that replace its solid box, and the stone mesh that replaces its instance), its floors (boxes
+// drawn by inDrawSteps and fitted out with furniture, colliders where c, lamps, rooms, stair ramps) and its colliders. It rounds
+// to the centimetre and uses only + - * /, floor and round, so every engine lays it out alike.
+// Local frame: u along x from the box's centre, v from the door wall's outside inward (world z = cz + sg*(ez - v), sg the door's
+// side), y up. Faces (f) of a box are given in local bits (1 +u, 2 -u, 4 +y, 8 -y, 16 +v deeper, 32 -v toward the door) and kept
+// in the world's (1 +x, 2 -x, 4 +y, 8 -y, 16 +z, 32 -z), as the city's interiors do.
+const FAUST_RIN = { version: 1, wall: 0.3, shackWall: 0.14, slab: 0.15, part: 0.12, door: [1.4, 2.1], shackDoor: [1.2, 2.0], inner: [1.3, 2.1],
+  hall: 1.7, stairRun: 4.5, skin: 0.04,
+  // m from a door a participant opens the building at, and it closes past (with nobody inside, after 3 s)
+  open: 18, close: 55 }
+function faustRingInterior(b) {
+  const K = FAUST_RIN, box = b.box, shack = b.kind === 'shack', sg = b.door.face[1] > 0 ? 1 : -1, two = !shack && b.storeys > 1
+  const rng = genRng((b.seed ^ 0x78a1d3) >>> 0), pick = list => list[rng() * list.length | 0], chance = p => rng() < p
+  const T = shack ? K.shackWall : K.wall, P = K.part, ex = box.ex, ez = box.ez, cx = box.cx, cz = box.cz, H = inCm(box.cy + box.ey)
+  const dw = (shack ? K.shackDoor : K.door)[0], dh = inCm(Math.min((shack ? K.shackDoor : K.door)[1], H - 0.15)), ud = inCm(b.door.x - cx)
+  const SL = shack ? 0.08 : K.slab, FH = two ? inCm(H / 2) : H                       // a storey's height, floor to floor
+  // local faces to the world's
+  const W1 = sg > 0 ? 32 : 16, W0 = sg > 0 ? 16 : 32
+  const lf = m => m === undefined ? undefined : (m & 15) | (m & 16 ? W1 : 0) | (m & 32 ? W0 : 0)
+  const zr = (v0, v1) => sg > 0 ? [cz + ez - v1, cz + ez - v0] : [cz - ez + v0, cz - ez + v1]
+  const Ui0 = -ex + T, Ui1 = ex - T, Vi0 = T, Vi1 = 2 * ez - T
+  const tint = 0      // the walls' look is the instances' own (the runtime cuts them from the hidden instances)
+  // ---- the floors
+  const floors = [0, 1].slice(0, two ? 2 : 1).map(k => ({ k, y: k * FH, boxes: [], lights: [], rooms: [], ramps: [], aprons: [] }))
+  let F = floors[0], occ = [], keep = []
+  const addBox = (list, u0, u1, y0, y1, v0, v1, t, more) => {
+    if (u1 - u0 < 0.004 || y1 - y0 < 0.004 || v1 - v0 < 0.004) return
+    const [z0, z1] = zr(v0, v1)
+    list.push(inBox(cx + (u0 + u1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, (u1 - u0) / 2, (y1 - y0) / 2, (z1 - z0) / 2, { t, ...more, f: lf(more?.f) }))
+  }
+  const box_ = (u0, u1, y0, y1, v0, v1, t, more) => addBox(F.boxes, u0, u1, y0, y1, v0, v1, t, more)
+  const room = (u0, u1, v0, v1, kind, lit) => {
+    const [z0, z1] = zr(v0, v1)
+    F.rooms.push({ ...inRect(cx + u0, cx + u1, z0, z1), kind, lit, u0: inCm(u0), u1: inCm(u1), v0: inCm(v0), v1: inCm(v1) })
+    return F.rooms.length - 1
+  }
+  const lamp = (u, v, y, r, power, color) => { const [z] = zr(v, v); F.lights.push([inCm(cx + u), inCm(y), inCm(z), r, power, color]) }
+  // ---- the shell: walls with the door's gap, the roof slab. skip: faces the stone mesh leaves out (the inside ones, which the
+  // floors' skins draw)
+  const shell = [], pieces = []
+  const sbox = (u0, u1, y0, y1, v0, v1) => { addBox(shell, u0, u1, y0, y1, v0, v1, tint); pieces.push([inCm(u0), inCm(u1), inCm(y0), inCm(y1), inCm(v0), inCm(v1)]) }
+  const d0 = ud - dw / 2, d1 = ud + dw / 2
+  sbox(-ex, d0, 0, H, 0, T); sbox(d1, ex, 0, H, 0, T); sbox(d0, d1, dh, H, 0, T)             // the door wall and its lintel
+  sbox(-ex, ex, 0, H, 2 * ez - T, 2 * ez)                                                     // the back wall
+  sbox(-ex, -ex + T, 0, H, T, 2 * ez - T); sbox(ex - T, ex, 0, H, T, 2 * ez - T)               // the side walls
+  const walls = shell.map(s => ({ cx: s.cx, cy: s.cy, cz: s.cz, ex: s.ex, ey: s.ey, ez: s.ez }))
+  { const [z0, z1] = zr(0, 2 * ez); walls.push({ cx: inCm(cx), cy: inCm(H - SL / 2), cz: inCm((z0 + z1) / 2), ex: inCm(ex), ey: inCm(SL / 2), ez: inCm((z1 - z0) / 2) }) }      // the roof slab: a collider only
+  // ---- surfaces by style
+  const wallT = shack ? pick([IN_TINT.crate, IN_TINT.woodLight, IN_TINT.concrete, IN_TINT.wood]) : pick([IN_TINT.plaster, IN_TINT.plasterCool, IN_TINT.cream, IN_TINT.plaster])
+  const floorT = shack ? IN_TINT.wood : pick([IN_TINT.woodLight, IN_TINT.lino, IN_TINT.woodLight, IN_TINT.tile])
+  const ceilT = shack ? IN_TINT.concrete : IN_TINT.paper
+  const dark = IN_TINT.dark, wood = IN_TINT.wood, woodL = IN_TINT.woodLight, cloth = IN_TINT.cloth, red = IN_TINT.red
+  // skins: the inside of every wall of floor F, a thin box against the wall's inner face with only its inward face drawn (3 cm in front of
+  // the instanced wall's own inner face, which would z-fight)
+  const skins = k => {
+    F = floors[k]
+    const y0 = k * FH, y1 = y0 + FH - (k === floors.length - 1 ? SL : 0), s = K.skin
+    box_(Ui0, d0, y0, y1, Vi0, Vi0 + s, wallT, { f: 16 }); box_(d1, Ui1, y0, y1, Vi0, Vi0 + s, wallT, { f: 16 })
+    if (k === 0) { box_(d0, d1, dh, y1, Vi0, Vi0 + s, wallT, { f: 16 }) } else { box_(d0, d1, y0, y1, Vi0, Vi0 + s, wallT, { f: 16 }) }
+    box_(Ui0, Ui1, y0, y1, Vi1 - s, Vi1, wallT, { f: 32 })
+    box_(Ui0, Ui0 + s, y0, y1, Vi0, Vi1, wallT, { f: 1 }); box_(Ui1 - s, Ui1, y0, y1, Vi0, Vi1, wallT, { f: 2 })
+  }
+  // a doorway-clear apron in front of a door in a partition: keep rect [u0, u1, v0, v1]
+  const apronU = (uPart, side, g0, g1) => keep.push([uPart - 1.5, uPart + 1.5, g0 - 0.2, g1 + 0.2])
+  // ---- furniture helpers: a footprint on one of a room's walls, clear of what stands and of the doors' aprons
+  const overlap = (p, q, m = 0) => p[0] < q[1] + m && p[1] > q[0] - m && p[2] < q[3] + m && p[3] > q[2] - m
+  // a gap between two pieces: closed (under 0.1 m) or wide enough for the Maniak (1.1 m), never a slot he can't pass
+  const slot = (p, q) => { const gx = Math.max(p[0] - q[1], q[0] - p[1]), gz = Math.max(p[2] - q[3], q[2] - p[3])
+    const g = gx > 0 && gz <= 0 ? gx : gz > 0 && gx <= 0 ? gz : 1e9; return g > 0.1 && g < 1.1 }
+  const fits = fp => !occ.some(q => overlap(fp, q, 0.0) || slot(fp, q)) && !keep.some(q => overlap(fp, q))
+  const place = (R, side, len, depth, prefer, build) => {
+    const lo = (side[0] === 'u' ? R.v0 : R.u0) + len / 2 + 0.04, hi = (side[0] === 'u' ? R.v1 : R.u1) - len / 2 - 0.04
+    if (hi < lo) return false
+    const cands = prefer === 'a' ? [lo, lo + 0.6, lo + 1.2] : prefer === 'b' ? [hi, hi - 0.6, hi - 1.2] : prefer === 'm' ? [(lo + hi) / 2, (lo + hi) / 2 - 0.6, (lo + hi) / 2 + 0.6] : [lo + (hi - lo) * rng(), lo, hi]
+    for (const c of cands) {
+      const a = Math.min(Math.max(c, lo), hi), fp = side === 'u0' ? [R.u0, R.u0 + depth, a - len / 2, a + len / 2] : side === 'u1' ? [R.u1 - depth, R.u1, a - len / 2, a + len / 2]
+        : side === 'v0' ? [a - len / 2, a + len / 2, R.v0, R.v0 + depth] : [a - len / 2, a + len / 2, R.v1 - depth, R.v1]
+      if (!fits(fp)) continue
+      occ.push(fp)
+      // ib: a box by its distance along the wall from the footprint's middle (a), from the wall (d), and height (y)
+      const ib = (a0, a1, d0_, d1_, y0, y1, t, more) => {
+        const [u0, u1, v0, v1] = side === 'u0' ? [R.u0 + d0_, R.u0 + d1_, a + a0, a + a1] : side === 'u1' ? [R.u1 - d1_, R.u1 - d0_, a + a0, a + a1]
+          : side === 'v0' ? [a + a0, a + a1, R.v0 + d0_, R.v0 + d1_] : [a + a0, a + a1, R.v1 - d1_, R.v1 - d0_]
+        box_(u0, u1, F.y + y0, F.y + y1, v0, v1, t, { c: y1 - y0 > 0.3 && !more?.nc ? 1 : 0, ...more })
+      }
+      build(ib, a, fp)
+      return true
+    }
+    return false
+  }
+  // a poster on a wall of a room (picture p), at the height y, along the wall at a: the wall's face looks into the room
+  const poster = (R, side, a, y, w, h, p) => {
+    const t = 0.01, fy = F.y + y
+    if (side[0] === 'u') { const u = side === 'u0' ? R.u0 + t : R.u1 - t; addBox(F.boxes, u - t, u + t, fy - h / 2, fy + h / 2, a - w / 2, a + w / 2, 0xffffff, { m: 3, p, f: side === 'u0' ? 1 : 2 }) }
+    else { const v = side === 'v0' ? R.v0 + t : R.v1 - t; addBox(F.boxes, a - w / 2, a + w / 2, fy - h / 2, fy + h / 2, v - t, v + t, 0xffffff, { m: 3, p, f: side === 'v0' ? 16 : 32 }) }
+  }
+  const lampShade = (u, v, y, r, onT) => {      // a hanging lamp: a flex and a glowing shade
+    box_(u - 0.02, u + 0.02, y, F.y + FH - SL, v - 0.02, v + 0.02, dark)
+    box_(u - 0.22, u + 0.22, y - 0.16, y, v - 0.22, v + 0.22, onT ? 0xfff1d0 : IN_TINT.paper, onT ? { m: 2, r } : {})
+  }
+  // ---- room fittings
+  const bedBuild = ib => {
+    ib(-0.75, 0.75, 0, 2.05, 0.1, 0.42, wood, { c: 1 }); ib(-0.7, 0.7, 0.08, 2.0, 0.42, 0.6, pick([IN_TINT.cream, cloth, red]), { c: 1 })
+    ib(-0.3, 0.3, 0.1, 0.5, 0.6, 0.72, IN_TINT.paper, { nc: 1 }); ib(-0.75, 0.75, 0, 0.08, 0.1, 1.05, wood, { c: 1 }) }
+  // a bed: head to a wall, on whichever wall and spot takes it (every bedroom gets one if it can)
+  const bed = R => { const sides = ['v1', 'u0', 'u1', 'v0'], first = sides.splice(rng() * 4 | 0, 1)[0]
+    for (const side of [first, ...sides]) for (const pref of ['a', 'b', 'm']) if (place(R, side, 1.5, 2.05, pref, bedBuild)) return true
+    return false }
+  const wardrobe = R => place(R, pick(['u0', 'u1', 'v1', 'v0']), 1.3, 0.6, pick(['a', 'b']), ib => { ib(-0.65, 0.65, 0, 0.6, 0, 1.95, wood, { c: 1 }); ib(-0.02, 0.02, 0.6, 0.62, 0.1, 1.85, dark, { nc: 1 }) })
+  const nightstand = R => place(R, pick(['u0', 'u1', 'v1']), 0.5, 0.42, pick(['a', 'b']), ib => { ib(-0.25, 0.25, 0, 0.42, 0, 0.5, woodL, { c: 1 }) })
+  const dresser = R => place(R, pick(['u0', 'u1', 'v0', 'v1']), 1.1, 0.5, 'r', ib => { ib(-0.55, 0.55, 0, 0.5, 0, 0.95, woodL, { c: 1 }); ib(-0.5, 0.5, 0.5, 0.52, 0.45, 0.5, dark, { nc: 1 }) })
+  const sofa = R => place(R, pick(['u0', 'u1', 'v1', 'v0']), 2.0, 0.9, 'm', ib => {
+    ib(-1, 1, 0, 0.9, 0.0, 0.45, cloth, { c: 1 }); ib(-1, 1, 0, 0.28, 0.45, 0.95, cloth, { c: 1 }); ib(-1, -0.8, 0.0, 0.9, 0.45, 0.65, cloth, { c: 1 }); ib(0.8, 1, 0.0, 0.9, 0.45, 0.65, cloth, { c: 1 }) })
+  const armchair = R => place(R, pick(['u0', 'u1', 'v1', 'v0']), 0.9, 0.9, 'r', ib => { ib(-0.45, 0.45, 0, 0.9, 0, 0.45, red, { c: 1 }); ib(-0.45, 0.45, 0, 0.25, 0.45, 0.9, red, { c: 1 }) })
+  const radio = R => place(R, pick(['u0', 'u1', 'v1', 'v0']), 0.7, 0.4, 'r', (ib, a) => {
+    ib(-0.35, 0.35, 0, 0.4, 0, 0.85, wood, { c: 1 }); ib(-0.3, 0.3, 0.1, 0.4, 0.85, 1.15, woodL, { c: 1 }); ib(-0.22, 0.22, 0.0, 0.04, 0.9, 1.1, 0xe8d8a0, { m: 2, nc: 1 }) })
+  const shelf = R => place(R, pick(['u0', 'u1', 'v0', 'v1']), 1.3, 0.35, 'r', ib => {
+    for (const y of [0, 0.5, 1.0, 1.5]) ib(-0.65, 0.65, 0, 0.35, y, y + 0.04, wood, { nc: 1 })
+    ib(-0.65, -0.61, 0, 0.35, 0, 1.9, wood, { c: 1 }); ib(0.61, 0.65, 0, 0.35, 0, 1.9, wood, { c: 1 }); ib(-0.6, 0.6, 0.3, 0.35, 0, 1.9, wood, { c: 1 })
+    for (let i = 0; i < 5; i++) ib(-0.58 + i * 0.24, -0.4 + i * 0.24, 0.04, 0.3, 0.54, 0.54 + 0.2 + (i % 3) * 0.06, pick([red, IN_TINT.green, IN_TINT.leather, IN_TINT.cream]), { nc: 1 }) })
+  const table = (R, w, d) => place(R, pick(['u0', 'u1', 'v0', 'v1']), w, d, 'r', ib => {
+    ib(-w / 2, w / 2, 0, d, 0.7, 0.75, woodL, { c: 1 })
+    for (const sa of [-1, 1]) for (const sd of [0.08, d - 0.08]) ib(sa * (w / 2 - 0.06) - 0.03, sa * (w / 2 - 0.06) + 0.03, sd - 0.03, sd + 0.03, 0, 0.7, wood, { nc: 1 }) })
+  const coffee = R => place(R, pick(['u0', 'u1', 'v0', 'v1']), 1.1, 0.6, 'r', ib => ib(-0.55, 0.55, 0, 0.6, 0, 0.4, wood, { c: 1 }))
+  const kitchen = R => {
+    place(R, pick(['u0', 'u1', 'v1']), 2.4, 0.62, 'a', ib => {
+      ib(-1.2, 1.2, 0, 0.62, 0, 0.9, IN_TINT.cream, { c: 1 }); ib(-1.2, 1.2, 0, 0.62, 0.9, 0.94, dark, { nc: 1 })
+      ib(-0.5, -0.1, 0.1, 0.5, 0.94, 0.97, IN_TINT.steel, { nc: 1 }); ib(0.3, 0.9, 0.1, 0.5, 0.94, 0.98, dark, { nc: 1 }); ib(0.4, 0.5, 0.2, 0.3, 0.98, 1.0, 0xff7a30, { m: 2, nc: 1 }) })
+    place(R, pick(['u0', 'u1', 'v1', 'v0']), 0.75, 0.75, 'b', ib => { ib(-0.375, 0.375, 0, 0.75, 0, 1.75, IN_TINT.cream, { c: 1 }); ib(-0.3, 0.3, 0.75, 0.77, 0.3, 1.2, IN_TINT.steel, { nc: 1 }) })
+    table(R, 1.2, 0.9); if (chance(0.6)) table(R, 1.0, 0.8)
+  }
+  const crates = R => { for (let i = 0; i < 2 + (rng() * 2 | 0); i++) place(R, pick(['u0', 'u1', 'v0', 'v1']), 0.7, 0.7, 'r', ib => { ib(-0.35, 0.35, 0, 0.7, 0, 0.65, IN_TINT.crate, { c: 1 }); if (chance(0.4)) ib(-0.3, 0.3, 0.05, 0.65, 0.65, 1.2, IN_TINT.crate, { c: 1 }) }) }
+  const closet = R => { for (const s of ['u0', 'u1']) place(R, s, Math.min(1.4, R.v1 - R.v0 - 1.8), 0.34, 'b', ib => {
+      for (const y of [0.3, 0.8, 1.3, 1.8]) ib(-0.6, 0.6, 0, 0.34, y, y + 0.04, wood, { nc: 1 }); ib(-0.62, -0.58, 0, 0.34, 0, 1.85, wood, { c: 1 }); ib(0.58, 0.62, 0, 0.34, 0, 1.85, wood, { c: 1 }) }) }
+  // ---- a doorway through a partition with its lintel; the partition along v at u (thickness P), spanning [v0, v1], gaps [[g0, g1]]
+  const partV = (u, v0, v1, gaps, y0, y1, t) => {
+    let v = v0
+    for (const [g0, g1] of gaps) { box_(u - P / 2, u + P / 2, y0, y1, v, g0, t, { c: 1 }); box_(u - P / 2, u + P / 2, y0 + K.inner[1], y1, g0, g1, t, { c: 1 }); v = g1 }
+    box_(u - P / 2, u + P / 2, y0, y1, v, v1, t, { c: 1 })
+  }
+  const partU = (v, u0, u1, y0, y1, t) => box_(u0, u1, y0, y1, v - P / 2, v + P / 2, t, { c: 1 })
+  // a door leaf standing open against the wall, drawn only
+  const leaf = (u, v0, v1, y0, h, t) => { box_(u - 0.025, u + 0.025, y0, y0 + h, v0, v1, t); box_(u - 0.04, u + 0.04, y0 + 1.0, y0 + 1.08, v1 - 0.18, v1 - 0.1, IN_TINT.brass, { m: 1 }) }
+  // the ground floor's street door: the leaf stands open against the wall beside the opening (its inside), a step outside
+  const frontDoor = () => {
+    F = floors[0]
+    leaf(d0 - 0.03, Vi0 + 0.02, Vi0 + dw - 0.05, 0.02, dh - 0.1, woodL)
+    addBox(F.boxes, d0 - 0.05, d1 + 0.05, 0, 0.05, -0.5, 0, IN_TINT.concrete, { nc: 1, f: 4 })
+  }
+  const connect = []                    // the rooms' doorways, [floor, room a, room b] by index, for the walk check
+  let stairs = null
+  // =========================================================== the layout
+  if (shack) {
+    F = floors[0]; occ = []; keep = []
+    skins(0)
+    const R = { u0: Ui0, u1: Ui1, v0: Vi0, v1: Vi1 }
+    // the door's apron: nothing stands in front of it, 1.5 m in
+    keep.push([d0 - 0.3, d1 + 0.3, Vi0, Vi0 + 1.6])
+    // the floor and ceiling
+    box_(Ui0, Ui1, 0.0, 0.05, Vi0, Vi1, floorT, { f: 4 }); box_(Ui0, Ui1, H - SL - 0.03, H - SL, Vi0, Vi1, ceilT, { f: 8 })
+    room(Ui0, Ui1, Vi0, Vi1, 'shell', false); room(Ui0, Ui1, Vi0, Vi1, 'shell', false); room(Ui0, Ui1, Vi0, Vi1, 'shack', true)
+    frontDoor()
+    // furnishings: a cot, a stove, a table and a crate or two, a shelf of tins, one of the regime's posters
+    place(R, 'v1', 0.85, 1.9, pick(['a', 'b']), ib => { ib(-0.42, 0.42, 0, 1.9, 0.12, 0.38, wood, { c: 1 }); ib(-0.4, 0.4, 0.05, 1.85, 0.38, 0.5, pick([cloth, red, IN_TINT.cream]), { c: 1 }) })
+    place(R, pick(['u0', 'u1']), 0.55, 0.55, 'b', ib => { ib(-0.275, 0.275, 0, 0.55, 0, 0.9, IN_TINT.steel, { c: 1 }); ib(-0.04, 0.04, 0.2, 0.28, 0.9, H - SL, dark, { nc: 1 }); ib(-0.15, 0.15, 0.2, 0.35, 0.3, 0.5, 0xff6a20, { m: 2, nc: 1 }) })
+    if (R.u1 - R.u0 > 2.0 && R.v1 - R.v0 > 2.6) table(R, 0.8, 0.8)
+    crates(R); shelf(R)
+    const wall = pick(['u0', 'u1', 'v1'])
+    poster(R, wall, wall[0] === 'u' ? (Vi0 + Vi1) / 2 : (Ui0 + Ui1) / 2, 1.5, 0.55, 0.8, pick(['poster', 'poster2', 'poster3', 'poster4']))
+    lampShade((Ui0 + Ui1) / 2, (Vi0 + Vi1) / 2 + 0.3, H - SL - 0.45, 2, true)
+    lamp((Ui0 + Ui1) / 2, (Vi0 + Vi1) / 2 + 0.3, H - SL - 0.6, 2, 1.4, 0xffc890)
+  } else {
+    // a hall from the street door straight back, a column of rooms each side of it
+    const hh = K.hall / 2, h0 = ud - hh - P / 2, h1 = ud + hh + P / 2
+    const nSide = ud > 0 ? 1 : -1                                       // the side the door is nearer (the narrow column)
+    const colL = [Ui0, h0 - P / 2], colR = [h1 + P / 2, Ui1], wide = nSide > 0 ? colL : colR, narrow = nSide > 0 ? colR : colL
+    const uW = nSide > 0 ? h0 : h1, uN = nSide > 0 ? h1 : h0              // the partition on the wide side, on the narrow side
+    const Di = Vi1 - Vi0, vs = inCm(Math.min(Math.max(Vi0 + Di * (0.4 + 0.2 * rng()), Vi0 + 3.4), Vi1 - 3.4))
+    const nw = narrow[1] - narrow[0], run = K.stairRun, gs = K.inner[0]
+    const frontKind = two ? (pick(['living']), 'living') : pick(['living', 'living', 'kitchen']), backKind = frontKind === 'living' ? pick(['kitchen', 'bedroom']) : 'bedroom'
+    const nLit = [true, true, true, true, true]
+    // the stair, in the narrow column: from its front doorway to the upper floor
+    const vS0 = Vi0 + 1.5, vS1 = vS0 + run
+    const hall = [], wideRooms = []
+    for (const f of floors) {
+      F = f; occ = []; keep = []
+      const k = f.k, y0 = f.y, y1 = y0 + FH - SL
+      skins(k)
+      // floor surface and ceiling
+      if (k === 0) box_(Ui0, Ui1, 0.0, 0.05, Vi0, Vi1, floorT, { f: 4 })
+      const ground = k === 0
+      // rooms: the first two stand for the whole shell (the light fallback); then the hall, the wide column's, the narrow's
+      room(Ui0, Ui1, Vi0, Vi1, 'shell', false); room(Ui0, Ui1, Vi0, Vi1, 'shell', false)
+      const rHall = room(uW < uN ? uW + P / 2 : uN + P / 2, uW < uN ? uN - P / 2 : uW - P / 2, Vi0, Vi1, 'hall', nLit[0])
+      const rFront = room(wide[0], wide[1], Vi0, vs - P / 2, two && !ground ? 'bedroom' : frontKind, nLit[1])
+      const rBack = room(wide[0], wide[1], vs + P / 2, Vi1, two && !ground ? 'bedroom' : two ? 'kitchen' : backKind, nLit[2])
+      const rNar = room(narrow[0], narrow[1], Vi0, Vi1, two ? 'stairs' : nw >= 2.2 ? 'bedroom' : 'pantry', nLit[3])
+      const rooms = { hall: F.rooms[rHall], front: F.rooms[rFront], back: F.rooms[rBack], nar: F.rooms[rNar] }
+      // the wide column's partitions: its wall on the hall, with a doorway to each room, and the wall between the two rooms
+      const mid = (a, b) => inCm((a + b) / 2), gF = mid(Vi0, vs - P / 2), gB = mid(vs + P / 2, Vi1)
+      const doorsW = [[gF - gs / 2, gF + gs / 2], [gB - gs / 2, gB + gs / 2]]
+      partV(uW, Vi0, Vi1, doorsW, y0, y1, wallT)
+      partU(vs, wide[0], wide[1], y0, y1, wallT)
+      for (const [g0, g1] of doorsW) apronU(uW, nSide > 0 ? -1 : 1, g0, g1)
+      // the narrow column's wall on the hall: the ground floor's doorway at the front (or mid-column for a bedroom), the upper
+      // floor's past the stair's top (or none at all above a pantry)
+      let doorsN
+      if (!two) doorsN = [nw >= 2.2 ? [mid(Vi0, Vi1) - gs / 2, mid(Vi0, Vi1) + gs / 2] : [Vi0 + 0.15, Vi0 + 0.15 + gs]]
+      else if (ground) doorsN = [[Vi0 + 0.15, Vi0 + 0.15 + gs]]
+      else doorsN = [[vS1 + 0.12, Math.min(vS1 + 0.12 + gs, Vi1 - 0.08)]]
+      partV(uN, Vi0, Vi1, doorsN, y0, y1, wallT)
+      for (const [g0, g1] of doorsN) apronU(uN, nSide > 0 ? 1 : -1, g0, g1)
+      // the hall's own apron: the street door's, 1.7 m in, over the hall's width
+      if (ground) keep.push([d0 - 0.2, d1 + 0.2, Vi0, Vi0 + 1.9])
+      // surfaces: the ceiling; the upper floor's slab (with the stair's hole) is the ground floor's ceiling
+      if (!two) box_(Ui0, Ui1, y1 - 0.03, y1, Vi0, Vi1, ceilT, { f: 8 })
+      if (two && ground) {
+        // the slab over the ground floor: all of the plate but the stair's hole (the narrow column from the front to the stair's top)
+        const slab = (u0, u1, v0, v1) => { box_(u0, u1, y1, y0 + FH, v0, v1, ceilT, { c: 1, f: 8 }); box_(u0, u1, y0 + FH - 0.03, y0 + FH, v0, v1, floorT, { f: 4 }) }
+        const [n0, n1] = narrow
+        if (nSide > 0) { slab(Ui0, n0, Vi0, Vi1); slab(n0, n1, vS1, Vi1) } else { slab(n1, Ui1, Vi0, Vi1); slab(n0, n1, vS1, Vi1) }
+        // the slab's narrow-side piece beside the hole: from the column's wall to the plate's edge is the column itself (the hole)
+      }
+      if (two && !ground) box_(Ui0, Ui1, y1 - 0.03, y1, Vi0, Vi1, ceilT, { f: 8 })
+      // lamps (a hanging lamp in each room that has its light on)
+      const lampIn = (r, u, v, on, wideU) => { if (!on) return; for (const du of wideU > 5.5 ? [-wideU / 4, wideU / 4] : [0]) { lampShade(u + du, v, y1 - 0.5, r, true); lamp(u + du, v, y1 - 0.65, r, 1.5, 0xffcf90) } }
+      lampIn(rHall, mid(uW, uN), (Vi0 + Vi1) / 2, nLit[0], 0); lampIn(rFront, mid(wide[0], wide[1]), mid(Vi0, vs), nLit[1], wide[1] - wide[0]); lampIn(rBack, mid(wide[0], wide[1]), mid(vs, Vi1), nLit[2], wide[1] - wide[0])
+      if (!two || !ground) lampIn(rNar, mid(narrow[0], narrow[1]), mid(Vi0, Vi1), nLit[3], 0)
+      else lampIn(rNar, mid(narrow[0], narrow[1]), vS1 - 1.0, nLit[3], 0)
+      // ---- fittings
+      const Rf = { u0: wide[0], u1: wide[1], v0: Vi0, v1: vs - P / 2 }, Rb = { u0: wide[0], u1: wide[1], v0: vs + P / 2, v1: Vi1 }
+      const Rh = { u0: Math.min(uW, uN) + P / 2, u1: Math.max(uW, uN) - P / 2, v0: Vi0, v1: Vi1 }
+      const Rn = { u0: narrow[0], u1: narrow[1], v0: Vi0, v1: Vi1 }
+      const furnish = (R, kind) => {
+        if (kind === 'living') { sofa(R); coffee(R); radio(R); armchair(R); if (chance(0.6)) shelf(R); poster(R, pick(['u0', 'u1', 'v0', 'v1']), 0, 1.6, 0.6, 0.9, 'faust') }
+        else if (kind === 'kitchen') { kitchen(R) }
+        else if (kind === 'bedroom') { bed(R); wardrobe(R); nightstand(R); if (chance(0.7)) dresser(R); if (chance(0.5)) shelf(R) }
+      }
+      const posterAt = (R, side) => side[0] === 'u' ? (R.v0 + R.v1) / 2 : (R.u0 + R.u1) / 2
+      // keep the posters off the doors' walls: faust's portrait goes on the narrow wall of the living room, set below
+      furnish(Rf, rooms.front.kind); furnish(Rb, rooms.back.kind)
+      if (!(two && ground)) { /* a one-storey house's narrow column */ }
+      if (!two) { if (nw >= 2.2) furnish(Rn, 'bedroom'); else closet(Rn) }
+      // the hall: a coat stand and a console at the far end, a notice by the door
+      place(Rh, 'v1', 0.8, 0.35, 'm', ib => { ib(-0.4, 0.4, 0, 0.35, 0, 0.8, woodL, { c: 1 }) })
+      place(Rh, pick(['u0', 'u1']), 0.4, 0.4, 'b', ib => { ib(-0.04, 0.04, 0.05, 0.12, 0, 1.7, dark, { c: 1 }); ib(-0.2, 0.2, 0.0, 0.4, 1.6, 1.7, dark, { nc: 1 }) })
+      poster(Rh, pick(['u0', 'u1']), mid(Vi0 + 2.6, Vi1 - 0.6), 1.5, 0.45, 0.65, ground ? 'notice' : pick(['poster', 'poster2', 'poster3']))
+      if (ground) frontDoor()
+      // the stair: a ramp to walk on and its steps drawn
+      if (two) {
+        const nu0 = narrow[0] + 0.05, nu1 = narrow[1] - 0.05
+        if (ground) {
+          const steps = 14, tread = run / steps, rise = FH / steps
+          for (let j = 0; j < steps; j++) box_(nu0, nu1, 0.02, (j + 1) * rise, vS0 + j * tread, vS0 + (j + 1) * tread, IN_TINT.concrete, { f: 1 | 2 | 4 | 16 | 32 })
+          const [za, zb] = zr(vS0, vS1)
+          stairs = { x0: inCm(cx + nu0), x1: inCm(cx + nu1), z0: inCm(za), z1: inCm(zb), y0: 0, y1: FH, run: 'z', up: sg > 0 ? -1 : 1 }
+          F.ramps.push(stairs)
+        }
+      }
+      // upper floor's walkable slab under the rooms is the slab above (collider already), its top drawn by floorT
+      if (!ground) { /* nothing more */ }
+      F.keep = keep; F.occ = occ
+    }
+    floors[0].hallRoom = 2
+  }
+  // ---- the building: its colliders (the shell, then each floor's boxes with c), as faustBox-like records
+  const colliders = [...walls]
+  floors.forEach(f => { for (const bx of f.boxes) if (bx.c) colliders.push({ cx: bx.cx, cy: bx.cy, cz: bx.cz, ex: bx.ex, ey: bx.ey, ez: bx.ez }) })
+  const ramps = floors.flatMap(f => f.ramps)
+  const out = { version: K.version, id: b.id, kind: b.kind, seed: b.seed, tint, rect: { x0: inCm(cx - ex), x1: inCm(cx + ex), z0: inCm(cz - ez), z1: inCm(cz + ez), y1: H },
+    halfD: inCm(ez), storeys: floors.length, height: FH, door: { x: b.door.x, z: b.door.z, w: dw, h: dh, face: b.door.face, out: [inCm(b.door.x), 0, inCm(b.door.z + sg * 2.2)], in: [inCm(b.door.x), 0, inCm(b.door.z - sg * (T + 1.0))] },
+    pieces, colliders, ramps, floors: floors.map(f => ({ k: f.k, y: f.y, boxes: f.boxes, lights: f.lights, rooms: f.rooms, ramps: f.ramps })), stairs }
+  out.hash = inHash({ ...out, floors: out.floors.map(f => ({ ...f, boxes: f.boxes.length, hash: inHash(f.boxes) })) })
+  return out
+}
+// ---- the outskirts' houses and shacks opening (card #78), after faustRingInterior's plans above
+// A ring house's or shack's solid box (faustRingsTick's colliders) is swapped for its walls with the door's gap, its floors and its
+// fittings when a participant comes within FAUST_RIN.open of its door: the plan and its meshes are made in a background job
+// (GAME.background), and the swap itself is one synchronous step (its box's body out, the walls' and the fittings' colliders in, its
+// wall instances in the pool hidden along with its door pane, the walls' replacement and the floors shown). The replacement walls are
+// cut from the hidden instances' own matrices and tints (a shack's two courses, leaning and turned, included), so the outside looks
+// as it did; a shack's inside is turned with it. It closes past FAUST_RIN.close with nobody in it, after 3 s, and back to the box.
+function faustRingInState(F) { return F.ringIn ||= { open: new Map(), pending: new Set(), n: 0, scan: 0, shut: new Map(), stats: { opened: 0, closed: 0, maxOpenMs: 0, maxSwapMs: 0, failed: 0 } } }
+// a plan cell's drawn parts that belong to an enterable building, by index in cell.part: Map(index -> 'id/role'): a house's door pane;
+// a shack's lower and upper wall courses and its door pane. Found from the plan's own numbers (faustRingCell), memoised on the cell
+function faustRingInRoles(c) {
+  if (c.inRoles) return c.inRoles
+  const m = c.inRoles = new Map()
+  for (const b of c.buildings) {
+    if (b.kind === 'house') {
+      const z = b.door.z + b.door.face[1] * 0.03
+      c.part.forEach((q, i) => { if (q[0] === 'pane' && q[2] === 1.05 && Math.abs(q[4] - b.door.x) < 0.011 && Math.abs(q[6] - z) < 0.011) m.set(i, b.id + '/door') })
+    } else if (b.kind === 'shack') {
+      const s = b.box, walls = []
+      c.part.forEach((q, i) => { if (q[0] === 'body' && q[1] === s.ex && q[3] === s.ez && Math.abs(q[4] - s.cx) < 0.25 && Math.abs(q[6] - s.cz) < 0.25) walls.push([i, q]) })
+      if (walls.length < 2) continue
+      m.set(walls[0][0], b.id + '/lo'); m.set(walls[1][0], b.id + '/hi')
+      // its door pane: at the door's place on its own axes (-0.45 ex, ez + 0.03), turned by its yaw
+      const yaw = walls[0][1][7], cy = Math.cos(yaw), sy = Math.sin(yaw), dx = -s.ex * 0.45, dz = s.ez + 0.03, px = s.cx + dx * cy + dz * sy, pz = s.cz - dx * sy + dz * cy
+      c.part.forEach((q, i) => { if (q[0] === 'pane' && q[1] === 0.42 && q[2] === 0.95 && Math.abs(q[4] - px) < 0.02 && Math.abs(q[6] - pz) < 0.02) m.set(i, b.id + '/door') })
+    }
+  }
+  return m
+}
+const faustRingInWalls = b => b.kind === 'house' ? [['body', 'body']] : [['lo', 'body'], ['hi', 'body']]
+// a building's wall instances in the pool now: [{ m (16 floats), c (3) }], or null while the pool doesn't have them
+function faustRingInRead(F, b) {
+  const out = []
+  for (const [role, kind] of faustRingInWalls(b)) {
+    const i = F.ringIdx?.get(b.id + '/' + role), mesh = F.ringMeshes?.find(m => m.userData.faustRings === kind)
+    if (i === undefined || !mesh) return null
+    out.push({ m: mesh.instanceMatrix.array.slice(i * 16, i * 16 + 16), c: mesh.instanceColor.array.slice(i * 3, i * 3 + 3) })
+  }
+  return out
+}
+// the walls (P.pieces, in the building's own axes) cut from the wall instances' matrices: one instance of the pool's box each,
+// in the course's own frame (so a turned, leaning course keeps its turn and lean), clipped to the course's height
+function faustRingInShell(F, P, courses) {
+  const S = F.ringShapes, sg = P.door.face[1], rows = []
+  for (const { m, c } of courses) {
+    const len = (a, b, d) => Math.hypot(m[a], m[b], m[d]), lx = len(0, 1, 2), ly = len(4, 5, 6), lz = len(8, 9, 10), cy = m[13]
+    for (const [u0, u1, y0, y1, v0, v1] of P.pieces) {
+      const zr = [sg * (P.halfD - v0), sg * (P.halfD - v1)].sort((p, q) => p - q)
+      const a = Math.max((y0 - cy) / ly, -1), b = Math.min((y1 - cy) / ly, 1)
+      if (b - a < 1e-4) continue
+      const w = [(u1 - u0) / 2 / lx, (b - a) / 2, (zr[1] - zr[0]) / 2 / lz], k = [(u0 + u1) / 2 / lx, (a + b) / 2, (zr[0] + zr[1]) / 2 / lz]
+      const o = new Float32Array(16)
+      for (let j = 0; j < 3; j++) { for (let r = 0; r < 3; r++) o[j * 4 + r] = m[j * 4 + r] * w[j]; o[j * 4 + 3] = 0 }
+      for (let r = 0; r < 3; r++) o[12 + r] = m[12 + r] + m[r] * k[0] + m[4 + r] * k[1] + m[8 + r] * k[2]
+      o[15] = 1; rows.push([o, c])
+    }
+  }
+  const mesh = new THREE.InstancedMesh(S.body, F.materials.stone, rows.length), col = new Float32Array(rows.length * 3)
+  rows.forEach(([o, c], i) => { mesh.instanceMatrix.array.set(o, i * 16); col.set(c, i * 3) })
+  mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor = new THREE.InstancedBufferAttribute(col, 3)
+  mesh.computeBoundingSphere(); mesh.castShadow = false; mesh.receiveShadow = false; mesh.userData.ringIn = P.id
+  return mesh
+}
+// the building's collider in its cell's chunks: { c: the chunk, i: its index, body }, or null while the cell's colliders are made
+function faustRingInFind(F, b) {
+  const [, i, j] = b.id.split(' '), cell = F.rings?.cells.get(i + ' ' + j), s = b.box
+  for (const c of cell?.chunks || []) {
+    if (c.dropped) continue
+    const k = c.src.findIndex(q => q.cx === s.cx && q.cz === s.cz && q.ex === s.ex && q.ez === s.ez && q.cy === s.cy)
+    if (k >= 0 && c.bodies[k]) return { c, k, body: c.bodies[k], box: c.src[k] }
+  }
+  return null
+}
+// a chunk's ray copy without the opened buildings' boxes
+function faustRingInRays(Z, c) {
+  const shut = Z.shut.get(c)
+  if (c.ray) { dropBody(c.ray); A.destroy(c.ray.mesh) }
+  c.ray = rayMesh(shut?.size ? c.src.filter(b => !shut.has(b)) : c.src, [], false)
+}
+// hide (or show) a building's wall instances and its door pane in the pool; each one matrix is updated, not the whole buffer
+function faustRingInHide(F, O, on) {
+  if (on) {
+    O.hid = []
+    for (const [role, kind] of [...faustRingInWalls(O.b), ['door', 'pane']]) {
+      const i = F.ringIdx?.get(O.id + '/' + role), mesh = F.ringMeshes?.find(m => m.userData.faustRings === kind)
+      if (i === undefined || !mesh) continue
+      const a = mesh.instanceMatrix.array, o = i * 16
+      O.hid.push({ mesh, i, m: a.slice(o, o + 16) })
+      a.fill(0, o, o + 16); a[o + 15] = 1
+      mesh.instanceMatrix.addUpdateRange(o, 16); mesh.instanceMatrix.needsUpdate = true
+    }
+  } else if (O.hid) {
+    for (const { mesh, i, m } of O.hid) if (F.ringMeshes?.includes(mesh)) { mesh.instanceMatrix.array.set(m, i * 16); mesh.instanceMatrix.addUpdateRange(i * 16, 16); mesh.instanceMatrix.needsUpdate = true }
+    O.hid = null
+  }
+}
+// the pool was refilled: the open buildings' instances are hidden in the new meshes
+function faustRingInRehide(F) { for (const O of F.ringIn?.open.values() || []) { O.hid = null; faustRingInHide(F, O, true) } }
+function faustRingInUndraw(O) {
+  for (const g of O.groups || []) { faustIn.root?.remove(g); g.traverse(n => n.geometry?.dispose()) }
+  if (O.shell) { O.shell.parent?.remove(O.shell); O.shell.dispose() }
+  O.groups = null; O.shell = null
+}
+// a shack's colliders turned with it (a body each, turned about the building's middle), or the plain static chunk
+function faustRingInBodies(P, yaw) {
+  const boxes = P.colliders.map(q => faustBox(q.cx, q.cy, q.cz, q.ex, q.ey, q.ez))
+  if (!yaw) return inBodies(boxes, P.ramps)
+  const r = P.rect, cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2, c = Math.cos(yaw), s = Math.sin(yaw), sh = Math.sin(yaw / 2), ch = Math.cos(yaw / 2), tris = [], made = []
+  const v = new A.btVector3(0, 0, 0)
+  for (const b of boxes) {
+    const dx = b.cx - cx, dz = b.cz - cz, x = cx + dx * c + dz * s, z = cz - dx * s + dz * c
+    v.setValue(b.ex, b.ey, b.ez)
+    const B = makeBody(new A.btBoxShape(v), 0, x, b.cy, z, [0, sh, 0, ch]); B.body.setFriction(0.9)
+    world.addRigidBody(B.body, ...COLLIDE.static); made.push(B)
+    for (const q of RAY_TRIS) tris.push(q.map(([px, py, pz]) => { const lx = px * b.ex, lz = pz * b.ez; return [x + lx * c + lz * s, b.cy + py * b.ey, z - lx * s + lz * c] }))
+  }
+  A.destroy(v)
+  const rec = addChunk([], 'ring in', tris)
+  rec.bodies.push(...made)
+  return rec
+}
+// the swap: after the plan and its meshes are made
+function faustRingInSwap(F, Z, b, P, groups, shell) {
+  const t0 = performance.now(), hit = faustRingInFind(F, b), walls = faustRingInRead(F, b)
+  if (!hit || !walls) return false
+  const { c, body, box } = hit, m = walls[0].m, yaw = Math.abs(Math.atan2(m[8], m[10])) < 1e-4 ? 0 : Math.atan2(m[8], m[10])
+  const O = { id: b.id, b, P, c, box, body, groups, shell, yaw, seen: performance.now(), hid: null, rec: null, ramps: [] }
+  // the solid box out of the world and out of its chunk's ray copy
+  if (!body.out) world.removeRigidBody(body.body)
+  body.out = true; body.shut = 1
+  ;(Z.shut.get(c) || Z.shut.set(c, new Set()).get(c)).add(box)
+  faustRingInRays(Z, c)
+  O.rec = faustRingInBodies(P, yaw)
+  O.ramps = P.ramps.map(r => ({ ...r, id: b.id, k: r.y0 > 0.5 ? 1 : 0 }))
+  faustIn.ramps.push(...O.ramps)
+  if (shell) { worldGroup.add(shell); still(shell) }
+  // the interior turned with the shack, about the building's middle
+  if (yaw) for (const g of groups || []) {
+    const r = P.rect, cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2, cs = Math.cos(yaw), sn = Math.sin(yaw)
+    g.traverse(n => { n.matrixAutoUpdate = true; n.matrixWorldAutoUpdate = true })
+    g.rotation.y = yaw; g.position.set(cx - (cx * cs + cz * sn), 0, cz - (-cx * sn + cz * cs)); g.updateMatrixWorld(true); still(g)
+  }
+  Z.open.set(b.id, O)
+  faustRingInHide(F, O, true)
+  Z.stats.opened++; Z.stats.maxSwapMs = Math.max(Z.stats.maxSwapMs, performance.now() - t0)
+  return true
+}
+function faustRingInClose(F, Z, O, gone) {
+  Z.open.delete(O.id)
+  if (O.rec && statics.includes(O.rec)) dropChunk(O.rec)
+  faustIn.ramps = faustIn.ramps.filter(r => !O.ramps.includes(r))
+  faustRingInHide(F, O, false)
+  faustRingInUndraw(O)
+  if (!gone && !O.c.dropped) {
+    const shut = Z.shut.get(O.c)
+    shut?.delete(O.box); if (shut && !shut.size) Z.shut.delete(O.c)
+    O.body.shut = 0
+    if (!O.c.away && world) { O.body.out = false; world.addRigidBody(O.body.body, ...COLLIDE.static) }
+    faustRingInRays(Z, O.c)
+  }
+  Z.stats.closed++
+}
+// the plan, its meshes and the swap, in the background
+function faustRingInJob(F, Z, b) {
+  const w = world
+  Z.pending.add(b.id)
+  background.run('ringin:' + b.id, function* () {
+    const t0 = performance.now()
+    const P = faustRingInterior(b)
+    yield
+    let groups = null, shell = null
+    if (!renderHeadless && camera && F.materials && F.ringShapes) {
+      if (!faustIn.root) { faustIn.root = new THREE.Group(); faustIn.root.name = 'interiors'; scene.add(faustIn.root) }
+      // the floors, as the city's interiors draw a storey (inDrawSteps; its group goes to faustIn.root)
+      const D = { B: { id: b.id, door: P.door, cache: new Map(P.floors.map(f => [f.k, f])) }, storeys: new Map() }
+      for (const f of P.floors) { yield* inDrawSteps(D, f.k); yield }
+      groups = [...D.storeys.values()]
+      // the walls, in the pool's own material and tints
+      const walls = faustRingInRead(F, b)
+      if (walls) shell = faustRingInShell(F, P, walls)
+      yield
+    }
+    const O = { groups, shell }
+    if (faustState === F && world === w && F.ringIn === Z && !Z.open.has(b.id) && faustRingInSwap(F, Z, b, P, groups, shell)) Z.stats.maxOpenMs = Math.max(Z.stats.maxOpenMs, performance.now() - t0)
+    else { faustRingInUndraw(O); Z.stats.failed++ }
+  }, { priority: 3, valid: () => faustState === F && F.ringIn === Z && world === w }).catch(e => frameFailed('ring interiors', e)).finally(() => Z.pending.delete(b.id))
+}
+// each sim tick (the host's players, or a guest's own body): open what a participant is near, close what none is
+function faustRingInTick(participants) {
+  const F = faustState
+  if (!F || !LV.faust || !world || !F.rings || !faustRoadsReady(F)) return
+  const Z = faustRingInState(F), K = FAUST_RIN, C = FAUST_RINGS.cell, now_ = performance.now()
+  const pts = participants.filter(c => c && c.x === c.x && !c.bot).map(c => [c.x, c.z, Math.hypot(c.vx || 0, c.vz || 0)])
+  // who is near: a scan every 6th tick of the cells within reach of a participant (a car at speed opens only what it stops at)
+  if (++Z.scan % 6 === 0 && Z.pending.size < 2 && Z.open.size < 24) for (const [x, z, v] of pts) {
+    const R = v > 10 ? 6 : K.open
+    for (let i = Math.floor((x - R) / C); i <= Math.floor((x + R) / C); i++) for (let j = Math.floor((z - R) / C); j <= Math.floor((z + R) / C); j++) {
+      const cell = F.ringPlans?.get(i + ' ' + j)
+      if (!cell?.buildings.length || !F.rings.cells.has(i + ' ' + j)) continue
+      for (const b of cell.buildings) {
+        if (b.kind === 'urban' || Z.open.has(b.id) || Z.pending.has(b.id)) continue
+        const dx = b.door.x - x, dz = b.door.z - z
+        // its walls must be in the pool (drawn) or the opened building would show a hole where it stood: headless, no pool is made
+        if (dx * dx + dz * dz > R * R || !(renderHeadless || F.ringIdx?.has(b.id + '/' + (b.kind === 'house' ? 'body' : 'lo'))) || !faustRingInFind(F, b)) continue
+        faustRingInJob(F, Z, b)
+        if (Z.pending.size >= 2) break
+      }
+    }
+  }
+  for (const O of [...Z.open.values()]) {
+    if (O.c.dropped) { faustRingInClose(F, Z, O, true); continue }
+    const r = O.P.rect, near = pts.some(([x, z]) => { const dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1); return dx * dx + dz * dz < K.close * K.close })
+    if (near) O.seen = now_
+    else if (now_ - O.seen > 3000) faustRingInClose(F, Z, O)
+  }
+}
+// the state is the level's: a new city takes its meshes away
+function faustRingInReset() {
+  const F = faustState, Z = F?.ringIn
+  if (!Z) return
+  for (const O of [...Z.open.values()]) { try { faustRingInClose(F, Z, O, true) } catch (e) { console.warn('ring interiors reset', e) } }
+  F.ringIn = null
+}
+// an open ring building at x, z (no smash crater in it), with a margin
+const faustRingInHere = (x, z) => { for (const O of faustState?.ringIn?.open.values() || []) { const r = O.P.rect; if (x > r.x0 - 1.2 && x < r.x1 + 1.2 && z > r.z0 - 1.2 && z < r.z1 + 1.2) return true } return false }
+// /near door: the doors of the houses and shacks round c (the cells within one), the spot 3 m out on the street, facing the door
+function faustRingDoors(c) {
+  const F = faustState, plan = F && faustRoadsReady(F), C = FAUST_RINGS.cell, out = []
+  if (!plan) return out
+  const i0 = Math.floor(c.x / C), j0 = Math.floor(c.z / C)
+  for (let i = i0 - 1; i <= i0 + 1; i++) for (let j = j0 - 1; j <= j0 + 1; j++) for (const b of faustRingPlan(F, plan, i, j).buildings) {
+    if (b.kind === 'urban') continue
+    const [nx, nz] = b.door.face
+    out.push({ x: b.door.x, z: b.door.z, y0: 0, what: 'door of a ' + b.kind + ' (' + b.id + ')', spot: { x: b.door.x + nx * 3, z: b.door.z + nz * 3, face: [-nx, -nz] } })
+  }
+  return out
+}
+
 // Pure road routing for v1 bots: cardinal street corners, no per-chunk Recast allocation.
 // Rooftop pursuit, stairs and interiors are deliberately outside this coarse navigation pass.
 function faustNav(at, target) {
@@ -5051,6 +5572,7 @@ function faustNav(at, target) {
 
 let faustState = null
 function faustReset() {
+  faustRingInReset()
   faustDisposeSky()
   inReset()
   faustState = { seed: LV.grow.seed, S: LV.grow.S, chunks: new Map(), skyline: null, materials: null,
@@ -5148,7 +5670,8 @@ function faustTick() {
   const vp = me ? [me.x, me.z, me.y] : points[0]
   try { faustStream(points, vp) } catch (e) { frameFailed('city', e) }
   try { faustRoadsTick(points) } catch (e) { frameFailed('roads', e) }      // card #18: the highways' colliders
-  try { faustRingsTick(points) } catch (e) { frameFailed('rings', e) }      // card #18: the rings' buildings' colliders
+  try { faustRingsTick(points) } catch (e) { frameFailed('rings', e) }
+  try { faustRingInTick(participants) } catch (e) { frameFailed('ring interiors', e) }      // card #78: ring houses and shacks open      // card #18: the rings' buildings' colliders
   GAME.fogGrown.x = 1e9
   try { faustInteriorTick(participants) } catch (e) { frameFailed('interiors', e) }
   faustState.stats.maxTickMs = Math.max(faustState.stats.maxTickMs, performance.now() - t)
@@ -5676,13 +6199,31 @@ function faustDecoTheatre(g, lot) {
     g.box(faustBox(x, 5.65 + k * 0.7, fz - 0.03, h - 0.25, 0.2, 0.02), D.brass, 0.6)
   }
   faustPyramid(g, x, 7.05, fz - 0.1, 0.4, 0.1, 1.6, D.brass)
-  // the blade sign: out from the wall at the marquee's right, up to 20 m
-  const bx = x + hw + 1.6, Hs = Math.min(20, H * 0.45), y0 = 5, bz = f + 0.9
-  g.box(faustBox(bx, y0 + Hs / 2, bz, 0.14, Hs / 2, 0.9), I)
-  for (const s of [-1, 1]) g.box(faustBox(bx + s * 0.16, y0 + Hs / 2, bz, 0.02, Hs / 2 - 0.25, 0.7), D.brass, 0.7)
-  for (let k = 1; k * 1.25 < Hs - 0.5; k++) g.box(faustBox(bx, y0 + k * 1.25, bz, 0.2, 0.07, 0.75), K)
-  g.box(faustBox(bx, y0 + Hs + 0.15, bz, 0.2, 0.15, 0.95), E)
-  faustPyramid(g, bx, y0 + Hs + 0.3, bz, 0.2, 0.95, 2.2, D.brass)
+  // the blade sign: a flat lit panel 1.8 m deep off the wall at the marquee's right, 0.4 m thick, up 3-4 storeys. A lit border on both
+  // faces, stacked dark chevrons (no lettering), bulbs up its outer edge, a small stepped crest
+  const bx = x + hw + 1.6, Hs = Math.min(16, H * 0.4), y0 = 5.6, bz = f + 0.95, yc = y0 + Hs / 2
+  g.box(faustBox(bx, yc, bz, 0.2, Hs / 2, 0.9), I)
+  const quad = (X, s, p) => {       // a quad on the face at X, given as (z, y) corners in order, facing out along s
+    const P = p.map(([a, b]) => [X, b, a]), n = (a, b, c) => (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1])
+    if (n(P[0], P[1], P[2]) * s > 0) { g.tri(P[0], P[1], P[2], K); g.tri(P[0], P[2], P[3], K) } else { g.tri(P[0], P[2], P[1], K); g.tri(P[0], P[3], P[2], K) }
+  }
+  for (const s of [-1, 1]) {
+    const X = bx + s * 0.21
+    g.box(faustBox(X, yc, bz, 0.01, Hs / 2 - 0.3, 0.7), D.brass, 0.85)
+    for (const e of [-1, 1]) {
+      g.box(faustBox(X + s * 0.01, yc, bz + e * 0.78, 0.012, Hs / 2 - 0.18, 0.08), L, 1)
+      g.box(faustBox(X + s * 0.01, yc + e * (Hs / 2 - 0.2), bz, 0.012, 0.08, 0.78), L, 1)
+    }
+    for (let k = 0; 1.5 * k + 1.5 < Hs; k++) {
+      const yk = y0 + 0.9 + k * 1.5
+      for (const e of [-1, 1]) quad(X + s * 0.02, s, [[bz, yk + 0.3], [bz + e * 0.55, yk - 0.05], [bz + e * 0.55, yk - 0.27], [bz, yk + 0.08]])
+    }
+  }
+  const nb = Math.round(Hs / 0.7)
+  for (let k = 0; k <= nb; k++) g.box(faustBox(bx, y0 + 0.2 + k * (Hs - 0.4) / nb, bz + 0.92, 0.1, 0.1, 0.1), L, 1)
+  g.box(faustBox(bx, y0 + Hs + 0.2, bz, 0.26, 0.2, 0.98), E)
+  g.box(faustBox(bx, y0 + Hs + 0.55, bz, 0.2, 0.15, 0.7), E)
+  faustPyramid(g, bx, y0 + Hs + 0.7, bz, 0.15, 0.5, 1.8, D.brass)
   // the ticket booths
   for (const s of [-1, 1]) {
     const px = x + s * 5.6
@@ -6285,6 +6826,9 @@ const FAUSTLAND_API = { interior: faustInterior, storey: faustStorey, plan: faus
   // made), the cell (480 m) under x, z, and a building by its id ('ring i j n')
   ring: { cell: (i, j) => { const F = faustState, plan = F && faustRoadsReady(F); return plan ? faustRingPlan(F, plan, i, j) : null },
     at: (x, z) => [Math.floor(x / FAUST_RINGS.cell), Math.floor(z / FAUST_RINGS.cell)], size: () => FAUST_RINGS.cell,
+    // card #78: a house's or shack's interior plan (pure in the building), the open ones' ids, and the counters
+    interior: id => { const b = FAUSTLAND_API.ring.building(id); return b && b.kind !== 'urban' ? faustRingInterior(b) : null },
+    interiors: () => ({ open: [...faustState?.ringIn?.open.keys() || []], stats: faustState?.ringIn?.stats || null }),
     building: id => { const [, i, j, n] = String(id).split(' ').map(Number), F = faustState, plan = F && faustRoadsReady(F); return plan ? faustRingPlan(F, plan, i, j).buildings[n] || null : null } },
   get state() { return faustState },
   get seed() { return LV.grow?.seed },
@@ -6651,7 +7195,7 @@ function faustInLid(c, vy) {
   return room < 8 ? Math.min(vy, Math.sqrt(2 * -GRAV * Math.max(0.05, room))) : vy
 }
 // no smash crater in an open building, on any floor or its roof
-const faustInNoCrater = (x, z) => [...faustIn.open.values()].some(O => Math.abs(x - O.B.x) < O.B.w + 1.2 && Math.abs(z - O.B.z) < O.B.d + 1.2)
+const faustInNoCrater = (x, z) => [...faustIn.open.values()].some(O => Math.abs(x - O.B.x) < O.B.w + 1.2 && Math.abs(z - O.B.z) < O.B.d + 1.2) || faustRingInHere(x, z)
 
 // ---- route: bots in or bound for a building follow its storeys' graphs from the street door
 function faustInNav(at, target) {
@@ -30060,6 +30604,7 @@ const testTools = (() => {
       }
       return [] },
   }
+  { const cityDoors = NEAR.door; NEAR.door = c => [...cityDoors(c), ...faustRingDoors(c)] }      // card #78: the ring houses' and shacks' doors too
   // card #18: a road's points as /near things (every 5th, 100 m apart; a ramp's middle only)
   const roadSpots = (ok, at = null, middle = false) => {
     const plan = faustState && faustRoadsReady(faustState), out = []
