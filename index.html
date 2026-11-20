@@ -56,6 +56,7 @@
   label{display:block;color:#86847f;margin:14px 0 4px;font-size:12.5px}
 
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px}
+  #host-city{margin-bottom:14px}
   #panel{width:min(1060px,100%);border:0;background:none}
   #panel > h1{text-align:center;margin:0 0 10px;font:400 clamp(46px,11vmin,104px)/.86 'Maniak Display',Impact,'Arial Black',sans-serif;
     color:#f4f1ea;-webkit-text-stroke:.075em #000;paint-order:stroke fill;letter-spacing:.015em;
@@ -206,7 +207,7 @@
 
   /* ---- touch controls ---- */
   #touch{position:fixed;inset:0;z-index:6;display:none;pointer-events:none}
-  body.touch #touch{display:block}
+  body.touch.playing #touch{display:block}
   #stick{position:absolute;width:124px;height:124px;border-radius:50%;
     border:2px solid rgba(208,205,198,.22);background:rgba(14,14,15,.3);display:none}
   #knob{position:absolute;width:54px;height:54px;border-radius:50%;
@@ -368,8 +369,6 @@
       <h2>HOST GAME</h2>
       <label for="host-seed">CITY SEED</label>
       <input id="host-seed" placeholder="blank = a fresh city" maxlength="10" inputmode="numeric" autocomplete="off">
-      <label>MODE</label>
-      <div class="sides"><button id="mode-waves">Waves</button><button id="mode-ffa">Free-for-all</button></div>
       <label id="events-label">EVENT</label>
       <div class="sides" id="events"></div>
       <button id="host-btn" class="go">Host game</button>
@@ -491,7 +490,6 @@
   <div id="host-only">
   <label>CITY SIZE</label>
   <div id="host-city" class="cards"></div>
-  <div class="row" id="set-mode-row"><button id="set-mode">Enemies: waves</button></div>
   <div class="row" id="set-event-row"><button id="set-event">Event: Auto</button></div>
   <div class="setrow" id="set-bots-row">
     <label for="set-bots">Freaks</label>
@@ -619,7 +617,7 @@
        msgs (host message handlers), commands (chat commands);
      simulation: host (the host tick's phases), think (a bot's input), lifecycle
        (match start, joins, leaves, session end, snapshot fields), death, match
-       (limits, restart, mode, bots), level (loaded, grown tiles), crater,
+       (limits, restart, bots), level (loaded, grown tiles), crater,
        objectBody;
      presentation: looks and tornado (what avatars and render draw), view (HUD,
        scoreboard, results, radar, server panel, F3 rows), audio (effects, radio).
@@ -652,7 +650,7 @@
 const THREE = ENABLE3D.THREE
 
 // ---------------------------------------------------------------- tuning
-// ---- CONTENT, what a reskin edits: CHARS (bots: BOTS; teams: TEAMS + `team`), SIDES, WAVES, GUNS + SOUNDS,
+// ---- CONTENT, what a reskin edits: CHARS (bots: BOTS; teams: TEAMS + `team`), SIDES, GUNS + SOUNDS,
 //   POWERS, HEALS, OBJECTS, LEVELS, VEHICLES, MODELS (COSTUMES), RADIO, and the game's ids and title face just below
 // ROOM_NS: a room's id on the PeerJS signaling server is ROOM_NS + its code, so other games' rooms never meet this one's.
 // TITLE_FONT: the landing title's display face (Luckiest Guy, Apache-2.0), fetched under its pin as the libraries are
@@ -678,8 +676,8 @@ const TITLE_FONT = { family: 'Maniak Display', url: 'https://cdn.jsdelivr.net/np
 // shove: { mass: its capsule's, so Bullet's contacts knock vehicles; sprint: only sprinting; cap: m/s faster than a vehicle moves away that it closes on it }
 // sprintSpd: on-foot sprint m/s (default speed); jet.sprint: flight sprint m/s
 // swing: { range m, pace: m/s it travels }. bones: { box_man bone: [x, y, z] } (y: length). sparks: running-spark colour
-// SIDES (CHARS `side`): guns: false = players carry none (clicks fire atk/far); waves: the waves' side
-const SIDES = { maniak: { name: 'The Maniak', waves: true }, freaks: { name: 'Freaks', guns: false } }
+// SIDES (CHARS `side`): guns: false = players carry none (clicks fire atk/far)
+const SIDES = { maniak: { name: 'The Maniak' }, freaks: { name: 'Freaks', guns: false } }
 // TEAMS (CHARS `team`): one player plays any standing member; foes: squad bots added in free-for-all
 const TEAMS = {}
 // EVENTS: on from..to [month, day] by the host's local date; while on, CHARS rows with its name as `event` play, `cls`
@@ -853,12 +851,6 @@ const BOTS = [
   { char: 'Misery Master', cid: 'Misery Master', crew: 'teardrops', boss: true, rare: true, visits: 6, range: 2.2, fireRange: 20, aimErr: 0.04, jumpy: 0.7,
     turn: 8, hitRun: [1.0, 0.5] },
   { char: 'Tony', cid: 'Tony', crew: 'mob', boss: true, rare: true, visits: 8, range: 7, fireRange: 18, aimErr: 0.05, jumpy: 0.2, turn: 4 },
-]
-// pick: every BOTS row whose fields match (a list: any of it; absent = false)
-const WAVES = [
-  { name: 'FREAK SHOW',        pick: { name: 'Freak' } },
-  { name: 'MIDDLE MANAGEMENT', pick: { name: 'Brute' } },
-  { name: 'EVERYBODY OUT',     pick: { rare: false } },
 ]
 // a LEVELS row's `theme` overrides THEME. TOR_TOP: tornado top (m), or the lid if lower
 const TOR_TOP = 25
@@ -1477,7 +1469,7 @@ const upEffect = (G, i, n) => {
   return '+' + ((n / 3) | 0)
 }
 
-const FRAG_LIMIT = 25      // kills to win; 0 for no limit
+const FRAG_LIMIT = 0       // kills to win; 0 for no limit
 const TIME_LIMIT = 0       // seconds; 0 for no limit
 const RESULTS_S = 10
 const MOUSE_MAX = 320      // px per mousemove; past this it is not a hand
@@ -1494,7 +1486,7 @@ const MAX_REWIND = maxRewind(SNAP_MIN)   // 500 ms at any rate; older shots lead
 const RESPAWN_S = 2.2
 const TEAM_BEAT = 1          // s, then control moves to a standing teammate
 const SPAWN_PROT = 3.0   // s of spawn immunity
-const MAX_PLAYERS = 32, WAVES_PLAYERS = 4
+const MAX_PLAYERS = 32
 const FX_LIVE = 768        // cap, newest kept
 const TRACER_MS = 130
 
@@ -2788,20 +2780,15 @@ for (const [i, B] of BOTS.entries()) {
 }
 for (const C of CHARS) C.shift &&= ref(C.shift)
 const START = ref('The Maniak')
-const MODES = ['ffa', 'waves']
-let gameMode = 'waves'
 // the dated event the room plays, null if none; its rows play only while it is on
 let eventOn = null
 const offEvent = R => !!R.event && R.event !== eventOn?.name
 // the host's Event setting: 'auto' (the date decides), 'off', or an EVENTS name
 const eventPicks = () => ['auto', 'off', ...EVENTS.map(E => E.name)], eventLabel = k => k === 'auto' ? 'Auto' : k === 'off' ? 'Off' : k
-const picked = pick => BOTS.flatMap((B, i) =>
-  !B.squad && !offEvent(B) && Object.entries(pick).every(([k, v]) => [v].flat().includes(B[k] || false)) ? [i] : [])
+// rows that turn up on their own roll (BOTS `visits`)
+const visitors = () => BOTS.flatMap((B, i) => B.visits && !B.squad && !offEvent(B) ? [i] : [])
 // [id, cid] for a bot row and its alt
 const botPairs = list => list.flatMap(i => [[BOT_ID0 + i, BOTS[i].cid], ...BOTS[i].altRow ? [[BOT_ID0 + i, BOTS[i].altRow.cid]] : []])
-let waveAt = -1, waveGap = 0
-// a break holds while the next wave's rows (or any other queued look) still prepare, WAVE_HOLD_S longer at most
-const WAVE_GAP_S = 4, WAVE_HOLD_S = 10
 
 const RARE_ONE_IN = 20
 // rare: out of free-for-all; visits: in anyway, on its own roll
@@ -3343,7 +3330,7 @@ function haymakerCharge(c, dt, inp) {
 // Charged block contact uses the same damage, knockback, protection and kill-credit path as the other attacks.
 let chainSerial = 0, chainMarks = [], chainMarksAt = -Infinity, chainMarksRemote = []
 const blockAttack = () => GUNS[gunNamed('Cinderblock')]
-const chainEligible = (c,v) => v !== c && v.dead <= 0 && !(v.prot > 0) && (gameMode !== 'waves' || sideOf(v) !== sideOf(c))
+const chainEligible = (c,v) => v !== c && v.dead <= 0 && !(v.prot > 0)
 // Aim from the whirling block to the actual reticle target, rather than to a point behind a nearby victim.
 function chainAimPoint(c,range) {
   const [yaw,pitch]=aimAngles(c),dir=aimDir(yaw,pitch),eye=eyeAt(c)
@@ -3887,18 +3874,17 @@ const botOf = id => (id >= BOT_ID0 ? BOTS[id - BOT_ID0] : null) || null
 // bot row, else CHARS row, else START's; every ability is read from it
 const rowFor = (id, cid, B = botOf(id)) => (B && B.altRow?.cid === cid ? B.altRow : B) || CHARS[cid] || CHARS[START]
 const rowOf = c => c.bot || rowFor(-1, c.cid), sideOf = c => rowOf(c).side
-const sideOffered = k => gameMode !== 'waves' || !SIDES[k] || !!SIDES[k].waves
 let balanceOn = true
 const humansOn = (k, skip) => [...roster].filter(([id, p]) => id < BOT_ID0 && id !== skip && CHARS[p.cid]?.side === k).length
 const tally = (k, skip) => [humansOn(k, skip), Object.keys(SIDES).reduce((n, s) => s === k ? n : n + humansOn(s, skip), 0)]
 // the sides a player can pick from: balancing needs two
 const sidesPlayed = () => new Set(PICKABLE.map(i => CHARS[i].side)).size
-const balanced = () => (isHost ? settings.balance !== false : balanceOn) && gameMode === 'ffa' && sidesPlayed() > 1
+const balanced = () => (isHost ? settings.balance !== false : balanceOn) && sidesPlayed() > 1
 function sideLocked(k, id) {
   const [mine, theirs] = tally(k, id)
   return { locked: balanced() && CHARS[roster.get(id)?.cid]?.side !== k && mine > theirs, mine, theirs }
 }
-const fallbackRow = id => { const k = Object.keys(SIDES).filter(sideOffered).sort((a, b) => humansOn(a, id) - humansOn(b, id))[0]
+const fallbackRow = id => { const k = Object.keys(SIDES).sort((a, b) => humansOn(a, id) - humansOn(b, id))[0]
   return PICKABLE.find(i => CHARS[i].side === k && !taken(CHARS[i].team, id)) ?? START }
 const colorOf = (id, cid) => rowFor(id, cid).color
 function skinOf(id, cid) {
@@ -6433,7 +6419,7 @@ function boltSegments(x1, y1, z1, x2, y2, z2, gunId, hit) {
 
 // freezes nobody (guests' prediction would diverge); scoring stops instead
 // a match as the server's events tell it
-const matchInfo = () => ({ level: LEVELS[levelId].name, mode: gameMode, fragLimit, minutes: timeLimit / 60 })
+const matchInfo = () => ({ level: LEVELS[levelId].name, mode: 'ffa', fragLimit, minutes: timeLimit / 60 })
 function endMatch(why) {
   if (resultsLeft > 0) return
   resultsLeft = RESULTS_S
@@ -10412,7 +10398,7 @@ function prepareRows(pairs) {
   }
 }
 // First-sight props precede body rows and build only off play (menu, a break).
-const offPlay = () => phase !== 'playing' || isHost && gameMode === 'waves' && ![...players.values()].some(c => c.bot && !c.bot.squad)
+const offPlay = () => phase !== 'playing'
 const prepLook = (key, steps) => prepQueue.some(q => q.key === key) || prepQueue.push({ key, steps })
 // every pickup a pad can roll and the rows' held guns
 function prepareLooks(pairs) {
@@ -14133,7 +14119,7 @@ function loadSettings() {
   settings.volume = clamp(Number.isFinite(+settings.volume) ? +settings.volume : 0.8, 0, 1)
   settings.rate = SNAP_STEPS.includes(+settings.rate) ? +settings.rate : 0
   settings.balance = settings.balance !== false
-  settings.frags = clamp(Number.isFinite(+settings.frags) ? Math.round(+settings.frags) : FRAG_LIMIT, 0, 200)
+  settings.frags = settings.fragsSet ? clamp(Number.isFinite(+settings.frags) ? Math.round(+settings.frags) : FRAG_LIMIT, 0, 200) : FRAG_LIMIT
   settings.mins = clamp(Number.isFinite(+settings.mins) ? +settings.mins : TIME_LIMIT / 60, 0, 60)
   if (!Object.hasOwn(CITY_SIZES, settings.city)) settings.city = 'medium'
   settings.cid = Number.isInteger(settings.cid) ? settings.cid : -1
@@ -14235,9 +14221,7 @@ function openHost() {
   markCitySize(cs, Object.keys(CITY_SIZES).indexOf(settings.city))
   const ek = settings.event || 'auto'
   el('#set-event').textContent = 'Event: ' + eventLabel(ek) + (ek === 'auto' ? ' (' + (eventOn ? eventOn.name : 'none') + ')' : '')
-  el('#set-mode').textContent =
-    'Enemies: ' + (gameMode === 'waves' ? 'waves' : 'free-for-all')
-  for (const id of ['bots', 'balance', 'frags', 'time']) el('#set-' + id + '-row').style.display = gameMode === 'ffa' && (id !== 'balance' || sidesPlayed() > 1) ? '' : 'none'
+  el('#set-balance-row').style.display = sidesPlayed() > 1 ? '' : 'none'
   el('#set-event-row').style.display = EVENTS.length ? '' : 'none'
   const bots = el('#set-bots'), out = el('#set-bots-v')
   bots.max = regulars()
@@ -14280,11 +14264,6 @@ function initSettings() {
   el('#set-event').onclick = () => {
     const P = eventPicks()
     GAME.match.event(P[(P.indexOf(settings.event || 'auto') + 1) % P.length])
-    openHost()
-  }
-  el('#set-mode').onclick = () => {
-    GAME.match.mode(nextOf(MODES, gameMode))
-    announce('§7Mode: §f' + gameMode)
     openHost()
   }
   el('#host-back').onclick = settingsBack
@@ -14530,8 +14509,7 @@ function sfxFrame(me, others, t, objects = []) {
     const C = CHARS[me.cid] || CHARS[START], who = C.name
     const you = (name, as, lvl = 1) => sfxPlay(name, null, 'you', lvl, 0, 0, as)
     const alive = !(me.dead > 0), was = !(s.dead > 0), same = me.cid === s.cid
-    // none in waves (guests are sent 0)
-    const limit = isHost && gameMode !== 'ffa' ? 0 : fragLimit
+    const limit = fragLimit
     sfxJet(!fresh && alive && !!C.jet && !!input.j && !me.jLock && me.fuel > 0, who)
     if (!fresh) {
       if (!alive && was) you('die', who)
@@ -15435,7 +15413,7 @@ function fadeChat(t) {
 // hooked[type] first. What a guest sent reaches a hook bounded as the host bounds it, and still untrusted; what a hook sends
 // guests is cut to a guest's chat line and spaced as a guest's chat is.
 const HOOK_TYPES = ['ping', 'match.start', 'match.end', 'player.join', 'player.leave', 'player.rename', 'kill', 'death', 'chat',
-                    'damage', 'spawn', 'pickup', 'wave', 'broadcast.start', 'broadcast.stop']
+                    'damage', 'spawn', 'pickup', 'broadcast.start', 'broadcast.stop']
 const HOOK_FILTERS = ['join', 'chat', 'hit'], HOOK_TYPE = /^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)*$/, HOOK_DATA_MAX = 8192, HOOK_BURST = 8
 // type ('*': every type) -> its listeners; kind -> its filters; a guest's id -> how it went, while its link closes
 const hookOn = new Map(), hookFilters = new Map(), hookGone = new Map()
@@ -15560,19 +15538,18 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     const d = hookFreeze(JSON.parse(s)), meta = hookMeta(type)
     for (const f of fs) try { f(d, meta) } catch (e) { hookFailed(type, e) }
   },
-  // Run a server from the landing page, as its button does: { code, level, mode, frags, minutes, enemies, name }, each optional
+  // Run a server from the landing page, as its button does: { code, level, frags, minutes, enemies, name }, each optional;
+  // a `mode` from an older server is ignored: every game is free-for-all
   serve(o = {}) {
     if (phase !== 'menu' || el('#serve-btn').disabled) return false
     const lv = o.level === undefined ? 0 : levelArg(o.level), code = o.code === undefined ? '' : codeOf(o.code, '')
     hookCheck(lv === 0, 'Faustland is the only world.')
     hookCheck(o.code === undefined || code, 'a room code is 6 of ' + CODE_ALPHABET)
-    hookCheck(o.mode === undefined || MODES.includes(o.mode), 'no mode ' + o.mode + ': ' + MODES.join(', '))
     hookCheck(o.frags === undefined || Number.isInteger(o.frags) && o.frags >= 0 && o.frags <= 200, 'frags: 0-200')
     hookCheck(o.minutes === undefined || Number.isFinite(o.minutes) && o.minutes >= 0 && o.minutes <= 60, 'minutes: 0-60')
     hookCheck(o.enemies === undefined || Number.isInteger(o.enemies) && o.enemies >= 0, 'enemies: 0 or more')
     if (o.seed !== undefined) { faustRequestedSeed = faustParseSeed(o.seed); if (el('#host-seed')) el('#host-seed').value = String(o.seed ?? '') }
     serveCode = code
-    if (o.mode !== undefined) gameMode = o.mode
     if (o.frags !== undefined) settings.frags = o.frags
     if (o.minutes !== undefined) settings.mins = o.minutes
     if (o.enemies !== undefined) BOT_COUNT = o.enemies
@@ -15610,7 +15587,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   room() {
     const all = [...players.values()]
     return { ready: phase === 'menu' && !el('#serve-btn').disabled, hosting: isHost, serving, open: isHost && roomOpen, code: isHost ? roomCodeStr : '',
-      level: LEVELS[levelId].name, mode: gameMode, fragLimit: GAME.match.fragLimit, minutes: GAME.match.timeLimit / 60,
+      level: LEVELS[levelId].name, mode: 'ffa', fragLimit: GAME.match.fragLimit, minutes: GAME.match.timeLimit / 60,
       match: isHost ? hookMeta('room').match : null, players: all.filter(c => !c.bot).length, enemies: all.filter(c => c.bot && c.owner === undefined).length,
       uptime: serving ? Math.floor((now() - servedAt) / 1000) : 0, signaling: !peer ? '' : peer.disconnected ? 'lost, retrying' : peer.open ? 'connected' : 'connecting',
       status: el('#status').textContent, hookFailures: hookFails, lastHookFailure: hookFail, broadcast: isHost && bcastUrl ? bcastOrigin(bcastUrl) : null }
@@ -15638,7 +15615,9 @@ let admitted = false, helloAt = 0, helloDue = false
 const hello = () => { helloDue = false; helloAt = now(); sendHost({ k: 'hello', cid: myCid, name: myName }) }
 // the host's own player, in the room as The Maniak
 function hostIn() {
-  players.set(0, Object.assign(newChar(myCid, -6, 0), { id: 0 }))
+  const me = Object.assign(newChar(myCid, -6, 0), { id: 0 })
+  players.set(0, me)
+  respawn(me); input.yaw = me.yaw; input.pitch = 0
   roster.set(0, { cid: myCid, name: myName })
   GAME.rows.joined(players.get(0), myCid)
   pushRoster()
@@ -16035,8 +16014,6 @@ function openHostPeer(attempt) {
       joinNote('never connected (' + (p ? 'ICE ' + p.iceConnectionState + ', link ' + p.connectionState : 'no link') + ')')
     }, 1000)
     c.on('open', () => {
-      if (gameMode === 'waves' && conns.size >= WAVES_PLAYERS - (serving ? 0 : 1)) {
-        c.send({ k: 'full', n: WAVES_PLAYERS }); setTimeout(() => { try { c.close() } catch (e) {} }, 150); return }
       conns.set(id, c)
       lastSeen.set(id, now())
       watchLink(c, id)
@@ -16310,7 +16287,7 @@ const GUEST_MSGS = {
   lag: { apply: d => { onLag(d.n) } },
   sys: { apply: d => { sysMsg(String(d.m || '').slice(0, 200)) } },
   kicked: { apply: d => { kickedBy = String(d.by || 'the host').slice(0, 16) } },
-  full: { apply: d => { endSession('Room full', (gameMode === 'waves' ? 'Waves takes ' : 'The room takes ') + (d.n | 0) + ' players.', false) } },
+  full: { apply: d => { endSession('Room full', 'The room takes ' + (d.n | 0) + ' players.', false) } },
   hostgone: { apply: () => { endSession('Host left', 'The host closed the game.', true) } },
   bcast: { validate: d => typeof d.u === 'string' && Number.isInteger(d.n) && d.n >= 0 && bcastOk(d.u) ? d : null, apply: d => { bcastHear(d.u, d.n) } },
   c: { apply: d => {
@@ -16716,7 +16693,7 @@ document.addEventListener('visibilitychange', () => {
 })
 
 // ---------------------------------------------------------------- rules
-// this game's rules: modes, bots, waves, combat; the engine reaches them through GAME and the phases
+// this game's rules: bots, combat; the engine reaches them through GAME and the phases
 // a participant's body and abilities as the engine reads them: { r, h, model, room?, wallRun?, climb?, lift?, hurl?, name }
 GAME.participant = rowFor
 GAME.participantOf = rowOf
@@ -16728,7 +16705,7 @@ function spawnList(rows) {
 
 const SQUAD = (r => [...r.filter(i => BOTS[i].always).sort((a, b) => BOTS[a].always - BOTS[b].always), ...r.filter(i => !BOTS[i].always)])(BOTS.flatMap((B, i) => B.squad ? [i] : []))
 
-const squadWant = () => gameMode === 'ffa' && BOT_COUNT ? [...fieldedTeams()].reduce((n, t) => n + (TEAMS[t].foes | 0), BOT_COUNT) : 0
+const squadWant = () => BOT_COUNT ? [...fieldedTeams()].reduce((n, t) => n + (TEAMS[t].foes | 0), BOT_COUNT) : 0
 
 function stepSquad() {
   let want = Math.min(SQUAD.length, squadWant()), moved = false
@@ -16762,47 +16739,10 @@ function foesWanted() {
 }
 
 function teamsChanged() {
-  if (gameMode !== 'ffa') return
   const want = foesWanted()
   for (const c of [...players.values()]) if (c.id >= BOT_ID0 && !c.bot.squad && !want.includes(c.id - BOT_ID0)) dropBot(c)
   want.forEach(addBot)
   if (conns.size) pushRoster()
-}
-
-function setMode(m) {
-  if (!MODES.includes(m)) return false
-  const humans = conns.size + (serving ? 0 : 1)
-  if (m === 'waves' && humans > WAVES_PLAYERS) { sysMsg('§cWaves takes ' + WAVES_PLAYERS + ' players; ' + humans + ' are here.'); return false }
-  gameMode = m
-  for (const c of players.values()) if (!c.bot && !sideOffered(sideOf(c))) moveTo(c, START)
-  pushRoster()
-  waveAt = -1; waveGap = 0
-  if (m === 'ffa') spawnBots(BOT_COUNT)
-  else spawnList([]), stepSquad()
-  return true
-}
-
-function startWave(i) {
-  waveAt = i
-  const w = WAVES[i]
-  if (hooked.wave) hookEmit('wave', { name: w.name, number: i + 1 })
-  spawnList(picked(w.pick))
-  for (const c of players.values())
-    if (!c.bot) { c.spLeft = {}; restoreSpecial(c) }
-  waveGap = WAVE_GAP_S
-  announce('§e' + w.name)
-}
-
-// every wave's rows, the one on the field (as the roster shows) first
-const waveOrder = (on = Math.max(0, WAVES.findIndex(w => picked(w.pick).some(i => roster.has(BOT_ID0 + i))))) =>
-  WAVES.flatMap((_, j) => picked(WAVES[(on + j) % WAVES.length].pick))
-
-function stepWaves(dt) {
-  if (gameMode !== 'waves') return
-  if ([...players.values()].some(c => c.bot && !c.bot.squad)) return
-  if (waveGap > 0) { if (waveGap === WAVE_GAP_S) prepareRows(botPairs(picked(WAVES[(waveAt + 1) % WAVES.length].pick))); waveGap -= dt; return }
-  if (waveGap > -WAVE_HOLD_S && prepQueue.some(q => !Array.isArray(q) || botPairs(picked(WAVES[(waveAt + 1) % WAVES.length].pick)).some(p => skinKey(...p) === skinKey(...q)))) { waveGap -= dt; return }
-  startWave((waveAt + 1) % WAVES.length)
 }
 
 const smashRow = () => [...BOTS, ...CHARS].find(R => R.smash)
@@ -16985,7 +16925,7 @@ const HOST_PHASES = {
     const k = c.owner !== undefined && players.get(c.owner) || c
     k.kills++
     if (hooked.kill) hookEmit('kill', { killer: hookWho(k), victim: hookWho(victim), weapon: G.name, ...c !== k && { via: hookWho(c) } })
-    if (fragLimit && gameMode === 'ffa' && k.kills >= fragLimit) endMatch('Frag limit.')
+    if (fragLimit && k.kills >= fragLimit) endMatch('Frag limit.')
     const vn = (roster.get(victim.id) || {}).name || rowOf(victim).name
     const own = (roster.get(k.id) || {}).name || '?', kn = c === k ? own : rowOf(c).name + ' (' + own + ')'
     announce('§f' + kn + ' §7dropped §f' + vn + ' §8(' + G.name + ')')
@@ -17040,7 +16980,6 @@ const HOST_PHASES = {
     emit(id, volley(id, () => seatedShot(c, viewT, () => resolveShot(c, all, credit(id, c), viewT, GUNS[c.gun], c.gun))))
   }
 
-  stepWaves(dt)
   stepSquad()
   present(all)
   stepPickups(dt, all)
@@ -17110,8 +17049,7 @@ GAME.lifecycle = {
     hookMatchStart(matchInfo)
   },
   populate() {
-    if (gameMode === 'waves') startWave(0)
-    else spawnBots(BOT_COUNT)
+    spawnBots(BOT_COUNT)
   },
   sessionEnd() { resultsLeft = 0; matchLeft = 0; lastResSig = null },
   left(id) { if (dropMates(id)) teamsChanged() },
@@ -17121,7 +17059,7 @@ GAME.lifecycle = {
     pk: pickups.filter(p => p.respawn <= 0).map(p => [p.x, p.y, p.z, p.gun, p.pow, p.heal]),
     mo: resultsLeft > 0 ? r2(resultsLeft) : 0,
     ml: timeLimit ? r2(matchLeft) : 0,
-    fl: gameMode === 'waves' ? 0 : fragLimit, md: gameMode, bl: settings.balance !== false ? 1 : 0,
+    fl: fragLimit, md: 'ffa', bl: settings.balance !== false ? 1 : 0,
     tw: tornadoNow()?.map(r2), ...eventOn && { ev: eventOn.name },
   }),
   takeItems(d) {
@@ -17140,10 +17078,9 @@ GAME.lifecycle = {
     resultsLeft = d.mo || 0
     matchLeft = d.ml || 0
     fragLimit = d.fl | 0
-    if (MODES.includes(d.md)) gameMode = d.md
     if (d.bl !== undefined) balanceOn = !!d.bl
     setEvent(typeof d.ev === 'string' && EVENTS.find(E => E.name === d.ev) || null)
-    if (helloDue && phase === 'playing') { hello(); prepareRows(gameMode === 'waves' ? botPairs(waveOrder()) : GAME.rows.visitors()) }
+    if (helloDue && phase === 'playing') { hello(); prepareRows(GAME.rows.visitors()) }
   },
 }
 
@@ -18205,7 +18142,7 @@ GAME.streetLife = {
 }
 
 function rollRare(c) {
-  if (!isHost || gameMode !== 'ffa') return
+  if (!isHost) return
   BOTS.forEach((B, i) => {
     if (!B.visits || players.has(BOT_ID0 + i) || Math.floor(Math.random() * (B.visits === true ? RARE_ONE_IN : B.visits))) return
     addBot(i)
@@ -18246,7 +18183,7 @@ const moveTo = (c, cid) => { becomeChar(c, cid); const p = roster.get(c.id); if 
 function switchChar(c, cid) {
   const C = CHARS[cid]
   if (!C || C.hidden || offEvent(C) || cid === c.cid || c.dead > 0 || c.shiftCool > 0) return false
-  if (!sideOffered(C.side) || !c.bot && sideLocked(C.side, c.id).locked) return false
+  if (!c.bot && sideLocked(C.side, c.id).locked) return false
   if (!c.bot && C.team && C.team === CHARS[c.cid].team) {
     const m = onTeam(c).find(m => m.cid === cid && m.dead <= 0)
     return !!m && free(c) && free(m) && (swapTo(c, m), true)
@@ -18266,7 +18203,7 @@ function teamDown(c, dt) {
 }
 // back up: a visitor leaves, else its team respawns together (the player last), rebalanced, and a rare bot may turn up
 function teamUp(c, team) {
-  if (c.bot && c.owner === undefined && !c.bot.squad && (c.bot.rare || gameMode === 'waves')) leaveRare(c)
+  if (c.bot && c.owner === undefined && !c.bot.squad && c.bot.rare) leaveRare(c)
   else {      // player last
     for (const m of team.length ? team.filter(m => m.dead > 0 || m === c).sort((a, b) => !a.bot - !b.bot) : [c]) { m.downT = 0; if (isHost && !m.bot) rebalance(m); respawn(m); if (hooked.spawn) hookEmit('spawn', { who: hookWho(m) }) }
     rollRare(c)
@@ -18281,14 +18218,14 @@ function noSwap(c, cid) {
   if (!(t - p.noAt <= (why === p.no ? 2000 : 1000))) tell(c.id, '§7' + why)
   p.no = why; p.noAt = t
 }
-function setFragLimit(n) { fragLimit = settings.frags = n; saveSettings() }
+function setFragLimit(n) { fragLimit = settings.frags = n; settings.fragsSet = true; saveSettings() }
 function setMatchMinutes(n) {
   timeLimit = n * 60
   matchLeft = timeLimit              // a new length is a new clock
   settings.mins = n; saveSettings()
 }
 // the match's limits and its restart, as chat, settings and a level change set them
-GAME.match = { frags: setFragLimit, minutes: setMatchMinutes, restart: () => { hostEvent(); resetMatch() }, event: k => pickEvent(k), get fragLimit() { return fragLimit }, get timeLimit() { return timeLimit }, bots: spawnBots, mode: setMode, get resultsLeft() { return resultsLeft }, get fragSteps() { return FRAG_STEPS }, get minuteSteps() { return MINUTE_STEPS } }
+GAME.match = { frags: setFragLimit, minutes: setMatchMinutes, restart: () => { hostEvent(); resetMatch() }, event: k => pickEvent(k), get fragLimit() { return fragLimit }, get timeLimit() { return timeLimit }, bots: spawnBots, get resultsLeft() { return resultsLeft }, get fragSteps() { return FRAG_STEPS }, get minuteSteps() { return MINUTE_STEPS } }
 // the commands this game adds to the page's own
 GAME.commands = {
   event:  { args: '<name|auto|off>', help: 'host only, the seasonal event', run: a => {
@@ -18309,19 +18246,9 @@ GAME.commands = {
                                 : '§7Already out.') } },
   despawn:{ args: '', help: 'host only, remove every enemy', run: () => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
-              if (gameMode === 'ffa') BOT_COUNT = 0, stepSquad()
+              BOT_COUNT = 0; stepSquad()
               spawnList([])
               sysMsg('§7Cleared.') } },
-  wave:   { args: '<n|name>', help: 'host only, jump straight to a wave', run: a => {
-              if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
-              if (gameMode !== 'waves') return sysMsg('§cNot in waves — the host panel sets the mode')
-              const want = String(a || '').trim().toLowerCase()
-              let i = WAVES.findIndex(w => w.name.toLowerCase() === want)
-              if (i < 0 && /^\d+$/.test(want)) i = parseInt(want, 10) - 1
-              if (i < 0 || i >= WAVES.length)
-                return sysMsg('§cWaves: §f' +
-                  WAVES.map((w, n) => (n + 1) + ' ' + w.name).join('  '))
-              startWave(i) } },
   bots:   { args: '<0-6>', help: 'host only, set how many enemies', run: a => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
               const n = parseInt(a, 10)
@@ -18331,17 +18258,13 @@ GAME.commands = {
               sysMsg('§7Enemies: §f' + BOT_COUNT) } },
 }
 // a joining player's row: the one it asked for, unless this room cannot take it (told why), and its team fielded once it stands
-const visitors = () => gameMode === 'ffa' ? picked({ visits: true }) : []
 GAME.rows = {
   visitors: () => botPairs(visitors()),
   admit(id, asked) {
     let cid = clamp(asked | 0, 0, CHARS.length - 1)
     if (CHARS[cid].hidden) cid = START
     if (offEvent(CHARS[cid])) cid = START
-    if (!sideOffered(CHARS[cid].side)) {
-      cid = fallbackRow(id)
-      tell(id, '§eThis room plays ' + gameMode + ': ' + Object.keys(SIDES).filter(sideOffered).map(k => SIDES[k].name).join(', ') + ' only')
-    } else if (sideLocked(CHARS[cid].side, id).locked || taken(CHARS[cid].team, id)) {
+    if (sideLocked(CHARS[cid].side, id).locked || taken(CHARS[cid].team, id)) {
       cid = fallbackRow(id)
       tell(id, '§eThat character is taken here: you play §f' + CHARS[cid].name)
     }
@@ -18351,7 +18274,7 @@ GAME.rows = {
   switch: switchChar,
   refuse: noSwap,
   // the bots whose looks the menu prepares for a player on this row
-  menuBots: cid => gameMode === 'ffa' || !sideOffered(CHARS[cid].side) ? [...foesWanted(), ...SQUAD, ...visitors()] : waveOrder(),
+  menuBots: () => [...foesWanted(), ...SQUAD, ...visitors()],
   cid: v => clamp(v | 0, 0, CHARS.length - 1),
   of: cid => CHARS[cid],
 }
@@ -18382,7 +18305,7 @@ function eventAt(d, pick = settings.event) {
   const k = (d.getMonth() + 1) * 100 + d.getDate(), n = ([m, day]) => m * 100 + day
   return EVENTS.find(E => n(E.from) <= n(E.to) ? k >= n(E.from) && k <= n(E.to) : k >= n(E.from) || k <= n(E.to)) || null
 }
-const hostEvent = () => { if (!isHost && connected) return; const was = eventOn; setEvent(eventAt(new Date())); if (eventOn !== was && isHost && gameMode === 'ffa' && players.size) spawnBots(BOT_COUNT) }
+const hostEvent = () => { if (!isHost && connected) return; const was = eventOn; setEvent(eventAt(new Date())); if (eventOn !== was && isHost && players.size) spawnBots(BOT_COUNT) }
 // a host's pick: in a room, one that flips the event restarts the round as a level switch does
 function pickEvent(k) {
   settings.event = k; saveSettings()
@@ -19018,7 +18941,7 @@ function drawTab(others) {
   const tab = el('#tab')
   tab.style.display = tabOpen ? 'grid' : 'none'
   if (!tabOpen) { lastTabSig = null; return }
-  hud('tabHead', el('#tabhead'), 'textContent', 'STANDINGS' + (gameMode === 'ffa' ? ' · ' + (fragLimit ? 'first to ' + fragLimit : 'no limit') : ''))
+  hud('tabHead', el('#tabhead'), 'textContent', 'STANDINGS · ' + (fragLimit ? 'first to ' + fragLimit : 'no limit'))
   const rows = standings(others)
   const sig = rows.map(r => r.id + ':' + r.kills).join(',')
   const me = isHost ? players.get(0) : predicted
@@ -19284,12 +19207,11 @@ function drawRadar(me, others, t) {
     if (B.x1 > me.x - far && B.x0 < me.x + far && B.z1 > me.z - far && B.z0 < me.z + far) g.drawImage(B.cv, B.x0, B.z0, B.x1 - B.x0, B.z1 - B.z0)
   }
   g.setTransform(1, 0, 0, 1, 0, 0)
-  const mine = sideOf(me)
   for (const o of others) {
     if (o.dead > 0) continue
     let [x, y] = turn((o.x - me.x) * s, (o.z - me.z) * s)
     const d = Math.hypot(x, y), k = d > R - 5 ? (R - 5) / d : 1
-    g.fillStyle = gameMode !== 'ffa' && rowFor(o.id, o.cid).side === mine ? '#d8cfb8' : '#d0453a'
+    g.fillStyle = '#d0453a'
     g.beginPath(); g.arc(R + x * k, R + y * k, 3, 0, 2 * Math.PI); g.fill()
   }
   g.restore()
@@ -19368,7 +19290,7 @@ class Arena extends ENABLE3D.Scene3D {
 
 const pickCard = (wrap, d) => { for (const c of wrap.children) c.classList.remove('sel'); d.classList.add('sel') }
 const members = t => CHARS.flatMap((C, i) => C.team === t ? [i] : [])
-// what a Host draws first: The Maniak and his team, the first wave or the free-for-all's bots
+// what a Host draws first: The Maniak and his team, and the bots
 function prepMenu() {
   const team = CHARS[myCid].team
   prepareRows([...(team ? members(team) : [myCid]).map(k => [0, k]), ...botPairs(GAME.rows.menuBots(myCid))])
@@ -19437,8 +19359,6 @@ function wireMenu() {
   el('#serve-btn').disabled = false
   el('#join-btn').disabled = false
   el('#host-btn').onclick = go(startHost)
-  const modes = () => MODES.forEach(m => el('#mode-' + m).classList.toggle('on', m === gameMode))
-  for (const m of MODES) el('#mode-' + m).onclick = () => { gameMode = m; modes() }
   const evRow = el('#events'), evs = () => [...evRow.children].forEach(b => b.classList.toggle('on', b.ev === (settings.event || 'auto')))
   for (const k of eventPicks()) {
     const b = evRow.appendChild(document.createElement('button'))
@@ -19446,7 +19366,6 @@ function wireMenu() {
   }
   if (!EVENTS.length) evRow.style.display = el('#events-label').style.display = 'none'
   evs()
-  modes()
   el('#menu-set').onclick = openSettings
   el('#serve-btn').onclick = go(startServer)
   el('#join-btn').onclick = go(() => {

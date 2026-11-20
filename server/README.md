@@ -46,8 +46,7 @@ Everything is an environment variable (`-e NAME=value`).
 | Variable | Default | |
 |---|---|---|
 | `LEVEL` | `Faustland` | Faustland is the only world, so leave it unset. Any other level stops the server ("Faustland is the only world.") |
-| `MODE` | `waves` | `ffa` (free-for-all, 32 players) or `waves` (4 players against waves of Freaks and Brutes) |
-| `FRAGS` | `25` | kills to win, 0–200; 0 is no limit |
+| `FRAGS` | `0` | kills to win, 0–200; 0 is no limit, so the match runs on with no rounds |
 | `MINUTES` | `0` | length of a match, 0–60; 0 is untimed |
 | `ENEMIES` | `3` | computer-run enemies: Freaks, and the bigger, slower Brutes |
 | `SEED` | fresh each run | the city's seed, a whole number from 0 to 4294967295. The same seed builds the same city, so a seed you like can be played again. The log and `GET /status` name the seed in play, and `POST /command` with `/seed 42` (or `/seed random`) rebuilds the city from another. A `GAME_FILE` without seeded cities ignores it and says so |
@@ -62,6 +61,9 @@ Everything is an environment variable (`-e NAME=value`).
 | `ACTION_TOKEN` (or `ACTION_TOKEN_FILE`) | | required whenever `ACTION_HOST` is not loopback |
 | `GAME_FILE` | the game in the image | run another copy of the game, mounted into the container |
 | `BROADCAST_URL` | | a stream for the city's screens (see Broadcasts) |
+
+Every game is free-for-all: players fight the enemies and each other. `MODE` is gone; a server started with it still
+starts, says the setting is ignored, and plays free-for-all.
 
 An event type list is `*` for every type, a comma list such as `kill,player.join`, or a list of types to leave out such as
 `-damage,-chat`.
@@ -84,7 +86,7 @@ Each event is one JSON object, the same on stdout and to a webhook:
 | Type | Data |
 |---|---|
 | `ping` | `reason` (`start`, or `request` from the action API), `players`, `enemies`, `level`, `uptime` |
-| `match.start` | `level`, `mode`, `fragLimit`, `minutes` |
+| `match.start` | `level`, `mode` (always `ffa`, kept for consumers that read it), `fragLimit`, `minutes` |
 | `match.end` | `reason` (`frags`, `time`, `restart`, `stop`), `winner` (or null), `standings` with `kills` each |
 | `player.join` | `player` |
 | `player.leave` | `player`, `reason` (`left`, `kicked`, `timeout`, `dropped`) |
@@ -95,7 +97,6 @@ Each event is one JSON object, the same on stdout and to a webhook:
 | `damage` | `victim`, `attacker` (or null), `weapon`, `amount`, `hp` |
 | `spawn` | `who`: a respawn, or an enemy arriving |
 | `pickup` | `player`, `item`, `kind` (`gun`, `power`, `heal`) |
-| `wave` | `name`, `number` |
 | `broadcast.start` | `origin`: a broadcast started, or switched to a stream from there |
 | `broadcast.stop` | `origin` |
 

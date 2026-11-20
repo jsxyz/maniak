@@ -132,7 +132,7 @@ const CFG = {
     : die('BROADCAST_URL: an https URL with no credentials in it, at most 1024 characters'),
   stdout: types(env.STDOUT_EVENTS || '*', 'STDOUT_EVENTS'),
   serve: Object.fromEntries(Object.entries({
-    code: env.ROOM_CODE, level: env.LEVEL, mode: env.MODE, name: env.SERVER_NAME,
+    code: env.ROOM_CODE, level: env.LEVEL, name: env.SERVER_NAME,
     frags: number('FRAGS', 0, 200, true), minutes: number('MINUTES', 0, 60), enemies: number('ENEMIES', 0, 100, true),
     // the city's seed, so a seed liked once can be played again; unset, each match gets a fresh one. Passed only when set,
     // so a copy of the game without seeds still serves
@@ -141,6 +141,7 @@ const CFG = {
   api: { host: env.ACTION_HOST || '127.0.0.1', port: number('ACTION_PORT', 0, 65535, true) ?? 8080,
          token: env.ACTION_TOKEN_FILE ? read(env.ACTION_TOKEN_FILE, 'ACTION_TOKEN_FILE') || die('ACTION_TOKEN_FILE: the file is empty') : env.ACTION_TOKEN || '' },
 }
+if (!blank(env.MODE)) say('MODE: the setting is gone, and every game is free-for-all; MODE=' + JSON.stringify(env.MODE).slice(0, 40) + ' is ignored')
 const HOOKS = webhooks()
 const LOOPBACK = /^(127\.\d+\.\d+\.\d+|::1|localhost)$/
 if (CFG.api.port && !LOOPBACK.test(CFG.api.host) && !CFG.api.token)
