@@ -1084,6 +1084,8 @@ const PERFORMER = { char: 'Street performer', cid: 'Street performer', range: 1.
 // player whose heat it belongs to (ai.hunt). Baton: swarms round him. Armed: a revolver from farAt m. copies: the pool's size
 const ENFORCER = { char: 'Enforcer', cid: 'Enforcer', enforcer: true, range: 1.6, fireRange: 3.5, aimErr: 0.07, jumpy: 0.5, turn: 6, swarm: true, copies: 8 }
 const ENFORCER_ARMED = { ...ENFORCER, swarm: false, far: 'Revolver', farAt: 6, range: 11, fireRange: 28, aimErr: 0.06, jumpy: 0.3 }
+// card #14, stage 3a: the Pacifiers' hunters (5 stars: a squad in line, rifles; `elite`)
+const ENFORCER_ELITE = { ...PACIFIER, enforcer: true, elite: true, crew: 'hunters', copies: 4 }
 const BOTS = [
   TEARDROP, TEARDROP, TEARDROP,
   THUG, SHOOTER, THUG,
@@ -1098,7 +1100,7 @@ const BOTS = [
     turn: 8, hitRun: [1.0, 0.5] },
   { char: 'Tony', cid: 'Tony', crew: 'mob', boss: true, rare: true, visits: 8, range: 7, fireRange: 18, aimErr: 0.05, jumpy: 0.2, turn: 4 },
   { ...PERFORMER, rare: true, visits: 4 },
-  ENFORCER, ENFORCER_ARMED,
+  ENFORCER, ENFORCER_ARMED, ENFORCER_ELITE,
 ]
 // a LEVELS row's `theme` overrides THEME. TOR_TOP: tornado top (m), or the lid if lower
 const TOR_TOP = 25
@@ -6277,8 +6279,9 @@ for (const [i, B] of BOTS.entries()) {
 }
 for (const C of CHARS) C.shift &&= ref(C.shift)
 // the pool's BOTS indexes, by kind
-const ENFORCER_ROWS = { baton: [], armed: [] }
-BOTS.forEach((B, i) => { if (B.enforcer) ENFORCER_ROWS[B.far ? 'armed' : 'baton'].push(i) })
+const ENFORCER_ROWS = { baton: [], armed: [], heavy: [], pacifier: [] }
+const ENFORCER_KIND = B => B.elite ? 'pacifier' : B.heavy ? 'heavy' : B.far ? 'armed' : 'baton'
+BOTS.forEach((B, i) => { if (B.enforcer) ENFORCER_ROWS[ENFORCER_KIND(B)].push(i) })
 const START = ref('The Maniak')
 // the dated event the room plays, null if none; its rows play only while it is on
 let eventOn = null
@@ -28136,6 +28139,8 @@ const HEAT = {
   witness: { people: 40, enforcers: 60 },
   sight: 70, seen: 3, hide: 14, hideStar: 4, disguised: 5,
   force: [0, 2, 3, 4, 5, 6], armed: 0.5,
+  // stage 3: the force by star, by kind (one arrives every spawn.gap s till it's whole)
+  mix: [null, { baton: 2 }, { baton: 2, armed: 1 }, { baton: 2, armed: 2 }, { baton: 2, armed: 3 }, { baton: 2, armed: 3, pacifier: 4 }],
   spawn: { gap: 2.2, near: 42, far: 78, keep: 140 },
 }
 // host: player id -> { pts, stars, state (0 clear, 1 wanted, 2 searching), seenAt (ms), last {x, y, z}, left (s of search), at {kind: ms}, spawnAt }
@@ -28201,7 +28206,7 @@ function enforcerSpot(p) {
 let ENFORCER_AT = null          // respawn() puts the enforcer being added here, not at a spawn point
 // at: where, if not out of the way of his sight; crew: out of a squad car (not counted in the foot force)
 function enforcerAdd(p, armed, at, crew) {
-  const rows = ENFORCER_ROWS[armed ? 'armed' : 'baton'], i = rows.find(i => !players.has(BOT_ID0 + i)), spot = i !== undefined && (at || enforcerSpot(p))
+  const rows = ENFORCER_ROWS[typeof armed === 'string' ? armed : armed ? 'armed' : 'baton'], i = rows.find(i => !players.has(BOT_ID0 + i)), spot = i !== undefined && (at || enforcerSpot(p))
   if (!spot) return false
   ENFORCER_AT = [spot.x, spot.y, spot.z, spot.yaw]
   const ok = addBot(i)
@@ -28249,11 +28254,10 @@ function heatStep(p, all, dt, T) {
     if (H.left <= 0) return heatClear(p.id)
   }
   // the force: those still near him count; one more arrives each HEAT.spawn.gap s till it's whole
-  const want = HEAT.force[H.stars], armedWant = H.stars >= 2 ? Math.floor(want * HEAT.armed) : 0
-  const near = mine.filter(e => !e.ai.crew && Math.hypot(e.x - p.x, e.z - p.z) < HEAT.spawn.keep), armedHave = near.filter(e => e.bot.far).length
-  if (T - H.spawnAt >= HEAT.spawn.gap * 1000 && near.length < want) {
-    H.spawnAt = T
-    enforcerAdd(p, armedHave < armedWant)
+  const mix = HEAT.mix[H.stars], near = mine.filter(e => !e.ai.crew && Math.hypot(e.x - p.x, e.z - p.z) < HEAT.spawn.keep)
+  if (mix && T - H.spawnAt >= HEAT.spawn.gap * 1000) {
+    const kind = ['baton', 'armed', 'heavy', 'pacifier'].find(k => (mix[k] | 0) > near.filter(e => ENFORCER_KIND(e.bot) === k).length)
+    if (kind) { H.spawnAt = T; enforcerAdd(p, kind) }
   }
   if (typeof heatCars === 'function') heatCars(p, H, T, dt)
 }
