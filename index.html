@@ -17569,7 +17569,13 @@ const CAPE_IN = 0.002, CAPE_OUT = 0.006, CAPE_BAND = 0.03, CAPE_LYING = 0.7, CAP
 // hugging his back, the lower ones streaming back), each bone's width (narrower than his shoulders), how far the lower bones'
 // hinges turn to the way he faces rather than his twisting chest (the first hangs from his chest), and the ripple's amplitude per bone and rate (rad/s)
 const CAPE_RUN_BEND = [0.25, 0.85, 1], CAPE_RUN_WIDTH = [1, 0.58, 0.45], CAPE_RUN_HIPS = 0.9, CAPE_RUN_RIPPLE = [0.05, 0.1, 0.15], CAPE_RUN_RATE = 16
-const capeP = new THREE.Vector3(), capeX = new THREE.Vector3(), capeY = new THREE.Vector3(), capeM = new THREE.Matrix4(), capeR = new THREE.Quaternion()
+// (#72) at speed the cloth cups round his lats and its hem flutters, so from his side it reads as a wedge to a wavy hem, not a
+// stick: morph targets made at load (capeShade). The curl brings the edges forward toward his back by CAPE_CURL of the
+// cape's half-width at the hem (none at the top), and draws them in a little; the flutter is a wave of CAPE_FLUTTER of the
+// half-width (out of the cloth, over its lower two thirds, growing to the hem) running down it at CAPE_FLUTTER_RATE rad/s.
+// Both come in with the ripple (5 to 9 m/s); the cloth's points against his body carry them too
+const CAPE_CURL = 0.25, CAPE_FLUTTER = 0.12, CAPE_FLUTTER_RATE = 20
+const capeP = new THREE.Vector3(), capeX = new THREE.Vector3(), capeY = new THREE.Vector3(), capeM = new THREE.Matrix4(), capeR = new THREE.Quaternion(), capeL3 = new THREE.Matrix3()
 // once per model: the cloth's points, each its bones, its bind position in each bone's frame, the weights, and the share
 // of it each cape bone carries (a turn of cape bone k moves it by share[k]); and each cape bone's axes in its parent's
 // frame as bound: D down the cloth, B back (away from him), L its hinge across the cloth (a lift turns it by -lift about L)
@@ -17614,13 +17620,16 @@ function capePoints(R) {
       let best = null, bd = Infinity
       for (const e of near) { const d = Math.abs(e[1][X] - x) + Math.abs(e[1][1] - y) - e[1][Z] * inward * 0.05; if (d < bd) { bd = d; best = e } }
       if (!best) continue
-      const p = { names: [], local: [], w: [], share: [0, 0, 0], top: f < 0.2, side: Math.abs(s) > 0.4, k: 0, f }
+      const p = { names: [], local: [], dl: [], w: [], share: [0, 0, 0], top: f < 0.2, side: Math.abs(s) > 0.4, k: 0, f }
       hinges.forEach((y, k) => { if ((best[1][1] - y) * Math.sign(bot - top) > 0.01) p.k = k })
       for (let c = 0; c < 4; c++) {
         const j = J.getComponent(best[0], c), w = W.getComponent(best[0], c)
         if (!(w > 0)) continue
         p.names.push(sk.bones[j].name); p.w.push(w)
         p.local.push(capeP.fromBufferAttribute(P, best[0]).applyMatrix4(m.bindMatrix).applyMatrix4(sk.boneInverses[j]).toArray())
+        // (and the morph targets' moves of it in the bone's frame, as bound: curl, flutter sine, flutter cosine)
+        const lin = capeL3.setFromMatrix4(capeM.copy(sk.boneInverses[j]).multiply(m.bindMatrix)), mt = g.morphAttributes.position
+        p.dl.push([0, 1, 2].flatMap(t => mt?.[(M.capeMorphAt ?? 0) + t] && M.capeMorphAt !== undefined ? capeP.fromBufferAttribute(mt[M.capeMorphAt + t], best[0]).applyMatrix3(lin).toArray() : [0, 0, 0]))
         const ci = cape.indexOf(j)
         if (ci >= 0) for (let k = 0; k <= ci; k++) p.share[k] += w
       }
@@ -17638,7 +17647,7 @@ function capeRig(R) {
   if (!all?.length || !body) return (R.capeS = null)
   const pts = all.filter(p => p.names.every(n => R.bones.has(n))), caps = body.filter(c => R.bones.has(c[0]))
   return (R.capeS = {
-    pts: pts.map(p => ({ ...p, bones: p.names.map(n => R.bones.get(n)), local: p.local.flat() })),
+    pts: pts.map(p => ({ ...p, bones: p.names.map(n => R.bones.get(n)), local: p.local.flat(), dl: p.dl.flat() })), morph: R.capeMorph ||= [0, 0, 0],
     of: R.cape.map((b, k) => pts.flatMap((p, i) => p.k === k ? [i] : [])), below: pts.flatMap((p, i) => p.top ? [] : [i]),
     at: new Float64Array(pts.length * 3),
     caps: caps.map(([n, ...e]) => ({ bone: R.bones.get(n), arm: /arm|hand/.test(n), e: e.slice(0, 6), r: e[6] })),
@@ -17649,10 +17658,13 @@ function capeRig(R) {
 const capeMul = (M, x, y, z, out, o) => { out[o] = M[0] * x + M[4] * y + M[8] * z + M[12]; out[o + 1] = M[1] * x + M[5] * y + M[9] * z + M[13]; out[o + 2] = M[2] * x + M[6] * y + M[10] * z + M[14] }
 const capeTmp = new Float64Array(3), capeHinge = new Float64Array(3)
 function capeSkinPts(S) {
+  const [c, fs, fc] = S.morph
   S.pts.forEach((p, i) => {
     let x = 0, y = 0, z = 0
     for (let j = 0; j < p.bones.length; j++) {
-      capeMul(p.bones[j].matrixWorld.elements, p.local[j * 3], p.local[j * 3 + 1], p.local[j * 3 + 2], capeTmp, 0)
+      const L = p.local, D = p.dl, o = j * 9
+      capeMul(p.bones[j].matrixWorld.elements, L[j * 3] + c * D[o] + fs * D[o + 3] + fc * D[o + 6], L[j * 3 + 1] + c * D[o + 1] + fs * D[o + 4] + fc * D[o + 7],
+        L[j * 3 + 2] + c * D[o + 2] + fs * D[o + 5] + fc * D[o + 8], capeTmp, 0)
       x += capeTmp[0] * p.w[j]; y += capeTmp[1] * p.w[j]; z += capeTmp[2] * p.w[j]
     }
     S.at[i * 3] = x; S.at[i * 3 + 1] = y; S.at[i * 3 + 2] = z
@@ -17809,6 +17821,11 @@ function rigCape(a, R, dt) {
   // and centring are the sprint's, from 5 m/s: blending the centring in at the run swung its hem further)
   const shape = seated || dying ? 0 : ease(1.5, 8)
   R.capeRun = run
+  // the curl and the flutter (CAPE_CURL), on every LOD; before the cloth's points are skinned
+  const mo = R.capeMorph ||= [0, 0, 0]
+  R.capeFl = ((R.capeFl || 0) + h * CAPE_FLUTTER_RATE) % (2 * Math.PI)
+  mo[0] = run; mo[1] = run * Math.cos(R.capeFl); mo[2] = -run * Math.sin(R.capeFl)
+  if (M.capeMorphAt !== undefined) for (const m of R.lods) if (m?.morphTargetInfluences) for (let t = 0; t < 3; t++) m.morphTargetInfluences[M.capeMorphAt + t] = mo[t]
   capeArmsOff = shape > 0.3      // (running, the arms pumping past its top corners gather it; they don't swing it out)
   // each bone's contact: its lift held from below (R.capeLo, his body) and above (R.capeHi, the ground under him)
   const lo = R.capeLo ||= R.cape.map(() => -Infinity), hi = R.capeHi ||= R.cape.map(() => Infinity), wants = R.capeWant ||= R.cape.map(() => 0)
@@ -18002,7 +18019,31 @@ function capeShade(root, M) {
       const ox = cx / nc - bx / nb, oz = cz / nc - bz / nb, mark = new Float32Array(n * 2)
       for (let i = 0; i < n; i++) { const c = Math.min(1, w[i]); mark[i * 2] = c; mark[i * 2 + 1] = c && N.getX(i) * ox + N.getZ(i) * oz < 0 ? c : 0 }
       g.setAttribute('capeMark', new THREE.BufferAttribute(mark, 2))
+      // the curl and the flutter (CAPE_CURL), as moves of the bind pose: across the cloth (level, square to his back), down
+      // it from its top row to its hem, and out of it (away from his back)
+      const ol = Math.hypot(ox, oz), outX = ox / ol, outZ = oz / ol, latX = -outZ, latZ = outX
+      let yTop = -Infinity, yBot = Infinity, lc = 0
+      for (let i = 0; i < n; i++) if (w[i] > 0.5) { yTop = Math.max(yTop, P.getY(i)); yBot = Math.min(yBot, P.getY(i)); lc += P.getX(i) * latX + P.getZ(i) * latZ }
+      lc /= nc
+      let hw = 0
+      for (let i = 0; i < n; i++) if (w[i] > 0.5) hw = Math.max(hw, Math.abs(P.getX(i) * latX + P.getZ(i) * latZ - lc))
+      const curl = new Float32Array(n * 3), fs = new Float32Array(n * 3), fc = new Float32Array(n * 3)
+      if (hw > 0 && yTop > yBot) for (let i = 0; i < n; i++) {
+        const c = Math.min(1, w[i])
+        if (!c) continue
+        const t = Math.min(1, Math.max(0, (yTop - P.getY(i)) / (yTop - yBot))), u = Math.max(-1, Math.min(1, (P.getX(i) * latX + P.getZ(i) * latZ - lc) / hw))
+        const cu = c * hw * t, fwd = CAPE_CURL * cu * u * u, inn = 0.1 * cu * u
+        curl[i * 3] = -outX * fwd - latX * inn; curl[i * 3 + 2] = -outZ * fwd - latZ * inn
+        const e = Math.min(1, Math.max(0, (t - 0.3) / 0.7)), amp = c * CAPE_FLUTTER * hw * e * e * (3 - 2 * e), ph = 2 * Math.PI * 1.25 * t + 0.9 * u
+        fs[i * 3] = outX * amp * Math.sin(ph); fs[i * 3 + 2] = outZ * amp * Math.sin(ph)
+        fc[i * 3] = outX * amp * Math.cos(ph); fc[i * 3 + 2] = outZ * amp * Math.cos(ph)
+      }
+      const at = (g.morphAttributes.position ||= []).length
+      g.morphAttributes.position.push(new THREE.BufferAttribute(curl, 3), new THREE.BufferAttribute(fs, 3), new THREE.BufferAttribute(fc, 3))
+      g.morphTargetsRelative = true
+      if (M.capeMorphAt === undefined) M.capeMorphAt = at
     }
+    if (g.morphAttributes.position?.length && !o.morphTargetInfluences?.length) o.updateMorphTargets()
     o.material = Array.isArray(o.material) ? o.material.map(capeShadeMaterial) : capeShadeMaterial(o.material)
   })
 }
