@@ -6094,6 +6094,7 @@ function launchObject(o, L, ux, uz) {
 
 // a seated rider is struck through its vehicle, once a volley (rode)
 function strike(c, h, G, ux, uy, uz, rode) {
+  if (h.street) return slStruck(c, h, G, ux, uy, uz)        // a passer-by (street life, card #26): knocked down, no damage
   const s = seatOf(h)
   if (s) { if (!rode?.has(s[0])) { rode?.add(s[0]); strikeObject(c, s[0], G, ux, uy, uz) } return }
   const was = hookHitOn && [h.hp, h.mark, h.markT]
@@ -6173,7 +6174,7 @@ const dived = (R, v) => { const s = v ? clamp(v / R.dive.ref, 1, R.dive.cap) : 1
 
 function resolveShot(shooter, targets, onKill, viewT, G, gunId) {
   // friendly fire; rewound once per volley, not per pellet
-  const aimed = viewT === undefined ? targets : rewindTargets(targets, shooter, viewT)
+  const aimed = slAim(shooter, viewT === undefined ? targets : rewindTargets(targets, shooter, viewT), viewT, G)
   if (G.kind) return deliver(shooter, G, gunId, aimed, onKill)
   const fx = []
   let hits = 0
@@ -6321,7 +6322,7 @@ function firePrimary(c, targets, onKill, viewT, v) {
     c.sp--
     if (c.spLeft) c.spLeft[CHARS[c.cid].name] = c.sp
   }
-  return deliver(c, P, primaryId(c), viewT === undefined ? targets : rewindTargets(targets, c, viewT), onKill)
+  return deliver(c, P, primaryId(c), slAim(c, viewT === undefined ? targets : rewindTargets(targets, c, viewT), viewT, P), onKill)
 }
 // a GUNS row with a kind, fired from c along its aim at the aimed bodies, in whichever slot it sits: the fx it draws
 function deliver(c, P, gunId, aimed, onKill) {
@@ -16954,6 +16955,1063 @@ GAME.lifecycle = {
   },
 }
 
+// ---------------------------------------------------------------- street life (card #26)
+// Pedestrians, cyclists, mothers with prams, walked dogs and strays, pigeons on the pavement and flocks overhead (pin rule 12).
+// Ambient life costs no bandwidth: every client builds the same people from the city seed and moves them by the room clock
+// (host ms: the host's now(), a guest's renderT). Each walks a closed route on a schedule; one that crosses an avenue
+// waits at the kerb for the red of that avenue's traffic (GAME.traffic's signal clock, or the same pure formula here).
+// What matters to play is the host's: it knocks people down with the engine's own hit rules (strike, castPellet, blast and
+// deliver take them as targets) and with vehicles, panics them, scatters pigeons, and sends each change once as a small
+// record in the snapshot ('sl', repeated a few times and refreshed every 2 s). A guest plays a record from its start time,
+// as the host does. Mothers with prams, dogs and pigeons are never knocked down: they get out of the way.
+const STREET_FILES = { anims: 'anims_street.ae18f90f.glb', bike: 'bike.9b59aabf.glb', pram: 'pram.58d87a3c.glb', dog: 'dog.f8b8105a.glb', pigeon: 'pigeon.b13d236f.glb' }
+const STREET = {
+  // people per 96 m cell by district, scaled by the quality setting
+  density: { core: 22, civic: 17, tenement: 14, industrial: 5, plaza: 18 }, quality: { low: 0.6, medium: 0.8, high: 1 },
+  share: { idle: 0.2, junction: 0.2, pram: 0.08, dog: 0.08 }, strays: 0.5, flocks: [1, 3], cyclistGap: 150,
+  walk: [1.2, 1.55], cross: 1.95, pram: 1.05, run: 4.4, ride: [4.4, 5.8], dogWalk: 1.0,
+  // drawing: LOD ranges (m) for people (LOD0, LOD1, LOD2, then impostors), and how far each kind is drawn at all
+  lod: [12, 30, 60], draw: { ped: 140, bike: 120, pram: 75, dog: 60, pigeon: 45, flock: 350 },
+  // lower quality: nearer LOD steps and shorter draws (the vertex work of skinning is the cost on a weak GPU)
+  qualityLod: { low: [6, 16, 40], medium: [10, 24, 50] }, qualityDraw: { low: 0.7, medium: 0.85 },
+  // the host's rules: people within hostR of a participant are tested; ranges (m) and timings (s)
+  hostR: 70, scareR: 15, pigeonR: 3.4, carR: 7, brushR: 1.4, fleeS: 7, backS: 45, lieS: 2.4, getupS: 1.5, knockS: 0.55,
+  repeat: 3, refreshMs: 2000, keepMs: 60000,
+  signal: { cycle: 24, red: { x: [10, 24], z: [20, 34] }, go: 2.2 },
+  // the anchors the clips were authored for (street_moves.mjs): the rider's bike under him, the pram 1.22 m before the mother
+  pramBack: 1.22, bike: { crank: 0.17, pedalOut: 0.125, bb: [0, 0.28, -0.1], wheelR: 0.352, axles: [0.56, -0.54] },
+  bodies: ['civ_m_suit', 'civ_m_coat', 'civ_m_worker', 'civ_f_dress', 'civ_f_coat'],
+}
+const SL_K = { ped: 0, idle: 1, pram: 2, walker: 3, stray: 4, cyclist: 5, exit: 6 }
+// The traffic card's signal clock: pure, from the junction and the room time (ms); GAME.traffic's own when it has one
+const slPhase = (jx, jz, t) => ((t / 1000 + ((Math.round(jx / 96) + Math.round(jz / 96)) & 1) * 4) % 24 + 24) % 24
+// the room time (ms) at or after t when a pedestrian may step off across the avenue whose traffic runs along `axis`: within
+// `go` s of that traffic's red starting (crossing takes about 11.5 s of its 14 s)
+function slCrossAt(jx, jz, axis, t) {
+  const p = slPhase(jx, jz, t), r0 = STREET.signal.red[axis][0] % 24
+  let d = r0 - p; while (d < -STREET.signal.go) d += 24
+  return d <= 0 ? t : t + d * 1000
+}
+// a cyclist riding along `axis` reaches the stop line at time t: when it may go on (its green, less the last half second)
+function slGreenAt(jx, jz, axis, t) {
+  const p = slPhase(jx, jz, t), g0 = axis === 'x' ? 0 : 10
+  if (p >= g0 && p < g0 + 7.5) return t
+  let d = g0 - p; while (d < 0) d += 24
+  return t + d * 1000
+}
+const slHash = (...k) => { let h = 2166136261 >>> 0; for (const v of k) h = cityHash((h ^ (v | 0)) >>> 0); return h }
+const slRnd = (...k) => slHash(...k) / 4294967296
+const slWrap = a => { a = (a + Math.PI) % (2 * Math.PI); return (a < 0 ? a + 2 * Math.PI : a) - Math.PI }
+
+// ---- routes: polylines on a schedule. Keys are [t (s from the period's start), x, z, mode, speed]; the mode is the
+// segment's that starts at the key: 0 walk, 1 stand, 2 cross, 3 ride, 4 stopped astride, 5 sniff, 6 sit
+function slRoute(keys, period, t0) {
+  const a = new Float64Array(keys.length * 5); keys.forEach((k, i) => a.set(k, i * 5))
+  const R = { keys: a, n: keys.length, period, t0, cum: new Float64Array(keys.length) }
+  for (let i = 1; i < R.n; i++) R.cum[i] = R.cum[i - 1] + Math.hypot(a[i * 5 + 1] - a[i * 5 - 4], a[i * 5 + 2] - a[i * 5 - 3])
+  return R
+}
+// where a route has its walker at room time t (ms): x, z, heading, mode, speed, distance along (for the stride), key index
+function slEval(R, t, o) {
+  let u = ((t - R.t0) / 1000) % R.period; if (u < 0) u += R.period
+  const K = R.keys, n = R.n
+  let lo = 0, hi = n - 1
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (K[m * 5] <= u) lo = m; else hi = m }
+  const a = lo * 5, b = Math.min(lo + 1, n - 1) * 5, dt = K[b] - K[a], f = dt > 1e-6 ? Math.min(1, Math.max(0, (u - K[a]) / dt)) : 0
+  const dx = K[b + 1] - K[a + 1], dz = K[b + 2] - K[a + 2]
+  o.x = K[a + 1] + dx * f; o.z = K[a + 2] + dz * f; o.mode = K[a + 3]; o.v = K[a + 4]; o.i = lo; o.u = u
+  if (dx * dx + dz * dz > 1e-6) o.yaw = Math.atan2(dx, dz)
+  else if (R.face?.[lo] !== undefined) o.yaw = R.face[lo]
+  else { // standing: face along the last move
+    for (let j = 1; j < n; j++) { const p = ((lo - j) % (n - 1) + (n - 1)) % (n - 1) * 5, q = p + 5, ex = K[q + 1] - K[p + 1], ez = K[q + 2] - K[p + 2]
+      if (ex * ex + ez * ez > 1e-6) { o.yaw = Math.atan2(ex, ez); break } } }
+  o.s = R.cum[lo] + Math.hypot(dx, dz) * f + Math.floor(((t - R.t0) / 1000) / R.period) * R.cum[n - 1]
+  return o
+}
+// the point at distance s along a route's polyline (looping), and the heading there; for prams ahead and for flight paths
+function slAlong(R, s, o) {
+  const L = R.cum[R.n - 1]; if (!(L > 0)) { o.x = R.keys[1]; o.z = R.keys[2]; return o }
+  s = ((s % L) + L) % L
+  let lo = 0, hi = R.n - 1
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (R.cum[m] <= s) lo = m; else hi = m }
+  const a = lo * 5, b = (lo + 1) * 5, seg = R.cum[lo + 1] - R.cum[lo], f = seg > 1e-6 ? (s - R.cum[lo]) / seg : 0
+  o.x = R.keys[a + 1] + (R.keys[b + 1] - R.keys[a + 1]) * f; o.z = R.keys[a + 2] + (R.keys[b + 2] - R.keys[a + 2]) * f
+  const dx = R.keys[b + 1] - R.keys[a + 1], dz = R.keys[b + 2] - R.keys[a + 2]; if (dx * dx + dz * dz > 1e-9) o.yaw = Math.atan2(dx, dz)
+  return o
+}
+// a closed loop walked at speed v from point `start`; stops: Map(point index -> [seconds, mode, facing])
+function slLoop(pts, v, start, stops, t0 = 0) {
+  const keys = [], face = [], n = pts.length; let t = 0
+  for (let i = 0; i <= n; i++) {
+    const k = (i + start) % n, p = pts[k], st = i < n && stops?.get(k)
+    if (st) { face[keys.length] = st[2]; keys.push([t, p[0], p[1], st[1], 0]); t += st[0] }
+    keys.push([t, p[0], p[1], 0, v])
+    if (i < n) { const q = pts[(k + 1) % n]; t += Math.hypot(q[0] - p[0], q[1] - p[1]) / v }
+  }
+  const R = slRoute(keys, t, t0); if (face.length) R.face = face
+  return R
+}
+
+// ---- the city's walkable rings: around each lot, outside its piers, entrances and podium, on its paving
+function slLotRing(lot) {
+  const pier = lot.district !== 'industrial' && lot.district !== 'tenement', m = pier ? 1.13 + 0.8 : 0.25 + 0.85
+  const front = lot.district === 'industrial' || lot.district === 'tenement' ? 0.5 + 0.85 : !lot.gothic && !lot.stop ? 1.3 + 0.75 : m
+  return [lot.x - lot.w - m, lot.z - lot.d - m, lot.x + lot.w + m, lot.z + lot.d + Math.max(m, front)]
+}
+const slInside = (r, x, z, pad = 0) => x > r[0] - pad && x < r[2] + pad && z > r[1] - pad && z < r[3] + pad
+// lamp posts on the avenue's east pavement (faustPlan's slim boxes at X + 11.4): a ring side that would brush one steps aside
+function slRingPts(r, X, Z) {
+  let [x0, z0, x1, z1] = r
+  for (const q of [20, 76]) if (z0 < Z + q && z1 > Z + q && Math.abs(x0 - (X + 11.4)) < 0.6) x0 = X + 11.4 + 0.65
+  return [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]
+}
+
+// ---- a cell's people, built once from its plan and kept while it is near
+let slState = null
+function slReset() {
+  const F = faustState
+  slState = { seed: F.seed, S: F.S, cells: new Map(), lines: new Map(), rec: new Map(), byId: new Map(), panics: [], out: [], recSeq: 0, lastOut: -1e9, frame: 0,
+    exits: new Map(), exitN: 0, tracerSeen: new WeakSet(), stats: { cells: 0, records: 0, bytesOut: 0, wireN: 0, hostMs: 0, frameMs: 0, people: 0 } }
+}
+function slPlan(ci, cj) {
+  const F = faustState, c = F.chunks.get(faustKey(ci, cj))
+  return c?.plan || faustPlan(F.seed, ci, cj, F.S)
+}
+const slCentral = (gx, gz) => gx >= -2 && gx <= 1 && gz >= -2 && gz <= 1
+// does the avenue whose traffic runs along `axis` exist at junction (jx, jz), on the side `sgn` of it (+1: the far cell)
+function slAvenue(axis, jx, jz, sgn) {
+  const S = slState.S, A = S * 48
+  if (Math.abs(jx) >= A || Math.abs(jz) >= A) return false
+  if (axis === 'z') { const gx = Math.round(jx / 96), gz = Math.round(jz / 96) + (sgn > 0 ? 0 : -1); return gz >= -S / 2 && gz < S / 2 && !(slCentral(gx, gz) && Math.abs(jx) < 192) }
+  const gz = Math.round(jz / 96), gx = Math.round(jx / 96) + (sgn > 0 ? 0 : -1)
+  return gx >= -S / 2 && gx < S / 2 && !(slCentral(gx, gz) && Math.abs(jz) < 192)
+}
+const slJunction = (jx, jz) => slAvenue('z', jx, jz, 1) && slAvenue('z', jx, jz, -1) && slAvenue('x', jx, jz, 1) && slAvenue('x', jx, jz, -1)
+// the junction loop: around a signalled avenue junction, over each of its four crosswalks (11.45-18.55 m out, painted by the
+// city), waiting at each kerb for the red of the traffic it crosses. dir: 1 anticlockwise from above, -1 clockwise. The route
+// starts at its first kerb as that crossing's window opens, and closes on that window a whole number of cycles later, so it
+// repeats in step with the signals; walkers on it are whole cycles apart
+function slJunctionRoute(jx, jz, dir, v) {
+  const c = 11.2, w = 15, P = [[c, c], [c, w], [-c, w], [-c, c], [-w, c], [-w, -c], [-c, -c], [-c, -w], [c, -w], [c, -c], [w, -c], [w, c]]
+  const pts = (dir > 0 ? P : [P[0], ...P.slice(1).reverse()]).map(([x, z]) => [jx + x, jz + z])
+  const legs = pts.map((a, i) => { const b = pts[(i + 1) % pts.length], dx = b[0] - a[0], dz = b[1] - a[1], d = Math.hypot(dx, dz)
+    return { a, b, d, cross: d > 15, axis: Math.abs(dx) > Math.abs(dz) ? 'z' : 'x', yaw: Math.atan2(dx, dz) } })
+  const i0 = legs.findIndex(l => l.cross), T0 = slCrossAt(jx, jz, legs[i0].axis, 0)
+  const keys = [], face = []; let t = 0
+  for (let m = 0; m < legs.length; m++) {
+    const L = legs[(i0 + m) % legs.length]
+    if (L.cross) {
+      const go = m === 0 ? 0 : (slCrossAt(jx, jz, L.axis, T0 + t * 1000) - T0) / 1000
+      if (go > t + 0.05) { face[keys.length] = L.yaw; keys.push([t, L.a[0], L.a[1], 1, 0]); t = go }
+      keys.push([t, L.a[0], L.a[1], 2, STREET.cross]); t += L.d / STREET.cross
+    } else { keys.push([t, L.a[0], L.a[1], 0, v]); t += L.d / v }
+  }
+  const L0 = legs[i0], period = Math.ceil((t - 0.001) / 24) * 24
+  if (period > t + 0.05) { face[keys.length] = L0.yaw; keys.push([t, L0.a[0], L0.a[1], 1, 0]) }
+  keys.push([period, L0.a[0], L0.a[1], 2, STREET.cross])
+  const R = slRoute(keys, period, T0); R.face = face
+  return R
+}
+// build the people of cell (ci, cj)
+function slCell(ci, cj) {
+  const key = ci + ' ' + cj, st = slState
+  let cell = st.cells.get(key)
+  if (cell) { cell.used = performance.now(); return cell }
+  const P = slPlan(ci, cj), S = st.S, gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96, seed = st.seed
+  // the same people for every client whatever its quality setting (records name them by id); quality only thins what is drawn
+  const q = 1, rng = genRng(slHash(seed, gx, gz, 26)), q_ = () => q
+  cell = { key, ci, cj, X, Z, agents: [], flocks: [], used: performance.now(), rings: [] }
+  const lots = P.lots, rings = lots.map(l => slLotRing(l)).filter(r => !P.diagonal || Math.abs((r[1] + r[3]) / 2 - (r[0] + r[2]) / 2 - 384) > 40)
+  cell.rings = rings.map(r => ({ r, pts: slRingPts(r, X, Z) }))
+  const district = P.plaza ? 'plaza' : P.district
+  const n = Math.round((STREET.density[district] ?? 10) * q * (0.85 + 0.3 * rng()))
+  const id = k => (ci * 512 + cj) * 64 + k
+  let k = 0
+  const body = () => { const r = rng(); return r < 0.6 ? (r * 5 / 0.6 | 0) % 3 : 3 + (rng() < 0.5 ? 0 : 1) }     // three men, two women
+  const tint = () => { const r = rng(); return [0.82 + r * 0.3, 0.82 + rng() * 0.28, 0.82 + rng() * 0.26] }
+  // plazas: loops of a few points over the open paving, pigeons in numbers
+  if (P.plaza || !cell.rings.length) {
+    const cx = X + 48, cz = Z + 48, R0 = P.plaza ? 34 : 30
+    for (let i = 0; i < n && k < 60; i++) {
+      const m = 3 + (rng() * 3 | 0), a0 = rng() * 6.283, pts = []
+      for (let j = 0; j < m; j++) { const a = a0 + j * 6.283 / m + (rng() - 0.5) * 0.6, r = R0 * (0.25 + 0.7 * rng()); pts.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]) }
+      if (rng() < STREET.share.idle) { const p = pts[0]; cell.agents.push({ id: id(k++), kind: SL_K.idle, body: body(), tint: tint(), x: p[0], z: p[1], yaw: rng() * 6.283, clip: ['idle', 'phone', 'talk', 'arms_folded'][rng() * 4 | 0], ph: rng(), home: slLoop(pts, STREET.walk[0], 0) }); continue }
+      const v = STREET.walk[0] + rng() * (STREET.walk[1] - STREET.walk[0]), dir = rng() < 0.5
+      const R = slLoop(dir ? pts : pts.slice().reverse(), v, 0, null, -rng() * 3e5)
+      cell.agents.push({ id: id(k++), kind: rng() < STREET.share.pram ? SL_K.pram : rng() < STREET.share.dog ? SL_K.walker : SL_K.ped, body: body(), tint: tint(), route: R })
+    }
+    for (let f = 0; f < (P.plaza ? 3 : 1); f++) cell.flocks.push(slFlock(cell, id(48 + f), cx + (rng() - 0.5) * 50, cz + (rng() - 0.5) * 50, 8 + (rng() * 12 | 0), rng))
+    return slKeep(cell)
+  }
+  // the junction this cell owns, if signalled: some walkers loop over its crosswalks
+  const junc = slJunction(X, Z)
+  for (let i = 0; i < n; i++) {
+    const ring = cell.rings[rng() * cell.rings.length | 0], pts = ring.pts, r = rng()
+    const tw = tint(), b = body()
+    if (r < STREET.share.idle) {
+      // idling at a shopfront or a lamp: on the ring, facing the wall (or the street)
+      const side = rng() * 4 | 0, f = 0.15 + rng() * 0.7, a = pts[side], c = pts[(side + 1) % 4]
+      const x = a[0] + (c[0] - a[0]) * f, z = a[1] + (c[1] - a[1]) * f, inYaw = Math.atan2((ring.r[0] + ring.r[2]) / 2 - x, (ring.r[1] + ring.r[3]) / 2 - z)
+      const face = Math.round(inYaw / (Math.PI / 2)) * Math.PI / 2 + (rng() < 0.3 ? Math.PI : 0)
+      const pair = rng() < 0.3
+      cell.agents.push({ id: id(k++), kind: SL_K.idle, body: b, tint: tw, x, z, yaw: face, clip: ['idle', 'phone', 'talk', 'arms_folded', 'idle'][rng() * 5 | 0], ph: rng(), home: slLoop(pts, STREET.walk[0], side) })
+      if (pair && k < 60) {
+        cell.agents.at(-1).yaw = face + Math.PI / 2; cell.agents.at(-1).clip = 'talk'
+        cell.agents.push({ id: id(k++), kind: SL_K.idle, body: body(), tint: tint(), x: x + Math.sin(face + Math.PI / 2) * 1.1, z: z + Math.cos(face + Math.PI / 2) * 1.1, yaw: face - Math.PI / 2, clip: 'talk', ph: rng(), home: cell.agents.at(-1).home }) }
+      continue
+    }
+    const v = STREET.walk[0] + rng() * (STREET.walk[1] - STREET.walk[0]), dir = rng() < 0.5, start = rng() * 4 | 0
+    if (junc && r < STREET.share.idle + STREET.share.junction) {
+      const R = slJunctionRoute(X, Z, dir ? 1 : -1, v)
+      R.t0 += Math.floor(rng() * 40) * 24000          // a whole number of signal cycles apart: they share the windows
+      cell.agents.push({ id: id(k++), kind: SL_K.ped, body: b, tint: tw, route: R, cross: true })
+      continue
+    }
+    const stops = new Map(); if (rng() < 0.5) { const j = rng() * 4 | 0, a = pts[j], c = pts[(j + 1) % 4]; stops.set(j, [3 + rng() * 6, 1, Math.atan2((ring.r[0] + ring.r[2]) / 2 - a[0], (ring.r[1] + ring.r[3]) / 2 - a[1])]) }
+    const loop = dir ? pts : pts.slice().reverse(), kind = rng() < STREET.share.pram ? SL_K.pram : rng() < STREET.share.dog ? SL_K.walker : SL_K.ped
+    const R = slLoop(loop, kind === SL_K.pram ? STREET.pram : v, start, kind === SL_K.pram ? null : stops, -rng() * 3e5)
+    cell.agents.push({ id: id(k++), kind, body: kind === SL_K.pram ? 3 + (rng() < 0.5 ? 0 : 1) : b, tint: tw, route: R })
+  }
+  // under the avenue's lamps (faustPlan's posts at X + 11.4, Z + 20 and Z + 76): someone loitering, facing the street
+  for (const q of [20, 76]) if (rng() < 0.55 * q_(q)) {
+    const x = X + 11.4 + 0.55, z = Z + q + (rng() - 0.5) * 0.8, ring = cell.rings.find(g => g.r[1] < z && g.r[3] > z) || cell.rings[0]
+    if (cell.rings.some(g => slInside(g.r, x, z, -0.2))) continue
+    cell.agents.push({ id: id(k++), kind: SL_K.idle, body: body(), tint: tint(), x, z, yaw: -Math.PI / 2 + (rng() - 0.5) * 0.6,
+      clip: ['idle', 'phone', 'arms_folded'][rng() * 3 | 0], ph: rng(), home: ring && slLoop(ring.pts, STREET.walk[0], 0) })
+  }
+  // a stray or two, nosing along a ring: walk, sniff, walk, sit
+  for (let i = 0; i < (rng() < STREET.strays * q ? 1 : 0); i++) {
+    const ring = cell.rings[rng() * cell.rings.length | 0], st_ = new Map()
+    st_.set(rng() * 4 | 0, [4 + rng() * 4, 5, 0]); st_.set(rng() * 4 | 0, [6 + rng() * 8, 6, 0])
+    cell.agents.push({ id: id(k++), kind: SL_K.stray, body: 0, tint: [0.7 + rng() * 0.3, 0.65 + rng() * 0.3, 0.6 + rng() * 0.3], route: slLoop(rng() < 0.5 ? ring.pts : ring.pts.slice().reverse(), STREET.dogWalk, rng() * 4 | 0, st_, -rng() * 2e5) })
+  }
+  // pigeons: on the paving between a ring and the kerb
+  const nf = STREET.flocks[0] + (rng() * (STREET.flocks[1] - STREET.flocks[0] + 1) | 0)
+  for (let f = 0; f < nf && cell.rings.length; f++) {
+    const ring = cell.rings[rng() * cell.rings.length | 0].r, side = rng() * 4 | 0, u = 0.2 + rng() * 0.6
+    const x = side === 0 ? ring[0] - 1.6 : side === 2 ? ring[2] + 1.6 : ring[0] + (ring[2] - ring[0]) * u
+    const z = side === 1 ? ring[1] - 1.6 : side === 3 ? ring[3] + 1.6 : ring[1] + (ring[3] - ring[1]) * u
+    const fl = slFlock(cell, id(48 + f), x, z, 5 + (rng() * 8 | 0), rng); fl.out = [[-1, 0], [0, -1], [1, 0], [0, 1]][side]; cell.flocks.push(fl)
+  }
+  return slKeep(cell)
+}
+function slKeep(cell) {
+  const st = slState
+  for (const ag of cell.agents) {
+    ag.rank = slRnd(ag.id, 77)
+    const R = ag.route; let b
+    if (R) { b = [1e9, 1e9, -1e9, -1e9]; for (let i = 0; i < R.n; i++) { const x = R.keys[i * 5 + 1], z = R.keys[i * 5 + 2]; b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], z); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], z) } }
+    else b = [ag.x, ag.z, ag.x, ag.z]
+    if (ag.home) for (let i = 0; i < ag.home.n; i++) { const x = ag.home.keys[i * 5 + 1], z = ag.home.keys[i * 5 + 2]; b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], z); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], z) }
+    ag.box = b
+  }
+  st.cells.set(cell.key, cell); st.stats.cells = st.cells.size; return cell
+}
+// a pigeon flock on the ground: birds pecking and walking around a spot; a scatter sends them up and round, back in 20-30 s
+function slFlock(cell, id, x, z, n, rng) {
+  const birds = []
+  for (let i = 0; i < n; i++) birds.push({ a: rng() * 6.283, r: 0.3 + rng() * 1.6, w: 0.05 + rng() * 0.12, ph: rng() * 100, back: 18 + rng() * 12, s: 0.9 + rng() * 0.2 })
+  return { id, x, z, birds }
+}
+// cyclists: on each avenue's bike lanes (8.3 m off its centreline, on the cars' side), riding the whole line from edge to edge,
+// stopping at the stop line (20.5 m before the junction's centre) of each signalled junction while their traffic isn't green.
+// A line is (axis of travel, the avenue's coordinate, direction). One lap is simulated per speed from the city's edge at a
+// cycle's start; it is padded at the far edge (out of sight) to a whole number of cycles, so laps repeat in step with the
+// signals, and riders on a line are whole cycles apart.
+function slLine(axis, c, dir) {
+  const st = slState, key = axis + c + ':' + dir
+  let L = st.lines.get(key); if (L) return L
+  const A = st.S * 48, q = 1                                         // as for cells: the same riders on every client
+  L = { axis, c, dir, A, len: 2 * A, riders: [], laps: new Map() }
+  const n = Math.max(1, Math.round(2 * A / STREET.cyclistGap))
+  for (let i = 0; i < n; i++) {
+    if (slRnd(st.seed, c, dir, i, 7) > 0.5 + 0.45 * q) continue
+    const v = STREET.ride[0] + (slHash(st.seed, c, dir, i, 3) % 5) / 4 * (STREET.ride[1] - STREET.ride[0])
+    L.riders.push({ id: 0x100000 + (((axis === 'x' ? 0 : 1) * 64 + (c / 96 + 32 | 0)) * 2 + (dir > 0 ? 0 : 1)) * 64 + i, kind: SL_K.cyclist, v, slot: i, n,
+      body: slHash(st.seed, c, dir, i) % 3, tint: [0.8 + slRnd(c, dir, i, 1) * 0.3, 0.8 + slRnd(c, dir, i, 2) * 0.3, 0.8 + slRnd(c, dir, i, 4) * 0.3] })
+  }
+  st.lines.set(key, L)
+  return L
+}
+function slLap(L, v) {
+  let lap = L.laps.get(v); if (lap) return lap
+  const legs = [], A = L.A, dir = L.dir; let t = 0, s = 0
+  for (let j = 1; j * 96 < L.len; j++) {
+    const sStop = j * 96 - 20.5, tArrive = t + (sStop - s) / v, along = -A * dir + j * 96 * dir
+    const jx = L.axis === 'x' ? along : L.c, jz = L.axis === 'x' ? L.c : along
+    const tGo = slJunction(jx, jz) ? slGreenAt(jx, jz, L.axis, tArrive * 1000) / 1000 : tArrive
+    const stop = tGo > tArrive + 0.05
+    legs.push([t, s, tArrive, sStop, legs.length && legs.at(-1)[4] === 4 ? 1 : 0, stop])          // [t0, s0, t1, s1, eases in, eases out]
+    if (stop) legs.push([tArrive, sStop, tGo, sStop, 4])
+    t = tGo; s = sStop
+  }
+  const tEnd = t + (L.len - s) / v; legs.push([t, s, tEnd, L.len, legs.at(-1)?.[4] === 4 ? 1 : 0, false])
+  lap = { legs, T: tEnd, period: Math.ceil(tEnd / 24 + 0.5) * 24 }
+  L.laps.set(v, lap)
+  return lap
+}
+// a rider at room time t (ms): along its line (s), stopped or riding, hidden at the edges
+function slRider(L, R, t, o) {
+  const lap = slLap(L, R.v), off = Math.round(R.slot * lap.period / 24 / R.n) * 24
+  let u = (t / 1000 - off) % lap.period; if (u < 0) u += lap.period
+  o.hidden = u >= lap.T; if (o.hidden) return o
+  let lo = 0, hi = lap.legs.length - 1
+  while (hi > lo) { const m = (lo + hi + 1) >> 1; if (lap.legs[m][0] <= u) lo = m; else hi = m - 1 }
+  const g = lap.legs[lo], f = g[2] > g[0] ? Math.min(1, (u - g[0]) / (g[2] - g[0])) : 0
+  if (g[4] === 4) { o.s = g[1]; o.mode = 4; o.v = 0 }
+  else {
+    // ease out into a stop and in out of one: the same mean speed over the leg
+    const e = g[4] && g[5] ? f * f * (3 - 2 * f) : g[4] ? 1 - Math.cos(f * Math.PI / 2) : g[5] ? Math.sin(f * Math.PI / 2) : f
+    o.s = g[1] + (g[3] - g[1]) * e; o.mode = 3; o.v = R.v
+  }
+  // with the cars on the plan's motor lanes (traffic, card #4): moving +z keeps to x < c, moving +x keeps to z < c
+  const along = -L.A * L.dir + o.s * L.dir, lane = 8.3 * L.dir
+  if (L.axis === 'x') { o.x = along; o.z = L.c - lane; o.yaw = L.dir > 0 ? Math.PI / 2 : -Math.PI / 2 }
+  else { o.x = L.c - lane; o.z = along; o.yaw = L.dir > 0 ? 0 : Math.PI }
+  return o
+}
+
+// ---- records: what the host decides, played the same on every client. kind 1 knocked down, 2 panic (an area), 3 pigeons
+// scattered, 4 a driver out of a taken car, 5 got out of the way (one agent). Wire form: [kind, id, t, x, z, ...]
+const SL_REC = { knock: 1, panic: 2, scatter: 3, exit: 4, dodge: 5 }
+function slAddRec(a, local) {
+  const st = slState; if (!st) return null
+  const key = a[0] + ':' + a[1] + ':' + Math.round(a[2])
+  if (st.rec.has(key)) return null
+  const r = { key, kind: a[0], id: a[1], t: a[2], x: a[3], z: a[4], a, seq: ++st.recSeq }
+  if (r.kind === 1) { r.x1 = a[5]; r.z1 = a[6]; r.x2 = a[7]; r.z2 = a[8]; if (a.length > 9) r.bike = [a[9], a[10], a[11]] }
+  if (r.kind === 2) r.r = a[5]
+  if (r.kind === 4) { r.x1 = r.x; r.z1 = r.z; r.x2 = a[5]; r.z2 = a[6]; r.body = a[7] | 0; st.exits.set(key, { ag: { id: r.id, kind: SL_K.exit, body: r.body % 3, tint: [0.9, 0.9, 0.9], r } }) }
+  if (r.kind === 5) r.dir = a[5] < 0 ? -1 : 1
+  st.rec.set(key, r)
+  if (r.kind !== 2) { const L = st.byId.get(r.id) || st.byId.set(r.id, []).get(r.id); L.push(r); L.sort((p, q) => p.t - q.t) }
+  else st.panics.push(r)
+  if (!local) st.out.push({ r, n: 0 })
+  st.stats.records = st.rec.size
+  return r
+}
+function slPrune(t) {
+  const st = slState
+  for (const [k, r] of st.rec) if (t - r.t > STREET.keepMs) {
+    st.rec.delete(k); st.exits.delete(k)
+    if (r.kind === 2) st.panics.splice(st.panics.indexOf(r), 1)
+    else { const L = st.byId.get(r.id); if (L) { L.splice(L.indexOf(r), 1); if (!L.length) st.byId.delete(r.id) } }
+  }
+}
+// the record steering an agent at room time t, or null: its own (knock, dodge) or an area panic that caught it, the latest
+// begun and still running; a panic passes over anyone already reacting to an earlier record when it began
+function slRecFor(ag, t) {
+  const st = slState, back = STREET.backS * 1000
+  let best = null
+  const own = st.byId.get(ag.id)
+  if (own) for (const r of own) if (r.t <= t && t - r.t < back && (!best || r.t > best.t)) best = r
+  for (const p of st.panics) {
+    if (p.t > t || t - p.t >= back || best && best.t >= p.t || ag.kind === SL_K.cyclist || ag.kind === SL_K.exit) continue
+    const c = ag.pan?.get(p.key) ?? slCaught(ag, p)
+    if (c) best = p
+  }
+  return best
+}
+const slTmp = { x: 0, z: 0, yaw: 0, mode: 0, v: 0, s: 0, i: 0, u: 0 }
+function slCaught(ag, p) {
+  // where the agent was, by its own schedule, when the panic began; earlier records it was already in are respected
+  const own = slState.byId.get(ag.id), busy = own?.some(r => r.t < p.t && p.t - r.t < STREET.backS * 1000)
+  let hit = false
+  if (!busy) { const q = slAmbient(ag, p.t, slTmp); hit = Math.hypot(q.x - p.x, q.z - p.z) < p.r }
+  ;(ag.pan ||= new Map()).set(p.key, hit); if (ag.pan.size > 12) ag.pan.delete(ag.pan.keys().next().value)
+  return hit
+}
+// an agent's own schedule at t: on its route, or standing at its spot
+function slAmbient(ag, t, o) {
+  if (ag.route) return slEval(ag.route, t, o)
+  o.x = ag.x; o.z = ag.z; o.yaw = ag.yaw; o.mode = 1; o.v = 0; o.s = 0; return o
+}
+// the route an agent runs along when it panics: its own, or (standing) its lot's ring from the nearest point
+function slFleeStart(ag, at) {
+  const R = ag.route || ag.home
+  if (!R) return null
+  if (ag.route && ag._s0 !== undefined && ag._s0t === at.t) return [R, ag._s0]
+  let s0 = at.s
+  if (!ag.route) { // project the spot onto the ring
+    let best = 1e9; const K = R.keys
+    for (let i = 0; i + 1 < R.n; i++) { const ax = K[i * 5 + 1], az = K[i * 5 + 2], bx = K[i * 5 + 6], bz = K[i * 5 + 7], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1
+      const f = Math.max(0, Math.min(1, ((at.x - ax) * dx + (at.z - az) * dz) / L2)), d = Math.hypot(ax + dx * f - at.x, az + dz * f - at.z)
+      if (d < best) { best = d; s0 = R.cum[i] + Math.sqrt(L2) * f } }
+  }
+  return [R, s0]
+}
+// ---- an agent's pose at room time t, for drawing and for the host's tests: o gets x, z, y (lift), yaw, clip, ct (clip
+// time, s), scale (0 hidden), mode, v (m/s), down (on the ground), and the prop's state
+const SL_POSE = () => ({ x: 0, z: 0, y: 0, yaw: 0, clip: 'idle', ct: 0, scale: 1, mode: 0, v: 0, s: 0, i: 0, u: 0, down: false, rec: null, hidden: false, bike: null, prop: 0 })
+function slPose(ag, t, o) {
+  o.y = 0; o.scale = 1; o.down = false; o.hidden = false; o.rec = null; o.lieRoll = 0
+  const r = ag.kind === SL_K.exit ? ag.r : slRecFor(ag, t)
+  // the schedule's pose first (cyclists from their line)
+  if (ag.kind === SL_K.cyclist) slRider(ag.line, ag, t, o)
+  else if (ag.kind !== SL_K.exit) slAmbient(ag, t, o)
+  const amb = !r
+  if (r) { o.rec = r; slDetached(ag, r, t, o) }
+  else if (ag.kind !== SL_K.cyclist && ag.kind !== SL_K.exit) {
+    // coming back after a record ran out: grow in where the schedule has it
+    const own = slState.byId.get(ag.id), last = own?.at(-1), back = STREET.backS * 1000
+    const ended = last && t - last.t >= back && t - last.t < back + 400 ? (t - last.t - back) / 400 : 1
+    let pe = 1; for (const p of slState.panics) if (p.t <= t && t - p.t >= back && t - p.t < back + 400 && ag.pan?.get(p.key)) pe = Math.min(pe, (t - p.t - back) / 400)
+    o.scale = Math.min(ended, pe)
+  }
+  if (amb) slClip(ag, o, t)
+  return o
+}
+// the clip for a pose on schedule
+function slClip(ag, o, t) {
+  const H = ag.body >= 3 ? 1.66 : 1.78
+  switch (ag.kind) {
+    case SL_K.idle: o.clip = ag.clip; o.ct = t / 1000 + ag.ph * 3; break
+    case SL_K.cyclist: {
+      const crank = o.s / (STREET.bike.wheelR * 2.6)
+      o.crank = o.mode === 4 ? 1.5 * Math.PI + 0.5 : crank
+      o.clip = o.mode === 4 ? 'cyclestop' : 'cycle'; o.ct = o.mode === 4 ? t / 1000 : crank / (2 * Math.PI)
+      o.wheel = o.s / STREET.bike.wheelR; break }
+    case SL_K.pram: o.clip = o.mode === 1 ? 'pushidle' : 'push'; o.ct = o.mode === 1 ? t / 1000 : o.s / (0.57 * H); break
+    case SL_K.walker: o.clip = o.mode === 1 ? 'leash_idle' : 'leash_walk'; o.ct = o.mode === 1 ? t / 1000 : o.s / (0.57 * H); break
+    case SL_K.stray: o.clip = o.mode === 5 ? 'sniff' : o.mode === 6 ? 'sit' : 'walk'; o.ct = o.mode === 0 ? o.s / 0.95 : t / 1000; break
+    default: o.clip = o.mode === 1 ? 'idle' : 'walk'; o.ct = o.mode === 1 ? t / 1000 + (ag.id % 7) : o.s / (0.57 * H)
+  }
+}
+// the pose under a record
+function slDetached(ag, r, t, o) {
+  const tau = (t - r.t) / 1000, H = ag.body >= 3 ? 1.66 : 1.78, S = STREET
+  const dog = ag.kind === SL_K.stray
+  if (r.kind === 1 || r.kind === 4) {
+    const k0 = r.kind === 1 ? S.knockS : 0, k1 = k0 + (r.kind === 1 ? S.lieS : 0), k2 = k1 + (r.kind === 1 ? S.getupS : 0)
+    const face = Math.atan2(r.x - r.x1, r.z - r.z1)
+    if (r.kind === 1 && tau < k0) {
+      const u = tau / k0, e = 1 - (1 - u) * (1 - u)
+      o.x = r.x + (r.x1 - r.x) * e; o.z = r.z + (r.z1 - r.z) * e; o.y = Math.sin(Math.PI * u) * 0.45 + (ag.kind === SL_K.cyclist ? (1 - u) * 0.55 : 0)
+      o.yaw = face; o.clip = 'knockback'; o.ct = u * 0.8; o.down = true
+    } else if (tau < k1) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = 'death'; o.ct = 2.39; o.down = true }
+    else if (tau < k2) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = 'getup'; o.ct = tau - k1; o.down = true }
+    else {
+      const d = Math.hypot(r.x2 - r.x1, r.z2 - r.z1), run = (tau - k2) * S.run, f = d > 0.01 ? Math.min(1, run / d) : 1
+      o.x = r.x1 + (r.x2 - r.x1) * f; o.z = r.z1 + (r.z2 - r.z1) * f; o.yaw = Math.atan2(r.x2 - r.x1, r.z2 - r.z1)
+      o.clip = 'flee'; o.ct = run / (3.25 * H); o.v = S.run
+      const end = d / S.run
+      if (tau - k2 > end) { const g = (tau - k2 - end) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
+    }
+    if (ag.kind === SL_K.cyclist) { o.bikeDown = r.bike || [r.x1, r.z1, face]; o.wheel = 0 }
+    return
+  }
+  // a panic or a dodge: off along the route (away from the trouble), then gone into a doorway for a while
+  const at = slAmbient(ag, r.t, slTmp), fs = slFleeStart(ag, at)
+  if (!fs) { o.hidden = true; o.scale = 0; return }
+  const [R, s0] = fs
+  let dir = r.dir
+  if (r.kind === 2 || !dir) {
+    const p = slAlong(R, s0 + 2, { x: 0, z: 0, yaw: 0 }), m = slAlong(R, s0 - 2, { x: 0, z: 0, yaw: 0 })
+    dir = Math.hypot(p.x - r.x, p.z - r.z) >= Math.hypot(m.x - r.x, m.z - r.z) ? 1 : -1
+  }
+  // close to the trouble, a person first cowers where they stand, then runs
+  const cow = r.kind === 2 && !dog && ag.kind !== SL_K.pram && Math.hypot(at.x - r.x, at.z - r.z) < 6 ? 1.3 : 0
+  if (tau < cow) { const q = slAlong(R, s0, o); o.x = q.x; o.z = q.z; o.yaw = Math.atan2(r.x - o.x, r.z - o.z); o.clip = 'cower'; o.ct = tau; o.v = 0; o.s = 0; return }
+  const v = ag.kind === SL_K.pram ? 3 : dog ? 5.5 : S.run, run = Math.min(tau - cow, S.fleeS) * v
+  slAlong(R, s0 + dir * run, o); if (dir < 0) o.yaw = slWrap(o.yaw + Math.PI)
+  o.v = tau < S.fleeS ? v : 0
+  if (tau - cow > S.fleeS) { const g = (tau - cow - S.fleeS) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
+  o.s = run
+  if (ag.kind === SL_K.pram) { o.clip = 'push'; o.ct = run / (0.57 * H) * 0.55 }
+  else if (dog) { o.clip = 'run'; o.ct = run / 1.55 }
+  else if (ag.kind === SL_K.walker) { o.clip = 'flee'; o.ct = run / (3.25 * H) }
+  else { o.clip = 'flee'; o.ct = run / (3.25 * H) }
+}
+
+// ---- the host: what it tests, and the records it makes
+// people around a point at room time T, from their cells (3x3 around it) and from the cyclist lines near it
+function slAround(x, z, R, T, fn) {
+  const st = slState, S = st.S, A = S * 48, pose = slAroundPose
+  // the cells the box [x±R, z±R] (plus a knocked-down runner's reach) overlaps; an agent whose route stays outside the box
+  // is skipped unless a record has it off its route
+  const pad = 25, i0 = Math.max(0, Math.floor((x - R - pad + A) / 96)), i1 = Math.min(S - 1, Math.floor((x + R + pad + A) / 96))
+  const j0 = Math.max(0, Math.floor((z - R - pad + A) / 96)), j1 = Math.min(S - 1, Math.floor((z + R + pad + A) / 96))
+  for (let i = i0; i <= i1; i++)
+    for (let j = j0; j <= j1; j++) {
+      const cell = slCell(i, j)
+      for (const ag of cell.agents) {
+        const b = ag.box
+        if (b && (b[0] > x + R || b[2] < x - R || b[1] > z + R || b[3] < z - R) && !st.byId.has(ag.id)) continue
+        slPose(ag, T, pose); if (pose.hidden) continue
+        if (Math.abs(pose.x - x) < R && Math.abs(pose.z - z) < R) fn(ag, pose, cell)
+      }
+    }
+  for (const L of slLinesNear(x, z, R)) for (const ag of L.riders) {
+    ag.line = L; slPose(ag, T, pose); if (pose.hidden) continue
+    if (Math.abs(pose.x - x) < R && Math.abs(pose.z - z) < R) fn(ag, pose, null)
+  }
+  for (const r of st.exits.values()) { slPose(r.ag, T, pose); if (!pose.hidden && Math.abs(pose.x - x) < R && Math.abs(pose.z - z) < R) fn(r.ag, pose, null) }
+}
+const slAroundPose = SL_POSE()
+function slLinesNear(x, z, R) {
+  const st = slState, A = st.S * 48, out = []
+  for (let k = Math.ceil((x - R - 9) / 96); k * 96 <= x + R + 9; k++) { const c = k * 96; if (Math.abs(c) >= A) continue; out.push(slLine('z', c, 1), slLine('z', c, -1)) }
+  for (let k = Math.ceil((z - R - 9) / 96); k * 96 <= z + R + 9; k++) { const c = k * 96; if (Math.abs(c) >= A) continue; out.push(slLine('x', c, 1), slLine('x', c, -1)) }
+  return out
+}
+// a straight run from (x, z) toward (dx, dz) for up to d m, stopped short of any lot's building (its ring's inside)
+function slRunTo(x, z, dx, dz, d) {
+  const n = Math.hypot(dx, dz) || 1; dx /= n; dz /= n
+  const st = slState, A = st.S * 48
+  for (let k = 0; k <= d; k += 0.4) {
+    const px = x + dx * k, pz = z + dz * k
+    if (Math.abs(px) > A - 2 || Math.abs(pz) > A - 2) return [x + dx * Math.max(0, k - 0.4), z + dz * Math.max(0, k - 0.4)]
+    const cell = slCell(Math.floor((px + A) / 96), Math.floor((pz + A) / 96))
+    for (const g of cell.rings) if (slInside(g.r, px, pz, -0.9)) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
+  }
+  return [x + dx * d, z + dz * d]
+}
+const slR2 = v => Math.round(v * 100) / 100
+function slKnock(ag, p, ux, uz, power, by, T) {
+  if (!slKnockable(ag, p)) return slDodge(ag, p, ux, uz, T)
+  const n = Math.hypot(ux, uz) || 1, d = Math.max(1, Math.min(7, 0.8 + power))
+  const [x1, z1] = slRunTo(p.x, p.z, ux / n, uz / n, d)
+  // up, then away from whoever did it, into the nearest doorway
+  const [x2, z2] = slRunTo(x1, z1, ux / n + (slRnd(ag.id, T) - 0.5) * 0.8, uz / n + (slRnd(T, ag.id) - 0.5) * 0.8, 22)
+  const a = [SL_REC.knock, ag.id, Math.round(T), slR2(p.x), slR2(p.z), slR2(x1), slR2(z1), slR2(x2), slR2(z2)]
+  if (ag.kind === SL_K.cyclist) { const [bx, bz] = slRunTo(p.x, p.z, ux / n, uz / n, d * 0.6); a.push(slR2(bx), slR2(bz), slR2(p.yaw + (slRnd(ag.id) - 0.5))) }
+  slAddRec(a)
+  slPanic(p.x, p.z, T)
+  if (by && hooked['street.knock']) hookEmit('street.knock', { attacker: hookWho(by), kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: slR2(p.x), z: slR2(p.z) })
+}
+// mothers with prams and dogs aren't knocked down: they jump out of the way
+const slKnockable = (ag, p) => ag.kind !== SL_K.pram && ag.kind !== SL_K.stray && !(p.rec && (p.rec.kind === 1 && (p.down || p.rec.t > slNow() - 300)))
+function slDodge(ag, p, ux, uz, T) {
+  if (p.rec || ag.kind === SL_K.cyclist || ag.kind === SL_K.exit) return
+  // run along the route the way the push sent it
+  const fs = slFleeStart(ag, p); if (!fs) return
+  const q = slAlong(fs[0], fs[1] + 2, { x: 0, z: 0, yaw: 0 }), dir = (q.x - p.x) * ux + (q.z - p.z) * uz >= 0 ? 1 : -1
+  slAddRec([SL_REC.dodge, ag.id, Math.round(T), slR2(p.x), slR2(p.z), dir])
+}
+function slPanic(x, z, T, r = STREET.scareR) {
+  for (const p of slState.panics) if (Math.abs(p.t - T) < 3000 && Math.hypot(p.x - x, p.z - z) < 8) return
+  slAddRec([SL_REC.panic, 0, Math.round(T), slR2(x), slR2(z), r])
+  // and the pigeons nearby go up
+  slFlocksNear(x, z, r + 6, f => slScatter(f, x, z, T))
+}
+function slScatter(f, x, z, T) {
+  const own = slState.byId.get(f.id)?.at(-1)
+  if (own && T - own.t < 15000) return
+  slAddRec([SL_REC.scatter, f.id, Math.round(T), slR2(x), slR2(z)])
+}
+function slFlocksNear(x, z, R, fn) {
+  const st = slState, A = st.S * 48, ci = Math.floor((x + A) / 96), cj = Math.floor((z + A) / 96)
+  for (let i = Math.max(0, ci - 1); i <= Math.min(st.S - 1, ci + 1); i++) for (let j = Math.max(0, cj - 1); j <= Math.min(st.S - 1, cj + 1); j++)
+    for (const f of slCell(i, j).flocks) if (Math.hypot(f.x - x, f.z - z) < R + 1.5) fn(f)
+}
+// cells nobody has looked at for 30 s are rebuilt when next needed
+function slForget(st) {
+  const t = performance.now(); if (t - (st.forgotAt || 0) < 5000) return; st.forgotAt = t
+  for (const [k, c] of st.cells) if (t - c.used > 30000) st.cells.delete(k)
+}
+const slNow = () => isHost ? tickAt || now() : renderT
+// the host's tick: violence seen in the tick's tracers panics people, anyone close scatters pigeons, vehicles knock people down
+function slHostTick() {
+  const st = slState; if (!st || !isHost) return
+  const t0 = performance.now(), T = tickAt || now()
+  // the cinderblock in flight (every tick: it is fast): whoever it passes through goes down the way it flies
+  for (const c of players.values()) {
+    const g = c.chain
+    if (!g || g.phase !== 2 || !g.p) { c.slChainAt = null; continue }
+    const a = c.slChainAt || g.p, b = g.p, dx = b[0] - a[0], dz = b[2] - a[2], L = Math.hypot(dx, dz), sp = Math.hypot(...g.v)
+    c.slChainAt = g.p.slice()
+    if (b[1] > 2.6 || sp < 3) continue
+    slAround((a[0] + b[0]) / 2, (a[2] + b[2]) / 2, L / 2 + 1.5, T, (ag, p) => {
+      if (p.down || ag.kind === SL_K.exit && p.rec?.t > T - 500) return
+      const f = L > 1e-6 ? Math.max(0, Math.min(1, ((p.x - a[0]) * dx + (p.z - a[2]) * dz) / (L * L))) : 0
+      if (Math.hypot(a[0] + dx * f - p.x, a[2] + dz * f - p.z) < 0.75) slKnock(ag, p, g.v[0], g.v[2], sp * 0.22, c, T)
+    })
+  }
+  if ((st.tick = (st.tick || 0) + 1) % 3) return          // 20 Hz
+  slPrune(T); slForget(st)
+  // shots, punches, booms: each new tracer from someone is trouble at its start
+  for (const f of tracers) if (!st.tracerSeen.has(f)) { st.tracerSeen.add(f); if (Number.isFinite(f[0]) && Number.isFinite(f[2])) slPanic(f[0], f[2], T) }
+  for (const c of players.values()) {
+    if (c.dead > 0 || seatOf(c)) continue
+    slFlocksNear(c.x, c.z, STREET.pigeonR, f => slScatter(f, c.x, c.z, T))
+  }
+  const who = [...players.values()]
+  for (const o of objs) {
+    if (!o.V || !o.body) continue
+    const v = o.body.getLinearVelocity(), vx = v.x(), vz = v.z(), sp = Math.hypot(vx, vz)
+    if (sp < 1.5 || !who.some(c => Math.abs(c.x - o.x) < 120 && Math.abs(c.z - o.z) < 120)) continue
+    slFlocksNear(o.x, o.z, STREET.carR, f => slScatter(f, o.x, o.z, T))
+    const fx = vx / sp, fz = vz / sp, hl = (o.V.l || 4.8) / 2 + 0.3, hw = (o.V.w || 1.9) / 2 + 0.3
+    slAround(o.x, o.z, hl + 2, T, (ag, p) => {
+      if (p.down || ag.kind === SL_K.exit && p.rec?.t > T - 500) return
+      const dx = p.x - o.x, dz = p.z - o.z, al = dx * fx + dz * fz, ac = dx * -fz + dz * fx
+      if (Math.abs(al) > hl || Math.abs(ac) > hw) return
+      const side = ac >= 0 ? 1 : -1
+      slKnock(ag, p, fx + -fz * side * 0.6, fz + fx * side * 0.6, sp * 0.45, players.get(o.riders?.[0]), T)
+    })
+  }
+  st.stats.hostMs = st.stats.hostMs * 0.9 + (performance.now() - t0) * 0.1
+}
+// the engine's hit rules see people as targets: proxies within reach of a player's shot, where they are at the shot's view
+// time; strike() hands a proxy to slStruck instead of damaging it
+function slAim(shooter, list, viewT, G) {
+  if (!isHost || !slState || !shooter || shooter.bot || !LV.faust) return list
+  const T = viewT ?? (tickAt || now()), reach = Math.min(80, (G?.range ?? 3) * 1.6 + 2.5), add = []
+  slAround(shooter.x, shooter.z, reach, T, (ag, p) => {
+    if (p.down || p.scale < 0.5 || Math.hypot(p.x - shooter.x, p.z - shooter.z) > reach) return
+    const ride = ag.kind === SL_K.cyclist
+    add.push({ street: true, agent: ag, pose: { ...p }, id: -1000 - add.length, x: p.x, y: (ride ? 0.45 : 0) + 0.9 + p.y, z: p.z, r: ag.kind === SL_K.stray ? 0.35 : 0.3, h: ag.kind === SL_K.stray ? 0.05 : 0.6,
+      hp: 1e9, dead: 0, prot: 0, axis: AXIS_UP, grounded: true, cid: 0 })
+  })
+  return add.length ? list.concat(add) : list
+}
+function slStruck(c, h, G, ux, uy, uz) {
+  if (!isHost || !slState) return
+  const T = tickAt || now(), power = Math.max(1, (G?.knock ?? 6) * 0.35 + (G?.dmg ?? 10) * 0.03)
+  slKnock(h.agent, h.pose, ux, uz, power, c, T)
+}
+// what traffic brakes for: people and riders in the roadway near (x, z) (crossing, riding, running, knocked down)
+function slRoadList() {
+  const st = slState, T = slNow()
+  if (st.road && Math.abs(T - st.road.T) < 50) return st.road.list
+  const list = [], seen = new Set()
+  for (const c of players.values()) slAround(c.x, c.z, 160, T, (ag, p) => {
+    if (!(p.mode === 2 || ag.kind === SL_K.cyclist || p.rec) || p.hidden || seen.has(ag.id)) return
+    seen.add(ag.id)
+    list.push({ id: ag.id, x: p.x, y: p.y, z: p.z, radius: ag.kind === SL_K.cyclist ? 0.9 : ag.kind === SL_K.pram ? 0.8 : 0.45,
+      vx: Math.sin(p.yaw) * p.v, vz: Math.cos(p.yaw) * p.v, kind: ag.kind === SL_K.cyclist ? 'cyclist' : ag.kind === SL_K.pram ? 'pram' : ag.kind === SL_K.stray ? 'dog' : 'ped' })
+  })
+  st.road = { T, list }
+  return list
+}
+function slObstacles(x, z, R = 25) {
+  if (!slState || !LV.faust) return []
+  const list = slRoadList()
+  return x === undefined ? list : list.filter(o => Math.abs(o.x - x) < R && Math.abs(o.z - z) < R && Math.hypot(o.x - x, o.z - z) < R)
+}
+// a driver taken out of a car (traffic's carjack): a man who runs for the nearest doorway
+function slDriverExit({ vehicleId, x, z, dx = 1, dz = 0 } = {}) {
+  if (!isHost || !slState || !Number.isFinite(x) || !Number.isFinite(z)) return
+  const T = tickAt || now(), id = 0x200000 + (++slState.exitN % 4096)
+  const [x2, z2] = slRunTo(x, z, dx, dz, 24)
+  slAddRec([SL_REC.exit, id, Math.round(T), slR2(x), slR2(z), slR2(x2), slR2(z2), slHash(vehicleId | 0, T | 0) % 3])
+}
+// the wire: new records in the next few snapshots, and every live one every refreshMs (a late joiner, a lost packet)
+function slWireOut() {
+  const st = slState; if (!st || !isHost || !conns.size) return {}
+  const T = tickAt || now(), out = []
+  if (T - st.lastOut >= STREET.refreshMs) { st.lastOut = T; for (const r of st.rec.values()) if (T - r.t < STREET.backS * 1000 + 2000) out.push(r.a); st.out.length = 0 }
+  else { for (const e of st.out) out.push(e.r.a); for (const e of st.out) e.n++; st.out = st.out.filter(e => e.n < STREET.repeat) }
+  if (!out.length) return {}
+  st.stats.wireN += out.length; st.stats.bytesOut += JSON.stringify(out).length + 6
+  return { sl: out }
+}
+function slWireIn(d) {
+  if (isHost || !slState || !Array.isArray(d.sl) || d.sl.length > 400) return
+  for (const a of d.sl) if (Array.isArray(a) && a.length >= 5 && a.length <= 12 && a.every(Number.isFinite) && a[0] >= 1 && a[0] <= 5) slAddRec(a, true)
+}
+
+// ---- drawing: each model's clips baked into a bone texture (a 3x4 matrix per joint per frame, root space), skinned on the
+// GPU per instance, so each model and LOD is one instanced draw. Bikes and prams are rigid parts, instanced
+const SL_CLIPS = {
+  civ: [['idle', 15, 1], ['walk', 30, 1], ['phone', 15, 1], ['talk', 15, 1], ['arms_folded', 15, 1], ['knockback', 30, 0], ['getup', 30, 0], ['death', 20, 0],
+    ['flee', 30, 1], ['cower', 15, 1], ['leash_walk', 30, 1], ['leash_idle', 15, 1], ['cycle_', 30, 1], ['cyclestop_', 15, 1], ['push_', 30, 1], ['pushidle_', 15, 1]],
+  dog: [['idle', 15, 1], ['walk', 30, 1], ['run', 30, 1], ['sit', 15, 1], ['sniff', 15, 1], ['eat', 15, 1], ['flinch', 30, 0]],
+  pigeon: [['idle', 15, 1], ['peck', 30, 1], ['walk', 30, 1], ['fly', 30, 1], ['glide', 15, 1]],
+}
+let slKit = null, slKitJob = null
+const slHalf = v => THREE.DataUtils.toHalfFloat(v)
+function slSkinPatch(tex, blend) {
+  return shader => {
+    shader.uniforms.slAnim = { value: tex }
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <skinning_pars_vertex>', `uniform highp sampler2D slAnim;
+attribute vec4 slFrame;
+mat4 slBone(float i, float f) { int x = int(i) * 3, y = int(f);
+  vec4 a = texelFetch(slAnim, ivec2(x, y), 0), b = texelFetch(slAnim, ivec2(x + 1, y), 0), c = texelFetch(slAnim, ivec2(x + 2, y), 0);
+  return mat4(a.x, b.x, c.x, 0.0, a.y, b.y, c.y, 0.0, a.z, b.z, c.z, 0.0, a.w, b.w, c.w, 1.0); }
+mat4 slSkin(float f) { return slBone(skinIndex.x, f) * skinWeight.x + slBone(skinIndex.y, f) * skinWeight.y + slBone(skinIndex.z, f) * skinWeight.z + slBone(skinIndex.w, f) * skinWeight.w; }`)
+      .replace('#include <skinbase_vertex>', blend ? 'mat4 slM = slSkin(slFrame.x) * (1.0 - slFrame.z) + slSkin(slFrame.y) * slFrame.z;' : 'mat4 slM = slSkin(slFrame.x);')
+      .replace('#include <skinnormal_vertex>', 'objectNormal = (slM * vec4(objectNormal, 0.0)).xyz;')
+      .replace('#include <skinning_vertex>', 'transformed = (slM * vec4(transformed, 1.0)).xyz;')
+  }
+}
+// one skinned model: its LODs as instanced meshes over one baked texture; clips: Map(name -> { row, n, dur, loop })
+function* slSkinnedSteps(g, clipSrc, want, cap, tag, out) {
+  const root = cloneSkinned(g.scene); root.updateMatrixWorld(true)
+  const lods = rigLods(root).filter(Boolean); if (!lods.length) lods.push(root.getObjectByProperty('isSkinnedMesh', true))
+  const m0 = lods[0], skel = m0.skeleton, nb = skel.bones.length, W = nb * 3, mixer = new THREE.AnimationMixer(root)
+  const list = want.map(([name, fps, loop]) => { const nm = name.endsWith('_') ? name + tag : name, c = clipSrc.find(c => c.name === nm)
+    return c && { name: name.replace(/_$/, ''), c, fps, loop, n: Math.max(2, Math.round(c.duration * fps) + (loop ? 0 : 1)) } }).filter(Boolean)
+  const rows = list.reduce((s, l) => s + l.n, 0), data = new Uint16Array(W * rows * 4), M = new THREE.Matrix4()
+  const B = m0.bindMatrix, Bi = m0.bindMatrixInverse, MW = m0.matrixWorld.clone(), clips = new Map()
+  let row = 0
+  for (const l of list) {
+    mixer.stopAllAction(); const act = mixer.clipAction(l.c); act.play()
+    clips.set(l.name, { row, n: l.n, dur: l.c.duration, loop: !!l.loop })
+    for (let f = 0; f < l.n; f++) {
+      act.time = l.loop ? f / l.n * l.c.duration : f / (l.n - 1) * l.c.duration; mixer.update(0)
+      root.updateMatrixWorld(true); skel.update()
+      for (let b = 0; b < nb; b++) {
+        M.fromArray(skel.boneMatrices, b * 16).premultiply(Bi).premultiply(MW)          // metres: the vertices are moved into bind space below
+        const e = M.elements, o = (row * W + b * 3) * 4
+        for (let k = 0; k < 3; k++) { data[o + k * 4] = slHalf(e[k]); data[o + k * 4 + 1] = slHalf(e[k + 4]); data[o + k * 4 + 2] = slHalf(e[k + 8]); data[o + k * 4 + 3] = slHalf(e[k + 12]) }
+      }
+      row++
+      if (f % 4 === 3) yield                     // a few poses a step: the loader spends 4 ms a frame, a whole clip took 10-50
+    }
+    yield
+  }
+  const tex = new THREE.DataTexture(data, W, rows, THREE.RGBAFormat, THREE.HalfFloatType); tex.needsUpdate = true
+  const ims = []
+  for (const [k, m] of lods.entries()) {
+    yield
+    const geo = m.geometry.clone()
+    // gltfpack stores each LOD's positions as integers, its dequantizing scale in the mesh's bind matrix: positions and normals
+    // as floats, moved by the LOD's own bind matrix into bind space (metres), where every LOD and the baked bones meet
+    for (const name of ['position', 'normal']) { const a = geo.attributes[name]; if (!a || a.array instanceof Float32Array && !a.normalized) continue
+      const f = new Float32Array(a.count * 3); for (let i = 0; i < a.count; i++) { f[i * 3] = a.getX(i); f[i * 3 + 1] = a.getY(i); f[i * 3 + 2] = a.getZ(i) }
+      geo.setAttribute(name, new THREE.BufferAttribute(f, 3)) }
+    geo.applyMatrix4(m.bindMatrix)
+    for (const name of Object.keys(geo.attributes)) if (!['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'color'].includes(name)) geo.deleteAttribute(name)
+    const frame = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4); frame.setUsage(THREE.DynamicDrawUsage); geo.setAttribute('slFrame', frame)
+    const mat = m.material.clone(), blend = k === 0
+    mat.defines = { ...mat.defines, USE_SKINNING: '' }; mat.onBeforeCompile = slSkinPatch(tex, blend); mat.customProgramCacheKey = () => 'sl-skin' + (blend ? '-b' : '')
+    const im = new THREE.InstancedMesh(geo, mat, cap); im.count = 0; im.frustumCulled = false; im.castShadow = k === 0; im.receiveShadow = true
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.setColorAt(0, new THREE.Color(1, 1, 1)); im.instanceColor.setUsage(THREE.DynamicDrawUsage)
+    if (k === 0) { const dm = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }); dm.defines = { USE_SKINNING: '' }; dm.onBeforeCompile = slSkinPatch(tex, false); dm.customProgramCacheKey = () => 'sl-skin-depth'; im.customDepthMaterial = dm }
+    im.userData.frame = frame; im.userData.tris = (geo.index ? geo.index.count : geo.attributes.position.count) / 3
+    const nm = new THREE.MeshNormalMaterial({ toneMapped: false }); nm.defines = { USE_SKINNING: '' }; nm.onBeforeCompile = slSkinPatch(tex, blend)
+    nm.customProgramCacheKey = () => 'sl-skin-normal' + (blend ? '-b' : ''); im.userData.normalMaterial = nm          // Ink's normals pass (below)
+    ims.push(im)
+  }
+  let footY = 0
+  const idle = list.find(l => l.name === 'idle')
+  if (idle) { mixer.stopAllAction(); const a = mixer.clipAction(idle.c); a.play(); a.time = 0; mixer.update(0); root.updateMatrixWorld(true); const b = yield* boundsSteps(root); if (b && Number.isFinite(b.minY)) footY = b.minY }
+  mixer.stopAllAction(); mixer.uncacheRoot(root)
+  for (const [k, C] of clips) C.abs = /^cycle/.test(k)
+  Object.assign(out, { tex, clips, ims, nb, rows, footY })
+}
+// a rigid part from a prop's GLB: its mesh in the named node's frame (gltfpack moves a mesh under an unnamed child)
+function slPart(g, name, cap, metal) {
+  const node = g.scene.getObjectByName(name); if (!node) return null
+  node.updateMatrixWorld(true)
+  const mesh = node.isMesh ? node : node.children.find(c => c.isMesh); if (!mesh) return null
+  // gltfpack's integer positions are dequantized by the mesh node's transform: floats first, then that transform (the named
+  // node keeps the part's place in the prop; a mesh on the named node itself carries both, so its place is taken off)
+  const geo = mesh.geometry.clone()
+  for (const nm of ['position', 'normal']) { const a = geo.attributes[nm]; if (!a || a.array instanceof Float32Array && !a.normalized) continue
+    const f = new Float32Array(a.count * 3); for (let i = 0; i < a.count; i++) { f[i * 3] = a.getX(i); f[i * 3 + 1] = a.getY(i); f[i * 3 + 2] = a.getZ(i) }
+    geo.setAttribute(nm, new THREE.BufferAttribute(f, 3)) }
+  if (mesh !== node) geo.applyMatrix4(mesh.matrix)
+  else { geo.applyMatrix4(node.matrix); geo.translate(-node.position.x, -node.position.y, -node.position.z) }
+  const mat = mesh.material.clone()
+  if (metal) Object.assign(mat, { envMap: chrome().envMap, envMapIntensity: 0.55 })
+  const im = new THREE.InstancedMesh(geo, mat, cap); im.count = 0; im.frustumCulled = false; im.castShadow = !name.includes('lod1'); im.receiveShadow = true
+  im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.userData.tris = (geo.index ? geo.index.count : geo.attributes.position.count) / 3
+  im.userData.at = node.getWorldPosition(new THREE.Vector3())
+  return im
+}
+function slLoadKit() {
+  if (slKitJob || renderHeadless || serving || !scene) return
+  slKitJob = { steps: null, failed: false }
+  rigLoader()
+  const files = [RIG_FILES.anims, STREET_FILES.anims, ...STREET.bodies.map(b => RIG_FILES[b]), STREET_FILES.bike, STREET_FILES.pram, STREET_FILES.dog, STREET_FILES.pigeon]
+  Promise.all(files.map(f => rigFetch(f))).then(gs => { slKitJob.steps = slKitSteps(gs) })
+    .catch(e => { slKitJob.failed = true; console.warn('street life: its models did not load, it stays empty:', e && e.message) })
+}
+function* slKitSteps([anims, street, ...rest]) {
+  const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon] = rest.slice(STREET.bodies.length)
+  const root = new THREE.Group(); root.name = 'street life'
+  const kit = { root, bodies: [], parts: {} }
+  const clips = [...anims.animations, ...street.animations]
+  for (const [i, g] of bodies.entries()) {
+    const b = {}; yield* slSkinnedSteps(g, clips, SL_CLIPS.civ, i < 3 ? 60 : 40, STREET.bodies[i].replace('civ_', ''), b)
+    kit.bodies.push(b); for (const im of b.ims) root.add(im)
+  }
+  kit.dog = {}; yield* slSkinnedSteps(dog, dog.animations, SL_CLIPS.dog, 24, '', kit.dog); for (const im of kit.dog.ims) root.add(im)
+  kit.pigeon = {}; yield* slSkinnedSteps(pigeon, pigeon.animations, SL_CLIPS.pigeon, 320, '', kit.pigeon); for (const im of kit.pigeon.ims) root.add(im)
+  for (const [name, cap] of [['bike_frame', 40], ['bike_wheel', 80], ['bike_crank', 40], ['bike_pedal', 80], ['pram_body', 24], ['pram_wheel_f', 48], ['pram_wheel_r', 48]])
+    for (const lod of ['', '_lod1']) { const im = slPart(name.startsWith('bike') ? bike : pram, name + lod, cap, true); if (im) { kit.parts[name + lod] = im; root.add(im) } }
+  const lg = new THREE.BufferGeometry(), lp = new THREE.BufferAttribute(new Float32Array(48 * 8 * 3), 3); lp.setUsage(THREE.DynamicDrawUsage); lg.setAttribute('position', lp)
+  kit.leash = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x2b2118 })); kit.leash.frustumCulled = false; root.add(kit.leash)
+  if (activeLook === 'ink' && typeof inkPrepare === 'function') inkPrepare(root)          // Ink patches on first sight: compile that
+  if (renderer?.compileAsync) {
+    // one material a frame: without parallel compiling (a software renderer) all at once stalled one frame 5 s here; meshes
+    // that share a program compile it once
+    const seen = new Set()
+    for (const o of root.children) {
+      if (!o.material || seen.has(o.material)) continue
+      seen.add(o.material); let ready = false
+      yield; renderer.compileAsync(o, camera, scene).then(() => { ready = true }, () => { ready = true })
+      while (!ready) yield 'wait'
+    }
+  }
+  scene.add(root); slKit = kit
+}
+// ---- the frame: everyone near the camera, posed at the room clock, into the instance buffers
+const slM4 = new THREE.Matrix4(), slQ = new THREE.Quaternion(), slV = new THREE.Vector3(), slS = new THREE.Vector3(), slE = new THREE.Euler(), slCol = new THREE.Color()
+const slFrus = new THREE.Frustum(), slPM = new THREE.Matrix4(), slSph = new THREE.Sphere()
+const slPoseA = SL_POSE(), slPoseB = SL_POSE()
+function slSet(im, x, y, z, yaw, s, roll = 0, pitch = 0) {
+  const i = im.count; if (i >= im.instanceMatrix.count) return -1
+  slE.set(pitch, yaw, roll, 'YXZ'); slQ.setFromEuler(slE); slV.set(x, y, z); slS.set(s, s, s); slM4.compose(slV, slQ, slS)
+  slM4.toArray(im.instanceMatrix.array, i * 16); im.count++
+  return i
+}
+// the clip time to frames: [frame A, frame B, blend]
+function slFrameOf(kitm, name, ct, out, i) {
+  const C = kitm.clips.get(name) || kitm.clips.get('idle') || kitm.clips.values().next().value
+  let u = ct / C.dur; u = C.loop ? u - Math.floor(u) : Math.min(1, Math.max(0, u))
+  const f = u * (C.loop ? C.n : C.n - 1), a = Math.floor(f), b = C.loop ? (a + 1) % C.n : Math.min(C.n - 1, a + 1)
+  out.array[i * 4] = C.row + Math.min(a, C.n - 1); out.array[i * 4 + 1] = C.row + b; out.array[i * 4 + 2] = f - a; out.array[i * 4 + 3] = 0
+}
+function slDrawSkinned(kitm, p, d, tint, scale = 1) {
+  const L = STREET.qualityLod[settings.quality] || STREET.lod, k = d < L[0] ? 0 : d < L[1] ? 1 : 2, im = kitm.ims[Math.min(k, kitm.ims.length - 1)]
+  const C = kitm.clips.get(p.clip), lift = C?.abs ? 0 : -(kitm.footY || 0) * p.scale * scale
+  const i = slSet(im, p.x, p.y + lift, p.z, p.yaw, p.scale * scale, p.roll || 0, p.pitch || 0); if (i < 0) return
+  slFrameOf(kitm, p.clip, p.ct, im.userData.frame, i)
+  if (tint) im.setColorAt(i, slCol.setRGB(tint[0], tint[1], tint[2]))
+}
+function slFrame(t, dt) {
+  if (!LV.faust || !faustState || renderHeadless) return
+  if (!slState || slState.seed !== faustState.seed || slState.S !== faustState.S) slReset()
+  const st = slState, t0 = performance.now(); st.frame++
+  if (!slKit) {
+    slLoadKit()
+    if (slKitJob?.steps) { const end = performance.now() + 4; while (performance.now() < end) { const r = slKitJob.steps.next(); if (r.done) { slKitJob.steps = null; break } if (r.value === 'wait') break } }
+    return
+  }
+  const T = isHost ? now() : renderT, kit = slKit, cam = camera
+  if (st.view) { cam.position.set(...st.view.p); cam.lookAt(...st.view.t) }          // debug: a free camera (streetLife.view)
+  cam.updateMatrixWorld(); slPM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); slFrus.setFromProjectionMatrix(slPM)
+  for (const c of kit.root.children) if (c.isInstancedMesh) c.count = 0
+  const qn = STREET.quality[settings.quality] ?? 1, qd = STREET.qualityDraw[settings.quality] ?? 1, D = Object.fromEntries(Object.entries(STREET.draw).map(([k, v]) => [k, v * qd]))
+  const cx = cam.position.x, cz = cam.position.z, A = st.S * 48, seen = (x, y, z, r) => slFrus.intersectsSphere(slSph.set(slV.set(x, y, z), r))
+  const near = (x, z, R) => Math.abs(x - cx) < R && Math.abs(z - cz) < R && Math.hypot(x - cx, z - cz) < R
+  // nudge: people step a little aside from the players and vehicles drawn near them (cosmetic, every client its own)
+  const pushers = []
+  for (const c of players.values()) pushers.push([c.x, c.z, 1.1])
+  for (const o of objs) if (o.V) pushers.push([o.x, o.z, 2.6])
+  let ln = 0; const lp = kit.leash.geometry.attributes.position.array
+  const ci0 = Math.floor((cx + A) / 96), cj0 = Math.floor((cz + A) / 96), m = Math.ceil(D.ped / 96)
+  let people = 0
+  for (let i = Math.max(0, ci0 - m); i <= Math.min(st.S - 1, ci0 + m); i++) for (let j = Math.max(0, cj0 - m); j <= Math.min(st.S - 1, cj0 + m); j++) {
+    const X = (i - st.S / 2) * 96 + 48, Z = (j - st.S / 2) * 96 + 48
+    if (!near(X, Z, D.ped + 70) || !seen(X, 10, Z, 80)) continue
+    const cell = slCell(i, j)
+    for (const ag of cell.agents) {
+      if (ag.rank >= qn && !st.byId.has(ag.id)) continue          // thinned by the quality setting (never someone a record is about)
+      const p = slPose(ag, T, slPoseA)
+      if (p.hidden || p.scale <= 0.01 || !near(p.x, p.z, D.ped) || !seen(p.x, 1, p.z, 2.2)) continue
+      for (const [px, pz, r] of pushers) { const dx = p.x - px, dz = p.z - pz, d2 = dx * dx + dz * dz; if (d2 < r * r && d2 > 1e-6 && !p.down) { const d = Math.sqrt(d2), k = (r - d) / d * 0.6; p.x += dx * k; p.z += dz * k } }
+      const d = Math.hypot(p.x - cx, p.z - cz)
+      if (ag.kind === SL_K.stray) { if (d < D.dog) slDrawSkinned(kit.dog, p, d, ag.tint, 0.95); continue }
+      slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++
+      if (ag.kind === SL_K.pram && d < D.pram) {
+        const lod = d < 18 ? '' : '_lod1', s = p.scale, f = STREET.pramBack, x = p.x + Math.sin(p.yaw) * f * s, z = p.z + Math.cos(p.yaw) * f * s
+        slSet(kit.parts['pram_body' + lod], x, 0, z, p.yaw, s)
+        const roll = (p.s || 0) / 0.215, roll2 = (p.s || 0) / 0.255
+        for (const [nm, ax, r, rr] of [['pram_wheel_f', 0.335, 0.215, roll], ['pram_wheel_r', -0.335, 0.255, roll2]]) for (const side of [-1, 1]) {
+          const ox = side * 0.285, wx = x + Math.cos(p.yaw) * ox + Math.sin(p.yaw) * ax, wz = z - Math.sin(p.yaw) * ox + Math.cos(p.yaw) * ax
+          slSet(kit.parts[nm + lod], wx, r * s, wz, p.yaw + (side < 0 ? Math.PI : 0), s, 0, side < 0 ? -rr : rr)
+        }
+      }
+      if (ag.kind === SL_K.walker && d < D.dog) {
+        // the dog on its lead: at the owner's right, a little ahead, wandering; it sits when the owner stands
+        const w = Math.sin(T / 1300 + ag.id) * 0.25, dy = p.yaw + Math.sin(T / 2100 + ag.id * 1.7) * 0.3
+        const q = slPoseB; Object.assign(q, { x: p.x + Math.cos(p.yaw) * (-0.6 + w) + Math.sin(p.yaw) * 0.9, z: p.z - Math.sin(p.yaw) * (-0.6 + w) + Math.cos(p.yaw) * 0.9, y: 0, yaw: dy, scale: p.scale, roll: 0, pitch: 0 })
+        q.clip = p.rec ? 'run' : p.clip === 'leash_idle' ? 'sit' : 'walk'; q.ct = q.clip === 'sit' ? T / 1000 : (p.s || 0) / (q.clip === 'run' ? 1.55 : 0.95)
+        slDrawSkinned(kit.dog, q, d, ag.tint || [0.95, 0.9, 0.85], 0.9)
+        if (d < 30 && ln < 47 && !p.rec) {
+          const hx = p.x + Math.cos(p.yaw) * -0.24 + Math.sin(p.yaw) * 0.22, hz = p.z - Math.sin(p.yaw) * -0.24 + Math.cos(p.yaw) * 0.22, hy = 0.84
+          const cx_ = q.x + Math.sin(dy) * 0.2, cz_ = q.z + Math.cos(dy) * 0.2, cy = 0.4 * 0.9
+          for (let s_ = 0; s_ < 4; s_++) {
+            const a = s_ / 4, b = (s_ + 1) / 4, sag = u => -0.12 * Math.sin(Math.PI * u), o = ln * 24 + s_ * 6
+            lp[o] = hx + (cx_ - hx) * a; lp[o + 1] = hy + (cy - hy) * a + sag(a); lp[o + 2] = hz + (cz_ - hz) * a
+            lp[o + 3] = hx + (cx_ - hx) * b; lp[o + 4] = hy + (cy - hy) * b + sag(b); lp[o + 5] = hz + (cz_ - hz) * b
+          }
+          ln++
+        }
+      }
+    }
+    for (const f of cell.flocks) if (near(f.x, f.z, D.pigeon) && seen(f.x, 2, f.z, 25)) slDrawFlock(kit, f, T, Math.hypot(f.x - cx, f.z - cz))
+  }
+  // cyclists
+  for (const L of slLinesNear(cx, cz, D.bike)) for (const ag of L.riders) {
+    if (slRnd(ag.id, 77) >= qn && !st.byId.has(ag.id)) continue
+    ag.line = L; const p = slPose(ag, T, slPoseA); p.bikeDown = p.rec?.kind === 1 ? p.bikeDown : null
+    if (p.bikeDown) { const [bx, bz, by] = p.bikeDown, d = Math.hypot(bx - cx, bz - cz)
+      if (near(bx, bz, D.bike) && seen(bx, 0.4, bz, 1.6)) slBikeDown(kit, d < 16 ? '' : '_lod1', bx, bz, by) }
+    if (p.hidden || !near(p.x, p.z, D.bike) || !seen(p.x, 1, p.z, 2.4)) continue
+    const d = Math.hypot(p.x - cx, p.z - cz), lod = d < 16 ? '' : '_lod1'
+    if (!p.bikeDown) slBike(kit, lod, p)
+    if (!p.hidden && p.scale > 0.01) { if (!p.rec) p.y = 0; slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++ }
+  }
+  // drivers out of taken cars
+  for (const { ag } of st.exits.values()) {
+    const p = slPose(ag, T, slPoseA); if (!p.hidden && near(p.x, p.z, D.ped)) slDrawSkinned(kit.bodies[ag.body], p, Math.hypot(p.x - cx, p.z - cz), ag.tint)
+  }
+  if (st.lineup) slDrawLineup(kit, st.lineup, T, cx, cz)
+  // overhead flocks: six circling the city, seen from the street
+  slDrawSky(kit, T, cx, cz)
+  kit.leash.geometry.setDrawRange(0, ln * 8); kit.leash.geometry.attributes.position.needsUpdate = true
+  for (const c of kit.root.children) if (c.isInstancedMesh) { c.instanceMatrix.needsUpdate = true; if (c.instanceColor) c.instanceColor.needsUpdate = true; if (c.userData.frame) c.userData.frame.needsUpdate = true
+    if (c.instanceMatrix.clearUpdateRanges) { c.instanceMatrix.clearUpdateRanges(); c.instanceMatrix.addUpdateRange(0, c.count * 16) } }
+  slForget(st)
+  if (!isHost) slPrune(T)
+  st.stats.people = people; st.stats.frameMs = st.stats.frameMs * 0.9 + (performance.now() - t0) * 0.1
+}
+function slBike(kit, lod, p) {
+  const yaw = p.yaw, s = p.scale, c = Math.cos(yaw), sn = Math.sin(yaw), at = (ax, ay, az) => [p.x + c * ax + sn * az, ay, p.z - sn * ax + c * az]
+  slSet(kit.parts['bike_frame' + lod], p.x, 0, p.z, yaw, s)
+  const wheel = p.wheel || 0, crank = p.crank || 0, B = STREET.bike
+  for (const az of B.axles) { const [x, y, z] = at(0, 0.35, az); slSet(kit.parts['bike_wheel' + lod], x, y, z, yaw, s, 0, wheel) }
+  { const [x, y, z] = at(0, B.bb[1], B.bb[2]); slSet(kit.parts['bike_crank' + lod], x, y, z, yaw, s, 0, crank) }
+  for (const side of [1, -1]) {
+    const a = side > 0 ? crank : crank + Math.PI, px = side > 0 ? -B.pedalOut : B.pedalOut
+    const [x, y, z] = at(px, B.bb[1] - Math.cos(a) * B.crank, B.bb[2] - Math.sin(a) * B.crank)
+    slSet(kit.parts['bike_pedal' + lod], x, y, z, yaw, s)
+  }
+}
+// a knocked-down bike where it slid: every part, rolled a quarter turn onto its side
+function slBikeDown(kit, lod, bx, bz, yaw) {
+  const c = Math.cos(yaw), sn = Math.sin(yaw), B = STREET.bike, R = Math.PI / 2
+  const at = (ax, ay, az) => [bx - c * ay + sn * az, 0.3 + ax, bz + sn * ay + c * az]          // (ax, ay, az) rolled, turned, placed
+  slSet(kit.parts['bike_frame' + lod], bx, 0.3, bz, yaw, 1, R)
+  for (const az of B.axles) { const [x, y, z] = at(0, 0.35, az); slSet(kit.parts['bike_wheel' + lod], x, y, z, yaw, 1, R) }
+  { const [x, y, z] = at(0, B.bb[1], B.bb[2]); slSet(kit.parts['bike_crank' + lod], x, y, z, yaw, 1, R) }
+  for (const side of [1, -1]) { const [x, y, z] = at(side > 0 ? -B.pedalOut : B.pedalOut, B.bb[1] - side * B.crank, B.bb[2]); slSet(kit.parts['bike_pedal' + lod], x, y, z, yaw, 1, R) }
+}
+// a ground flock: pecking, looking about, a few steps; after a scatter, up and round and back down
+function slDrawFlock(kit, f, T, d) {
+  const sc = slState.byId.get(f.id)?.findLast?.(r => r.t <= T && T - r.t < 40000)
+  const q = slPoseB; q.scale = 1; q.roll = 0
+  for (const [i, b] of f.birds.entries()) {
+    const ph = T / 1000 + b.ph, wob = Math.sin(ph * b.w * 6)
+    let x = f.x + Math.cos(b.a + 0.3 * Math.sin(ph * b.w)) * b.r, z = f.z + Math.sin(b.a + 0.3 * Math.sin(ph * b.w)) * b.r, y = 0
+    let yaw = b.a + ph * 0.3 + wob * 0.8, clip = (Math.floor(ph / 3) + i) % 3 === 0 ? 'walk' : (Math.floor(ph / 2.3) + i) % 2 ? 'peck' : 'idle', ct = ph, pitch = 0
+    if (sc) {
+      const tau = (T - sc.t) / 1000 - (i % 5) * 0.06, away = Math.atan2(x - sc.x, z - sc.z) + (slRnd(f.id, i) - 0.5) * 1.2
+      if (tau > 0 && tau < b.back + 4) {
+        const up = Math.min(1, tau / 1.4), cr = 9 + (i % 4) * 2.5, w = 0.45 + (i % 3) * 0.08
+        const ox = Math.sin(away) * 14, oz = Math.cos(away) * 14
+        const ang = away + Math.PI + tau * w * (i % 2 ? 1 : -1)
+        let fx = f.x + ox + Math.sin(ang) * cr * up, fz = f.z + oz + Math.cos(ang) * cr * up, fy = (3 + (i % 5) * 1.6) * up + (1 - up) * tau * 3
+        const land = Math.max(0, Math.min(1, (tau - b.back) / 4))
+        x = x + (fx - x) * (1 - land) * Math.min(1, tau * 2); z = z + (fz - z) * (1 - land) * Math.min(1, tau * 2); y = Math.max(0, fy * (1 - land))
+        yaw = ang + (i % 2 ? Math.PI / 2 : -Math.PI / 2); pitch = up < 1 ? -0.5 : 0
+        clip = land > 0.3 || (Math.floor(tau / 2.5) + i) % 3 === 2 ? 'glide' : 'fly'; ct = tau * 1.1
+      }
+    }
+    q.x = x; q.y = y; q.z = z; q.yaw = yaw; q.clip = clip; q.ct = ct; q.pitch = pitch
+    slDrawSkinned(kit.pigeon, q, d + y, null, b.s)
+  }
+}
+const SL_SKY = 6
+function slDrawSky(kit, T, cx, cz) {
+  const st = slState, q = slPoseB, A = st.S * 48
+  q.scale = 1; q.roll = 0; q.pitch = 0
+  for (let k = 0; k < SL_SKY; k++) {
+    const r = 150 + slRnd(st.seed, k, 1) * 250, w = (slRnd(st.seed, k, 2) < 0.5 ? 1 : -1) * 13 / r, ph = slRnd(st.seed, k, 3) * 6.283
+    const ox = (slRnd(st.seed, k, 4) - 0.5) * A * 1.2, oz = (slRnd(st.seed, k, 5) - 0.5) * A * 1.2, alt = 40 + slRnd(st.seed, k, 6) * 35
+    const a = ph + T / 1000 * w, fx = ox + Math.cos(a) * r, fz = oz + Math.sin(a) * r
+    if (Math.hypot(fx - cx, fz - cz) > STREET.draw.flock) continue
+    const head = Math.atan2(-Math.sin(a) * w, Math.cos(a) * w), n = 14 + (slHash(st.seed, k) % 12)
+    for (let i = 0; i < n; i++) {
+      const u = slRnd(k, i, 1), v = slRnd(k, i, 2), t = T / 1000
+      q.x = fx + (u - 0.5) * 16 + Math.sin(t * 0.7 + i) * 1.5; q.z = fz + (v - 0.5) * 16 + Math.cos(t * 0.6 + i * 1.3) * 1.5; q.y = alt + Math.sin(t * 0.9 + i * 0.7) * 2.5
+      q.yaw = head; q.clip = (Math.floor(t / 1.7 + u * 3)) % 3 === 0 ? 'glide' : 'fly'; q.ct = t * 1.15 + i * 0.13
+      slDrawSkinned(kit.pigeon, q, 99, null, 1.1)
+    }
+  }
+}
+// every model in a row across a point, facing `yaw`, turning slowly if spin: the five bodies walking, a cyclist, a mother with
+// her pram, a dog, pigeons (debug and tests)
+function slDrawLineup(kit, L, T, cx, cz) {
+  const q = slPoseB, ux = Math.cos(L.yaw), uz = -Math.sin(L.yaw), t = (T - L.T0) / 1000, at = k => [L.x + ux * (k - 4) * 1.7, L.z + uz * (k - 4) * 1.7]
+  const yaw = L.yaw + (L.spin ? t * L.spin : 0); Object.assign(q, { y: 0, scale: 1, roll: 0, pitch: 0, yaw })
+  for (let b = 0; b < 5; b++) { const [x, z] = at(b); Object.assign(q, { x, z, clip: L.clip || 'walk', ct: t }); slDrawSkinned(kit.bodies[b], q, Math.hypot(x - cx, z - cz), [1, 1, 1]) }
+  { const [x, z] = at(5.3); const p = { ...q, x, z, mode: 3, s: t * 4.5, crank: t * 4.5 / (STREET.bike.wheelR * 2.6), wheel: t * 4.5 / STREET.bike.wheelR, clip: 'cycle', ct: t * 4.5 / (STREET.bike.wheelR * 2.6) / (2 * Math.PI) }
+    slBike(kit, '', p); slDrawSkinned(kit.bodies[0], p, Math.hypot(x - cx, z - cz), [1, 1, 1]) }
+  { const [x, z] = at(7); const p = { ...q, x, z, clip: 'push', ct: t * 1.05 / 0.95, s: t * 1.05 }
+    slDrawSkinned(kit.bodies[3], p, Math.hypot(x - cx, z - cz), [1, 1, 1])
+    slSet(kit.parts.pram_body, x + Math.sin(yaw) * STREET.pramBack, 0, z + Math.cos(yaw) * STREET.pramBack, yaw, 1) }
+  { const [x, z] = at(8.6); slDrawSkinned(kit.dog, { ...q, x, z, clip: L.dog || 'walk', ct: t }, Math.hypot(x - cx, z - cz), null, 0.95) }
+  for (let i = 0; i < 3; i++) { const [x, z] = at(9.4 + i * 0.4); slDrawSkinned(kit.pigeon, { ...q, x, z, clip: ['idle', 'peck', 'walk'][i], ct: t }, 0, null, 1) }
+}
+function slFrameSafe(t, dt) { try { slFrame(t, dt) } catch (e) { frameFailed('street', e) } }
+
+// ---- hooks into the engine and the game
+{
+  if (typeof inkNormals === 'function') {
+    // Ink's separate normals pass (card #27: High on desktop) draws the scene under one override material, which knows
+    // nothing of the crowd's GPU skinning and would draw everyone in bind pose. The crowd sits that pass out, then draws
+    // its own normals (the same packing, skinned as shaded) into the same target over the same depth.
+    const inkNormalsBase = inkNormals
+    inkNormals = function (render, s, cam, post) {
+      const kids = slKit ? slKit.root.children : [], own = kids.filter(o => o.userData.normalMaterial && o.visible && o.count > 0)
+      for (const o of own) o.visible = false
+      try { inkNormalsBase(render, s, cam, post) } finally { for (const o of own) o.visible = true }
+      if (!own.length || !post?.normalTarget) return
+      const r = renderer, others = kids.filter(o => o.visible && !own.includes(o)), keep = own.map(o => o.material)
+      const auto = r.autoClear, su = r.shadowMap.autoUpdate, sn = r.shadowMap.needsUpdate
+      try {
+        for (const o of others) o.visible = false
+        own.forEach(o => { o.material = o.userData.normalMaterial })
+        r.autoClear = false; r.shadowMap.autoUpdate = false; r.shadowMap.needsUpdate = false
+        r.setRenderTarget(post.normalTarget); render(slKit.root, cam)
+      } finally {
+        own.forEach((o, i) => { o.material = keep[i] }); for (const o of others) o.visible = true
+        r.autoClear = auto; r.shadowMap.autoUpdate = su; r.shadowMap.needsUpdate = sn
+      }
+    }
+  }
+  const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems
+  L.snapshot = () => ({ ...snap(), ...slWireOut() })
+  L.takeItems = function (d) { take.call(this, d); slWireIn(d) }
+  const ap = HOST_PHASES.afterPhysics
+  HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust && faustState) { if (!slState || slState.seed !== faustState.seed) slReset(); slHostTick() } }
+}
+GAME.streetLife = {
+  obstacles: slObstacles, driverExit: slDriverExit,
+  // traffic may report a contact from its own physics; the host's own test makes the same record, so either is enough
+  struck: ({ id, vehicleId, vx = 0, vz = 0 } = {}) => {
+    if (!isHost || !slState) return
+    const T = tickAt || now()
+    slAround(...(o => o ? [o.x, o.z] : [0, 0])(objs.find(o => o.id === vehicleId)), 12, T, (ag, p) => { if (ag.id === id) slKnock(ag, p, vx, vz, Math.hypot(vx, vz) * 0.45, null, T) })
+  },
+  get stats() { return slState && { ...slState.stats, kit: !!slKit, cells: slState.cells.size, records: slState.rec.size } },
+  // tests and the debug panel: people near a point, records, and the host's own actions
+  around(x, z, r = 30, T) { const out = []; if (!slState) return out
+    slAround(x, z, r, T ?? slNow(), (ag, p) => out.push({ id: ag.id, kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: +p.x.toFixed(3), z: +p.z.toFixed(3), yaw: +p.yaw.toFixed(3), clip: p.clip, mode: p.mode, rec: p.rec?.kind || 0, down: p.down })); return out },
+  clock: () => slNow(),
+  flocks(x, z, r = 40) { const out = []; if (slState) slFlocksNear(x, z, r, f => out.push({ id: f.id, x: f.x, z: f.z, n: f.birds.length, out: f.out || [0, 1] })); return out },
+  records: () => slState ? [...slState.rec.values()].map(r => r.a) : [],
+  lineup(x, z, yaw = 0, opts = {}) { if (slState) slState.lineup = x === null ? null : { x, z, yaw, T0: slNow(), ...opts } },
+  knock(id, ux = 1, uz = 0, power = 4) { if (!isHost || !slState) return false; const T = tickAt || now(); let done = false
+    for (const c of players.values()) slAround(c.x, c.z, 200, T, (ag, p) => { if (ag.id === id && !done) { slKnock(ag, p, ux, uz, power, null, T); done = true } }); return done },
+  panic: (x, z) => isHost && slState && slPanic(x, z, tickAt || now()),
+  // debug and tests (host): set a real car rolling, undriven, down an agent's lane from behind it (the contact is the host's)
+  ram(objId, agentId, speed = 13, back = 16) {
+    if (!isHost || !slState) return false
+    const o = objs.find(o => o.id === objId && o.V), T = tickAt || now(); let at = null
+    if (!o) return false
+    for (const c of players.values()) slAround(c.x, c.z, 250, T, (ag, p) => { if (ag.id === agentId && !at) at = { x: p.x, z: p.z, yaw: p.yaw } })
+    if (!at) return false
+    const fx = Math.sin(at.yaw), fz = Math.cos(at.yaw), th = Math.atan2(-fx, -fz)         // vehicles face -z
+    GAME.traffic?.cancel?.(o.id)                     // a traffic car's driver would brake for the rider: release it first
+    setParked(o, false)
+    if (o.car) o.V.wheels.at.forEach((w, k) => { o.car.setBrake(0, k); o.car.applyEngineForce(0, k) })   // cancel() leaves the brakes on
+    putObject(o, [at.x - fx * back, 0.75, at.z - fz * back, 0, Math.sin(th / 2), 0, Math.cos(th / 2), fx * speed, 0, fz * speed, 0, 0, 0])
+    return { x: at.x, z: at.z, yaw: at.yaw }
+  },
+  // debug and tests: draw from a free camera at p = [x, y, z] looking at t; view(null) gives the game its camera back
+  view(p, t) { if (slState) slState.view = p ? { p, t } : null },
+  draw: () => slKit && Object.fromEntries(slKit.root.children.filter(c => c.isInstancedMesh).map(c => [c.name || c.geometry.uuid.slice(0, 4), c.count])),
+  get kit() { return slKit },
+}
+
 function rollRare(c) {
   if (!isHost || gameMode !== 'ffa') return
   BOTS.forEach((B, i) => {
@@ -17708,6 +18766,7 @@ function draw(dt, t) {
   for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP))
   shake(camera, t)
   followSun()
+  slFrameSafe(t, dt)
   // reticle distance
   input.d = 0; input.view = null
   const view = cam.ray || cam.seatRay || firstPerson && !seatOf(me) && (([dx, dy, dz]) => ({ x: meD.x, y: eyeOf(meD), z: meD.z, dx, dy, dz, near: 0 }))(aimDir(input.yaw, input.pitch))

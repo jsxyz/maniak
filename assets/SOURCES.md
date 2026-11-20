@@ -60,3 +60,16 @@ ambientCG and dedicated to the public domain under CC0 1.0 (https://creativecomm
 | `real_granite_c.a24732fb.webp`, `real_granite_n.46e169b8.webp` | Granite: podiums, kerbs | ambientCG Granite002A (https://ambientcg.com/view?id=Granite002A) | CC0 1.0 |
 
 The look's sky, windows, rooms, shopfronts, neon, trims, puddles and light are made in its shaders for The MANIAK.
+
+# Street life (card #26)
+
+| File | What it is | Made from | License |
+|---|---|---|---|
+| `bike.<hash>.glb` | A 1930s-40s city roadster: black enamel diamond frame, fork and mudguards, chain guard, sprung leather saddle, swept-back bars with grips and a bell, lamp, rear carrier and reflector; 32-spoke wheels, crank and pedals as separate parts so the game can turn them. LOD0 and LOD1 parts (about 5.6k and 2.0k triangles a bicycle). A 64 px palette texture (colour and roughness/metal) | Made for The MANIAK (modelled procedurally in Blender) | CC0 1.0 |
+| `pram.<hash>.glb` | A 1930s-40s coach-built pram: a navy tub with cream pinstripes and a chrome rim, a bellows hood with its hinges, C-springs on a chrome chassis, a handle with a cream grip, a knitted apron and the baby's bonnet; four spoked wheels as separate parts. LOD0 and LOD1 parts (about 8.8k and 3.1k triangles). A 64 px palette texture | Made for The MANIAK (modelled procedurally in Blender) | CC0 1.0 |
+| `pigeon.<hash>.glb` | A feral rock pigeon: slate head, green and purple neck sheen, blue-grey body, two black wing bars, dark tail band, orange eyes, coral feet (vertex colours), an 11-bone rig, and clips idle, peck, walk, fly and glide. LOD0/1/2 (about 2.2k / 0.75k / 0.22k triangles) | Made for The MANIAK (modelled, rigged and animated procedurally in Blender) | CC0 1.0 |
+| `dog.<hash>.glb` | A medium street dog: a brown-and-tan mutt with a dark saddle and cream chest, fur streaks in its 1024 WebP colour and 512 WebP normal maps, a leather collar with a brass tag; clips walk, run, idle, sniff, eat, flinch, jump (the source pack's) and sit (authored for The MANIAK). LOD0/1/2 (about 6.7k / 2.4k / 0.9k triangles), 49 joints | Quaternius "Ultimate Animated Animal Pack" (the Husky), rescaled, subdivided, unwrapped, repainted, given a collar and a sit clip for The MANIAK | CC0 1.0 (source); modifications CC0 1.0 |
+| `anims_street.<hash>.glb` | 14 clips on the shared 65-joint skeleton, no mesh: riding a bicycle and stopped astride it (one pair per male pedestrian body, its feet on the pedals and hands on the grips by IK on that body's bone lengths), pushing a pram and standing with it (one pair per female body), walking and standing with a dog's lead, fleeing with the arms up, and cowering | Authored for The MANIAK on top of the shared clips (walk, idle, drive, sprint, crouch), which come from Quaternius "Universal Animation Library" 1 and 2 | CC0 1.0 |
+
+Source pack, by Quaternius and dedicated to the public domain under CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/):
+- Ultimate Animated Animal Pack (Husky, glTF), from quaternius.com/packs/ultimateanimatedanimals.html; the file was taken from its poly.pizza listing, which marks it CC0 1.0
