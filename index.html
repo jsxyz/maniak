@@ -9709,6 +9709,8 @@ function driveThink(b, o, tgt, dt, all) {
 // card #42: a bot hops at random only farther than HOP_CLEAR m from its target and HOP_ROOM m from anyone: a hop at a run
 // carries about 7 m, and nearer it came down on a head
 const HOP_CLEAR = 9, HOP_ROOM = 3
+// card #42: a bot asking to move that has gone under PIN_M m in PIN_S s is pinned, and slides aside for SLIDE_S s
+const PIN_S = 0.3, PIN_M = 0.25, SLIDE_S = 0.8
 // /spawn <name> still|walk: the test enemy stands (still) or paces side to side across the host's view (walk) at its spot, its yaw held, no target
 // and no fire, until it takes a hit (hp below what it started with) or dies
 function stillInput(b) {
@@ -9935,6 +9937,20 @@ function botThink(b, all, dt) {
   }
   if (spec.hitRun) { if (ai.awayT > 0) ai.awayT -= dt; else if ((ai.swT = los && dist < reach ? (ai.swT || 0) + dt : 0) > spec.hitRun[0]) ai.awayT = spec.hitRun[1], ai.swT = 0 }
   const fire = !prey && !car?.to && seatShot(b, G) && los && (held ? dist < 0.7 * H.speed && off < Math.atan2(tgt.r, dist) + 0.02 : (air ? Math.hypot(dist, b.y - tgt.y) : dist) < reach) && onTarget && !(ai.awayT > 0) && !ai.noFire     // a flier's reach is 3D
+  // card #42 (#63's capture): pinned. Asking to move, it has gone under PIN_M in PIN_S s: its line runs into something (faustNav
+  // goes straight within 24 m; the wall rays above see only the level). It slides along it to one side for SLIDE_S s, held,
+  // instead of pushing in every tick, where Bullet threw it back each few ticks; pinned again soon after, the other side
+  ai.sinceSlide = (ai.sinceSlide ?? 9) + dt
+  if (!(Math.hypot(mf, mr) > 0.5) || charging || climbing || car || held || seat) ai.pinAt = null
+  else if (!ai.pinAt) ai.pinAt = { x: b.x, z: b.z, t: 0 }
+  else if ((ai.pinAt.t += dt) >= PIN_S) {
+    if (!(ai.slideT > 0) && Math.hypot(b.x - ai.pinAt.x, b.z - ai.pinAt.z) < PIN_M) {
+      ai.slideSide = ai.sinceSlide < 1.5 ? -(ai.slideSide || 1) : Math.random() < 0.5 ? -1 : 1
+      ai.slideT = SLIDE_S
+    }
+    ai.pinAt = { x: b.x, z: b.z, t: 0 }
+  }
+  if (ai.slideT > 0) { ai.slideT -= dt; ai.sinceSlide = 0; mf = 0.25; mr = ai.slideSide }
   const out = threatOf(b)
   if (out) [mf, mr] = toLocal(yaw, ...out)
   if (ai.dive && (fire && !(b.cool > 0) && !(b.charge < G.windup) || ai.diveT < -A.dive)) ai.dive = false, ai.diveT = A.dive
@@ -9989,7 +10005,7 @@ function botThink(b, all, dt) {
   ai.doCharge = _chargeJ !== null          // read by the P-gate
   if (_wrForward) { mf = 1; mr = 0; sj = false; sy = (_wrYaw ?? yaw) - yaw }
   return {
-    f: ai.awayT > 0 && !_wrForward && !orbit ? -1 : out ? mf : mf * pace * (ai.wait ? 0.3 : 1), r: out ? mr : mr * pace,
+    f: ai.awayT > 0 && !_wrForward && !orbit && !(ai.slideT > 0) ? -1 : out ? mf : mf * pace * (ai.wait ? 0.3 : 1), r: out ? mr : mr * pace,
     j: sj ?? (air ? ai.hop || (flier ? !b.flying || b.y < wantY - 0.5 : b.y + rise(b.vy, jetOf(b).grav || 1) < wantY)
        : ai.hop && !(b.wall > 0) || (charging || pace < 1 || b.wall > 0 || POWERS[tgt.mark - 1]?.move === 0 ? false : (ai.tgt < 0 || sd > HOP_CLEAR) && !all.some(o => o !== b && !(o.dead > 0) && Math.hypot(o.x - b.x, o.z - b.z) < HOP_ROOM) && Math.random() < spec.jumpy * dt)),   // wall: climbs on; held target: on foot
     descend: flier && b.flying && !ai.hop && b.y > wantY + 0.5 || _doZip,
