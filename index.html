@@ -718,7 +718,13 @@ const TEXT = {
   enemyGone: '§f{name} §7is gone.',                              // announcement, a rare enemy leaves
   arrive: {                                                      // {line} for each rare enemy (by id)
     'Misery Master': 'crashes the party.', 'Tony': 'is here to collect.', 'Street performer': 'sets up on the corner.' },
-  enforcersAfter: "§cFaust's enforcers are after you",           // chat, you reach one star
+  enforcersAfter: "§cFaust's enforcers are after you",
+  enforcersOn: "§7Faust's enforcers are §fon§7: crimes in public bring heat again.",     // announcement, /enforcers on
+  enforcersOff: "§7Faust's enforcers are §foff§7: no heat builds and none are out.",     // announcement, /enforcers off
+  enforcersUsage: '§cUsage: §f/enforcers off|on §7(now {state})',                         // reply, /enforcers with no or a wrong word
+  enforcersState: { on: 'on', off: 'off' },                                              // {state} above
+  enforcersHost: '§cOnly the host controls the enforcers.',                              // reply, /enforcers from a guest
+  enforcersNoWanted: "§7Faust's enforcers are off (§f/enforcers on§7).",                  // reply, /wanted while they are off           // chat, you reach one star
   disguisePill: 'IN DISGUISE',                                   // HUD pill while disguised
   safePill: 'SAFE {s}s',                                         // HUD pill while spawn-protected
   tornado: '§e{who} §7kicked up a tornado.',                     // announcement, a tornado starts
@@ -28596,6 +28602,8 @@ const HEAT = {
 }
 // host: player id -> { pts, stars, state (0 clear, 1 wanted, 2 searching), seenAt (ms), last {x, y, z}, left (s of search), at {kind: ms}, spawnAt }
 const heat = new Map()
+let enforcersGuest = true       // what the host's snapshot said (`en`); the host's own is settings.enforcers
+const enforcersEnabled = () => isHost ? settings.enforcers !== false : enforcersGuest
 let heatMine = { stars: 0, state: 0, left: 0 }, heatAt = -Infinity, heatAcc = 0, heatRoster = false
 const heatStars = pts => { let n = 0; for (let k = 1; k < HEAT.stars.length; k++) if (pts >= HEAT.stars[k]) n = k; return n }
 const heatFor = id => heat.get(id) || heat.set(id, { pts: 0, stars: 0, state: 0, seenAt: 0, last: { x: 0, y: 0, z: 0 }, left: 0, at: {}, spawnAt: 0 }).get(id)
@@ -28611,7 +28619,7 @@ function heatWitnessed(x, z, T) {
 }
 // sure: the crime was seen by the enforcer it was done to
 function heatCrime(c, kind, x = c?.x, z = c?.z, n = 1, sure = false) {
-  if (!isHost || !LV.faust || !c || c.bot || c.id >= BOT_ID0 || c.dead > 0) return false
+  if (!isHost || !LV.faust || !c || c.bot || c.id >= BOT_ID0 || c.dead > 0 || !enforcersEnabled()) return false
   const T = tickAt || now(), H = heatFor(c.id), lim = HEAT.limit[kind]
   if (lim && T - (H.at[kind] || -1e9) < lim * 1000) return false
   if (!sure && !heatWitnessed(x, z, T)) return false
@@ -28631,7 +28639,7 @@ function heatClear(id) {
 }
 function heatSet(id, n) {
   const c = players.get(id), T = tickAt || now()
-  if (!c || c.bot) return false
+  if (!c || c.bot || !enforcersEnabled()) return false
   n = clamp(n | 0, 0, 5)
   if (!n) { heatClear(id); return true }
   const H = heatFor(id)
@@ -28724,12 +28732,24 @@ function heatDismiss(all, humans, T) {
     if (!shown && T - ai.gone > 4000 || T - ai.gone > 60000) enforcerDrop(e)
   }
 }
+// off: the heat clears, the enforcers and the squad's cars leave
+function enforcersPurge() {
+  for (const id of [...heat.keys()]) heatClear(id)
+  for (const e of enforcerList()) enforcerDrop(e)
+  for (const o of [...objs]) if (squadIds.has(o.id)) squadRemove(o)
+  if (heatRoster) { heatRoster = false; if (conns.size) pushRoster() }
+}
+function enforcersSet(on) {
+  settings.enforcers = !!on; saveSettings()
+  if (!on) enforcersPurge()
+}
 function heatTick(dt, all) {
   if (!isHost || !LV.faust) return
   heatAcc += dt
   if (heatAcc < 0.1) return
   const step = heatAcc, T = tickAt || now()
   heatAcc = 0
+  if (!enforcersEnabled()) { if (squadIds.size || all.some(c => c.bot?.enforcer) || [...heat.values()].some(H => H.stars)) enforcersPurge(); return }
   const humans = all.filter(c => !c.bot && c.id < BOT_ID0)
   for (const id of [...heat.keys()]) if (!players.has(id)) heat.delete(id)
   heatWatch(all, humans)
@@ -28742,12 +28762,13 @@ function heatTick(dt, all) {
 function enforcerDown(c) { enforcerDrop(c); if (conns.size) pushRoster() }
 {
   const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems, ms = L.matchStart, left = L.left, ap = HOST_PHASES.afterPhysics
-  L.snapshot = () => ({ ...snap(), ...isHost && { he: [...heat].filter(([, H]) => H.stars).map(([id, H]) => [id, H.stars, H.state, Math.round(H.left)]), sq: [...squadIds] } })
+  L.snapshot = () => ({ ...snap(), ...isHost && { he: [...heat].filter(([, H]) => H.stars).map(([id, H]) => [id, H.stars, H.state, Math.round(H.left)]), sq: [...squadIds], en: enforcersEnabled() ? 1 : 0 } })
   L.takeItems = function (d) {
     take.call(this, d)
     // absent = none, versioned by packet time (the channel is unordered)
     if (isHost || !Number.isFinite(d.t) || d.t <= heatAt) return
     heatAt = d.t
+    enforcersGuest = d.en !== 0
     squadIds.clear(); if (Array.isArray(d.sq) && d.sq.length <= 16) for (const i of d.sq) if (Number.isInteger(i) && i >= 0 && i < OBJ_MAX) squadIds.add(i)
     const m = Array.isArray(d.he) && d.he.length <= 32 && d.he.find(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] === myId)
     heatMine = m ? { stars: clamp(m[1] | 0, 0, 5), state: clamp(m[2] | 0, 0, 2), left: clamp(m[3], 0, 99) } : { stars: 0, state: 0, left: 0 }
@@ -29029,7 +29050,13 @@ GAME.commands = {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
               const n = parseInt(a, 10)
               if (isNaN(n) || n < 0 || n > 5) return sysMsg('§cUsage: §f/wanted <0-5>')
+              if (!enforcersEnabled()) return sysMsg(gameText('enforcersNoWanted'))
               GAME.heat.set(myId, n); sysMsg('§7Heat: §f' + n) } },
+  enforcers: { args: 'off|on', help: 'host only, Faust\'s enforcers off or on (heat, patrols, squad cars; on by default)', run: a => {
+              if (!isHost) return sysMsg(gameText('enforcersHost'))
+              const w = String(a || '').trim().toLowerCase()
+              if (w === 'off' || w === 'on') { if (enforcersEnabled() !== (w === 'on')) enforcersSet(w === 'on'); return announce(gameText(w === 'on' ? 'enforcersOn' : 'enforcersOff')) }
+              sysMsg(gameText('enforcersUsage', { state: TEXT.enforcersState[enforcersEnabled() ? 'on' : 'off'] })) } },
   despawn:{ args: '', help: 'host only, remove every enemy', run: () => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
               BOT_COUNT = 0; botsSlider(); stepSquad()
