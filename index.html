@@ -8516,7 +8516,9 @@ const background = (() => {
   const secLog = [], accMap = new Map(), secBy = new Map()
   let secOpen = null, planKB = 0, accT = 0
   // the fence gate: the last frame with GPU work, and the last frame whose fence has signalled
-  let gateFrame = 0, signaledFrame = 0, fenceOn = false, gateHeld = 0
+  let gateFrame = 0, signaledFrame = 0, fenceOn = false, gateHeld = 0, gateAt = 0
+  // no GPU pacing on a software GPU: each paced step costs a whole (slow) frame there, and it shares no GPU process
+  const paceOff = () => { try { return softGL() } catch (e) { return false } }
   const gpuEvent = e => { gpuLog.push({ t: Math.round(performance.now()), i: frameNo + 1, ...e }); if (gpuLog.length > 3000) gpuLog.shift() }
   const UPLOAD_KB = 4096
   let scheduled = false, order = 0, current = null
@@ -8550,8 +8552,9 @@ const background = (() => {
     const rush = typeof startingGame !== 'undefined' && startingGame
     const start = performance.now(), cap = rush ? 30 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
     let steps = 0
-    if (!rush && (gpuLast.links || gpuLast.upKB > UPLOAD_KB)) { stats.rests = (stats.rests || 0) + 1; gpuLast = gpuNone; return }
-    if (fenceOn && signaledFrame < gateFrame && gateHeld < 120) { gateHeld++; stats.gated = (stats.gated || 0) + 1; return }
+    const soft = paceOff()
+    if (!rush && !soft && (gpuLast.links || gpuLast.upKB > UPLOAD_KB)) { stats.rests = (stats.rests || 0) + 1; gpuLast = gpuNone; return }
+    if (!soft && fenceOn && signaledFrame < gateFrame && gateHeld < 120 && performance.now() - gateAt < 100) { gateHeld++; stats.gated = (stats.gated || 0) + 1; return }
     gateHeld = 0
     while (performance.now() - start < cap || !steps) {
       const list = [...jobs.values()].sort((a, b) => b.priority - a.priority || a.order - b.order)
@@ -8573,7 +8576,7 @@ const background = (() => {
         } else if (r.value === 'frame' || r.value === 'wait') deferred.add(j)
       } catch (e) { finish(j, false, e) }
       const stepMs = performance.now() - t, linked = (renderer?.info.programs?.length || 0) - progs0; current = null
-      if (linked > 0) { stats.last = j.key; stats.steps++; open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + ' +' + linked + 'p'); break }
+      if (linked > 0 && !soft) { stats.last = j.key; stats.steps++; open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + ' +' + linked + 'p'); break }
       if ((stepMs >= 1 || linked > 0) && open.steps.length < 40) open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + (linked > 0 ? ' +' + linked + 'p' : ''))
       if (stepMs >= 50) { stats.long.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs)); if (stats.long.length > 12) stats.long.shift() }
       stats.last = j.key; stats.maxStepMs = Math.max(stats.maxStepMs, stepMs); stats.steps++; steps++
@@ -8624,7 +8627,7 @@ const background = (() => {
         S.sync += gpuOpen.sync; S.caps += gpuOpen.caps || 0; S.q = Math.max(S.q, q); S.cells += gpuOpen.cells || 0
         S.skip += gpuOpen.skip || 0; S.skipKB += Math.round(gpuOpen.skipKB || 0); S.skel += gpuOpen.skel || 0 }
       if (gpuOpen.skipKB) gpuOpen.skipKB = Math.round(gpuOpen.skipKB)
-      if (gpuOpen.bgLinks || gpuOpen.bgKB >= 256 || gpuOpen.cells) gateFrame = i      // background work only, never the draw's own
+      if (gpuOpen.bgLinks || gpuOpen.bgKB >= 256 || gpuOpen.cells) { if (gateFrame <= signaledFrame) gateAt = performance.now(); gateFrame = i }      // background work only, never the draw's own
       gpuLast = gpuOpen; gpuOpen = { ...gpuNone }; frameNo = i; planKB = 0
       if (frameLog.length > 900) frameLog.shift()
       open = { steps: [], programs: [], parts: [] }; lastFrameT = t; secT = 0
@@ -8640,7 +8643,7 @@ const background = (() => {
     // new geometry of `bytes` may join this frame's draw: at most UPLOAD_KB a frame, the first always (yield 'frame' while false)
     signaled(i) { fenceOn = true; if (i > signaledFrame) signaledFrame = i },
     get gate() { return { frame: gateFrame, signaled: signaledFrame, open: !fenceOn || signaledFrame >= gateFrame } },
-    uploadSlot(bytes) { const kb = bytes / 1024; if (planKB && planKB + kb > UPLOAD_KB) return false; planKB += kb; return true },
+    uploadSlot(bytes) { const kb = bytes / 1024; if (planKB && planKB + kb > UPLOAD_KB && !paceOff()) return false; planKB += kb; return true },
     // from the GL wrappers: kind 'link' | 'shader' | 'up' (n bytes) | 'sync' (a query that waits on the GPU process)
     gpu(kind, n = 1, what = '') {
       const job = current ? current.key + (current.phase ? '/' + current.phase : '') : 'draw'
@@ -8714,7 +8717,7 @@ function* compileObjects(root, cam = camera, target = scene, setup = null, lit =
       undo()
     }
     // the GPU process is every tab's: its links go one call at a time in play, at most 4 programs at once under the overlay
-    if (made && (!startingGame || made >= 4) || performance.now() - t0 > 2) { yield Promise.all(batch); batch = []; made = 0; t0 = performance.now() }
+    if (made && !softGL() && (!startingGame || made >= 4) || performance.now() - t0 > 2) { yield Promise.all(batch); batch = []; made = 0; t0 = performance.now() }
   }
   if (batch.length) yield Promise.all(batch)
   // a context lost meanwhile: its programs went with it
