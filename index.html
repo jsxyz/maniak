@@ -3611,13 +3611,18 @@ function faustTris(g) {
 // 0.2 m of the near model at the median (0.8 m at the 90th percentile; lod2 is 1.9 m off, a convex decomposition worse).
 // Only lod1's two buffers are decoded, never the textures, so the dedicated server stays light. Every machine loads it in
 // the background (faustSolids); until it lands there, the head isn't solid on that machine (870 m up, out of reach at the start).
-let faustHeadTrisMemo = null, faustHeadBound = null, faustHeadFetch = null
+let faustHeadTrisMemo = null, faustHeadBound = null, faustHeadFetch = null, faustHeadBytesMemo = null
+// the head's GLB, fetched once for its look (faustHeadLoad) and its collider (faustHeadSource): from assets/ beside the
+// page, else the published site, as rigFetch does
+function faustHeadBytes() {
+  const get = base => fetch(base + FAUST.head.model.file).then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('HTTP ' + r.status)))
+  return faustHeadBytesMemo ||= get(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? get(RIG_SITE) : Promise.reject(e))
+    .catch(e => { faustHeadBytesMemo = null; throw e })
+}
 // lod1's GLB, fetched and its two buffers meshopt-decoded (fast, in wasm), with the matrix that places it
 function faustHeadSource() {
   return faustHeadFetch ||= (async () => {
-    const M = FAUST.head.model, get = base => fetch(base + M.file).then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('HTTP ' + r.status)))
-    const [env, buf] = await Promise.all([geoLoad(RIG_LIBS.filter(L => L.name === 'meshopt')),
-      get(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? get(RIG_SITE) : Promise.reject(e))])
+    const M = FAUST.head.model, [env, buf] = await Promise.all([geoLoad(RIG_LIBS.filter(L => L.name === 'meshopt')), faustHeadBytes()])
     const D = env.Meshopt.MeshoptDecoder; await D.ready
     const dv = new DataView(buf), jl = dv.getUint32(12, true), J = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl)))
     const bin = new Uint8Array(buf, 28 + jl, dv.getUint32(20 + jl, true))
@@ -4467,7 +4472,8 @@ function faustReplaceHead(mesh) {
 let faustHeadModel = null, faustHeadLoading = null
 function faustHeadLoad() {
   rigLoader()
-  return faustHeadLoading = rigFetch(FAUST.head.model.file).then(async gltf => {
+  // card #18: the one fetch the collider shares, parsed here
+  return faustHeadLoading = Promise.all([rigLoader(), faustHeadBytes()]).then(([loader, buf]) => new Promise((ok, no) => loader.parse(buf, RIG_BASE, ok, no))).then(async gltf => {
     const M = FAUST.head.model, root = gltf.scene.getObjectByName('faust_head'), lod = new THREE.LOD()
     const index = gltf.parser.json.materials.findIndex(m => m.name === 'faust_' + FAUST_HEAD.variant)
     const material = index >= 0 ? await gltf.parser.getDependency('material', index) : null
@@ -4604,7 +4610,7 @@ function faustAtmosphere() {
     const smog = new THREE.Sprite(smogMaterial); smog.position.set(x, 13, z); smog.scale.set(600, 32, 1); root.add(smog)
   }
 }
-function faustAtmosphereFrame() { faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
+function faustAtmosphereFrame() { faustFieldsFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
 function faustFarLights() { return drain(faustFarLightsSteps()) }
 function* faustFarLightsSteps() {
   const F = faustState, lights = faustBatch(F.S * F.S * 48), warnings = []
@@ -4641,31 +4647,47 @@ function* faustFarLightsSteps() {
   worldGroup.add(new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xff3925, size: 3, sizeAttenuation: true, transparent: true, opacity: 0.95, depthWrite: false, toneMapped: false })))
 }
 
-// card #18: the fields, from the city's edge to the world's (one ring of 8 triangles; the plots, furrows and hedges are
-// the shader's, from world position), and the world's edge: a dark border wall standing just outside it, with pylons
-// every 400 m, each with a sodium lamp on top
-function faustOutskirts() {
-  const W = FAUST.world, a = ARENA, p = []
-  for (const [x0, z0, x1, z1] of [[-W, -W, W, -a], [-W, a, W, W], [-W, -a, -a, a], [a, -a, W, a]])
-    p.push(x0, 0, z0, x0, 0, z1, x1, 0, z1, x0, 0, z0, x1, 0, z1, x1, 0, z0)
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3))
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(p.map((_, i) => i % 3 === 1 ? 1 : 0), 3))
-  const m = new THREE.MeshStandardMaterial({ color: 0x2e3530, roughness: 1 })
-  m.onBeforeCompile = shader => {
-    shader.vertexShader = 'varying vec2 faustField;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n faustField = (modelMatrix * vec4(transformed, 1.0)).xz;')
-    shader.fragmentShader = 'varying vec2 faustField;\n' + shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
-      vec2 plot = floor(faustField / 160.0), inPlot = fract(faustField / 160.0);
-      vec3 p3 = fract(vec3(plot.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33);
-      float h = fract((p3.x + p3.y) * p3.z);
-      vec3 tint = h < 0.4 ? vec3(0.8, 0.92, 0.66) : h < 0.75 ? vec3(0.66, 0.56, 0.46) : vec3(1.0, 0.92, 0.7);
-      float along = h < 0.55 ? faustField.x : faustField.y, fw = fwidth(along) / 2.4;
-      float furrow = 1.0 - 0.2 * (1.0 - smoothstep(0.25, 0.6, fw)) * smoothstep(0.35, 0.65, abs(fract(along / 2.4) - 0.5) * 2.0);
-      float edge = min(min(inPlot.x, 1.0 - inPlot.x), min(inPlot.y, 1.0 - inPlot.y)) * 160.0;
-      float hedge = 1.0 - 0.55 * (1.0 - smoothstep(1.5, 3.0 + fwidth(edge), edge));
-      diffuseColor.rgb *= tint * furrow * hedge;`)
+// card #18: the fields past the city's edge, and the world's edge: a dark border wall standing just outside it, with
+// pylons every 400 m, each with a sodium lamp on top. The fields are plots with hedgerows in the stone material's own
+// program (vertex colours: no shader of their own to compile), a patch about the camera, rebuilt as it travels.
+const FAUST_FIELDS = { plot: 160, reach: 2600, step: 480, hedge: 2.5, tints: [0x2b3527, 0x3a3128, 0x464232, 0x30392a], hedgeTint: 0x1a2118 }
+// the patch about (cx, cz): a background job's steps, 128 plots a step; returns its geometry
+function* faustFieldsSteps(cx, cz, seed) {
+  const { plot: P, reach: R, hedge: E, tints, hedgeTint } = FAUST_FIELDS, W = FAUST.world, a = ARENA, city = [{ a0: -a, a1: a, b0: -a, b1: a }], pieces = []
+  const i0 = Math.floor((cx - R) / P), i1 = Math.ceil((cx + R) / P), j0 = Math.floor((cz - R) / P), j1 = Math.ceil((cz + R) / P)
+  let n = 0
+  for (let i = i0; i < i1; i++) for (let j = j0; j < j1; j++) {
+    const r = { a0: Math.max(i * P, -W), a1: Math.min((i + 1) * P, W), b0: Math.max(j * P, -W), b1: Math.min((j + 1) * P, W) }
+    if (r.a0 < r.a1 && r.b0 < r.b1) for (const q of subtractRects(r, city)) pieces.push([q, tints[faustMix(seed ^ 0x51ed, i, j) % tints.length]])
+    if (++n % 128 === 0) yield
   }
-  m.customProgramCacheKey = () => 'faust-fields-1'
-  const fields = new THREE.Mesh(g, m); fields.position.y = -0.025; fields.receiveShadow = true; fields.frustumCulled = false; worldGroup.add(fields)
+  const batch = faustBatch(pieces.length * 18), quad = (x0, z0, x1, z1, tint) => { if (x1 - x0 > 0.01 && z1 - z0 > 0.01) {
+    batch.tri([x0, 0, z0], [x0, 0, z1], [x1, 0, z1], tint); batch.tri([x0, 0, z0], [x1, 0, z1], [x1, 0, z0], tint) } }
+  for (let k = 0; k < pieces.length; k++) {
+    const [q, tint] = pieces[k], e = Math.min(E, (q.a1 - q.a0) / 2, (q.b1 - q.b0) / 2)
+    quad(q.a0 + e, q.b0 + e, q.a1, q.b1, tint)                     // the plot
+    quad(q.a0, q.b0, q.a0 + e, q.b1, hedgeTint); quad(q.a0 + e, q.b0, q.a1, q.b0 + e, hedgeTint)   // its west and north hedges
+    if (k % 256 === 255) yield
+  }
+  return batch.geometry()
+}
+// each frame: once the camera is a step from the patch's middle, the patch is rebuilt there in the background
+function faustFieldsFrame() {
+  const F = faustState, f = F?.fields, S = FAUST_FIELDS.step
+  if (!f || !camera || f.job) return
+  const cx = Math.round(camera.position.x / S) * S, cz = Math.round(camera.position.z / S) * S
+  if (f.at === cx + ' ' + cz) return
+  f.job = background.run('faust fields', function* () {
+    const g = yield* faustFieldsSteps(cx, cz, F.seed)
+    f.mesh.geometry.dispose(); f.mesh.geometry = g; f.at = cx + ' ' + cz
+  }, { valid: () => faustState === F && F.fields === f }).catch(e => frameFailed('fields', e)).finally(() => { f.job = null })
+}
+function faustOutskirts() {
+  const W = FAUST.world, F = faustState
+  // the first patch about the spawn, at once (about 1,100 plots); faustFieldsFrame moves it
+  const first = faustFieldsSteps(0, 144, F.seed); let r; do r = first.next(); while (!r.done)
+  const fields = new THREE.Mesh(r.value, F.materials.stone); fields.position.y = -0.02; fields.receiveShadow = true; worldGroup.add(fields)
+  F.fields = { mesh: fields, at: '0 144', job: null }
   // the wall: its inner face on the world's edge, 36 m tall, with a coping; the pylons and lamps
   const H = 36, pylons = Math.ceil((2 * W - 200) / 400), wall = faustBatch(4 * 36 * (2 + 2 * pylons))
   for (const side of [-1, 1]) for (const axis of [0, 1]) {
