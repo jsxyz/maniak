@@ -10311,20 +10311,26 @@ function camBlock(px, py, pz, nx, ny, nz, len) {
   return far * camCb.get_m_closestHitFraction()
 }
 
-const chase = { yaw: NaN, t: 0, look: 0, inYaw: NaN, inPitch: NaN, idle: 0, x: NaN, z: NaN, v: 0, vb: 0, vFilt: 0, lag: 0 }
+const chase = { yaw: NaN, yaw0: NaN, t: 0, look: 0, inYaw: NaN, inPitch: NaN, idle: 0, x: NaN, z: NaN, v: 0, vb: 0, vFilt: 0, vF2: 0, lag: 0, camB: NaN, camBV: 0, camT: NaN }
+// the car camera's follow distance: a critically damped spring, w rad/s, toward its target, stepped in frame time
+const CHASE_CAM = { w: 6 }
+let carCamLast = null      // the last car camera frame, for gameHooks.capture's rows
 const LOOK_REST = 1500          // ms idle, moving, before free look recentres
 // a tick of the chase camera's easing: heading, speed, lag and free look
 function chaseStep(o, inp) {
   const f = rotq(o.q, [0, 0, -1]), want = Math.atan2(-f[0], -f[2]), now_ = tickAt, dt = now_ - chase.t, on = chase.yaw === chase.yaw && dt < 500
+  chase.yaw0 = on ? chase.yaw : want
   chase.yaw = on ? chase.yaw + wrapPi(want - chase.yaw) * (1 - Math.exp(-dt / 150)) : want
   const turned = on ? wrapPi(inp.yaw - chase.inYaw) : 0, v = on && dt > 0 ? Math.hypot(o.x - chase.x, o.z - chase.z) / dt * 1000 : 0
   chase.v = on ? chase.v + (v - chase.v) * (1 - Math.exp(-dt / 300)) : 0
   const bodyV = o.body ? o.body.getLinearVelocity() : null
   chase.vb = bodyV ? Math.hypot(bodyV.x(), bodyV.z()) : 0
   chase.vFilt = on ? chase.vFilt + (chase.vb - chase.vFilt) * (1 - Math.exp(-dt / 300)) : chase.vb
-  const wantLag = clamp((chase.vb - chase.vFilt) * 0.3, -1, 2.5)
-  chase.lag = on ? chase.lag + clamp(wantLag - chase.lag, -dt * 0.003, dt * 0.003) : 0
-  if (!on) chase.look = 0
+  // the pull-back on acceleration: 0.3 s times the speed's rise over its 0.3 s, both filtered (the raw body speed's
+  // tick-to-tick noise went straight into the distance); vehicleCamera springs the distance in frame time
+  chase.vF2 = on ? chase.vF2 + (chase.vFilt - chase.vF2) * (1 - Math.exp(-dt / 300)) : chase.vFilt
+  chase.lag = on ? clamp((chase.vFilt - chase.vF2) * 0.3, -1, 2.5) : 0
+  if (!on) { chase.look = 0; chase.camT = NaN }
   const tilted = on && inp.pitch !== chase.inPitch
   if (turned) chase.look = wrapPi(chase.look + turned)
   if (turned || tilted) chase.idle = 0; else chase.idle += on ? dt : 0
@@ -10334,12 +10340,16 @@ function chaseStep(o, inp) {
 // card #58, the car camera looking up: low: the orbit's lowest elevation, rad; past it the camera sinks to floor m over
 // the ground by sinkBy of the way up, once clear m outside the car's footprint, and the view tilts up to PITCH_MAX
 const CAR_CAM = { low: 0.05, floor: 0.75, sinkBy: 0.5, clear: 0.6 }
+// the free look's turn not yet taken by a tick (chaseStep takes it into chase.look)
+const chaseTurn = inp => chase.inYaw === chase.inYaw ? wrapPi(inp.yaw - chase.inYaw) : 0
 function vehicleCamera(o, me, inp, cam, firstPerson) {
   if (o.V?.fly) return planeCamera(o, me, inp, cam, firstPerson)      // card #5
   const pass = (seatOf(me)?.[1] ?? me.ride?.[1]) > 0
   if (chase.yaw !== chase.yaw || tickAt - chase.t >= 500) chaseStep(o, inp)
   const at = objDrawn.get(o), X = at ? at.x : o.x, Y = at ? at.y : o.y, Z = at ? at.z : o.z, Q = at ? at.q : o.q, drawnOff = at ? [0, 0, 0] : o.off || [0, 0, 0]
-  const V = o.V, yaw = chase.yaw + chase.look, sx = -Math.sin(yaw), sz = -Math.cos(yaw), cp = Math.cos(inp.pitch)
+  // the heading drawn between its last two ticks, as the car is; the mouse's turn since the last tick drawn now
+  const yawD = chase.yaw0 === chase.yaw0 ? chase.yaw0 + wrapPi(chase.yaw - chase.yaw0) * drawAlpha : chase.yaw
+  const V = o.V, yaw = yawD + chase.look + chaseTurn(inp), sx = -Math.sin(yaw), sz = -Math.cos(yaw), cp = Math.cos(inp.pitch)
   const wantFov = Math.min(FOV_MAX, settings.fov + 5 * (firstPerson ? 0 : clamp(chase.v / o.V.speed, 0, 1)))
   if (cam.fov !== wantFov) { cam.fov = wantFov; if (cam.updateProjectionMatrix) cam.updateProjectionMatrix() }
   if (firstPerson) {        // eye where the top's front edge sits 27° down
@@ -10352,7 +10362,12 @@ function vehicleCamera(o, me, inp, cam, firstPerson) {
   const off = drawnOff, L = V.l || 2 * o.R, H = V.h || o.R, x0 = X + off[0], z0 = Z + off[2]
   const ground = Y + off[1] + o.low, py = ground + H
   const pull = 1 + drive(V, 'chase') * clamp(chase.v / V.speed, 0, 1), up = (1.5 + 0.15 * L) * pull
-  const back = 1.3 * L * pull + chase.lag
+  const wantBack = 1.3 * L * pull + chase.lag, tf = now(), fdt = chase.camT === chase.camT ? clamp((tf - chase.camT) / 1000, 0, 0.25) : -1
+  if (fdt < 0 || !(chase.camB === chase.camB)) { chase.camB = wantBack; chase.camBV = 0 }
+  else { const w = CHASE_CAM.w, e = chase.camB - wantBack, g = chase.camBV + w * e, k = Math.exp(-w * fdt)
+    chase.camB = wantBack + (e + g * fdt) * k; chase.camBV = (chase.camBV - w * g * fdt) * k }
+  chase.camT = tf
+  const back = chase.camB
   const len = Math.hypot(back, up), el0 = Math.atan2(up, back), el = clamp(el0 - inp.pitch, CAR_CAM.low, 1.3)
   const ox = -sx * len * Math.cos(el), oy = len * Math.sin(el), oz = -sz * len * Math.cos(el)
   const t = camBlock(x0, py, z0, ox / len, oy / len, oz / len, len)
@@ -10373,6 +10388,7 @@ function vehicleCamera(o, me, inp, cam, firstPerson) {
   const dx = lx / lh * ch, dy = Math.sin(p), dz = lz / lh * ch
   cam.position.set(cx, cy, cz)
   cam.lookAt(cx + dx, cy + dy, cz + dz)
+  carCamLast = { at: now(), cam: [cx, cy, cz], target: [x0, py, z0], yaw, want: wantBack, back, len, dist: t, lag: chase.lag, alpha: drawAlpha }
   return { dist: t, hideSelf: false, fade: 1, seatRay: pass ? { x: cx, y: cy, z: cz, dx, dy, dz, near: t } : null }
 }
 
@@ -23144,7 +23160,7 @@ function cmdLook(a) {
   if (!w[0] || w.length > 2 || !Number.isFinite(h) || !Number.isFinite(q)) return sysMsg('§cUsage: §f/look <yaw degrees> [pitch degrees]')
   if (serving) return sysMsg('§cA server has no view.')
   const me = selfChar(), car = me && !(me.dead > 0) && (seatOf(me) || rideOf(me)) && chase.yaw === chase.yaw
-  input.yaw += wrapPi(-h * Math.PI / 180 - (car ? chase.yaw + chase.look : input.yaw))
+  input.yaw += wrapPi(-h * Math.PI / 180 - (car ? chase.yaw + chase.look + chaseTurn(input) : input.yaw))
   input.pitch = clamp(q * Math.PI / 180, -PITCH_MAX, PITCH_MAX)
   sysMsg('§7Looking §f' + h + '° §7pitched §f' + Math.round(input.pitch * 180 / Math.PI) + '°')
 }
@@ -23417,7 +23433,7 @@ const hookCheck = (ok, what) => { if (!ok) throw new TypeError(what) }
 // JPEG-coded; resolves { frames: [{ url, row }], ms, partial? } with a debug row each: fps, x y z, velocity, view heading and pitch.
 // One call returns a whole sequence. Jobs run side by side (a routine's {capture} and a QA call).
 const capJobs = []
-let capCanvas = null
+let capCanvas = null, capDir = null
 function captureFrames(o = {}) {
   const num = (v, d, lo, hi) => clamp(Number.isFinite(+v) && v !== null && v !== undefined ? Math.round(+v) : d, lo, hi)
   const q = Number(o.quality), job = { n: num(o.n, 1, 1, 150), every: num(o.every, 1, 1, 900), width: num(o.width, 480, 64, 1920),
@@ -23440,10 +23456,13 @@ function capAfterDraw() {
     if (capCanvas.width !== w || capCanvas.height !== h) { capCanvas.width = w; capCanvas.height = h }
     const g = capCanvas.getContext('2d'); g.drawImage(cv, 0, 0, w, h)
     const r = v => Math.round(v * 100) / 100, hd = headingOf(input.yaw)
+    capDir ||= new THREE.Vector3()
     job.frames.push({ url: capCanvas.toDataURL('image/jpeg', job.q), row: { t: Math.round(now() - job.t0), fps: Math.round(fps), w, h,
       x: me && r(me.x), y: me && r(me.y), z: me && r(me.z), vx: me && r(me.vx || 0), vy: me && r(me.vy || 0), vz: me && r(me.vz || 0), speed: me && r(Math.hypot(me.vx || 0, me.vz || 0)),
       heading: Math.round(hd), facing: facing(input.yaw), pitch: Math.round(input.pitch * 180 / Math.PI), look: lookStats.look, grounded: !!me?.grounded, seated: !!(me && seatOf(me)),
-      draws: renderer.info.render.calls, tris: renderer.info.render.triangles } })
+      draws: renderer.info.render.calls, tris: renderer.info.render.triangles,
+      ...(c => c && now() - c.at < 100 ? { carCam: { x: r(c.cam[0]), y: r(c.cam[1]), z: r(c.cam[2]), heading: Math.round(headingOf(c.yaw)), pitch: Math.round(Math.asin(clamp(camera.getWorldDirection(capDir).y, -1, 1)) * 180 / Math.PI),
+        target: c.target.map(r), want: r(c.want), back: r(c.back), len: r(c.len), dist: r(c.dist), lag: r(c.lag), alpha: r(c.alpha) } } : {})(me && seatOf(me) || me && rideOf(me) ? carCamLast : null) } })
     if (job.frames.length >= job.n) job.done()
   }
 }
@@ -23466,7 +23485,7 @@ const autoAct = k => {
 let autoRun = null
 function autoLook(h, q) {                     // as /look: compass degrees, the chase camera's yaw in a car
   const me = selfChar(), car = me && !(me.dead > 0) && (seatOf(me) || rideOf(me)) && chase.yaw === chase.yaw
-  input.yaw += wrapPi(-h * Math.PI / 180 - (car ? chase.yaw + chase.look : input.yaw))
+  input.yaw += wrapPi(-h * Math.PI / 180 - (car ? chase.yaw + chase.look + chaseTurn(input) : input.yaw))
   input.pitch = clamp((q || 0) * Math.PI / 180, -PITCH_MAX, PITCH_MAX)
 }
 // each kind: start(R, arg, step) -> a sub { tick(t) -> true when done, out? }; a throw ends the run with the error
@@ -32070,13 +32089,16 @@ function keepPoses() {
   else if (predicted) keepPose(predicted)
   for (const o of objs) keepPose(o, o.q)
 }
-// D: the largest leftover (to a tick) of the last 250 ms of frames; it falls at 0.05 ms a ms, so drawn time never skips ahead
+// D: the largest leftover (to a tick) of the last second of frames; it falls at 0.005 ms a ms, so drawn time never skips
+// ahead. Held that steady, drawn time keeps pace with the frames: over 250 ms at 0.05 ms a ms, D re-jumped and fell as
+// the leftovers' pattern beat against 85 and 144 Hz, up to 1.3 ms a frame, and a car's camera (locked to the drawn car)
+// shook the world by that times his speed
 function drawDelay(t) {
   accRing.push(t, Math.min(acc, TICK) * 1000)
-  while (accRing[0] < t - 250) accRing.splice(0, 2)
+  while (accRing[0] < t - 1000) accRing.splice(0, 2)
   let want = 0
   for (let i = 1; i < accRing.length; i += 2) want = Math.max(want, accRing[i])
-  const step = 0.05 * Math.max(0, t - drawAt)
+  const step = 0.005 * Math.max(0, t - drawAt)
   drawD = Math.max(want, drawD - step); drawAt = t
   drawAlpha = acc >= TICK ? 1 : clamp(1 + (acc * 1000 - drawD) / (TICK * 1000), 0, 1)
 }
