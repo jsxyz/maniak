@@ -3474,8 +3474,21 @@ function faustStorey(B, k) {
   const type = k === 0 ? B.ground : B.upper
   const sx = C.stairX, sw = 2 * ST.width + ST.well, Lz1 = C.z1 - K.part, Lz0 = C.z0 + K.part
   // ---- the corridor ring round the core, reaching the street door's line on every storey so the hallway meets it
-  const hw = K.hall, G = inRect(Math.max(P.x0, Math.min(C.x0 - hw, B.door.x - 1.1)), Math.min(P.x1, Math.max(C.x1 + hw, B.door.x + 1.1)),
-    Math.max(P.z0, C.z0 - hw), Math.min(P.z1, C.z1 + hw))
+  // its front and back walls run out to the side facades: each stands where it meets them between panes (the side windows; the
+  // ground storey's side shopfronts), the nearest such place 1.6..3.2 m from the core and 2.4 m from the plate's edge, else at
+  // K.hall. hz0, hz1: the back and front corridor's depth (K.hall where nothing moved)
+  const hw = K.hall, sides = inWindows(B, k).filter(w => w.face >= 2)
+  const pier = (z, lo, hi) => {
+    const clear = q => sides.every(w => q + 0.125 <= w.a0 || q - 0.125 >= w.a1)
+    if (!sides.length || clear(z)) return z
+    for (let i = 1; i <= 160; i++) for (const q of [inCm(z - i / 100), inCm(z + i / 100)]) if (q >= lo && q <= hi && clear(q)) return q
+    return z
+  }
+  const gz1 = C.z1 + hw < P.z1 - 2.4 ? pier(C.z1 + hw, C.z1 + 1.6, Math.min(C.z1 + 3.2, P.z1 - 2.4)) : C.z1 + hw
+  const gz0 = C.z0 - hw > P.z0 + 2.4 ? pier(C.z0 - hw, Math.max(C.z0 - 3.2, P.z0 + 2.4), C.z0 - 1.6) : C.z0 - hw
+  const hz1 = gz1 - C.z1, hz0 = C.z0 - gz0
+  const G = inRect(Math.max(P.x0, Math.min(C.x0 - hw, B.door.x - 1.1)), Math.min(P.x1, Math.max(C.x1 + hw, B.door.x + 1.1)),
+    Math.max(P.z0, gz0), Math.min(P.z1, gz1))
   const ring = room(G.x0, G.x1, G.z0, G.z1, 'ring'), core = room(C.x0, C.x1, C.z0, C.z1, 'core')
   const deco = B.style === 'core' || B.style === 'civic' || B.H > 300, base = s.mass === 0
   const mass = B.masses[s.mass], mx = (mass.x0 + mass.x1) / 2, mz = (mass.z0 + mass.z1) / 2
@@ -3697,11 +3710,11 @@ function faustStorey(B, k) {
   const lobbyFront = []    // a lobby's nodes on its street side, by its side doors: linked to the street door's inside
   let hallMain = null      // a hall's main aisle nodes
   const ringT = (x, z) => {   // a point's place round the ring's centreline, 0..4 sides
-    const cx0 = G.x0 + hw / 2, cx1 = G.x1 - hw / 2, cz0 = G.z0 + hw / 2, cz1 = G.z1 - hw / 2
+    const cx0 = G.x0 + hw / 2, cx1 = G.x1 - hw / 2, cz0 = G.z0 + hz0 / 2, cz1 = G.z1 - hz1 / 2
     const dzf = Math.abs(z - cz1), dzb = Math.abs(z - cz0), dxl = Math.abs(x - cx0), dxr = Math.abs(x - cx1), m = Math.min(dzf, dzb, dxl, dxr)
     return m === dzf ? (x - cx0) / (cx1 - cx0 || 1) : m === dxr ? 1 + (cz1 - z) / (cz1 - cz0 || 1) : m === dzb ? 2 + (cx1 - x) / (cx1 - cx0 || 1) : 3 + (z - cz0) / (cz1 - cz0 || 1)
   }
-  const ringAt = (x, z) => [Math.min(Math.max(x, G.x0 + hw / 2), G.x1 - hw / 2), Math.min(Math.max(z, G.z0 + hw / 2), G.z1 - hw / 2)]
+  const ringAt = (x, z) => [Math.min(Math.max(x, G.x0 + hw / 2), G.x1 - hw / 2), Math.min(Math.max(z, G.z0 + hz0 / 2), G.z1 - hz1 / 2)]
   const toRing = (id, x, z) => ringNodes.push([id, ringT(x, z)])
   toRing(nDoorOut, (sd0 + sd1) / 2, C.z1 + 1.1)
   const open = type === 'warehouse' || type === 'store'
@@ -3814,11 +3827,11 @@ function faustStorey(B, k) {
     if (Z.along) wallZ(Z.z0, Z.z1, wallAt, gaps.map(([a, b, t]) => [a, b, t]), wallTint); else wallX(Z.x0, Z.x1, wallAt, gaps, wallTint)
   }
   // the ring's corners and its order round the core (a hall has its aisles instead)
-  if (!open) for (const [x, z] of [[G.x0 + hw / 2, G.z1 - hw / 2], [G.x1 - hw / 2, G.z1 - hw / 2], [G.x1 - hw / 2, G.z0 + hw / 2], [G.x0 + hw / 2, G.z0 + hw / 2]]) toRing(node(x, y, z, ring), x, z)
+  if (!open) for (const [x, z] of [[G.x0 + hw / 2, G.z1 - hz1 / 2], [G.x1 - hw / 2, G.z1 - hz1 / 2], [G.x1 - hw / 2, G.z0 + hz0 / 2], [G.x0 + hw / 2, G.z0 + hz0 / 2]]) toRing(node(x, y, z, ring), x, z)
   ringNodes.sort((p, q) => p[1] - q[1])
   if (!open) for (let j = 0; j < ringNodes.length; j++) link(ringNodes[j][0], ringNodes[(j + 1) % ringNodes.length][0])
   // corridor lamps every 5 m round the ring
-  for (let t = 0.5; t < 4; t += 1) { const [x, z] = t < 1 ? [(G.x0 + G.x1) / 2, G.z1 - hw / 2] : t < 2 ? [G.x1 - hw / 2, (G.z0 + G.z1) / 2] : t < 3 ? [(G.x0 + G.x1) / 2, G.z0 + hw / 2] : [G.x0 + hw / 2, (G.z0 + G.z1) / 2]
+  for (let t = 0.5; t < 4; t += 1) { const [x, z] = t < 1 ? [(G.x0 + G.x1) / 2, G.z1 - hz1 / 2] : t < 2 ? [G.x1 - hw / 2, (G.z0 + G.z1) / 2] : t < 3 ? [(G.x0 + G.x1) / 2, G.z0 + hz0 / 2] : [G.x0 + hw / 2, (G.z0 + G.z1) / 2]
     if (x > C.x0 - 0.2 && x < C.x1 + 0.2 && z > C.z0 - 0.2 && z < C.z1 + 0.2) continue
     light(x, y + 3.3, z, ring, open ? 1.4 : 0.9, type === 'office' ? 0xdce8ff : 0xffd9a0)
     box(x - 0.25, x + 0.25, y + 3.62, Y1, z - 0.25, z + 0.25, 0xfff4dc, { m: 2, r: ring })
