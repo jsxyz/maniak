@@ -28577,7 +28577,7 @@ function slPushers(obl, dt, near, R) {
     let s = cs.get(id); if (!s || s.f !== st.frame - 1 || Math.abs(x - s.x) + Math.abs(z - s.z) > 4) s = { x, z, vx: 0, vz: 0 }
     const k = Math.min(1, h * 8), vx = s.vx + ((x - s.x) / h - s.vx) * k, vz = s.vz + ((z - s.z) / h - s.vz) * k
     cs.set(id, { x, z, vx, vz, f: st.frame })
-    P.push({ car: false, x, z, r: N.char, vx, vz })
+    P.push({ car: false, x, z, r: N.char, vx, vz, sp: Math.hypot(vx, vz) })
   }
   for (const o of obl || []) {
     if (!vehicleOf(o.K) || !near(o.x, o.z, R)) continue
@@ -28633,9 +28633,11 @@ function slNudge(ag, p, pushers, cell, dt) {
   for (const c of pushers) {
     const dx = qx - c.x, dz = qz - c.z
     if (!c.car) {
-      const rvx = (c.vx || 0) - pvx, rvz = (c.vz || 0) - pvz, rv = Math.hypot(rvx, rvz), moving = rv > N.moving
-      const ahead = c.r + (moving ? Math.min(rv * N.look, N.lookMax) : 0), B = ahead + N.hold + (pram ? STREET.pramBack : 0)
+      // the box first, with the most the way he comes can reach (his speed and theirs added); the exact tests follow
+      const B = c.r + N.hold + Math.min(((c.sp || 0) + pv) * N.look, N.lookMax) + (pram ? STREET.pramBack : 0)
       if (dx > B || dx < -B || dz > B || dz < -B) continue
+      const rvx = (c.vx || 0) - pvx, rvz = (c.vz || 0) - pvz, rv = Math.hypot(rvx, rvz), moving = rv > N.moving
+      const ahead = c.r + (moving ? Math.min(rv * N.look, N.lookMax) : 0)
       if (moving) {
         // card #67: coming at them (or they at him), they step across the way he comes, early, to the nearer side of it (the
         // other when that one's spot is in a building or past the reach), not pushed ahead of him until the offset runs out
@@ -28678,6 +28680,7 @@ function slNudge(ag, p, pushers, cell, dt) {
       tx -= c.fz * need; tz += c.fx * need                  // across its heading, to the nearer side of its path
     }
   }
+  if (!near && !n) return null                              // nothing near and no offset: on its route
   if (!near) tx = tz = 0
   const L = Math.hypot(tx, tz); if (L > N.max) { tx *= N.max / L; tz *= N.max / L }
   // toward the target at most as fast as vmax (at least the closing speed: card #67, a 3.4 m/s walker outpaced the 3 m/s step),
