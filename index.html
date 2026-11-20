@@ -93,17 +93,11 @@
 
   #hud{position:fixed;top:10px;left:12px;z-index:5;color:#95938d;
     text-shadow:0 1px 3px #000;display:none;pointer-events:none}
-  /* scales with the viewport's smaller side, never below 20px; sizes inside are ems of it */
+  /* the power pills (powers, marks, spawn protection); the Maniak's moves are fixed, so no weapon or ammo shows (#39).
+     Scales with the viewport's smaller side, never below 20px; sizes inside are ems of it */
   #gun{position:fixed;bottom:12px;right:16px;z-index:5;text-align:right;
     text-shadow:0 1px 4px #000;display:none;pointer-events:none;
     font-size:clamp(20px,2.1vmin,34px)}
-  #gun .g{font-size:1em;letter-spacing:.04em}
-  #gun .a{color:#95938d}
-  /* the character's own attack, above the gun */
-  #gun .sp{font-size:.65em;letter-spacing:.04em;margin-bottom:.15em;opacity:.95}
-  #gun .sp .c{color:#95938d;margin-left:7px}
-  #gun .sp.spent{opacity:.38}
-  #gun .sp.ready .c{color:#ece9e2}
   /* proficiency: a bar toward the next level, and its ceiling */
   #prof{margin-top:14px;font-size:12px;letter-spacing:.06em;color:#95938d}
   #prof b{display:block;margin-bottom:4px;color:#76767b;font-weight:400;font-size:11px}
@@ -113,11 +107,6 @@
   #pills{display:flex;gap:.3em;justify-content:flex-end;margin-bottom:.25em;min-height:.85em}
   #pills span{font-size:.55em;letter-spacing:.06em;padding:.18em .64em;border-radius:9px;
     border:1px solid currentColor}
-  /* a manyGuns row's arsenal, the held gun lit */
-  #bag{display:flex;gap:.25em;justify-content:flex-end;margin-top:.25em}
-  #bag span{font-size:.525em;letter-spacing:.05em;padding:.1em .57em;border-radius:4px;
-    border:1px solid #323236;color:#76767b}
-  #bag span.on{border-color:currentColor}
   /* on touch the panel moves clear of the fire button */
   body.touch #gun{bottom:auto;top:calc(8px + env(safe-area-inset-top));
     right:calc(12px + env(safe-area-inset-right))}
@@ -140,7 +129,7 @@
   #hudsound.muted{color:#d07a3a;border-color:#8a4f22;background:rgba(40,22,10,.8)}
   #hudsound.muted .on{display:none}
   #hudsound.muted .off{display:inline}
-  /* on a phone the weapon panel sits below that row */
+  /* on a phone the pills sit below that row */
   body.playing.touch #gun{top:calc(48px + env(safe-area-inset-top))}
   #hp{position:fixed;bottom:14px;left:16px;z-index:5;display:none;pointer-events:none}
   #hpbar{width:190px;height:9px;border:1px solid #323236;border-radius:5px;overflow:hidden;background:#0f0f10}
@@ -429,12 +418,7 @@
 <div id="hp"><canvas id="radar" width="150" height="150"></canvas><div id="teamstrip"></div><div id="hpbar"><div id="hpfill" style="width:100%"></div></div><div id="fuelbar"><div id="fuelfill"></div></div><div id="sprinting">SPRINT</div></div>
 <div id="veh"><span id="vspd">0</span> <span class="u"></span><div id="vname"></div>
   <div id="vhpbar"><div id="vhpfill"></div></div><div id="radio"></div></div>
-<div id="gun">
-  <div id="pills"></div>
-  <div class="sp"><span class="n"></span><span class="c"></span></div>
-  <div class="g"></div><div class="a"></div>
-  <div id="bag"></div>
-</div>
+<div id="gun"><div id="pills"></div></div>
 <div id="tab"><div class="tabinner"><h3 id="tabhead">STANDINGS</h3><table id="tabrows"></table>
   <div id="prof"></div></div></div>
 <div id="results"><div class="tabinner">
@@ -15210,10 +15194,19 @@ function openPause() {
     ? 'The game keeps running for everyone else — you are standing still, not safe.'
     : 'The game keeps running on the host — you are standing still, not safe.'
   el('#pause-host').style.display = isHost ? '' : 'none'
-  el('#pause-hint').innerHTML = IS_TOUCH ? '' :
-    'WASD move · Shift sprint · Space jump/rise · Q descend (flier) · click fire · right-click your attack · E use or lift<br>' +
-    'R next weapon · F shift form · T chat · Tab scores · V view · M sound · F3 debug'
+  el('#pause-hint').innerHTML = IS_TOUCH ? '' : keyHelp(selfChar())
   show('pause', 1)
+}
+
+// the desktop keys, for the character played: the status line leaves them to the menu (#39)
+function keyHelp(c) {
+  const C = c ? CHARS[c.cid] : CHARS[0]
+  const space = C.jet?.flier ? 'Space fly/rise · Q down' : C.chain ? 'Space tap: jump, hold and release: leap-smash · Q hold and release: chain · hold Q: reel in · Space: let go'
+    : 'Space jump' + (C.swing ? ' · Q zip' : '')
+  return 'WASD move · Shift sprint · ' + space + '<br>' +
+    'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker' : 'your attack') + ' · E use, enter a car or lift' +
+    (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + '<br>' +
+    'T chat · Tab scores · V view · M sound · B radio · F3 debug · Esc menu'
 }
 
 function closePause() {
@@ -17032,6 +17025,7 @@ function beginPlay() {
   el('#ui').style.display = 'none'
   document.body.classList.add('playing')
   if (navigator.userActivation?.isActive !== false) lockPointer()      // in the click that entered; else the first click in the game
+  sysMsg('§eWelcome to the freak show')                                // every entry, host or guest, in the wave title's yellow (#39)
   sysMsg('§7Connected. §8T to chat · /help for codes · /code for the room code')
   if (qualityAuto && qualityAuto !== QNAMES[0])
     sysMsg('§7Quality §f' + qualityAuto + '§7 — chosen for this machine. Settings can change it.')
@@ -19455,7 +19449,6 @@ function draw(dt, t) {
 
 // ---------------------------------------------------------------- view
 // this game's panels: the tab, the results and the serving host's panel; the engine calls them through GAME.view
-const dives = G => G?.dive ? ' (dives in the air)' : ''
 let lastTabSig = null, lastProfSig = null
 function standings(others) {
   const me = selfChar()
@@ -19579,9 +19572,8 @@ function initServerPanel() {
   el('#srv-time-more').onclick = mins(1)
 }
 
-// the HUD: weapon, health, powers, vehicle, fuel, the team strip and the status line, for the player drawn as me
+// the HUD: health, powers, vehicle, fuel, the team strip and the status line, for the player drawn as me
 function drawHud(me, others, t) {
-  const G = GUNS[me.gun]
   const FC = CHARS[me.cid]
   const frac = clamp(me.hp / CHARS[me.cid].hp, 0, 1)
   const hage = t - hitSeenAt
@@ -19590,16 +19582,6 @@ function drawHud(me, others, t) {
 
   const seat = !(me.dead > 0) && (seatOf(me) || me.ride), car = seat && (seat[0].V ? seat[0] : rideOf(me))
   const P = primaryOf(me)
-  hud('spShow', el('#gun .sp'), 'display', P && !(seat && !seat[1]) ? 'block' : 'none')
-  if (P) {
-    const left = me.sp === Infinity || me.sp === -1 ? '∞' : String(me.sp | 0)
-    const ready = (me.spCool || 0) <= 0 && (me.sp === Infinity || me.sp > 0)
-    hud('spName', el('#gun .sp .n'), 'textContent', P.name)
-    hud('spCol', el('#gun .sp .n'), 'color', css(P.color))
-    hud('spLeft', el('#gun .sp .c'), 'textContent', left)
-    const cls = 'sp' + (me.sp === 0 ? ' spent' : ready ? ' ready' : '')
-    hud('spCls', el('#gun .sp'), 'className', cls)
-  }
 
   const pills = []
   const PW = powerOf(me)
@@ -19615,31 +19597,10 @@ function drawHud(me, others, t) {
       .map(([c, txt]) => '<span style="color:' + c + '">' + esc(txt) + '</span>').join('')
   }
 
-  const carry = []
-  if (FC.manyGuns) {
-    for (let g = 0; g < GUNS.length; g++) {
-      if (g !== 0 && !bagHas(me, g)) continue
-      if (GUNS[g].special) continue
-      carry.push([g, GUNS[g].name, g === me.gun])
-    }
-  }
-  const bagKey = carry.map(v => v.join()).join('|')
-  if (lastHud.bag !== bagKey) {
-    lastHud.bag = bagKey
-    el('#bag').innerHTML = carry.map(([g, n, on]) =>
-      '<span class="' + (on ? 'on' : '') + '"' +
-      (on ? ' style="color:' + css(GUNS[g].color) + '"' : '') +
-      '>' + esc(n) + '</span>').join('')
-  }
-
-  hud('gunName', el('#gun .g'), 'textContent', G.name)
-  hud('gunCol', el('#gun .g'), 'color', css(G.color))
-  hud('ammo', el('#gun .a'), 'textContent', !gunsOf(me) ? '' :
-      (me.ammo === Infinity || me.ammo === -1) ? '∞' : String(me.ammo))
   hud('hpW', el('#hpfill'), 'width', (frac * 100).toFixed(1) + '%')
   hud('hpC', el('#hpfill'), 'background',
       frac > 0.5 ? '#a3ad86' : frac > 0.22 ? '#b8913f' : '#d0453a')
-  for (const [k, s] of [['fireD', '#btn-fire'], ['altD', '#btn-alt'], ['gunD', '#gun .g'], ['ammoD', '#gun .a'], ['bagD', '#bag']])
+  for (const [k, s] of [['fireD', '#btn-fire'], ['altD', '#btn-alt']])
     hud(k, el(s), 'display', seat && !seat[1] ? 'none' : '')
   hud('vehD', el('#veh'), 'display', seat ? 'block' : 'none')
   hud('useTxt', el('#btn-use'), 'textContent', seat ? 'EXIT' : 'USE'); hud('jumpTxt', el('#btn-jump'), 'textContent', seat ? 'H-BRAKE' : 'JUMP')
@@ -19676,16 +19637,10 @@ function drawHud(me, others, t) {
     ? '  ·  ' + mmss(matchLeft)
     : ''
   const use = liftOf(me) > 0 ? 'lift' : objs.some(p => takeable(me, p)) ? 'use' : ''
+  // the status line names no attack (#39): the name, what can be used here, the clock; the keys are in the menu
   hud('hud', el('#hud'), 'textContent', IS_TOUCH
-    ? nm + '  ·  FIRE ' + G.name + dives(G) + (cycles ? '  ·  WPN next' : '') + (P ? '  ·  ATK ' + P.name + dives(P) : '') + (use ? '  ·  USE ' + use : '') + clock
-    : nm + '  ·  WASD move  ·  Shift sprint  ·  Space ' + (FC.jet?.flier ? 'fly/rise  ·  Q down' : FC.chain ? 'hold/release leap-smash  ·  Q hold/release chain · hold Q reel · Space let go' : 'jump' + (FC.swing ? '  ·  Q zip' : '')) + '  ·  click ' + G.name +
-      dives(G) +
-      (cycles ? '  ·  R next' : '') +
-      (P ? '  ·  right-click ' + P.name : '') +
-      dives(P) +
-      (use ? '  ·  E ' + use : '') +
-      (FC.shift !== undefined ? '  ·  F shift form' : '') +
-      '  ·  T chat  ·  Tab scores' +
+    ? nm + (cycles ? '  ·  WPN next' : '') + (use ? '  ·  USE ' + use : '') + clock
+    : nm + (use ? '  ·  E ' + use : '') + (cycles ? '  ·  R next' : '') + '  ·  Esc menu and keys' +
       (locked || chatOpen ? '' : '  ·  click to capture mouse') + clock)
 }
 
