@@ -644,6 +644,7 @@
    ammo/sp use -1 for unlimited; anim is one integer; cid selects the row.
 
    Rigged characters (card #10): MODELS rows of kind 'rig' load GLBs from assets/ (RIG_FILES), animate in rigAnimate.
+   The villains (card #7): CHARS/BOTS rows by crew; their fighting is botThink's swarm, coverThink, drillThink and crewThink.
    Reskin: edit the CONTENT tables and look recipes. Keep pack/unpack and the
    wire guards aligned.
 */
@@ -689,7 +690,9 @@ const EVENTS = []
 const FAUST_HEAD = { variant: 'stone', software: false }
 // Every player is The Maniak (the design brief), on his rigged model (MODELS.maniak); skin and shape dress the box-man
 // fallback the page draws until the model loads, or if it can't.
-// The freaks are the bots' rows (BOTS), hidden: no player plays them; on pedestrian bodies (MODELS.freak, .brute) until card #7's
+// The freaks are the bots' rows (BOTS), hidden: no player plays them. Card #7 brings the comic's villains: Misery Master and his
+// Teardrops, Tony and his thugs, the Pacifiers' soldiers, each on its own rigged body. The stand-in Freak and Brute stay on as
+// Faustland's street freaks (pedestrian bodies, MODELS.freak, .brute); the old line read: until card #7's
 const CHARS = [
   { name: 'The Maniak', side: 'maniak', primary: 'Haymaker', r: 0.48, h: 0.50, model: 'maniak', speed: 7.4, jump: 8.6, hp: 150, color: 0xe8e2d4,
     role: 'Billionaire vigilante · fists, haymaker, leap-smash and chain',
@@ -705,6 +708,17 @@ const CHARS = [
     role: 'In charge of something · a sledgehammer',
     shape: { torso: [1.3, 1, 1.25], arm: [1.3, 1, 1.25], leg: [1.15, 1, 1.12] },
     skin: { head: 0x8c7a68, torso: 0x45454d, arm: 0x8c7a68, hand: 0x7a6a5a, leg: 0x3a3a42, boot: 0x1e1e22 } },
+  // card #7, the comic's villains (source/COMIC.md). r and h include the hat. enter: told when it turns up
+  { name: 'Teardrop', side: 'freaks', hidden: true, atk: 'Knife', model: 'teardrop', r: 0.34, h: 0.55, speed: 8.2, jump: 9.2, hp: 55, color: 0xe4e0d6,
+    role: 'One of Misery Master\'s Teardrops · a knife, and the rest of them' },
+  { name: 'Misery Master', side: 'freaks', hidden: true, atk: 'Salted knife', far: 'Knife fan', farAt: 4.5, model: 'misery_master', r: 0.36, h: 0.65,
+    speed: 7.6, jump: 9.2, hp: 600, color: 0xdcd7ca, enter: 'crashes the party.', role: 'Faust\'s son · salted knives, and a fan of them thrown' },
+  { name: 'Thug', side: 'freaks', hidden: true, atk: 'Bat', model: 'thug', r: 0.43, h: 0.53, speed: 6.8, jump: 8, hp: 110, color: 0x3b2b21,
+    role: 'Tony\'s muscle · bats, pipes and pistols' },
+  { name: 'Tony', side: 'freaks', hidden: true, atk: 'Bat', far: 'Scatter', farAt: 6, model: 'tony', r: 0.46, h: 0.55, speed: 6.4, jump: 7.6, hp: 340,
+    color: 0x30323a, enter: 'is here to collect.', role: 'One of Faust\'s men · a bat, and a shotgun past arm\'s length' },
+  { name: 'Pacifier', side: 'freaks', hidden: true, atk: 'Rifle', model: 'pacifier', r: 0.4, h: 0.55, speed: 6.2, jump: 8, hp: 150, color: 0x2c2f2a,
+    role: 'A mercenary paid to kill superheroes · a rifle, in a squad' },
 ]
 // rate: s/shot, spread: rad, range: m. Gun 0 never runs dry. look: line|beam|slash|blast; held: glow, heldScale, tether
 // kind: ray|pierce|chain|radius. dive: speed m/s, pull m/s²; dmg, knock × clamp(impact/ref, 1, cap), range × its root
@@ -782,6 +796,17 @@ const GUNS = [
     dive:{ speed:22, pull:16, ref:12, cap:2.6 } },
   { name:'Cinderblock', special:true, held:false, rate:0.8, dmg:45, knock:24, refSpeed:58, minScale:0.15, range:60, color:0xc9c0ae,
     scarLife:45, scarMax:32, scarArea:16, scarAreaMax:4 },
+  // card #7, the villains'. grip: how a rigged fist holds it (MODELS aims/shoots by grip, else by name); model: its PROP_MODELS look
+  { name:'Knife',        rate:0.45, dmg: 9, spread:0.30, pellets:2, range: 2.3, knock: 2.5, color:0xc9c5bb, melee:true, punch:'slash', grip:'knife', model:'Knife' },
+  // Misery Master's: salt in the wound (POWERS Salted)
+  { name:'Salted knife', rate:0.40, dmg:13, spread:0.34, pellets:2, range: 2.6, knock: 4.0, color:0xe8e2d6, melee:true, punch:'slash', grip:'knife', model:'Knife',
+    heldScale:1.15, apply:'Salted' },
+  // his signature: a fan of five salted knives, thrown
+  { name:'Knife fan',    rate:2.60, dmg:11, spread:0.15, pellets:5, range:22,  knock: 3.0, color:0xe8e2d6, punch:'throw', grip:'knife', model:'Knife', heldScale:1.15,
+    apply:'Salted' },
+  { name:'Bat',          rate:0.95, dmg:16, spread:0.40, pellets:3, range: 2.8, knock: 9.0, color:0x8a6442, melee:true, punch:'swing', grip:'bat', model:'Bat' },
+  { name:'Pipe',         rate:1.05, dmg:18, spread:0.36, pellets:3, range: 2.9, knock:10.0, color:0x5f6266, melee:true, punch:'swing', grip:'bat', model:'Pipe' },
+  { name:'Rifle',        rate:0.60, dmg: 6, spread:0.030, range:70, knock: 1.2, color:0x3a3d38, scar:'hole', burst:3, burstGap:0.1, grip:'rifle' },
 ].map(G => ({ ...GUN_ROW, ...G }))
 // POWERS: dur s, then scales of move jump rate give take fuel jet reach lift (jet 0 grounds; reach 0 spares melee)
 // drop:false: by `apply` only. look: an EFFECT_LOOKS overlay
@@ -790,6 +815,8 @@ const POWERS = [
   { name:'Amp',       color:0xff7b72, dur: 8.0, give: 1.7 },
   { name:'Haste',     color:0x7ee787, dur: 9.0, move: 1.35 },
   { name:'Overdrive', color:0xd2a8ff, dur: 8.0, fuel: 0 },
+  // card #7: Misery Master's salted blades: the wound stings, so it slows and takes more
+  { name:'Salted',    color:0xe8e2d6, dur: 4.0, take: 1.3, move: 0.85, drop:false },
 ]
 const HEALS = [
   { name:'Medkit',  amount: 40, color:0x3fb950 },
@@ -801,9 +828,27 @@ const HEALS = [
 // A bot with a primary and no far fires the primary from past farAt while its charges last.
 // hitRun: [swing s, away s]: after swing s striking in reach it sprints away for away s, holding fire (a spinner keeps
 // circling instead), then comes again.
+// Card #7: the comic's villains in gangs (crew). Free-for-all fields the first BOT_COUNT rows, so the rows come a gang at a time:
+// the Teardrops, Tony's thugs, a Pacifier squad, then one more of each, and Faustland's street freaks last. The bosses visit
+// (visits: 1 in n a respawn, else RARE_ONE_IN) and lead their crew while they're about. How each gang fights: swarm: it closes
+// from its own side of the target, the crew spread round it; cover: { hold s, peek s }: with its far weapon out it ducks where the
+// target can't see it and leans out to fire; drill: { gap m, bound s }: the crew comes on as a line abreast, half moving up while the
+// other half holds and fires, in turns. A crew keeps together on the way to a fight (crewThink), and comes back near its leader
+const TEARDROP = { char: 'Teardrop', cid: 'Teardrop', crew: 'teardrops', range: 1.6, fireRange: 3.5, aimErr: 0.08, jumpy: 1.4, turn: 7, swarm: true, hitRun: [0.5, 0.7] }
+const THUG = { char: 'Thug', cid: 'Thug', crew: 'mob', range: 2.2, fireRange: 4.5, aimErr: 0.06, jumpy: 0.4 }
+const SHOOTER = { ...THUG, far: 'Pistol', farAt: 7, range: 11, fireRange: 30, aimErr: 0.07, jumpy: 0.3, cover: { hold: 1.4, peek: 1.6 } }
+const PACIFIER = { char: 'Pacifier', cid: 'Pacifier', crew: 'pacifiers', range: 13, fireRange: 40, aimErr: 0.05, jumpy: 0.1, turn: 4, drill: { gap: 3, bound: 1.8 } }
 const BOTS = [
-  { char: 'Freak', cid: 'Freak', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 1.1, copies: 4 },
-  { char: 'Brute', cid: 'Brute', range: 2.4, fireRange: 5, aimErr: 0.05, jumpy: 0.3, turn: 5, copies: 2 },
+  TEARDROP, TEARDROP, TEARDROP,
+  THUG, SHOOTER, THUG,
+  PACIFIER, PACIFIER, PACIFIER, PACIFIER,
+  TEARDROP, { ...THUG, atk: 'Pipe' }, TEARDROP, SHOOTER,
+  { char: 'Freak', cid: 'Freak', crew: 'street', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 1.1 },
+  { char: 'Brute', cid: 'Brute', crew: 'street', range: 2.4, fireRange: 5, aimErr: 0.05, jumpy: 0.3, turn: 5 },
+  { char: 'Freak', cid: 'Freak', crew: 'street', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 1.1 },
+  { char: 'Misery Master', cid: 'Misery Master', crew: 'teardrops', boss: true, rare: true, visits: 6, range: 2.2, fireRange: 20, aimErr: 0.04, jumpy: 0.7,
+    turn: 8, hitRun: [1.0, 0.5] },
+  { char: 'Tony', cid: 'Tony', crew: 'mob', boss: true, rare: true, visits: 8, range: 7, fireRange: 18, aimErr: 0.05, jumpy: 0.2, turn: 4 },
 ]
 // pick: every BOTS row whose fields match (a list: any of it; absent = false)
 const WAVES = [
@@ -906,7 +951,7 @@ const ASSETS =
 // decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
 // neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.6e652416.glb', civ_f_coat: 'civ_f_coat.67e51246.glb', civ_f_dress: 'civ_f_dress.c79bc6fb.glb', civ_freak: 'civ_freak.a813a76c.glb', civ_m_coat: 'civ_m_coat.d4b5d9fb.glb', civ_m_suit: 'civ_m_suit.afd3fc9e.glb', civ_m_worker: 'civ_m_worker.3c5412af.glb', maniak: 'maniak.dae0434f.glb', props: 'props.c509eb59.glb' }
+const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.6e652416.glb', civ_f_coat: 'civ_f_coat.67e51246.glb', civ_f_dress: 'civ_f_dress.c79bc6fb.glb', civ_freak: 'civ_freak.a813a76c.glb', civ_m_coat: 'civ_m_coat.d4b5d9fb.glb', civ_m_suit: 'civ_m_suit.afd3fc9e.glb', civ_m_worker: 'civ_m_worker.3c5412af.glb', maniak: 'maniak.dae0434f.glb', props: 'props.c509eb59.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -921,6 +966,9 @@ const RIG_CIV = { kind: 'rig', anims: RIG_FILES.anims, yaw: Math.PI, gripReach: 
     climb: 'chain_hang', dive: 'fall', fly: 'fall', drive: 'drive', sit: 'sit', lift: 'smash_air', death: 'death', leap: 'fall', land: 'land',
     hits: ['hit_chest', 'hit_head'], aim: 'pistol_idle', shoot: 'pistol_shoot' },
   pace: { walk: 0.57, run: 1.55, sprint: 3.25, crouch: 0.41 } }
+// card #7: a villain's body: the pedestrians' base with the shared clips and the freaks' own, walking (not shambling) as a man does
+const RIG_FREAK = { ...RIG_CIV, anims: [RIG_FILES.anims, RIG_FILES.freak_anims], punches: {}, clips: { ...RIG_CIV.clips, idle: 'idle', walk: 'walk' },
+  pace: { walk: 0.62, run: 1.55, sprint: 3.25, crouch: 0.41 } }
 const MODELS = {
   trafficDriver: { ...RIG_CIV, file: RIG_FILES.civ_m_suit },
   // The Maniak (pin rule 10): kind 'rig'. clips: the avatar's states to clip names; pace: each locomotion clip's ground
@@ -940,6 +988,15 @@ const MODELS = {
   // swung (the Brute's sledge)
   freak: { ...RIG_CIV, file: RIG_FILES.civ_freak, punches: { jab: [['freak_attack', 0.35]], melee: [['hook', 0.04]] } },
   brute: { ...RIG_CIV, file: RIG_FILES.civ_brute, punches: { jab: [['hook', 0.04]], melee: [['hook', 0.04], ['cross', 0.18]] } },
+  // card #7, the villains: their own bodies, the shared clips plus their own (RIG_FILES.freak_anims: knife stance and slashes, a bat
+  // on the shoulder and its two-handed swing, a rifle held and its kick). aims and shoots: a held weapon's stance and shot by its
+  // GUNS grip (else its name), over the legs' clip; punches as the Maniak's, by the weapon's punch kind
+  teardrop: { ...RIG_FREAK, file: RIG_FILES.teardrop, aims: { knife: 'knife_idle' }, punches: { slash: [['knife_a', 0.02], ['knife_b', 0.02]] } },
+  misery_master: { ...RIG_FREAK, file: RIG_FILES.misery_master, clips: { ...RIG_FREAK.clips, walk: 'walk_formal' }, aims: { knife: 'knife_idle' },
+    punches: { slash: [['knife_a', 0.02], ['knife_lunge', 0.3], ['knife_b', 0.02]], throw: [['block_throw', 0.2]] } },
+  tony: { ...RIG_FREAK, file: RIG_FILES.tony, aims: { bat: 'bat_idle', Scatter: 'rifle_idle' }, shoots: { Scatter: 'rifle_shoot' }, punches: { swing: [['bat_swing', 0.05]] } },
+  thug: { ...RIG_FREAK, file: RIG_FILES.thug, aims: { bat: 'bat_idle' }, punches: { swing: [['bat_swing', 0.05]] } },
+  pacifier: { ...RIG_FREAK, file: RIG_FILES.pacifier, aims: { rifle: 'rifle_idle' }, shoots: { rifle: 'rifle_shoot' } },
   man: {
     url: ASSETS + 'box_man.glb',
     yaw: Math.PI,
@@ -1152,6 +1209,14 @@ function vehicleWheels(k, { r, at }) {
 // [along, radius]...] in %; each post a round body standing at [along, [height, radius]...] from its foot up. Its hand's
 // point is the model's origin. An outline or hole of four numbers is the rectangle [from, top, to, bottom].
 const GUN_PROFILES = {
+  Rifle: { len: 0.88, hand: [31, 37],                                               // card #7: a generic carbine, the Pacifiers'
+    parts: [['dark', 0.046, [[0, 12], [16, 11], [21, 15], [21, 22], [3, 29], [0, 29]]],
+      ['accent', 0.05, [[16, 11], [61, 11], [61, 21], [21, 22], [21, 15]]],
+      ['dark', 0.04, [[27, 21], [33, 21], [31, 39], [25.5, 39]]],
+      ['dark', 0.034, [[38, 21], [45, 21], [48, 37], [42, 38]]],
+      ['accent', 0.052, [[61, 12], [82, 13], [82, 20.5], [61, 21]]],
+      ['dark', 0.018, [[36, 7], [58, 7], [58, 11], [36, 11]]], ['dark', 0.012, [[78, 9], [81, 9], [81, 13], [78, 13]]]],
+    bores: [[1.0, 82, 99.5, 16.5]], tubes: [['steel', 0.9, 82, 98, 16.5]] },
   Pistol: { len: 0.202, hand: [20, 45],                                             // Glock 17
     parts: [['accent', 0.0255, [8, 2, 99.5, 13]],
       ['dark', 0.004, [94, 0, 96, 2]], ['dark', 0.02, [12, 0, 16, 2]],
@@ -1205,6 +1270,23 @@ function gunProfile(k, { len, hand: [hx, hy], parts, bores = [], tubes = [], lat
 
 const PROP_MODELS = {
   ...Object.fromEntries(Object.keys(VEHICLE_SHAPES).map(name => [name, k => vehicleModel(k, name)])),
+  // card #7. Melee looks: the grip at the origin, the blade or haft up +Y (out of a fist's thumb side), an edge toward -Z
+  Knife(k) {
+    k.box('dark', [0.022, 0.115, 0.03], [0, 0.0, 0], 'grip')
+    k.box('steel', [0.03, 0.012, 0.042], [0, 0.064, 0], 'guard')
+    k.add({ g: ['outline', [[-0.011, 0.07], [0.013, 0.07], [0.013, 0.2], [-0.004, 0.285], [-0.011, 0.255]], 0.004], m: 'steel', r: [0, Math.PI / 2, 0], tag: 'blade' })
+    // salt caked along the edge
+    k.add({ g: ['outline', [[0.004, 0.085], [0.0135, 0.085], [0.0135, 0.2], [-0.001, 0.27], [0.002, 0.2]], 0.0065], m: 'white', r: [0, Math.PI / 2, 0], tag: 'salt' })
+  },
+  Bat(k) {
+    k.add({ g: ['lathe', [[0.0, -0.075], [0.024, -0.072], [0.025, -0.062], [0.016, -0.05], [0.016, 0.2], [0.026, 0.38], [0.034, 0.56], [0.035, 0.66],
+      [0.03, 0.69], [0.0, 0.695]], 12], m: 'accent', tag: 'bat' })
+    k.add({ g: ['cylinder', 0.0175, 0.0175, 0.12, 10], m: 'dark', p: [0, 0.0, 0], tag: 'tape' })
+  },
+  Pipe(k) {
+    k.add({ g: ['lathe', [[0.0, -0.13], [0.024, -0.13], [0.024, -0.085], [0.019, -0.075], [0.019, 0.56], [0.027, 0.57], [0.027, 0.64], [0.0, 0.64]], 10],
+      m: 'accent', tag: 'pipe' })
+  },
   Hammer(k) {
     k.grip()
     k.box('steel', [0.07, 0.65, 0.07], [0, 0.22, 0], 'haft')
@@ -1271,6 +1353,13 @@ const SOUNDS = {
   'Haymaker charge': { say: 'a short breath of effort and a rising heavy swing', seed: 0 },
   Shiv: { say: 'a fast, thin blade slash: a hiss of air and a scrape', seed: 0 },
   Sledge: { say: 'a sledgehammer swung through the air into a dull iron thud', seed: 0 },
+  // card #7, the villains' weapons
+  Knife: { say: 'a short knife slash: a thin whip of air and a sharp scrape of steel', seed: 0 },
+  'Salted knife': { say: 'a long knife drawn fast through the air, with a gritty hiss of salt', seed: 0 },
+  'Knife fan': { say: 'five knives flung at once: a fanned flutter of spinning steel', seed: 0 },
+  Bat: { say: 'a wooden baseball bat swung hard: a low whoosh and a hollow wooden crack', seed: 0 },
+  Pipe: { say: 'a steel pipe swung hard: a heavy whoosh and a ringing metal clang', seed: 0 },
+  Rifle: { say: 'a three-round rifle burst: three tight, hard cracks', seed: 0 },
 
   Cinderblock: { say: 'a heavy concrete block thuds into flesh or cracks masonry with a cascade of chips', seed: 0 },
   // ---- you, never placed
@@ -3626,7 +3715,7 @@ const gunsOf = c => !gunless(CHARS[c.cid])
 const atksOf = c => [].concat(CHARS[c.cid].atk ?? [])
 function armRow(c) { c.gun = handsOf(CHARS[c.cid]); c.ammo = Infinity }
 function respawn(c) {
-  const s = pickSpawn(c)
+  const s = crewSpawn(c) || pickSpawn(c)
   if (LV.grow) growNear([[s[0], s[2]]], true)       // before anyone stands there
   c.prot = SPAWN_PROT
   setCharPos(c, s[0], s[1], s[2])
@@ -3906,7 +3995,7 @@ function carWant(b, seat, tgt, sd, dt) {
   const free = (o, i) => o.riders[i] === undefined && fits(b, o, i), by = o => players.get(o.riders[0])
   // empty, or a same-side driver's while it waits
   const usable = o => o.V && o.car && o.heldBy === undefined && o.thrownBy === undefined && o.fuse === undefined && upOf(o) > 0.7 && !canLift(b, o) &&
-    o.V.speed >= BOARD_GAIN * bestPace(b) && (o.riders[0] === undefined ? free(o, 0) : by(o) && sideOf(by(o)) === sideOf(b) && speedOf(o) < 3 && o.riders.some((r, i) => free(o, i)))
+    o.V.speed >= BOARD_GAIN * bestPace(b) && (o.riders[0] === undefined ? free(o, 0) && !o.traffic && speedOf(o) < 3 : by(o) && sideOf(by(o)) === sideOf(b) && speedOf(o) < 3 && o.riders.some((r, i) => free(o, i)))
   if (ai.car && !(objs.includes(ai.car) && usable(ai.car) && Math.hypot(ai.car.x - b.x, ai.car.z - b.z) < 30 && (ai.carT -= dt) > 0)) ai.car = null
   if (!ai.car && (ai.carScan = (ai.carScan || 0) - dt) <= 0) {
     ai.carScan = 0.5
@@ -4019,7 +4108,11 @@ function botThink(b, all, dt) {
   const seat = seatOf(b)
   if (seat && !seat[1]) return driveThink(b, seat[0], tgt, dt, all)
   const car = carWant(b, seat, tgt, sd, dt)
-  if (!tgt && !car?.to) return { f: 0.92, r: 0, j: false, descend: false, fire: false, yaw: ai.wander, pitch: 0, use: car?.use }
+  // card #7: a crew keeps together on the way to a fight (crewThink)
+  ai.wait = false
+  const follow = !car?.to && !seat && !(spec.drill && tgt && sd < 36) && crewThink(b, all, tgt, sd)
+  if (!tgt && follow) return { f: 1, r: 0, j: false, descend: false, fire: false, yaw: Math.atan2(-(follow.x - b.x), -(follow.z - b.z)), pitch: 0 }
+  if (!tgt && !car?.to) return { f: ai.wait ? 0 : 0.92, r: 0, j: false, descend: false, fire: false, yaw: ai.wander, pitch: 0, use: car?.use }
 
   const H = spec.hurl, held = H && objs.find(o => o.heldBy === b.id)
   let prey = null
@@ -4134,8 +4227,36 @@ function botThink(b, all, dt) {
     const m = Math.hypot(dx, dz) || 1;
     [mf, mr] = toLocal(yaw, dx, dz).map(v => v / m)
   }
+  // card #7: how each gang fights (BOTS swarm, cover, drill); on the way, in with its crew
+  ai.noFire = false; ai.walk = false
+  if (follow && !climbing) {
+    const dx = follow.x - b.x, dz = follow.z - b.z, m = Math.hypot(dx, dz) || 1
+    ;[mf, mr] = toLocal(yaw, dx / m, dz / m)
+  } else if (spec.swarm && los && (!along || Math.hypot(way.x - goal.x, way.z - goal.z) < 2) && !climbing && !car && !held && tgt.id >= 0 && dist > 2.4 && dist < 20 && !(ai.awayT > 0)) {
+    // (in Faustland every way has a corner: a straight approach is one whose corner is the goal itself)
+    // its own place round the target: the crew on it spread evenly round it, centred on the side they come from; the place draws in
+    // as it closes, and there it cuts in
+    const crew = all.filter(c => c.bot?.swarm && c.bot.crew === spec.crew && !(c.dead > 0) && c.ai?.tgt === tgt.id).sort((p, q) => p.id - q.id)
+    const n = Math.max(crew.length, 1), k = Math.max(0, crew.indexOf(b))
+    let cx = 0, cz = 0
+    for (const c of crew) { cx += c.x / n; cz += c.z / n }
+    const a = Math.atan2(cx - tgt.x, cz - tgt.z) + (k - (n - 1) / 2) * Math.min(1.3, 2 * Math.PI / Math.max(n, 2) * 0.85)
+    // far round from its place it circles at its range (holding its strike) instead of cutting across the target, then closes
+    const cur = Math.atan2(b.x - tgt.x, b.z - tgt.z), da = wrapPi(a - cur), round = Math.abs(da) > 0.5
+    const R = round ? Math.max(3.2, Math.min(dist, 7)) : Math.min(8, Math.max(2.4, dist * 0.7)), to = round ? cur + clamp(da, -0.7, 0.7) : a
+    const sx = tgt.x + Math.sin(to) * R - b.x, sz = tgt.z + Math.cos(to) * R - b.z, m = Math.hypot(sx, sz) || 1
+    if (m > 1.0) [mf, mr] = toLocal(yaw, sx / m, sz / m)
+    if (round) ai.noFire = true
+  }
+  if (spec.cover) coverThink(b, spec, tgt, dist, dt, !!(car || climbing || held || air || follow))
+  if (ai.cov && !(car || climbing)) {
+    const c = ai.cov, px = c.phase === 'peek' ? c.px : c.x, pz = c.phase === 'peek' ? c.pz : c.z, dx = px - b.x, dz = pz - b.z, m = Math.hypot(dx, dz)
+    ;[mf, mr] = m > 0.35 ? toLocal(yaw, dx / m, dz / m) : [0, 0]
+    ai.noFire = c.phase !== 'peek'
+  }
+  if (spec.drill && tgt.id >= 0 && !car && !climbing && !air && !follow && dist < 36) drillThink(b, spec, tgt, all, yaw, (f, r, fires) => { mf = f; mr = r; ai.noFire = !fires; ai.walk = true })
   if (spec.hitRun) { if (ai.awayT > 0) ai.awayT -= dt; else if ((ai.swT = los && dist < reach ? (ai.swT || 0) + dt : 0) > spec.hitRun[0]) ai.awayT = spec.hitRun[1], ai.swT = 0 }
-  const fire = !prey && !car?.to && seatShot(b, G) && los && (held ? dist < 0.7 * H.speed && off < Math.atan2(tgt.r, dist) + 0.02 : (air ? Math.hypot(dist, b.y - tgt.y) : dist) < reach) && onTarget && !(ai.awayT > 0)     // a flier's reach is 3D
+  const fire = !prey && !car?.to && seatShot(b, G) && los && (held ? dist < 0.7 * H.speed && off < Math.atan2(tgt.r, dist) + 0.02 : (air ? Math.hypot(dist, b.y - tgt.y) : dist) < reach) && onTarget && !(ai.awayT > 0) && !ai.noFire     // a flier's reach is 3D
   const out = threatOf(b)
   if (out) [mf, mr] = toLocal(yaw, ...out)
   if (ai.dive && (fire && !(b.cool > 0) && !(b.charge < G.windup) || ai.diveT < -A.dive)) ai.dive = false, ai.diveT = A.dive
@@ -4190,13 +4311,98 @@ function botThink(b, all, dt) {
   ai.doCharge = _chargeJ !== null          // read by the P-gate
   if (_wrForward) { mf = 1; mr = 0; sj = false; sy = (_wrYaw ?? yaw) - yaw }
   return {
-    f: ai.awayT > 0 && !_wrForward && !orbit ? -1 : out ? mf : mf * pace, r: out ? mr : mr * pace,
+    f: ai.awayT > 0 && !_wrForward && !orbit ? -1 : out ? mf : mf * pace * (ai.wait ? 0.3 : 1), r: out ? mr : mr * pace,
     j: sj ?? (air ? ai.hop || (flier ? !b.flying || b.y < wantY - 0.5 : b.y + rise(b.vy, jetOf(b).grav || 1) < wantY)
        : ai.hop && !(b.wall > 0) || (charging || pace < 1 || b.wall > 0 || POWERS[tgt.mark - 1]?.move === 0 ? false : Math.random() < spec.jumpy * dt)),   // wall: climbs on; held target: on foot
     descend: flier && b.flying && !ai.hop && b.y > wantY + 0.5 || _doZip,
-    fire: fire && !sig && !_wrForward, alt: fire && sig && !_wrForward || dashWant(b, tgt, dist, los, onTarget, dt, all), use: !!prey && objGap(b, prey) <= (H.reach ?? 1.5) || !!car?.use, sprint: !((jetOf(b)?.sprint && b.flying) || prey),
+    fire: fire && !sig && !_wrForward, alt: fire && sig && !_wrForward || dashWant(b, tgt, dist, los, onTarget, dt, all), use: !!prey && objGap(b, prey) <= (H.reach ?? 1.5) || !!car?.use, sprint: !((jetOf(b)?.sprint && b.flying) || prey || ai.walk),
     yaw: yaw + sy, pitch: sp ?? pitch,
   }
+}
+
+// card #7, crews: a crew's leader is its boss while it's about, else its first member. A member still far from the fight (over
+// CREW_FAR m from its target, or without one) falls in round its leader when it can see it; the leader waits for stragglers
+const CREW_FAR = 24
+function crewLead(b, all) {
+  let lead = null
+  if (b.bot?.crew) for (const c of all) if (c.bot?.crew === b.bot.crew && !(c.dead > 0) && !seatOf(c) && (!lead || (!!c.bot.boss - !!lead.bot.boss || lead.id - c.id) > 0)) lead = c
+  return lead
+}
+function crewThink(b, all, tgt, sd) {
+  const ai = b.ai, lead = crewLead(b, all)
+  if (!lead || tgt && sd < CREW_FAR) return null
+  const mates = all.filter(c => c !== lead && c.bot?.crew === b.bot.crew && !(c.dead > 0) && !seatOf(c)).sort((p, q) => p.id - q.id)
+  if (lead === b) {                                   // the leader: slower while its crew is strung out behind it (not ahead, in a fight)
+    const behind = tgt ? mates.filter(c => Math.hypot(c.x - tgt.x, c.z - tgt.z) > sd + 4) : mates
+    ai.wait = behind.length > 0 && behind.reduce((n, c) => n + Math.hypot(c.x - b.x, c.z - b.z), 0) / behind.length > 10
+    return null
+  }
+  const k = mates.indexOf(b), n = mates.length, d = Math.hypot(lead.x - b.x, lead.z - b.z)
+  if (k < 0 || d > 45 || !clearLine(b, lead)) return null
+  // its place in a loose wedge behind the leader
+  const yaw = lead.yaw || 0, side = (k - (n - 1) / 2) * 1.8, back = 2.2 + Math.abs(k - (n - 1) / 2) * 0.9
+  const x = lead.x + Math.sin(yaw) * back + Math.cos(yaw) * side, z = lead.z + Math.cos(yaw) * back - Math.sin(yaw) * side
+  return Math.hypot(x - b.x, z - b.z) > 1.2 ? { x, z } : null
+}
+// card #7: a crew member comes back near its crew's leader (the spawn point nearest it, 30 m from any player), else as anyone does
+function crewSpawn(c) {
+  const all = [...players.values()], lead = c.bot?.crew && crewLead(c, all.filter(o => o !== c))
+  if (!lead || !SPAWNS?.length) return null
+  let best = null, bd = Infinity
+  for (const s of SPAWNS) {
+    const d = Math.hypot(s[0] - lead.x, s[2] - lead.z)
+    if (d < bd && all.every(o => o.bot || o.dead > 0 || Math.hypot(s[0] - o.x, s[2] - o.z) > 30)) { bd = d; best = s }
+  }
+  return best
+}
+// card #7, cover: with its far weapon out and the target past farAt, it looks (every 1.2 s) round itself for a spot the target
+// can't see, a straight way in, and a place beside it, square to the target, to lean out from. It holds there for cover.hold s,
+// leans out to fire for cover.peek s, and ducks back; found out (the target sees the spot), it moves on
+function coverThink(b, spec, tgt, dist, dt, busy) {
+  const ai = b.ai, C = spec.cover, far = spec.far && b.gun === gunNamed([spec.far].flat()[0])
+  if (busy || !far || tgt.id < 0 || dist < (spec.farAt ?? 6) || dist > 45) { ai.cov = null; return }
+  const ey = tgt.y + tgt.h * 0.6
+  const sees = (x, y, z) => { const dx = x - tgt.x, dy = y - ey, dz = z - tgt.z, d = Math.hypot(dx, dy, dz) || 1; return staticRay(tgt.x, ey, tgt.z, dx / d, dy / d, dz / d, d) >= d - 0.3 }
+  const open = (x0, z0, x, z) => { const dx = x - x0, dz = z - z0, d = Math.hypot(dx, dz) || 1; return staticRay(x0, b.y, z0, dx / d, 0, dz / d, d + b.r) >= d + b.r - 0.05 }
+  let c = ai.cov
+  if (c && (ai.covCheck = (ai.covCheck || 0) - dt) <= 0) { ai.covCheck = 0.5; if (sees(c.x, b.y, c.z)) c = ai.cov = null }
+  if (!c && (ai.covScan = (ai.covScan || 0) - dt) <= 0) {
+    ai.covScan = 1.2
+    let best = null, bs = Infinity
+    const toT = Math.atan2(tgt.x - b.x, tgt.z - b.z)
+    for (let i = 0; i < 14; i++) {
+      const a = toT + i / 14 * 2 * Math.PI, r = 2 + i % 3 * 2.5, x = b.x + Math.sin(a) * r, z = b.z + Math.cos(a) * r
+      if (!open(b.x, b.z, x, z) || sees(x, b.y, z)) continue
+      const ux = tgt.x - x, uz = tgt.z - z, ud = Math.hypot(ux, uz) || 1
+      for (const s of [1, -1]) {
+        const px = x + uz / ud * 1.2 * s, pz = z - ux / ud * 1.2 * s
+        if (!open(x, z, px, pz) || !sees(px, b.y + b.h * 0.4, pz)) continue
+        const sc = r + Math.abs(ud - (spec.range ?? 10)) * 0.25
+        if (sc < bs) { bs = sc; best = { x, z, px, pz, phase: 'hide', t: C.hold } }
+        break
+      }
+    }
+    c = ai.cov = best
+  }
+  if (!c) return
+  if (c.phase === 'hide' && Math.hypot(c.x - b.x, c.z - b.z) < 0.7 && (c.t -= dt) <= 0) { c.phase = 'peek'; c.t = C.peek }
+  else if (c.phase === 'peek' && (c.t -= dt) <= 0) { c.phase = 'hide'; c.t = C.hold }
+}
+// card #7, drill: the crew's line abreast faces the target from the crew's centre, each in its slot by id, drill.gap m apart. The
+// line comes on by halves: for drill.bound s the even slots move up (holding fire) while the odd hold and fire, then the other way
+// round, until the line is at its range. Out of its slot it walks back into it first
+function drillThink(b, spec, tgt, all, yaw, set) {
+  const D = spec.drill, mates = all.filter(c => c.bot?.drill && c.bot.crew === spec.crew && !(c.dead > 0) && !seatOf(c)).sort((p, q) => p.id - q.id)
+  const n = mates.length, k = mates.indexOf(b)
+  if (k < 0) return
+  let cx = 0, cz = 0
+  for (const m of mates) { cx += m.x / n; cz += m.z / n }
+  const dx = tgt.x - cx, dz = tgt.z - cz, dc = Math.hypot(dx, dz) || 1, ux = dx / dc, uz = dz / dc
+  const lat = (k - (n - 1) / 2) * D.gap, go = Math.min(Math.max(0, dc - (spec.range ?? 12)), 5)
+  const sx = cx + ux * go + uz * lat - b.x, sz = cz + uz * go - ux * lat - b.z, m = Math.hypot(sx, sz) || 1
+  const moving = go > 0.5 && k % 2 === Math.floor(now() / 1000 / D.bound) % 2
+  if (m > 2.5 || moving && m > 0.4) set(...toLocal(yaw, sx / m, sz / m), false)
+  else set(0, 0, true)
 }
 
 // web at a jump's top: furthest-ahead tie with arc bottom 1 m over take-off, off the adjacent wall; [yaw off, pitch]|null
@@ -4214,7 +4420,7 @@ function swingAim(b, yaw, range, y0) {
 // a vehicle passing within reach inside 2 s: the flat way out of its line, else null
 function threatOf(b) {
   for (const o of objs) {
-    if (!o.V || o.parked) continue
+    if (!o.V || o.parked || Math.abs(o.y - b.y) > 3) continue
     const v = o.body.getLinearVelocity(), vx = v.x(), vz = v.z(), v2 = vx * vx + vz * vz
     const rx = b.x - o.x, rz = b.z - o.z, t = v2 > 9 ? (rx * vx + rz * vz) / v2 : 0
     if (t <= 0 || t > 2) continue
@@ -7739,13 +7945,18 @@ function rigLoader() {
 }
 function rigLoad(name, M) {
   rigLoader()
-  Promise.all([rigFetch(M.file), M.anims && rigFetch(M.anims)]).then(([g, a]) => onRigLoaded(M, g, a))
+  // anims: a clip file, or a list of them (card #7: the shared clips and the freaks' own), merged in order
+  const files = [M.anims].flat().filter(f => typeof f === 'string')
+  Promise.all([rigFetch(M.file), ...files.map(rigFetch)]).then(([g, ...a]) => onRigLoaded(M, g, a.length ? { animations: a.flatMap(x => x.animations) } : null))
     .catch(e => console.warn('model ' + name + ' failed, using capsules:', e && e.message))
 }
 // gltfpack keeps a LOD node's name on a parent and puts the mesh in an unnamed child: read either
 const rigLods = root => { const m = []; root.traverse(o => { const k = /_lod(\d)$/.exec(o.name) || /_lod(\d)$/.exec(o.parent?.name || ''); if (o.isSkinnedMesh && k) m[+k[1]] = o }); return m }
 function onRigLoaded(M, gltf, anims) {
   const root = gltf.scene
+  // card #7: the right grip's rest frame against the model, before any clip moves it (gripTurn turns a held weapon from it)
+  const grip = root.getObjectByName('grip_r')
+  if (grip) { root.updateMatrixWorld(true); M.gripRest = grip.getWorldQuaternion(new THREE.Quaternion()).invert() }
   root.traverse(n => { if (n.isMesh) { n.castShadow = true; n.frustumCulled = false; if (n.geometry) n.geometry.userData.shared = true } })
   M.anims = (anims || gltf).animations
   // measured standing in its idle (the rest pose is a T), LOD0 only
@@ -9940,7 +10151,7 @@ function rigAnimate(a, want, dt, t) {
   const step = t < (a.holdTo || 0) ? 0 : dt
   if (R.lod < 2 || R.frame % 2 === 0) R.mixer.update(R.lod < 2 ? step : step * 2)
   // arms held over the legs' clip: a lifted object overhead, a held gun's stance
-  const upper = hold === 'lift' ? rigClip(M, K.lift) : a.held?.visible && !(a.dying >= 0) ? rigClip(M, K.aim) : null
+  const HG = GUNS[a.heldGun], upper = hold === 'lift' ? rigClip(M, K.lift) : a.held?.visible && !(a.dying >= 0) ? rigClip(M, M.aims?.[HG?.grip] ?? M.aims?.[HG?.name] ?? K.aim) : null
   if (upper) rigPose(R, upper, (t / 1000) % upper.duration, 1, RIG_UPPER)
   // punches: the gun's punch kind, a combo for jabs (a gun without one: its shot); then hit reactions
   const wind = GUNS[a.chargeGun]
@@ -9954,7 +10165,7 @@ function rigAnimate(a, want, dt, t) {
     if (clip && !(G.hayWind && R.over?.clip.name === 'haymaker')) R.over = { clip, t0, at: t, full: G.punch === 'slam', speed: G.punch === 'jab' ? 1.5 : 1.15 }
   } else if (G && !G.melee && a.held?.visible && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 200) {
     R.shotSeen = a.shotAt
-    const clip = rigClip(M, K.shoot)
+    const clip = rigClip(M, M.shoots?.[G.grip] ?? M.shoots?.[G.name] ?? K.shoot)
     if (clip) R.over = { clip, t0: 0, at: t, speed: 1.6 }
   }
   if (a.struckAt !== undefined && a.struckAt !== R.struckSeen && t - a.struckAt < 200 && K.hits && !(R.over && !R.over.hit)) {
@@ -10138,6 +10349,17 @@ function clearHeld(a) {
   a.held = null
 }
 
+// card #7: a weapon in a rigged fist turns with the hand: the grip's turn from its rest frame, onto the weapon's frame at rest.
+// PROP_MODELS draw a blade or haft along +Y; at rest (model space: +X his left, +Y up, +Z forward) a knife's blade lies along the
+// right fist's arm-in axis, which is how the sword clips it slashes with (Universal Animation Library) carry theirs, and a bat's
+// haft out of the back of the fist, which stands it on the shoulder in bat_idle and brings it down through bat_swing
+const gripBasis = (x, y, z) => new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...x), new THREE.Vector3(...y), new THREE.Vector3(...z)))
+const GRIP_REST = { knife: gripBasis([0, 0, 1], [1, 0, 0], [0, 1, 0]), bat: gripBasis([0, 0, -1], [0, 1, 0], [1, 0, 0]) }
+const gripQ = new THREE.Quaternion()
+function gripTurn(a, held, G) {
+  a.socket.object.getWorldQuaternion(gripQ)
+  held.quaternion.copy(gripQ).multiply(a.rig.M.gripRest).multiply(GRIP_REST[G.grip] || GRIP_REST.knife)
+}
 function handSocket(a, side = 1, tag = 'hand') {
   const grip = a.rig && tag === 'hand' && a.rig.inst.getObjectByName(side > 0 ? 'grip_r' : 'grip_l')
   if (grip) return { object: grip, point: new THREE.Vector3() }
@@ -10229,6 +10451,7 @@ function drawHeld(id, state, t, view = null, fade = 1) {
     held.scale.setScalar(Math.min(1.1, Math.max(0.65, (a.spec.h + a.spec.r) / 0.9)) * (G.heldScale || 1))
     const pitch = Number.isFinite(state.pitch) ? state.pitch : a.shotPitch || 0, yaw = a.seatAim?.active ? state.yaw || 0 : a.face ?? (state.yaw || 0)
     held.rotation.set(pitch, yaw + (G.tether && a.shotGun === gun && age >= 0 && age < SLASH_MS ? (age / SLASH_MS - 0.5) * 2 * G.spread : 0), 0, 'YXZ')
+    if (a.rig?.M.gripRest && (G.melee || G.grip === 'knife') && a.socket?.object?.name === 'grip_r') gripTurn(a, held, G)
   }
   if (G.tether) {
     const L = G.tether / held.scale.x, w = 0.07 / held.scale.x
@@ -15567,10 +15790,10 @@ GAME.lifecycle = {
 function rollRare(c) {
   if (!isHost || gameMode !== 'ffa') return
   BOTS.forEach((B, i) => {
-    if (!B.visits || players.has(BOT_ID0 + i) || Math.floor(Math.random() * RARE_ONE_IN)) return
+    if (!B.visits || players.has(BOT_ID0 + i) || Math.floor(Math.random() * (B.visits === true ? RARE_ONE_IN : B.visits))) return
     addBot(i)
     if (conns.size) pushRoster()
-    announce('§f' + B.name + ' §7turned up.')
+    announce('§f' + B.name + ' §7' + (B.enter || 'turned up.'))
   })
 }
 
