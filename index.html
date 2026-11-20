@@ -3521,6 +3521,14 @@ function faustStorey(B, k) {
       for (let j = holes.length; j--;) if (holes[j][1] > dx0 - 0.3 && holes[j][0] < dx1 + 0.3) holes.splice(j, 1)
       holes.push([dx0, dx1, 0, B.door.h, 'door'])
     }
+    // where the ring's front or back wall meets a side face inside a pane (no pier was within reach of it), a pier the wall's
+    // width splits the opening there (#72: a mullion where a wall lands in a wide shop bay)
+    if (axis) for (const zw of [G.z1 < P.z1 - 0.01 ? G.z1 : null, G.z0 > P.z0 + 0.01 ? G.z0 : null]) {
+      const j = zw === null ? -1 : holes.findIndex(h => h[4] !== 'door' && zw + 0.1 > h[0] && zw - 0.1 < h[1])
+      if (j < 0) continue
+      const h = holes[j]
+      holes.splice(j, 1, ...[[h[0], zw - 0.1], [zw + 0.1, h[1]]].filter(([a, b]) => b - a > 0.2).map(([a, b]) => [a, b, h[2], h[3]]))
+    }
     holes.sort((p, q) => p[0] - q[0])
     let u = along0
     const piece = (u0, u1, y0, y1, faces) => {
