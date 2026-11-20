@@ -31643,14 +31643,19 @@ const blackbox = (() => {
     else for (const h of hits) { row.flag.push(h); console.warn('[blackbox] ' + h) }
   }
   B.frameNo = 0
+  B.litNames = ['sun intensity', 'sun colour', 'sun castShadow', 'shadow intensity', 'shadow bias', 'shadow normalBias', 'shadow map', 'shadow left', 'shadow right', 'shadow top', 'shadow bottom', 'shadow near', 'shadow far', 'hemisphere', 'fog density/near', 'fog far', 'fog colour', 'exposure', 'environment', 'shadows enabled', ...['road', 'pave'].flatMap(n => [n + ' ground visible', n + ' ground map version', n + ' ground map', n + ' ground buffer', n + ' ground drawRange'])]
   B.frame = () => {
     const t = performance.now(), c = selfChar(), o = c && (seatOf(c)?.[0] || rideOf(c)), cam = camera.position, L = B.last
     const progs = B.progs ||= new Set(), fresh = (renderer.info.programs || []).filter(q => !progs.has(q))
     for (const q of fresh) progs.add(q)
+    const sc = sunLight?.shadow?.camera, hemi = scene.children.find(n => n.isHemisphereLight)
+    const lit = [sunLight?.intensity, sunLight?.color.getHex(), sunLight?.castShadow, sunLight?.shadow.intensity, sunLight?.shadow.bias, sunLight?.shadow.normalBias, sunLight?.shadow.map?.texture.uuid.slice(0, 6),
+      sc?.left, sc?.right, sc?.top, sc?.bottom, sc?.near, sc?.far, hemi?.intensity, scene.fog?.density ?? scene.fog?.near, scene.fog?.far, scene.fog?.color.getHex(), renderer.toneMappingExposure, scene.environment?.uuid.slice(0, 6), renderer.shadowMap.enabled,
+      ...(cityGround || [null, null]).flatMap(m => [m?.visible, m?.material.map?.version, m?.material.map?.uuid.slice(0, 6), m?.geometry.attributes.position?.uuid.slice(0, 6), m?.geometry.drawRange.count])]
     const v = o && objPool.find(m => m.userData.oid === o.id), bv = o?.body ? o.body.getLinearVelocity() : null
     const row = { t: Math.round(t), dt: L ? Math.round(t - L.t) : 0, calls: lookStats.calls, tri: lookStats.triangles, prog: renderer.info.programs?.length ?? 0,
       cam: [cam.x, cam.y, cam.z].map(x => +x.toFixed(2)), fov: +camera.fov.toFixed(1), steer: o ? +(o.steer || 0).toFixed(3) : null,
-      speed: bv ? +Math.hypot(bv.x(), bv.z()).toFixed(1) : null, look: v ? v.children.map(k => +k.visible).join('') : '', shown: v ? +v.visible : null, wheels: wheelN, flag: [] }
+      speed: bv ? +Math.hypot(bv.x(), bv.z()).toFixed(1) : null, look: v ? v.children.map(k => +k.visible).join('') : '', shown: v ? +v.visible : null, wheels: wheelN, lit, sun: sunLight ? [sunLight.position.x, sunLight.position.y, sunLight.position.z].map(x => +x.toFixed(1)) : null, flag: [] }
     if (L && o) {
       const jump = Math.hypot(cam.x - L.cam[0], cam.y - L.cam[1], cam.z - L.cam[2])
       if (fresh.length) row.flag.push('programs ' + L.prog + '>' + row.prog + ' new: ' + fresh.map(q => q.name).join(', '))
@@ -31660,6 +31665,11 @@ const blackbox = (() => {
       if (L.calls > 50 && Math.abs(row.calls - L.calls) > 0.3 * L.calls) row.flag.push('calls ' + L.calls + '>' + row.calls)
       if (row.look !== L.look) row.flag.push('look ' + L.look + '>' + row.look)
       if (row.shown === 0) row.flag.push('car view culled')
+      const hid = culled.filter(g => g.userData.cell && g.userData.box && g.userData.box.distanceToPoint(camera.position) < 60)
+      if (hid.length) row.flag.push('cell hidden within 60 m: ' + hid.map(g => g.userData.cell.join(',') + ' box ' + g.userData.box.min.toArray().map(Math.round) + '..' + g.userData.box.max.toArray().map(Math.round)).join(' | '))
+      const was = L.lit, bad = []
+      if (was) row.lit.forEach((v, k) => { if (v !== was[k]) bad.push(B.litNames[k] + ' ' + was[k] + '>' + v) })
+      if (bad.length) row.flag.push('lighting state changed: ' + bad.join(', '))
       if (row.dt > 120) row.flag.push('slow frame ' + row.dt + ' ms')
     }
     if (o) B.objects(row, cam)
