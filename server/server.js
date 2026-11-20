@@ -146,13 +146,17 @@ const HOOKS = webhooks()
 const LOOPBACK = /^(127\.\d+\.\d+\.\d+|::1|localhost)$/
 if (CFG.api.port && !LOOPBACK.test(CFG.api.host) && !CFG.api.token)
   die(`the action API on ${CFG.api.host} is beyond loopback: set ACTION_TOKEN or ACTION_TOKEN_FILE, or keep ACTION_HOST=127.0.0.1`)
-// ---- the city's changes (card #46: broken glass, lamps knocked out, and later whatever else this server keeps), saved where
-// this server runs. WORLD_DIR, a directory (a volume), keeps a file a city; R2 keeps a copy as an object (R2_ENDPOINT,
-// R2_BUCKET, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY or its _FILE; R2_REGION, default auto; R2_PREFIX, default none).
-// Neither set: nothing is kept. The page saves a few seconds after a change and when the server stops (gameHooks.saveWorld);
-// a room starting on a city loads that city's save back. Each request to R2 is signed (AWS Signature Version 4), with no
-// library; its secret is never printed, and neither are the paths.
-const WORLD_KEY = /^world-\d{1,10}-\d{1,2}$/
+// ---- the city's changes (card #46; in tiles since card #70): broken glass, lamps knocked out, craters, and whatever else the
+// game keeps, saved where this server runs. The page names each thing it keeps: a city's tiles (world-<seed>-<size>/t-<x>-<z>,
+// 960 m of the world each: the page reads a tile in as players come near it and lets it go when they leave, so only what is
+// in play is held), its manifest (world-<seed>-<size>/manifest, written after its tiles), or a whole city saved before the
+// tiles (world-<seed>-<size>, read once and written out as tiles). WORLD_DIR, a directory (a volume), keeps them as files, a
+// city's tiles in its own directory; R2 keeps them as objects under R2_PREFIX (R2_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID and
+// R2_SECRET_ACCESS_KEY or its _FILE; R2_REGION, default auto). With R2 set, WORLD_DIR holds only what is in play: a tile the
+// page lets go is dropped from it once R2 has its last version. Neither set: nothing is kept. A save R2 didn't take is tried
+// again every 30 s and when the server stops, and (with WORLD_DIR) after a restart. Each request to R2 is signed (AWS
+// Signature Version 4), with no library; its secret is never printed, and neither are the paths.
+const WORLD_KEY = /^world-\d{1,10}-\d{1,2}(\/(manifest|t-(-?\d{1,4})-(-?\d{1,4})))?$/
 const WORLD_DIR = blank(env.WORLD_DIR) ? '' : path.resolve(env.WORLD_DIR)
 // made if missing, but only the last directory (a volume's mount gives the rest): a recursive mkdir can loop on a special
 // filesystem's parents
@@ -171,7 +175,7 @@ const R2 = (() => {
   return r
 })()
 const sha256 = d => crypto.createHash('sha256').update(d).digest('hex'), hmac = (k, d) => crypto.createHmac('sha256', k).update(d).digest()
-// one signed request to R2 for a save's object: GET it, or PUT a body
+// one signed request to R2 for a kept thing's object: GET it, or PUT a body
 function r2Request(method, name, body) {
   const t = new Date().toISOString().replace(/[-:]|\.\d{3}/g, ''), day = t.slice(0, 8), scope = day + '/' + R2.region + '/s3/aws4_request'
   const esc = s => encodeURIComponent(s).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())
@@ -185,36 +189,123 @@ function r2Request(method, name, body) {
   delete headers.host
   return fetch(R2.origin + uri, { method, headers, body, signal: AbortSignal.timeout(15000) })
 }
-const worldStatus = { saves: 0, loads: 0, r2Puts: 0, r2Gets: 0, failing: '' }
-// the page saves a city: its file (written whole, then moved into place) and its R2 object; true when either took it
+const worldStatus = { saves: 0, loads: 0, absent: 0, failed: 0, dropped: 0, r2Puts: 0, r2Gets: 0, failing: '', waiting: 0 }
+const worldFile = name => path.join(WORLD_DIR, name + '.json')
+// a trouble said once until it clears (each kind on its own), so a long R2 outage is one line, not one a tile
+const worldTrouble = new Map()
+function worldSay(kind, msg) { if (worldTrouble.get(kind) !== msg) { worldTrouble.set(kind, msg); say(msg) } }
+function worldClear(kind, msg) { if (worldTrouble.has(kind)) { worldTrouble.delete(kind); if (msg) say(msg) } }
+// R2's writes, in order for each name: the newest body a name waits with (r2Latest) is what is written next, so an old write
+// can never land on a newer one; a write R2 didn't take stays waiting (and is listed in WORLD_DIR/r2-waiting.json, to be
+// tried again after a restart) until a try takes it
+const r2Latest = new Map(), r2Chains = new Map(), R2_WAITING = WORLD_DIR && path.join(WORLD_DIR, 'r2-waiting.json')
+async function r2Put(name, body) {
+  try {
+    const r = await r2Request('PUT', name, body)
+    await r.arrayBuffer().catch(() => {})
+    if (r.status >= 200 && r.status < 300) { worldStatus.r2Puts++; worldClear('r2put', 'world: R2 takes saves again'); return true }
+    worldSay('r2put', 'world: R2 answered ' + r.status + ' to a save')
+  } catch (e) { worldSay('r2put', 'world: R2 ' + (e.name === 'TimeoutError' ? 'gave no answer in 15 s' : 'is unreachable (' + (e.cause?.code || e.name) + ')') + ' for a save') }
+  return false
+}
+function r2Write(name, body) {
+  r2Latest.set(name, body); r2Waiting()                 // listed before the try: a stop that kills it mid-write loses nothing
+  const p = (r2Chains.get(name) || Promise.resolve()).then(async () => {
+    const newest = r2Latest.get(name)
+    if (newest === undefined) return true                  // a write before this one took the newest already
+    const ok = await r2Put(name, newest)
+    if (ok && r2Latest.get(name) === newest) r2Latest.delete(name)
+    return ok
+  })
+  r2Chains.set(name, p.catch(() => false))
+  return p.then(ok => { r2Waiting(); return ok }, () => { r2Waiting(); return false })
+}
+let r2WaitingSaid = ''
+function r2Waiting() {
+  worldStatus.waiting = r2Latest.size
+  if (r2Latest.size && !r2Retry) r2Retry = setTimeout(r2RetryAll, 30000)
+  if (!R2_WAITING) return
+  const list = JSON.stringify([...r2Latest.keys()].sort())
+  if (list === r2WaitingSaid) return
+  r2WaitingSaid = list
+  try { if (r2Latest.size) fs.writeFileSync(R2_WAITING, list); else if (fs.existsSync(R2_WAITING)) fs.unlinkSync(R2_WAITING) } catch (e) {}
+}
+let r2Retry = null
+async function r2RetryAll() {
+  r2Retry = null
+  await Promise.all([...r2Latest.keys()].map(name => r2Write(name, r2Latest.get(name))))
+}
+// after a restart: what R2 hadn't taken before it, from the files (the newest copies)
+if (R2 && R2_WAITING) try {
+  for (const name of JSON.parse(fs.readFileSync(R2_WAITING, 'utf8'))) if (typeof name === 'string' && WORLD_KEY.test(name)) try { r2Latest.set(name, fs.readFileSync(worldFile(name), 'utf8')) } catch (e) {}
+  if (r2Latest.size) { say('world: ' + r2Latest.size + (r2Latest.size === 1 ? ' save' : ' saves') + ' R2 hadn\'t taken before the restart: trying again'); setTimeout(r2RetryAll, 1000) }
+} catch (e) {}
+// the page saves a kept thing: its file (written whole, then moved into place) and its R2 object; true when either took it
+// (one R2 didn't take is tried again, as above)
 async function worldSave(name, json) {
   if (typeof name !== 'string' || !WORLD_KEY.test(name) || typeof json !== 'string' || json.length > 64 << 20) return false
   let ok = false
-  if (WORLD_DIR) try { const f = path.join(WORLD_DIR, name + '.json'), tmp = f + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, json); fs.renameSync(tmp, f); ok = true }
-  catch (e) { say('world: cannot write the save (' + (e.code || e.name) + ')') }
-  if (R2) try {
-    const r = await r2Request('PUT', name, json)
-    await r.arrayBuffer().catch(() => {})
-    if (r.status >= 200 && r.status < 300) { ok = true; worldStatus.r2Puts++; if (worldStatus.failing) { worldStatus.failing = ''; say('world: R2 takes saves again') } }
-    else if (worldStatus.failing !== 'answered ' + r.status) say('world: R2 answered ' + r.status + ' to a save'), worldStatus.failing = 'answered ' + r.status
-  } catch (e) { const why = e.name === 'TimeoutError' ? 'no answer in 15 s' : 'unreachable (' + (e.cause?.code || e.name) + ')'; if (worldStatus.failing !== why) say('world: R2 ' + why), worldStatus.failing = why }
+  if (WORLD_DIR) try {
+    const f = worldFile(name), dir = path.dirname(f), tmp = f + '.' + process.pid + '.tmp'
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir)
+    fs.writeFileSync(tmp, json); fs.renameSync(tmp, f); ok = true; worldClear('file')
+  } catch (e) { worldSay('file', 'world: cannot write a save (' + (e.code || e.name) + ')') }
+  // with its file written, R2 is written behind (a stop doesn't wait on a slow R2: the file and the waiting list keep it);
+  // with no file, R2 is the save
+  if (R2) { if (ok) r2Write(name, json); else ok = await r2Write(name, json) }
   if (ok) worldStatus.saves++
+  worldTick()
   return ok
 }
-// a room starting on a city: its save, from the file, else from R2; null when there is none
-async function worldLoad(name) {
-  if (typeof name !== 'string' || !WORLD_KEY.test(name)) return null
-  if (WORLD_DIR) try { const text = fs.readFileSync(path.join(WORLD_DIR, name + '.json'), 'utf8'); worldStatus.loads++; return text }
-  catch (e) { if (e.code !== 'ENOENT') say('world: cannot read the save (' + (e.code || e.name) + ')') }
-  if (R2) try {
+// the page reads a kept thing: { text }, { absent: true } when there is none (a tile nothing has changed in), or { failed }
+// when it couldn't be read: the page then leaves it as it is and tries again, and never writes over it
+async function worldGet(name) {
+  if (typeof name !== 'string' || !WORLD_KEY.test(name)) return { failed: 'not a name of the world\'s' }
+  const done = r => { worldStatus[r.text !== undefined ? 'loads' : r.absent ? 'absent' : 'failed']++; worldTick(); return r }
+  if (WORLD_DIR) try { return done({ text: fs.readFileSync(worldFile(name), 'utf8') }) }
+  catch (e) { if (e.code !== 'ENOENT') { worldSay('fileread', 'world: cannot read a save (' + (e.code || e.name) + ')'); return done({ failed: 'its file (' + (e.code || e.name) + ')' }) } }
+  if (!R2) return done({ absent: true })
+  if (r2Latest.has(name)) return done({ text: r2Latest.get(name) })        // the newest, still waiting for R2
+  try {
     const r = await r2Request('GET', name)
-    if (r.status === 200) { worldStatus.loads++; worldStatus.r2Gets++; return await r.text() }
+    if (r.status === 200) { const text = await r.text(); worldStatus.r2Gets++; worldClear('r2get', 'world: R2 answers loads again'); return done({ text }) }
     await r.arrayBuffer().catch(() => {})
-    if (r.status !== 404) say('world: R2 answered ' + r.status + ' to a load')
-  } catch (e) { say('world: R2 unreachable (' + (e.cause?.code || e.name) + ')') }
-  return null
+    if (r.status === 404) { worldClear('r2get', 'world: R2 answers loads again'); return done({ absent: true }) }
+    worldSay('r2get', 'world: R2 answered ' + r.status + ' to a load')
+    return done({ failed: 'R2 answered ' + r.status })
+  } catch (e) {
+    const why = e.name === 'TimeoutError' ? 'gave no answer in 15 s' : 'is unreachable (' + (e.cause?.code || e.name) + ')'
+    worldSay('r2get', 'world: R2 ' + why + ' for a load')
+    return done({ failed: 'R2 ' + why })
+  }
 }
-if (WORLD_DIR || R2) say('world: the city\'s changes are kept' + (WORLD_DIR ? ' in WORLD_DIR' : '') + (WORLD_DIR && R2 ? ' and' : '') + (R2 ? ' in R2' : ''))
+// the page before the tiles read a city whole: its text, or null for none (and for a failure: that page couldn't tell)
+async function worldLoad(name) { const r = await worldGet(name); return r.text ?? null }
+// the page let a tile go: with R2 set, its file is dropped once R2 has its last version (WORLD_DIR then holds only what is
+// in play); true when dropped
+async function worldDrop(name) {
+  if (!WORLD_DIR || !R2 || typeof name !== 'string' || !WORLD_KEY.test(name) || !name.includes('/t-')) return false
+  await (r2Chains.get(name) || Promise.resolve())
+  if (r2Latest.has(name)) return false
+  try { fs.unlinkSync(worldFile(name)); worldStatus.dropped++; worldTick(); return true } catch (e) { return false }
+}
+// when the server stops (after the page's last save): R2 gets one more try at whatever it hasn't taken, for up to 6 s (a
+// container's stop gives about 10)
+async function worldFlush() {
+  if (!R2) return
+  clearTimeout(r2Retry); r2Retry = null
+  if (r2Latest.size) await Promise.race([r2RetryAll(), sleep(6000)])
+  if (r2Latest.size) say('world: R2 didn\'t take ' + r2Latest.size + (r2Latest.size === 1 ? ' save' : ' saves') + (R2_WAITING ? '; the files keep them, tried again after a restart' : ': they are lost'))
+}
+// a line a minute while things are kept or read: what this server did with the world since the last
+let worldLast = '', worldLineAt = 0
+function worldTick() {
+  if (!WORLD_DIR && !R2 || Date.now() - worldLineAt < 60000) return
+  const s = worldStatus, line = 'saved ' + s.saves + ', read ' + s.loads + ' (none there ' + s.absent + ', failed ' + s.failed + ')' + (R2 ? ', R2 waiting ' + s.waiting : '') + (WORLD_DIR && R2 ? ', files dropped ' + s.dropped : '')
+  if (line === worldLast) return
+  worldLast = line; worldLineAt = Date.now(); say('world: ' + line)
+}
+if (WORLD_DIR || R2) say('world: the city\'s changes are kept' + (WORLD_DIR ? ' in WORLD_DIR' : '') + (WORLD_DIR && R2 ? ' and' : '') + (R2 ? ' in R2' + (WORLD_DIR ? ' (WORLD_DIR holding only what is in play)' : '') : '') + ', in tiles')
 
 let html
 try { html = fs.readFileSync(CFG.game) } catch (e) { die((env.GAME_FILE ? 'GAME_FILE' : 'the game') + ': cannot read the file (' + e.code + ')') }
@@ -308,6 +399,7 @@ async function stop(code) {
   stopping = true
   say('server: stopping')
   if (WORLD_DIR || R2) try { await page?.evaluate(() => gameHooks.saveWorld?.()) } catch (e) {}
+  if (WORLD_DIR || R2) await worldFlush().catch(() => {})
   try { await page?.evaluate(() => gameHooks.stop()) } catch (e) {}
   await sleep(500)                     // the guests' goodbye, and the match's end
   for (const until = Date.now() + 7000; HOOKS.some(h => h.queue.length) && Date.now() < until;) await sleep(100)
@@ -330,7 +422,8 @@ let page = null
   page.on('pageerror', e => say('page: ' + e.message))
   page.on('console', m => { if (m.type() === 'error') say('page: ' + m.text()) })
   await page.exposeFunction('serverOut', onEvent)
-  if (WORLD_DIR || R2) { await page.exposeFunction('serverWorldSave', worldSave); await page.exposeFunction('serverWorldLoad', worldLoad) }
+  if (WORLD_DIR || R2) { await page.exposeFunction('serverWorldSave', worldSave); await page.exposeFunction('serverWorldLoad', worldLoad)
+    await page.exposeFunction('serverWorldGet', worldGet); await page.exposeFunction('serverWorldDrop', worldDrop) }
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load', timeout: 180000 })
   await page.waitForFunction(() => globalThis.gameHooks?.room().ready || /fail|broke/i.test(document.getElementById('status')?.textContent || ''),
     null, { timeout: 180000, polling: 500 }).catch(() => {})

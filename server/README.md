@@ -61,7 +61,7 @@ Everything is an environment variable (`-e NAME=value`).
 | `ACTION_TOKEN` (or `ACTION_TOKEN_FILE`) | | required whenever `ACTION_HOST` is not loopback |
 | `GAME_FILE` | the game in the image | run another copy of the game, mounted into the container |
 | `BROADCAST_URL` | | a stream for the city's screens (see Broadcasts) |
-| `WORLD_DIR` | | a directory (a volume) where the city's changes are kept, a file a city (see Keeping the city's changes) |
+| `WORLD_DIR` | | a directory (a volume) where the city's changes are kept, in tiles (see Keeping the city's changes) |
 | `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (or `R2_SECRET_ACCESS_KEY_FILE`) | | a bucket on Cloudflare R2 (or any S3-compatible store) where they are kept too; `R2_REGION` (default `auto`) and `R2_PREFIX` (default none) |
 
 Every game is free-for-all: players fight the enemies and each other. `MODE` is gone; a server started with it still
@@ -72,22 +72,31 @@ An event type list is `*` for every type, a comma list such as `kill,player.join
 
 ## Keeping the city's changes
 
-Glass the players break, and the street lamps they shoot out or knock over, stay that way. Set `WORLD_DIR` to a directory
-on a volume, and the server keeps them there, a file for each city (its seed and size), so a server started again on the
+Glass the players break, the street lamps and traffic signals they shoot out or knock over, and the craters they leave
+stay that way. Set `WORLD_DIR` to a directory on a volume, and the server keeps them there, so a server started again on the
 same seed finds the city as it was left:
 
 ```sh
 docker run -d --name maniak --network host -v maniak-world:/world -e WORLD_DIR=/world -e SEED=3501965595 ghcr.io/jsxyz/maniak-server
 ```
 
-Set the four R2 variables as well, or instead, to keep a copy in a bucket: then a server on another machine, or a fresh
-container without the volume, finds it there. The server signs each request itself; the access key needs read and write on
-the bucket. `R2_ENDPOINT` is the bucket's S3 API address (`https://<account>.r2.cloudflarestorage.com`); other
-S3-compatible stores work too, with `R2_REGION` set to theirs. With none of these set, nothing is kept.
+The world is kept in tiles of 960 m. The page reads a tile in as players come near it and lets it go a minute after the
+last of them has left, so only the parts in play are held, however big the world grows. A city's tiles are files in a
+directory of its own (`world-<seed>-<size>/t-<x>-<z>.json`, beside a small `manifest.json`).
 
-The page saves a few seconds after a change, and the server saves once more when it stops. A save is a small JSON file,
-versioned, which loads into the same city only; a host playing in a browser keeps its own in the browser, and can save
-it to a file and load one back from the menu.
+Set the four R2 variables as well, or instead, to keep them in a bucket, as objects under `R2_PREFIX` named the same way:
+then a server on another machine, or a fresh container without the volume, finds them there. With R2 set, `WORLD_DIR` holds
+only the tiles in play, so the disk stays small however big the world: a tile let go is dropped from it once R2 has its last
+version. A save R2 doesn't take is tried again every 30 s and when the server stops, and, with `WORLD_DIR`, after a restart.
+The server signs each request itself; the access key needs read and write on the bucket. `R2_ENDPOINT` is the bucket's S3 API
+address (`https://<account>.r2.cloudflarestorage.com`); other S3-compatible stores work too, with `R2_REGION` set to theirs.
+With none of these set, nothing is kept.
+
+The page saves a changed tile a few seconds after the change, and the server saves once more when it stops. A tile that can't
+be read is left as it is and read again later: the server never writes over what it couldn't read. A city kept whole by an
+earlier server (`world-<seed>-<size>.json`) is read once and written out as tiles, and the old file or object stays. A host
+playing in a browser keeps the same tiles in the browser, and can save the whole city to a file and load one back from the
+menu. The log has a line a minute on what was saved and read while it goes on, and one line for each trouble with the store.
 
 ## Events
 

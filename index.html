@@ -250,6 +250,16 @@
   #trow{position:absolute;top:calc(44px + env(safe-area-inset-top));
     left:calc(12px + env(safe-area-inset-left));display:flex;gap:6px;pointer-events:auto}
   #trow button{padding:7px 10px;font-size:12px;background:rgba(14,14,15,.6)}
+  /* card #68: the full-screen map on M */
+  #map{z-index:29;background:#06080b;overflow:hidden;place-items:stretch;touch-action:none;user-select:none;-webkit-user-select:none}
+  #map-cv{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  #map.drag #map-cv{cursor:grabbing}
+  #map-close{position:absolute;top:calc(20px + env(safe-area-inset-top));left:calc(20px + env(safe-area-inset-left))}
+  #map-zoom{position:absolute;top:calc(64px + env(safe-area-inset-top));right:calc(20px + env(safe-area-inset-right));display:flex;flex-direction:column;gap:8px}
+  #map button{width:44px;height:44px;padding:0;display:grid;place-items:center;font-size:20px;line-height:1;color:#e6dcc2;
+    background:rgba(8,10,14,.86);border:1px solid #c9a45c;border-radius:0;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+  #map button:hover,#map button:active{background:#2b261a;color:#fff}
+  #map button small{font-size:9px;letter-spacing:.08em}
 
   @media (max-width:430px){
     #panel{padding:18px}
@@ -466,6 +476,7 @@
     <button id="btn-chat">chat</button>
     <button id="btn-tab">scores</button>
     <button id="btn-code">room</button>
+    <button id="btn-map">map</button>
     <button id="btn-view">view</button>
     <button id="btn-full">⛶</button>
     <button id="btn-menu">≡</button>
@@ -481,6 +492,17 @@
   <div id="roomtag"></div>
 </div>
 <div id="dbg"></div>
+
+<div id="map" class="ovl" role="dialog" aria-label="Map of Faustland"><canvas id="map-cv"></canvas>
+  <button id="map-close" type="button" aria-label="Close the map" title="Close (M)">✕</button>
+  <div id="map-zoom">
+    <button id="map-in" type="button" aria-label="Zoom in" title="Zoom in (+)">+</button>
+    <button id="map-out" type="button" aria-label="Zoom out" title="Zoom out (-)">−</button>
+    <button id="map-me" type="button" aria-label="Centre on me" title="Centre on me (0)">◎</button>
+    <button id="map-city" type="button" aria-label="The whole city" title="The whole city"><small>CITY</small></button>
+    <button id="map-world" type="button" aria-label="The whole world" title="The whole world"><small>ALL</small></button>
+  </div>
+</div>
 
 <div id="pause" class="ovl"><div class="mbox">
   <h2>Menu</h2>
@@ -748,7 +770,7 @@ const CHARS = [
   { name: 'Street performer', side: 'freaks', hidden: true, atk: 'Shank', model: 'street_performer', r: 0.35, h: 0.55, speed: 6.8, jump: 8.2, hp: 80,
     color: 0x5b5246, enter: 'sets up on the corner.', role: 'Faustland\'s own busker · a dance, a tin cup and a shank' },
   // card #14: Faust's enforcers, hidden, never in the free-for-all fill: the heat system fields them (see HEAT)
-  { name: 'Enforcer', side: 'freaks', hidden: true, atk: 'Baton', model: 'enforcer', r: 0.36, h: 0.54, speed: 7.2, jump: 8.4, hp: 90, color: 0x1c1b1f,
+  { name: 'Enforcer', side: 'freaks', hidden: true, atk: 'Baton', model: 'enforcer', r: 0.36, h: 0.54, speed: 7.2, jump: 8.4, hp: 70, color: 0x1c1b1f,
     role: 'Faust\'s enforcer · a baton, a revolver and a warrant' },
 ]
 // card #15: the disguise is a hidden copy of the Maniak's row that only the drawn body reads (the coat); `disguise` on his row
@@ -856,8 +878,8 @@ const GUNS = [
   { name:'Shank',        rate:0.42, dmg: 8, spread:0.20, pellets:1, range: 2.2, knock: 1.6, color:0x7d7468, melee:true, punch:'stab', grip:'knife', model:'Shank' },
   { name:'Tin cup',      rate:1.00, dmg: 0, range: 0, knock: 0, color:0x8b877c, melee:true, model:'Tin cup' },
   // card #14, the enforcers': a baton held as a knife is, and a service revolver (held as the Pistol is)
-  { name:'Baton',        rate:0.70, dmg: 9, spread:0.34, pellets:3, range: 2.5, knock: 6.0, color:0x2a2a30, melee:true, punch:'slash', grip:'knife', model:'Baton' },
-  { name:'Revolver',     rate:0.85, dmg: 7, spread:0.045, range:50, knock: 2.0, color:0xd8cfb8, scar:'hole' },
+  { name:'Baton',        rate:0.90, dmg: 4, spread:0.30, pellets:2, range: 2.5, knock: 3.0, color:0x2a2a30, melee:true, punch:'slash', grip:'knife', model:'Baton' },
+  { name:'Revolver',     rate:1.00, dmg: 4, spread:0.05, range:50, knock: 1.5, color:0xd8cfb8, scar:'hole' },
 ].map(G => ({ ...GUN_ROW, ...G }))
 // POWERS: dur s, then scales of move jump rate give take fuel jet reach lift (jet 0 grounds; reach 0 spares melee)
 // drop:false: by `apply` only. look: an EFFECT_LOOKS overlay
@@ -7204,7 +7226,16 @@ function spawnFace(me) {
 
 // a rescue, not a death: health, powers, guns, proficiency kept
 const VOID_Y = -30
+// card #18 (asked by #64): every rescue is counted and the last one kept, for F3's rescue row: where he was (x, y, z), his
+// fall speed, his city cell and whether its collision was built, and why. The local player's own is said once in chat.
+const rescues = { n: 0, last: null }
 function rescue(c) {
+  const v = c.body?.getLinearVelocity(), ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96)
+  const cell = !LV.faust ? '' : !(Math.max(Math.abs(c.x), Math.abs(c.z)) <= ARENA) ? 'outside the city'
+    : ci + ' ' + cj + (faustState?.chunks.get(faustKey(ci, cj))?.physics ? ' built' : ' unbuilt')
+  const cause = [c.x, c.y, c.z].every(Number.isFinite) ? 'fell' : 'NaN'
+  rescues.n++; rescues.last = { who: c.bot ? c.bot.name : 'player ' + c.id, x: c.x, y: c.y, z: c.z, vy: v ? v.y() : NaN, cell, cause }
+  if (c === selfChar()) sysMsg('§7rescued from ' + [c.x, c.z, c.y].map(Math.round).join(' ') + ' (' + cause + ')')
   const s = pickSpawn(c)
   setCharPos(c, s[0], s[1], s[2])
   c.knT = 0; c.knx = 0; c.knz = 0; c.knUp = 0
@@ -19067,7 +19098,8 @@ const INPUT_SCHEMA = {
     keys[e.code] = true
     if (e.code === INPUT_SCHEMA.key.jump) { e.preventDefault(); if (!e.repeat) jumpTapped = true }
     if (e.code === 'KeyV') setView(!firstPerson)
-    if (e.code === 'KeyM') GAME.audio.toggle()
+    if (e.code === 'KeyM' && !e.repeat) openMap()
+    if (e.code === 'KeyN' && !e.repeat) GAME.audio.toggle()
     if (e.code === 'KeyB' && !e.repeat) GAME.audio.cycle()
     if (e.code === 'KeyC' && !e.repeat) teamSwitch()
     if (/^Digit[1-9]$/.test(e.code) && !e.repeat && !(isHost && GAME.match.resultsLeft > 0)) teamSwitch(+e.code.slice(5) - 1)
@@ -19125,6 +19157,7 @@ const INPUT_SCHEMA = {
     tap('btn-tab', () => { tabOpen = !tabOpen })
     tap('btn-code', () => { if (roomCodeStr) openCodeModal() })
     tap('btn-view', () => setView(!firstPerson))
+    tap('btn-map', toggleMap)
     tap('btn-full', toggleFullscreen)
     tap('btn-menu', openPause)
   },
@@ -19175,7 +19208,7 @@ const input = INPUT_SCHEMA.empty()
 let locked = false, chatOpen = false, tabOpen = false, modalOpen = false
 let firstPerson = true
 let pauseOpen = false
-const menuUp = () => modalOpen || pauseOpen || settingsOpen
+const menuUp = () => modalOpen || pauseOpen || settingsOpen || mapOpen
 
 const IS_TOUCH = (matchMedia && matchMedia('(pointer: coarse)').matches) ||
                  ('ontouchstart' in window && navigator.maxTouchPoints > 0)
@@ -19218,6 +19251,7 @@ function initInput() {
     if (modalOpen) { if (e.key === 'Escape') closeCodeModal(); return }
     if (settingsOpen) { if (e.key === 'Escape') settingsBack(); return }
     if (pauseOpen) { if (e.key === 'Escape') closePause(); return }
+    if (mapOpen) { mapKeyDown(e); return }
     if (chatOpen) return
     if (phase !== 'playing' || serving) return
     INPUT_SCHEMA.keyDown(e)
@@ -19523,6 +19557,8 @@ function drawDebug(me, fps) {
     (startLog ? row('start', startLog.marks.map(([k, t]) => k + ' ' + v(Math.round(t))).join('  ') + '  frames 2-30 max ' +
         v(Math.round(Math.max(0, ...startLog.frames.slice(1)))) + ' ms  programs +' + v(i.programs.length - startLog.progs) +
         (startLog.warmProgs != null ? ' (in play +' + v(i.programs.length - startLog.warmProgs) + ')' : '')) : '') +
+    (rescues.n ? row('rescue', v(rescues.n) + '  last ' + esc(rescues.last.who + ' at ' + [rescues.last.x, rescues.last.y, rescues.last.z].map(Math.round).join(' ') +
+        ' vy ' + Math.round(rescues.last.vy) + (rescues.last.cell ? '  cell ' + rescues.last.cell : '') + ' (' + rescues.last.cause + ')')) : '') +
     row('bg', 'max step ' + v(Math.round(background.stats.maxStepMs)) + ' ms  jobs ' + v(background.pending.length) +
         (background.stats.long.length ? '  long ' + esc(background.stats.long.join(', ')) : '') + (background.stats.late.length ? '  late programs ' + esc(background.stats.late.join(', ')) : '')) +
     row('js', (jit.off ? '<span class="w">optimizer off</span>' : jit.off === null ? 'checking' : 'optimizer on') + '  x' + f(jit.cold / jit.best, 1, 1)) +
@@ -19837,8 +19873,8 @@ function sfxApply(starting) {
   const hb = el('#hudsound')
   if (hb) {
     hb.classList.toggle('muted', !settings.sound)
-    const lab = settings.sound ? 'Sound on — click or press M to mute'
-                               : 'Sound off — click or press M to unmute'
+    const lab = settings.sound ? 'Sound on — click or press N to mute'
+                               : 'Sound off — click or press N to unmute'
     if (hb.getAttribute('aria-label') !== lab) hb.setAttribute('aria-label', lab)
     hb.title = lab
   }
@@ -20229,7 +20265,7 @@ function keyHelp(c) {
     'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
     (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + (C.disguise !== undefined ? ' · G change coat' : '') + (C.pipe ? ' · P pipe' : '') + '<br>' +
     'In a biplane: the mouse aims it · W full throttle · S idle · A/D roll (on the ground, steer) · Space brakes · E get out<br>' +
-    'H whistle for your car, at its wheel the ejector seat · T chat · Tab scores · V view · M sound · B radio · F3 debug · Esc menu'
+    'H whistle for your car, at its wheel the ejector seat · T chat · Tab scores · V view · M map · N sound · B radio · F3 debug · Esc menu'
 }
 
 function closePause() {
@@ -22034,7 +22070,7 @@ function reconcile(a) {
 }
 
 function clearSession() {
-  pauseOpen = false; closeSettings(); helloDue = false
+  pauseOpen = false; closeMap(); closeSettings(); helloDue = false
   perfSays.clear(); perfBubbles()                // card #59: no demand left over the menu
   if (isHost) hookMatchEnd('stop', null)
   endServing()                       // first: nothing below may think it serves
@@ -29695,6 +29731,474 @@ GAME.car = {
   row: MCAR.row, k: MC_K, wreck: MC_WRECK,
 }
 
+// ---------------------------------------------------------------- the map (card #68): full screen, on M (touch: the map button)
+// Drawn from the seeded plan, never rendered in 3D, so it is light on every device. The plan data (cells: roads, lots, plaza and
+// district; the monorail's beams and stations; the zeppelin lines and stops; the landmarks) is built once per city seed in a
+// background job (mapBuildSteps; faustPlan is pure, so it is the same for every player). It is painted (mapPaint) onto an offscreen
+// canvas a margin wider than the screen and cached by view: while a finger or the wheel moves the view, the cached picture is shifted
+// and scaled, and the picture is repainted at most every 160 ms. Each frame while the map is open it draws the cached picture, its
+// chrome (frame, title, compass, legend: cached by screen size), the scale bar, and the markers (him, the other players, his car).
+// North (-Z) is up. Other cards add to it with GAME.map.layer(name, { static(g, c), dynamic(g, c) }): g is in screen pixels and c
+// has c.xy(x, z) -> [sx, sy], c.k (px per m), c.W, c.H, c.D (the plan data), c.t (ms); static is painted with the cache (call
+// GAME.map.dirty() after changing it), dynamic every frame (#14's heat and enforcers, #18's highways and bridges).
+const MAP_DISTRICTS = ['core', 'civic', 'tenement', 'industrial']
+const MAP_NAMES = { core: 'THE CORE', civic: 'CIVIC QUARTER', tenement: 'TENEMENTS', industrial: 'INDUSTRIAL YARDS' }
+const MAP_LINES = { L: ['Loop line', '#e3b04b'], B: ['Line B', '#e8683f'], C: ['Line C', '#a98ee0'] }
+const MAP_PAL = { ink: '#06080b', field: ['#161c12', '#1d1b13', '#211f16', '#181e14'], hedge: '#0d110a', brass: '#c9a45c', brassDim: '#6d5b35', cream: '#e6dcc2', dim: '#8c8774',
+  ground: { core: '#2b261a', civic: '#1d2833', tenement: '#1d1c21', industrial: '#24201c' }, road: '#090a0d', plaza: '#26383a', air: '#5fc2c0' }
+const MAP_FONT = "'Futura','Century Gothic','Josefin Sans','Trebuchet MS',ui-sans-serif,sans-serif", MAP_TITLE = "'Maniak Display',Impact,'Arial Black',sans-serif"
+const MAP_ZOOM = { max: 3, fit: 0.72 }, MAP_MS = { repaint: 160, warm: 4000 }
+let mapOpen = false, mapData = null, mapJob = null, mapJobKey = '', mapWarmAt = 0, mapLooping = false
+let mapView = { cx: 0, cz: 0, k: 0.2 }, mapCache = null, mapChrome = null, mapSize = { W: 0, H: 0, dpr: 1 }, mapPaintAt = 0, mapHover = null
+let mapMe = null, mapOthers = [], mapCtx = null, mapCacheCv = null, mapChromeCv = null
+const mapPtr = new Map(), mapLayers = []
+
+const mapKey = () => LV.grow ? (LV.grow.seed >>> 0) + ' ' + LV.grow.S : ''
+const mapWorld = () => FAUST.world
+function mapKMin() { return Math.min(mapSize.W, mapSize.H) / (2 * mapWorld()) * 0.94 }
+function mapClampView() {
+  const V = mapView, W = mapWorld()
+  V.k = clamp(V.k, mapKMin(), MAP_ZOOM.max); V.cx = clamp(V.cx, -W, W); V.cz = clamp(V.cz, -W, W)
+}
+// a lerp between two hex colours
+function mapMix(a, b, t) { const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)); const A = p(a), B = p(b)
+  return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join('') }
+const MAP_LOT = Array.from({ length: 9 }, (_, i) => mapMix('#2f343d', '#cdbf9a', i / 8))
+
+// ---- the data: built once per seed, a few cells a step
+function* mapBuildSteps(seed, S) {
+  const A = S * 48, H = S / 2, cells = [], D = { key: seed + ' ' + S, seed, S, A, cells, beams: [], stations: [], lines: [], stops: [], pois: [], labels: [] }
+  const F = typeof faustState !== 'undefined' && faustState, same = F && F.seed === seed && F.S === S
+  const rail = faustRail(seed, S); yield
+  let n = 0
+  for (let ci = 0; ci < S; ci++) for (let cj = 0; cj < S; cj++) {
+    const plan = (same && F.chunks.get(faustKey(ci, cj))?.plan) || faustPlan(seed, ci, cj, S)
+    cells.push({ x: (ci - H) * 96, z: (cj - H) * 96, d: MAP_DISTRICTS.indexOf(plan.district), plaza: plan.plaza, central: plan.centralPlaza, diag: plan.diagonal,
+      roads: plan.roads.map(r => [r.a[0], r.a[2], r.b[0], r.b[2], r.width, r.avenue ? 1 : 0]),
+      lots: plan.lots.map(l => [l.x, l.z, l.w, l.d, l.height, l.gothic ? 1 : 0, l.stop ? 1 : 0]) })
+    if (++n % 3 === 0) yield
+  }
+  // the monorail: the beams and the stations
+  for (const b of rail.beams) D.beams.push({ line: b.line, p: b.p, turnout: !!b.turnout })
+  for (const t of rail.stations) {
+    const x = t.dir === 'z' ? t.c : t.p, z = t.dir === 'z' ? t.p : t.c
+    D.stations.push({ x, z, name: t.name, line: t.line, high: t.level > RAIL.level.low })
+    D.pois.push({ x, z, name: t.name + ' · monorail, ' + MAP_LINES[t.line][0].toLowerCase(), kind: 'rail' })
+  }
+  yield
+  // the zeppelin lines: each leg's path, thinned, and the stops they call at
+  let air = []
+  try { air = airLines(seed, S) } catch (e) { console.warn('map: no zeppelin lines,', e?.message || e) }
+  yield
+  const seen = new Map()
+  for (const line of air) {
+    const pts = []
+    for (const call of line.calls) { const P = call.path; for (let i = 0; i < P.length; i += 7) pts.push(P[i][0], P[i][2]); pts.push(P.at(-1)[0], P.at(-1)[2]) }
+    D.lines.push({ id: line.id, name: line.name, p: pts, loop: !!line.loop })
+    for (const s of line.stops) { const o = seen.get(s.id) || (seen.set(s.id, { x: s.x, z: s.z, lines: [] }), seen.get(s.id)); o.lines.push(line.name) }
+  }
+  for (const s of seen.values()) { D.stops.push(s); D.pois.push({ x: s.x, z: s.z, name: 'Zeppelin stop · ' + s.lines.join(', '), kind: 'air' }) }
+  // landmarks: the globe, Faust's head, Faust Plaza
+  const G = FAUST.globe, Hd = FAUST.head
+  D.globe = { x: G.x, z: G.z, r: G.radius }; D.head = { x: Hd.position[0], z: Hd.position[2], hx: Hd.size[0] / 2, hz: Hd.size[2] / 2 }
+  D.pois.push({ x: G.x, z: G.z, name: 'The Globe', kind: 'mark' }, { x: D.head.x, z: D.head.z, name: 'Faust\'s head', kind: 'mark' }, { x: -48, z: -48, name: 'Faust Plaza', kind: 'mark' })
+  // a label for each district, on the cell with the most of its own kind about it
+  for (let d = 0; d < MAP_DISTRICTS.length; d++) {
+    let best = null, bn = 0
+    for (const c of cells) if (c.d === d) { const m = cells.reduce((s, o) => s + (o.d === d && Math.abs(o.x - c.x) <= 288 && Math.abs(o.z - c.z) <= 288 ? 1 : 0), 0); if (m > bn) { bn = m; best = c } }
+    if (best && bn >= 6) D.labels.push({ x: best.x + 48, z: best.z + 48, text: MAP_NAMES[MAP_DISTRICTS[d]], size: bn })
+    yield
+  }
+  return D
+}
+// start the build for this city if there is none (or it is for another seed)
+function mapEnsure() {
+  const key = mapKey()
+  if (!key || !LV.faust || mapData?.key === key || mapJobKey === key) return
+  mapJobKey = key; mapData = null; mapCache = null
+  const [seed, S] = key.split(' ').map(Number)
+  background.run('map plan', function* () { mapData = yield* mapBuildSteps(seed, S); mapCache = null }, { valid: () => mapKey() === key })
+    .catch(e => { console.warn('map:', e?.message || e); mapJobKey = '' }).finally(() => { if (mapJobKey === key && !mapData) mapJobKey = '' })
+}
+
+// ---- painting: world transform for the plan, screen pixels for the text
+function mapNiceLength(m) { const s = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]; return s.find(v => v >= m) || 20000 }
+function mapText(g, t, x, y, { size = 11, color = MAP_PAL.cream, align = 'center', weight = 700, space = 1.5, halo = '#06080b', font = MAP_FONT } = {}) {
+  g.font = weight + ' ' + size + 'px ' + font; g.textAlign = align; g.textBaseline = 'middle'
+  if ('letterSpacing' in g) g.letterSpacing = space + 'px'
+  g.lineJoin = 'round'; g.lineWidth = Math.max(2, size / 3); g.strokeStyle = halo; g.strokeText(t, x, y)
+  g.fillStyle = color; g.fillText(t, x, y)
+  if ('letterSpacing' in g) g.letterSpacing = '0px'
+}
+function mapPoly(g, p, close) {
+  g.beginPath(); g.moveTo(p[0], p[1])
+  for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1])
+  if (close) g.closePath()
+}
+// the plan in the view V (centre and px-per-metre), a W x H picture at pixel ratio sc. Text and layers are in screen px.
+function mapPaint(g, D, V, W, H, sc) {
+  const k = V.k, P = MAP_PAL, xy = (x, z) => [(x - V.cx) * k + W / 2, (z - V.cz) * k + H / 2]
+  const x0 = V.cx - W / 2 / k, x1 = V.cx + W / 2 / k, z0 = V.cz - H / 2 / k, z1 = V.cz + H / 2 / k, WL = mapWorld(), A = D.A
+  const vis = (a0, b0, a1, b1) => a1 >= x0 && a0 <= x1 && b1 >= z0 && b0 <= z1
+  const px = n => n / k                                   // n screen pixels, in metres
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = P.ink; g.fillRect(0, 0, W * sc, H * sc)
+  g.setTransform(sc * k, 0, 0, sc * k, sc * (W / 2 - V.cx * k), sc * (H / 2 - V.cz * k))
+  g.lineJoin = 'round'; g.lineCap = 'butt'
+  // the world: fields to the edge, the plots where they can be told apart
+  g.fillStyle = P.field[0]; g.fillRect(-WL, -WL, 2 * WL, 2 * WL)
+  const plot = FAUST_FIELDS.plot
+  if (k * plot >= 7) {
+    const i0 = Math.max(Math.floor(x0 / plot), -WL / plot), i1 = Math.min(Math.ceil(x1 / plot), WL / plot), j0 = Math.max(Math.floor(z0 / plot), -WL / plot), j1 = Math.min(Math.ceil(z1 / plot), WL / plot)
+    const tints = P.field.map(() => [])
+    for (let i = i0; i < i1; i++) for (let j = j0; j < j1; j++) tints[faustMix(D.seed ^ 0x51ed, i, j) % tints.length].push(i * plot, j * plot)
+    const gap = px(1.2)
+    tints.forEach((list, c) => { g.fillStyle = P.field[c]; g.beginPath(); for (let n = 0; n < list.length; n += 2) g.rect(list[n] + gap, list[n + 1] + gap, plot - 2 * gap, plot - 2 * gap); g.fill() })
+  }
+  // a survey grid every kilometre, and distance rings from the city's centre
+  if (k >= 0.012 && k < 0.2) {
+    g.strokeStyle = 'rgba(201,164,92,.09)'; g.lineWidth = px(1); g.beginPath()
+    for (let u = -WL; u <= WL; u += 1000) { if (u >= x0 && u <= x1) { g.moveTo(u, -WL); g.lineTo(u, WL) } if (u >= z0 && u <= z1) { g.moveTo(-WL, u); g.lineTo(WL, u) } }
+    g.stroke()
+  }
+  if (k < 0.12) {
+    g.strokeStyle = 'rgba(201,164,92,.22)'; g.lineWidth = px(1); g.setLineDash([px(2), px(7)])
+    for (const r of [4000, 8000, 12000]) { g.beginPath(); g.arc(0, 0, r, 0, 2 * Math.PI); g.stroke() }
+    g.setLineDash([])
+  }
+  // the world's edge: the wall, with a lamp pylon every 400 m
+  g.strokeStyle = P.brass; g.lineWidth = px(3); g.strokeRect(-WL, -WL, 2 * WL, 2 * WL)
+  g.strokeStyle = 'rgba(201,164,92,.35)'; g.lineWidth = px(1); g.strokeRect(-WL + px(6), -WL + px(6), 2 * WL - px(12), 2 * WL - px(12))
+  if (k * 400 >= 5) { g.fillStyle = '#ffb35a'; g.beginPath()
+    for (let u = -WL + 200; u < WL; u += 400) for (const [a, b] of [[u, -WL], [u, WL], [-WL, u], [WL, u]]) if (vis(a - 5, b - 5, a + 5, b + 5)) g.rect(a - px(1.5), b - px(1.5), px(3), px(3))
+    g.fill() }
+  // the city: its cells' ground by district, then the streets and the lots
+  const cells = D.cells.filter(c => vis(c.x, c.z, c.x + 96, c.z + 96))
+  for (let d = 0; d < 4; d++) {
+    g.fillStyle = P.ground[MAP_DISTRICTS[d]]; g.beginPath()
+    for (const c of cells) if (c.d === d) g.rect(c.x, c.z, 96, 96)
+    g.fill()
+  }
+  // plazas and parks: paving, a brass border, trees; Faust Plaza's sunburst
+  g.fillStyle = P.plaza; g.beginPath()
+  for (const c of cells) if (c.plaza) g.rect(c.x + 2, c.z + 2, 92, 92)
+  g.fill()
+  if (k * 96 >= 10) {
+    g.strokeStyle = 'rgba(201,164,92,.45)'; g.lineWidth = px(1); g.beginPath()
+    for (const c of cells) if (c.plaza) g.rect(c.x + 8, c.z + 8, 80, 80)
+    g.stroke()
+    if (k >= 0.12) { g.fillStyle = 'rgba(70,120,80,.5)'; g.beginPath()
+      for (const c of cells) if (c.plaza && !c.central) for (const [a, b] of [[24, 24], [72, 24], [24, 72], [72, 72], [48, 48]]) { g.moveTo(c.x + a + 6, c.z + b); g.arc(c.x + a, c.z + b, 6, 0, 2 * Math.PI) }
+      g.fill() }
+  }
+  // the roads: avenues, side streets, the diagonal boulevard
+  const road = (pred, width, color, min) => {
+    g.strokeStyle = color; g.lineWidth = Math.max(width, px(min)); g.beginPath()
+    for (const c of cells) for (const r of c.roads) if (pred(r)) { g.moveTo(r[0], r[1]); g.lineTo(r[2], r[3]) }
+    g.stroke()
+  }
+  g.lineCap = 'butt'
+  if (k >= 0.06) road(r => !r[5], 8, P.road, 0.8)
+  road(r => r[5] && r[4] < 24, 20, P.road, 1.4)
+  road(r => r[5] && r[4] >= 24, 26, P.road, 1.8)
+  if (k >= 0.2) {          // the avenues' brass centre lines
+    g.setLineDash([px(8), px(6)]); road(r => r[5], 0, 'rgba(201,164,92,.42)', 0.8); g.setLineDash([])
+  }
+  // the lots, lighter for height; the gothic ones edged in brass; the transit towers in bright brass
+  if (k >= 0.05) {
+    for (let h = 0; h < 9; h++) {
+      g.fillStyle = MAP_LOT[h]; g.beginPath()
+      for (const c of cells) for (const l of c.lots) if (!l[6] && Math.min(8, Math.floor(l[4] / 30)) === h) g.rect(l[0] - l[2], l[1] - l[3], 2 * l[2], 2 * l[3])
+      g.fill()
+    }
+    if (k >= 0.14) { g.strokeStyle = 'rgba(201,164,92,.55)'; g.lineWidth = px(0.8); g.beginPath()
+      for (const c of cells) for (const l of c.lots) if (l[5]) g.rect(l[0] - l[2], l[1] - l[3], 2 * l[2], 2 * l[3])
+      g.stroke() }
+  }
+  // the city's own edge
+  g.strokeStyle = 'rgba(201,164,92,.6)'; g.lineWidth = px(1.4); g.strokeRect(-A, -A, 2 * A, 2 * A)
+  // Faust Plaza: a sunburst
+  if (vis(-192, -192, 192, 192)) {
+    g.strokeStyle = 'rgba(201,164,92,.6)'; g.lineWidth = px(1); g.beginPath()
+    for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; g.moveTo(-48 + Math.cos(a) * 24, -48 + Math.sin(a) * 24); g.lineTo(-48 + Math.cos(a) * (i & 1 ? 120 : 168), -48 + Math.sin(a) * (i & 1 ? 120 : 168)) }
+    g.stroke(); g.beginPath(); g.arc(-48, -48, 24, 0, 2 * Math.PI); g.arc(-48, -48, 80, 0, 2 * Math.PI); g.stroke()
+  }
+  // the monorail: the beams, one line each at far zoom
+  for (const pass of [0, 1]) for (const b of D.beams) {
+    if (pass === 0 && !b.turnout) continue
+    if (pass === 1 && b.turnout) continue
+    g.strokeStyle = MAP_LINES[b.line][1]; g.lineWidth = Math.max(k >= 0.5 ? 2.2 : 0, px(b.turnout ? 1.2 : 2)); mapPoly(g, b.p, false); g.stroke()
+  }
+  // the zeppelin lines: dashed
+  g.strokeStyle = P.air; g.lineWidth = px(1.4); g.setLineDash([px(7), px(5)]); g.globalAlpha = 0.8
+  for (const l of D.lines) { mapPoly(g, l.p, l.loop); g.stroke() }
+  g.setLineDash([]); g.globalAlpha = 1
+  // the globe and Faust's head
+  const Gb = D.globe, Hd = D.head
+  if (vis(Gb.x - Gb.r, Gb.z - Gb.r, Gb.x + Gb.r, Gb.z + Gb.r)) {
+    g.fillStyle = 'rgba(95,194,192,.07)'; g.beginPath(); g.arc(Gb.x, Gb.z, Gb.r, 0, 2 * Math.PI); g.fill()
+    g.strokeStyle = P.brass; g.lineWidth = px(2); g.stroke()
+    g.strokeStyle = 'rgba(201,164,92,.4)'; g.lineWidth = px(1); g.beginPath()
+    for (const f of [0.33, 0.66]) { g.moveTo(Gb.x + Gb.r * f, Gb.z); g.ellipse(Gb.x, Gb.z, Gb.r * f, Gb.r, 0, 0, 2 * Math.PI) }
+    for (const f of [0.5, 0.86]) { g.moveTo(Gb.x + Gb.r, Gb.z + Gb.r * f * 0); g.ellipse(Gb.x, Gb.z, Gb.r, Gb.r * f, 0, 0, 2 * Math.PI) }
+    g.stroke()
+  }
+  if (vis(Hd.x - Hd.hx, Hd.z - Hd.hz, Hd.x + Hd.hx, Hd.z + Hd.hz)) {
+    g.fillStyle = 'rgba(230,220,194,.16)'; g.fillRect(Hd.x - Hd.hx, Hd.z - Hd.hz, 2 * Hd.hx, 2 * Hd.hz)
+    g.strokeStyle = P.cream; g.lineWidth = px(1.6); g.strokeRect(Hd.x - Hd.hx, Hd.z - Hd.hz, 2 * Hd.hx, 2 * Hd.hz)
+  }
+  // ---- screen space
+  g.setTransform(sc, 0, 0, sc, 0, 0)
+  const pin = (x, z, f) => { const [a, b] = xy(x, z); if (a > -40 && a < W + 40 && b > -40 && b < H + 40) f(a, b) }
+  // district names: while the city is a block or two across, not once the streets themselves are read
+  if (k >= 0.1 && k < 0.34) for (const l of D.labels) pin(l.x, l.z, (a, b) => mapText(g, l.text, a, b, { size: clamp(k * 90, 9, 14), color: 'rgba(230,220,194,.8)', space: 3 }))
+  if (k < 0.1) pin(0, A, (a, b) => mapText(g, 'FAUSTLAND', a, b + 14, { size: 11, color: P.cream, space: 3 }))
+  // stations and stops
+  for (const s of D.stations) pin(s.x, s.z, (a, b) => {
+    const big = s.name === 'Globe Cross', r = k >= 0.3 ? (big ? 6 : 4.5) : k >= 0.08 ? 3 : 2
+    g.fillStyle = '#10131a'; g.strokeStyle = MAP_LINES[s.line][1]; g.lineWidth = k >= 0.08 ? 2 : 1.2
+    g.beginPath(); g.arc(a, b, r, 0, 2 * Math.PI); g.fill(); g.stroke()
+    if (k >= 0.45) mapText(g, s.name.toUpperCase(), a, b + 12, { size: 9, space: 1.2, color: MAP_LINES[s.line][1] })
+  })
+  for (const s of D.stops) pin(s.x, s.z, (a, b) => {
+    const r = k >= 0.08 ? 5 : 3.2
+    g.fillStyle = '#10131a'; g.strokeStyle = P.air; g.lineWidth = 1.6
+    g.beginPath(); g.moveTo(a, b - r); g.lineTo(a + r, b); g.lineTo(a, b + r); g.lineTo(a - r, b); g.closePath(); g.fill(); g.stroke()
+  })
+  // landmarks
+  pin(Gb.x, Gb.z, (a, b) => mapText(g, 'THE GLOBE', a, b, { size: clamp(k * 600, 10, 15), color: P.brass, space: 4 }))
+  pin(Hd.x, Hd.z + Hd.hz + 90, (a, b) => mapText(g, 'FAUST', a, b, { size: clamp(k * 520, 10, 15), color: P.cream, space: 4 }))
+  if (k >= 0.1) pin(-48, -48, (a, b) => mapText(g, 'FAUST PLAZA', a, b, { size: 10, color: P.brass, space: 2.5 }))
+  pin(0, -WL, (a, b) => { if (b > 50) mapText(g, 'THE WORLD\'S EDGE', a, b + 14, { size: 10, color: P.brassDim, space: 3 }) })
+  if (k < 0.12) for (const [r, t] of [[4000, '4 KM'], [8000, '8 KM'], [12000, '12 KM']]) pin(r * 0.7071, r * 0.7071, (a, b) => mapText(g, t, a, b, { size: 9, color: P.brassDim, space: 2 }))
+  const c = { xy, k, W, H, D, t: performance.now() }
+  for (const L of mapLayers) if (L.static) try { g.save(); L.static(g, c); g.restore() } catch (e) { console.warn('map layer ' + L.name + ':', e?.message || e) }
+}
+
+// ---- the frame, title, compass and legend: cached by screen size
+function mapPaintChrome(g, W, H, sc, compact) {
+  g.setTransform(sc, 0, 0, sc, 0, 0); g.clearRect(0, 0, W, H)
+  const B = MAP_PAL.brass, m = 6, c = 14
+  const frame = (o, w, a) => { g.strokeStyle = B; g.globalAlpha = a; g.lineWidth = w; g.beginPath()
+    g.moveTo(o + c, o); g.lineTo(W - o - c, o); g.lineTo(W - o, o + c); g.lineTo(W - o, H - o - c); g.lineTo(W - o - c, H - o); g.lineTo(o + c, H - o); g.lineTo(o, H - o - c); g.lineTo(o, o + c); g.closePath(); g.stroke() }
+  frame(m, 2.2, 0.95); frame(m + 5, 1, 0.5); g.globalAlpha = 1
+  // the title: a stepped cartouche
+  const tw = compact ? 118 : 170, th = compact ? 26 : 34, cx = W / 2, top = m - 1
+  g.fillStyle = '#0b0d12'; g.strokeStyle = B; g.lineWidth = 1.6; g.beginPath()
+  g.moveTo(cx - tw, top); g.lineTo(cx - tw + 12, top + th); g.lineTo(cx + tw - 12, top + th); g.lineTo(cx + tw, top); g.closePath(); g.fill(); g.stroke()
+  g.beginPath(); g.moveTo(cx - tw + 22, top + th + 4); g.lineTo(cx + tw - 22, top + th + 4); g.stroke()
+  mapText(g, 'FAUSTLAND', cx, top + th / 2 + 1, { size: compact ? 17 : 22, color: MAP_PAL.cream, space: 4, weight: 400, font: MAP_TITLE, halo: 'rgba(0,0,0,0)' })
+  // the compass: north is up
+  const r = compact ? 22 : 30, ox = W - r - 22, oy = H - r - 40
+  g.save(); g.translate(ox, oy)
+  g.strokeStyle = B; g.lineWidth = 1.4; g.beginPath(); g.arc(0, 0, r, 0, 2 * Math.PI); g.stroke()
+  g.beginPath(); g.arc(0, 0, r * 0.62, 0, 2 * Math.PI); g.globalAlpha = 0.5; g.stroke(); g.globalAlpha = 1
+  for (let i = 0; i < 4; i++) { g.save(); g.rotate(i * Math.PI / 2); g.fillStyle = i ? B : MAP_PAL.cream; g.beginPath(); g.moveTo(0, -r - 4); g.lineTo(r * 0.2, -r * 0.1); g.lineTo(0, 0); g.lineTo(-r * 0.2, -r * 0.1); g.closePath(); g.fill(); g.restore() }
+  g.restore(); mapText(g, 'N', ox, oy - r - 12, { size: 12, color: MAP_PAL.cream, space: 0 })
+  // the legend
+  const rows = [['you', 'you'], ['player', 'players'], ['car', 'his car'], ['rail', 'monorail'], ['air', 'zeppelins']]
+  const lx = 22, ly = H - 28 - (compact ? rows.length * 15 + 6 : rows.length * 17 + 8)
+  g.fillStyle = 'rgba(8,10,14,.78)'; g.strokeStyle = 'rgba(201,164,92,.5)'; g.lineWidth = 1
+  const lh = compact ? 15 : 17; g.beginPath(); g.rect(lx - 8, ly - 8, compact ? 92 : 112, rows.length * lh + 10); g.fill(); g.stroke()
+  rows.forEach(([kind, text], i) => {
+    const y = ly + i * lh + lh / 2 - 4
+    if (kind === 'you') mapArrow(g, lx + 6, y, 0, 6, '#ffd36a')
+    else if (kind === 'player') { g.fillStyle = '#7fd4b4'; g.beginPath(); g.arc(lx + 6, y, 3.4, 0, 2 * Math.PI); g.fill() }
+    else if (kind === 'car') mapCar(g, lx + 6, y, 0.9)
+    else if (kind === 'rail') { g.strokeStyle = MAP_LINES.L[1]; g.lineWidth = 2.2; g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke() }
+    else { g.strokeStyle = MAP_PAL.air; g.lineWidth = 1.6; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke(); g.setLineDash([]) }
+    mapText(g, text.toUpperCase(), lx + 22, y, { size: 9, align: 'left', space: 1.2, color: MAP_PAL.dim })
+  })
+}
+function mapArrow(g, x, y, yaw, r, color) {
+  // yaw 0 faces -Z, up the map; the nose turns with it
+  g.save(); g.translate(x, y); g.rotate(-yaw)
+  g.fillStyle = color; g.strokeStyle = '#06080b'; g.lineWidth = 2; g.lineJoin = 'round'
+  g.beginPath(); g.moveTo(0, -r * 1.25); g.lineTo(r * 0.85, r); g.lineTo(0, r * 0.45); g.lineTo(-r * 0.85, r); g.closePath(); g.stroke(); g.fill(); g.restore()
+}
+function mapCar(g, x, y, s) {
+  g.save(); g.translate(x, y); g.scale(s, s); g.fillStyle = '#ff7a45'; g.strokeStyle = '#06080b'; g.lineWidth = 2; g.lineJoin = 'round'
+  g.beginPath(); g.rect(-3.5, -6, 7, 12); g.stroke(); g.fill(); g.fillStyle = '#06080b'; g.fillRect(-2.2, -3.5, 4.4, 2.6); g.restore()
+}
+
+// ---- the frame: the cached picture, then what moves
+const mapNames = id => roster.get(id)?.name || ''
+function mapCarAt() {
+  const K = GAME.car?.k
+  if (K === undefined) return null
+  if (isHost) { const st = GAME.car.of(myId), o = st && st.car !== undefined ? objs.find(o => o.id === st.car && o.k === K) : null; return o ? { x: o.x, z: o.z } : null }
+  const me = mapMe; let best = null, bd = Infinity
+  for (const o of objs) if (o.k === K && me) { const d = Math.hypot(o.x - me.x, o.z - me.z); if (d < bd) { bd = d; best = o } }
+  return best ? { x: best.x, z: best.z } : null
+}
+function mapFrame(now) {
+  const cv = el('#map-cv'), W = cv.clientWidth, H = cv.clientHeight
+  if (!W || !H) return
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  if (mapSize.W !== W || mapSize.H !== H || mapSize.dpr !== dpr) { mapSize = { W, H, dpr }; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); mapCache = null; mapChrome = null; mapClampView() }
+  const g = mapCtx ||= cv.getContext('2d'), V = mapView
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = MAP_PAL.ink; g.fillRect(0, 0, cv.width, cv.height)
+  if (!mapData) {
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); mapText(g, 'SURVEYING FAUSTLAND…', W / 2, H / 2, { size: 14, color: MAP_PAL.brass, space: 4 }); return
+  }
+  // repaint the cached picture when the view has left it, at most every MAP_MS.repaint ms
+  const C = mapCache, margin = Math.round(0.22 * Math.max(W, H)), CW = W + 2 * margin, CH = H + 2 * margin
+  const off = !C || Math.abs(C.k - V.k) > 1e-9 || Math.abs(C.cx - V.cx) * V.k > 0.5 || Math.abs(C.cz - V.cz) * V.k > 0.5 || C.dirty
+  if (off && (!C || C.dirty || now - mapPaintAt >= MAP_MS.repaint)) {
+    // the picture's pixel ratio: capped so a big screen's margin does not cost a fortune
+    const sc = Math.min(dpr, Math.sqrt(4.2e6 / (CW * CH))) || 1
+    const cc = mapCacheCv ||= document.createElement('canvas')
+    if (cc.width !== Math.round(CW * sc) || cc.height !== Math.round(CH * sc)) { cc.width = Math.round(CW * sc); cc.height = Math.round(CH * sc) }
+    mapPaint(cc.getContext('2d'), mapData, V, CW, CH, sc)
+    mapCache = { cx: V.cx, cz: V.cz, k: V.k, CW, CH }; mapPaintAt = now
+  }
+  if (mapCache) {
+    const s = V.k / mapCache.k, sx = (mapCache.cx - V.cx) * V.k + W / 2, sy = (mapCache.cz - V.cz) * V.k + H / 2
+    g.setTransform(1, 0, 0, 1, 0, 0); g.imageSmoothingEnabled = true
+    g.drawImage(mapCacheCv, sx * dpr - mapCache.CW * s * dpr / 2, sy * dpr - mapCache.CH * s * dpr / 2, mapCache.CW * s * dpr, mapCache.CH * s * dpr)
+  }
+  g.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const xy = (x, z) => [(x - V.cx) * V.k + W / 2, (z - V.cz) * V.k + H / 2]
+  // the chrome
+  const compact = W < 560 || H < 440, ck = W + 'x' + H + 'x' + dpr
+  if (mapChrome !== ck) { const cc = mapChromeCv ||= document.createElement('canvas'); cc.width = Math.round(W * dpr); cc.height = Math.round(H * dpr); mapPaintChrome(cc.getContext('2d'), W, H, dpr, compact); mapChrome = ck }
+  g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(mapChromeCv, 0, 0); g.setTransform(dpr, 0, 0, dpr, 0, 0)
+  // the scale bar
+  const len = mapNiceLength(110 / V.k), bw = len * V.k
+  const sx0 = W / 2 - bw / 2, sy0 = H - 24
+  g.strokeStyle = MAP_PAL.cream; g.lineWidth = 2; g.beginPath(); g.moveTo(sx0, sy0 - 5); g.lineTo(sx0, sy0); g.lineTo(sx0 + bw, sy0); g.lineTo(sx0 + bw, sy0 - 5); g.stroke()
+  mapText(g, len >= 1000 ? len / 1000 + ' KM' : len + ' M', W / 2, sy0 + 10, { size: 10, color: MAP_PAL.cream, space: 2 })
+  // markers
+  const t = now, me = mapMe, mine = me && !(me.dead > 0)
+  const c = { xy, k: V.k, W, H, D: mapData, t }
+  for (const L of mapLayers) if (L.dynamic) try { g.save(); L.dynamic(g, c); g.restore() } catch (e) { console.warn('map layer ' + L.name + ':', e?.message || e) }
+  for (const o of mapOthers) {
+    if (o.dead > 0 || (isHost && players.get(o.id)?.bot)) continue
+    const [a, b] = xy(o.x, o.z)
+    if (a < -20 || b < -20 || a > W + 20 || b > H + 20) continue
+    mapArrow(g, a, b, o.yaw || 0, 5, '#7fd4b4')
+    const nm = mapNames(o.id); if (nm) mapText(g, nm, a, b - 13, { size: 10, color: '#a8e6cf', space: 0.8 })
+  }
+  const car = mapCarAt()
+  if (car) { const [a, b] = xy(car.x, car.z); mapCar(g, a, b, 1.1); mapText(g, 'CAR', a, b + 14, { size: 9, color: '#ff9a6a', space: 1.5 }) }
+  if (me) {
+    const [a, b] = xy(me.x, me.z), onScreen = a > 14 && a < W - 14 && b > 14 && b < H - 14
+    if (onScreen) {
+      const pulse = (now % 1600) / 1600
+      g.strokeStyle = 'rgba(255,211,106,' + (0.55 * (1 - pulse)).toFixed(2) + ')'; g.lineWidth = 2; g.beginPath(); g.arc(a, b, 9 + pulse * 20, 0, 2 * Math.PI); g.stroke()
+      mapArrow(g, a, b, me.yaw || 0, 8, mine ? '#ffd36a' : '#8a8472')
+      mapText(g, 'YOU', a, b + 21, { size: 10, color: '#ffd36a', space: 2 })
+    } else {
+      // off the picture: an arrow on the edge, toward him
+      const dx = a - W / 2, dz = b - H / 2, s = Math.min((W / 2 - 24) / Math.abs(dx || 1e-6), (H / 2 - 24) / Math.abs(dz || 1e-6))
+      g.save(); g.translate(W / 2 + dx * s, H / 2 + dz * s); g.rotate(Math.atan2(dz, dx) + Math.PI / 2)
+      g.fillStyle = '#ffd36a'; g.strokeStyle = '#06080b'; g.lineWidth = 2; g.beginPath(); g.moveTo(0, -11); g.lineTo(9, 7); g.lineTo(0, 3); g.lineTo(-9, 7); g.closePath(); g.stroke(); g.fill(); g.restore()
+    }
+  }
+  // what is under the pointer
+  if (mapHover && !mapPtr.size) {
+    let best = null, bd = 15
+    for (const p of mapData.pois) { const [a, b] = xy(p.x, p.z), d = Math.hypot(a - mapHover.x, b - mapHover.y); if (d < bd) { bd = d; best = p } }
+    if (best) {
+      const [a, b] = xy(best.x, best.z); g.font = '700 11px ' + MAP_FONT
+      const w = g.measureText(best.name).width + 16, x = clamp(a - w / 2, 8, W - w - 8), y = b - 30 < 12 ? b + 14 : b - 34
+      g.fillStyle = 'rgba(8,10,14,.92)'; g.strokeStyle = MAP_PAL.brass; g.lineWidth = 1; g.beginPath(); g.rect(x, y, w, 22); g.fill(); g.stroke()
+      mapText(g, best.name, x + w / 2, y + 11.5, { size: 11, weight: 600, space: 0.3, halo: 'rgba(0,0,0,0)' })
+    }
+  }
+}
+function mapLoop(now) {
+  if (!mapOpen) { mapLooping = false; return }
+  try { mapFrame(now) } catch (e) { console.warn('map:', e) }
+  requestAnimationFrame(mapLoop)
+}
+
+// ---- view controls
+function mapZoomAt(px, py, k) {
+  const V = mapView, wx = V.cx + (px - mapSize.W / 2) / V.k, wz = V.cz + (py - mapSize.H / 2) / V.k
+  V.k = k; mapClampView(); V.cx = wx - (px - mapSize.W / 2) / V.k; V.cz = wz - (py - mapSize.H / 2) / V.k; mapClampView()
+}
+const mapZoomBy = f => mapZoomAt(mapSize.W / 2, mapSize.H / 2, mapView.k * f)
+function mapGoMe() {
+  const me = mapMe || selfChar()
+  if (me) { mapView.cx = me.x; mapView.cz = me.z }
+  mapView.k = Math.min(mapSize.W || innerWidth, mapSize.H || innerHeight) / 760; mapClampView()
+}
+function mapGoCity() { mapView.cx = 0; mapView.cz = 0; mapView.k = Math.min(mapSize.W || innerWidth, mapSize.H || innerHeight) / (2 * (mapData?.A || 960)) * 0.9; mapClampView() }
+function mapGoWorld() { mapView.cx = 0; mapView.cz = 0; mapView.k = 0; mapClampView() }
+function openMap() {
+  if (mapOpen || phase !== 'playing' || serving || !LV.faust || chatOpen || menuUp()) return
+  mapEnsure()
+  mapOpen = true; letGo()
+  mapMe = selfChar()
+  mapSize = { W: innerWidth, H: innerHeight, dpr: 1 }; mapGoMe()
+  show('map', 1)
+  if (!mapLooping) { mapLooping = true; requestAnimationFrame(mapLoop) }
+}
+function closeMap() {
+  if (!mapOpen) return
+  mapOpen = false; show('map'); mapHover = null; mapPtr.clear()
+  if (phase === 'playing' && !chatOpen && !pauseOpen && !settingsOpen && !modalOpen) lockPointer()
+}
+const toggleMap = () => mapOpen ? closeMap() : openMap()
+function mapKeyDown(e) {
+  const pan = 120 / mapView.k
+  if (e.code === 'KeyM' || e.key === 'Escape') { e.preventDefault(); if (!e.repeat) closeMap() }
+  else if (e.key === '+' || e.key === '=') mapZoomBy(1.4)
+  else if (e.key === '-' || e.key === '_') mapZoomBy(1 / 1.4)
+  else if (e.key === '0' || e.code === 'Home') mapGoMe()
+  else if (e.key === 'ArrowLeft') { mapView.cx -= pan; mapClampView() }
+  else if (e.key === 'ArrowRight') { mapView.cx += pan; mapClampView() }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); mapView.cz -= pan; mapClampView() }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); mapView.cz += pan; mapClampView() }
+}
+function initMap() {
+  const cv = el('#map-cv')
+  cv.addEventListener('pointerdown', e => {
+    cv.setPointerCapture?.(e.pointerId); mapPtr.set(e.pointerId, { x: e.offsetX, y: e.offsetY })
+    el('#map').classList.add('drag')
+  })
+  cv.addEventListener('pointermove', e => {
+    mapHover = e.pointerType === 'mouse' ? { x: e.offsetX, y: e.offsetY } : null
+    const p = mapPtr.get(e.pointerId); if (!p) return
+    const nx = e.offsetX, ny = e.offsetY
+    if (mapPtr.size === 1) { mapView.cx -= (nx - p.x) / mapView.k; mapView.cz -= (ny - p.y) / mapView.k; mapClampView() }
+    else if (mapPtr.size === 2) {
+      const [a, b] = [...mapPtr.entries()], other = a[0] === e.pointerId ? b[1] : a[1]
+      const d = Math.hypot(nx - other.x, ny - other.y) || 1, mx = (nx + other.x) / 2, my = (ny + other.y) / 2, ox = (p.x + other.x) / 2, oy = (p.y + other.y) / 2
+      mapView.cx -= (mx - ox) / mapView.k; mapView.cz -= (my - oy) / mapView.k
+      mapZoomAt(mx, my, mapView.k * d / (Math.hypot(p.x - other.x, p.y - other.y) || d))
+    }
+    p.x = nx; p.y = ny
+  })
+  const up = e => { mapPtr.delete(e.pointerId); if (!mapPtr.size) el('#map').classList.remove('drag') }
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up)
+  cv.addEventListener('pointerleave', () => { mapHover = null })
+  cv.addEventListener('wheel', e => { e.preventDefault(); mapZoomAt(e.offsetX, e.offsetY, mapView.k * Math.exp(-e.deltaY * (e.deltaMode ? 0.04 : 0.0016))) }, { passive: false })
+  cv.addEventListener('dblclick', e => mapZoomAt(e.offsetX, e.offsetY, mapView.k * 2))
+  cv.addEventListener('contextmenu', e => e.preventDefault())
+  el('#map-close').onclick = closeMap
+  el('#map-in').onclick = () => mapZoomBy(1.6)
+  el('#map-out').onclick = () => mapZoomBy(1 / 1.6)
+  el('#map-me').onclick = mapGoMe
+  el('#map-city').onclick = mapGoCity
+  el('#map-world').onclick = mapGoWorld
+  addEventListener('resize', () => { if (mapOpen) { mapChrome = null; mapCache = null } })
+}
+// the game's hud call: the frame's player and others, and the plan's data built in the background a few seconds into play
+{
+  const hud0 = GAME.view.hud
+  GAME.view.hud = function (me, others, t) {
+    const r = hud0.call(this, me, others, t)
+    mapMe = me; mapOthers = others
+    if (!mapData && phase === 'playing' && LV.faust) { mapWarmAt ||= t; if (t - mapWarmAt > MAP_MS.warm) mapEnsure() } else if (phase !== 'playing') mapWarmAt = 0
+    else if (mapData && mapData.key !== mapKey()) mapEnsure()
+    return r
+  }
+}
+GAME.map = { layer: (name, spec) => { const i = mapLayers.findIndex(L => L.name === name); if (i >= 0) mapLayers.splice(i, 1); mapLayers.push({ name, ...spec }); if (mapCache) mapCache.dirty = true },
+  dirty: () => { if (mapCache) mapCache.dirty = true }, open: openMap, close: closeMap, toggle: toggleMap,
+  get isOpen() { return mapOpen }, get data() { return mapData }, view: mapView, paint: mapPaint, build: mapBuildSteps }
+
 // ---------------------------------------------------------------- boot
 class Arena extends ENABLE3D.Scene3D {
   constructor() { super({ key: 'arena' }) }
@@ -29722,6 +30226,7 @@ class Arena extends ENABLE3D.Scene3D {
       initCodeModal()
       initSettings()
       initPause()
+      initMap()
       initEndModal()
       GAME.view.serverInit()
       wireMenu()
