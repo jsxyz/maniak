@@ -8370,7 +8370,7 @@ const background = (() => {
         } else if (r.value === 'frame' || r.value === 'wait') deferred.add(j)
       } catch (e) { finish(j, false, e) }
       const stepMs = performance.now() - t, linked = (renderer?.info.programs?.length || 0) - progs0; current = null
-      if (linked > 0 && !rush) { stats.last = j.key; stats.steps++; open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + ' +' + linked + 'p'); break }
+      if (linked > 0) { stats.last = j.key; stats.steps++; open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + ' +' + linked + 'p'); break }
       if ((stepMs >= 1 || linked > 0) && open.steps.length < 40) open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + (linked > 0 ? ' +' + linked + 'p' : ''))
       if (stepMs >= 50) { stats.long.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs)); if (stats.long.length > 12) stats.long.shift() }
       stats.last = j.key; stats.maxStepMs = Math.max(stats.maxStepMs, stepMs); stats.steps++; steps++
@@ -8402,6 +8402,10 @@ const background = (() => {
       const t = performance.now()
       if (name && secT && t - secT >= 3 && open.parts.length < 40) open.parts.push((current ? current.key + '/' : '') + name + ' ' + Math.round(t - secT))
       secT = t
+    },
+    gpuTime(i, ms) {
+      for (let k = frameLog.length - 1; k >= 0 && k >= frameLog.length - 64; k--) if (frameLog[k].i === i) { frameLog[k].gpuMs = +ms.toFixed(2); break }
+      if (secOpen) { secOpen.gpuMax = Math.max(secOpen.gpuMax || 0, +ms.toFixed(1)); secOpen.gpuSum = +((secOpen.gpuSum || 0) + ms).toFixed(1); secOpen.gpuN = (secOpen.gpuN || 0) + 1 }
     },
     frameEnd(i, draw, phase, q = 0) {
       const t = performance.now()
@@ -17041,7 +17045,9 @@ function buildWorld() {
       if (graphics.rebuild && s === scene) rebuildGraphics()
       const programsBefore = renderer.info.programs.length
       background.sec(s === scene ? 'pre-render' : null)
+      if (s === scene) gpuTimerBegin()
       lookRender(render, s, cam)
+      if (s === scene) gpuTimerEnd(pageLife.frames + 1)
       background.sec(s === scene ? 'render' : 'render ' + (s.name || s.type))
       if (motionJob && s === scene) try { motionFrame() } catch (e) { motionJob.done('motion failed: ' + (e?.message || e)) }
       if (capJobs.length && s === scene) try { capAfterDraw() } catch (e) { for (const j of [...capJobs]) j.done('capture failed: ' + (e?.message || e)) }       // card #75: the canvas is only valid in this task
@@ -17638,12 +17644,14 @@ function avatarDetail(id, far) {
 }
 
 const shadowRing = Array.from({ length: 16 }, (_, i) => [Math.cos(i * Math.PI / 8), Math.sin(i * Math.PI / 8)])
-const floors = { boxes: null, n: 0, lo: Infinity, stamp: 0, cells: new Map() }    // every box by pad cell; lo: the lowest top
+const floors = { boxes: null, n: 0, lo: Infinity, stamp: 0, cells: new Map(), big: [] }    // every box by pad cell; lo: the lowest top
 // card #53: the grid filed ahead of the first draw (filing the whole city in one call held host start for 2 s)
-const floorsAdd = b => { const F = floors; b.fo = F.n; padsAdd([b], F.cells); F.lo = Math.min(F.lo, b.cy + b.ey); F.n++ }
+// a box more than 64 m across (a floor under the whole arena) is not filed cell by cell: it would be millions of cells
+const floorsAdd = b => { const F = floors; b.fo = F.n; if (b.ex > 64 || b.ez > 64) F.big.push(b); else padsAdd([b], F.cells); F.lo = Math.min(F.lo, b.cy + b.ey); F.n++ }
+const floorsAt = k => { const F = floors, at = F.cells.get(k); return F.big.length ? (at ? at.concat(F.big) : F.big) : at || [] }
 function* floorsSteps() {
   const F = floors
-  if (F.boxes !== BOXES) Object.assign(F, { boxes: BOXES, n: 0, lo: Infinity }).cells.clear()
+  if (F.boxes !== BOXES) Object.assign(F, { boxes: BOXES, n: 0, lo: Infinity, big: [] }).cells.clear()
   if (BOXES.length <= 128) return
   let t0 = performance.now()
   while (F.boxes === BOXES && F.n < BOXES.length) { floorsAdd(BOXES[F.n]); if (performance.now() - t0 > 8) { yield; t0 = performance.now() } }
@@ -17661,7 +17669,7 @@ const posed = p => !culling || cullT.v.intersectsSphere(cullT.b.set(p, 2)) || cu
 function drawAvatarShadow(a) {
   if (a.shadow) a.shadow.visible = false
   const F = floors, many = BOXES.length > 128
-  if (F.boxes !== BOXES) Object.assign(F, { boxes: BOXES, n: 0, lo: Infinity }).cells.clear()
+  if (F.boxes !== BOXES) Object.assign(F, { boxes: BOXES, n: 0, lo: Infinity, big: [] }).cells.clear()
   if (many && F.n < BOXES.length) {      // boxes streamed in since: at most 1 ms here; the shadow waits for the rest
     const end = performance.now() + 1
     while (F.n < BOXES.length && performance.now() < end) floorsAdd(BOXES[F.n])
@@ -17676,7 +17684,7 @@ function drawAvatarShadow(a) {
   const ux = reach ? dx / reach : 1, uz = reach ? dz / reach : 0
   let floor = null, top = -Infinity, x = 0, z = 0
   const hi = foot + 0.12, d = Math.max(0, hi - F.lo), n = many ? Math.ceil(d * reach / 8) + 1 : 0, stamp = ++F.stamp
-  for (let s = 0; s <= n; s++) for (const b of many ? F.cells.get(padCell(p.x - (p.y - hi + d * s / n) * dx, p.z - (p.y - hi + d * s / n) * dz)) || [] : BOXES) {
+  for (let s = 0; s <= n; s++) for (const b of many ? floorsAt(padCell(p.x - (p.y - hi + d * s / n) * dx, p.z - (p.y - hi + d * s / n) * dz)) : BOXES) {
     const y = b.cy + b.ey, sx = p.x - (p.y - y) * dx, sz = p.z - (p.y - y) * dz
     if (b.fs === stamp || !(b.fs = stamp) || b.vis === false || y > hi || y < top || y === top && !(b.fo < floor.fo) || Math.abs(sx - b.cx) > b.ex || Math.abs(sz - b.cz) > b.ez) continue
     floor = b; top = y; x = sx; z = sz
@@ -35236,7 +35244,7 @@ class Arena extends ENABLE3D.Scene3D {
   postRender() {
     pageLife.frames++
     const drawMs = drawT0 ? now() - drawT0 : 0
-    try { background.frameEnd(pageLife.frames, drawMs, phase + (startingGame ? ' start' : ''), gpuQueueTick(pageLife.frames)) } catch (e) {}
+    try { background.frameEnd(pageLife.frames, drawMs, phase + (startingGame ? ' start' : ''), gpuQueueTick(pageLife.frames)); gpuTimerPoll() } catch (e) {}
     if (drawT0) { msDraw = msDraw * 0.9 + drawMs * 0.1; drawT0 = 0 }
     if (blackbox.on) try { blackbox.frame() } catch (e) { blackbox.on = false; console.warn('blackbox', e) }
     if (stats) stats.end()
@@ -35246,6 +35254,31 @@ class Arena extends ENABLE3D.Scene3D {
 // card #53: one fence a frame; how many frames the oldest one not yet signalled is behind (WebGL updates a fence's status
 // between tasks, so 1 is the least); none on a lost context
 const gpuQ = { list: [], epoch: -1 }
+// card #53: the scene's render time on the GPU, where EXT_disjoint_timer_query_webgl2 exists (results read when available,
+// never waited on; a frame's query lands a few frames later)
+const gpuT = { ext: undefined, list: [], open: null, epoch: -1 }
+function gpuTimerBegin() {
+  const gl = renderer?.getContext()
+  if (!gl || gl.isContextLost()) return
+  if (gpuT.epoch !== graphics.lost) { gpuT.list.length = 0; gpuT.open = null; gpuT.epoch = graphics.lost; gpuT.ext = undefined }
+  if (gpuT.ext === undefined) gpuT.ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') || null
+  if (!gpuT.ext || gpuT.open || gpuT.list.length >= 30) return
+  const q = gl.createQuery(); if (!q) return
+  gl.beginQuery(gpuT.ext.TIME_ELAPSED_EXT, q); gpuT.open = q
+}
+function gpuTimerEnd(i) {
+  const gl = renderer?.getContext()
+  if (!gpuT.open || !gl || gl.isContextLost()) return
+  gl.endQuery(gpuT.ext.TIME_ELAPSED_EXT); gpuT.list.push([i, gpuT.open]); gpuT.open = null
+}
+function gpuTimerPoll() {
+  const gl = renderer?.getContext()
+  if (!gpuT.ext || !gl || gl.isContextLost()) return
+  while (gpuT.list.length && gl.getQueryParameter(gpuT.list[0][1], gl.QUERY_RESULT_AVAILABLE)) {
+    const [i, q] = gpuT.list.shift(), ns = gl.getQueryParameter(q, gl.QUERY_RESULT); gl.deleteQuery(q)
+    background.gpuTime(i, ns / 1e6)
+  }
+}
 function gpuQueueTick(i) {
   const gl = renderer?.getContext()
   if (!gl?.fenceSync || gl.isContextLost()) { gpuQ.list.length = 0; return 0 }
