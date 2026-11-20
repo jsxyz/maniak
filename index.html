@@ -662,7 +662,7 @@ const TITLE_FONT = { family: 'Maniak Display', url: 'https://cdn.jsdelivr.net/np
 // spins: tornado by circling: r0 + rLap m, dps0 + dpsLap a lap to cap laps, speed, pull s, life s, fade s
 // jet: thrust m/s², rise m/s, fuel s, refuel /s, fall m/s, grav ×; aura; grounded:true holds fire
 //   aloft: stat scales while flying (as POWERS). leap: same, airborne off a jet (BOTS rows too)
-// wallRun: { at: share of run speed }, entered and held sprinting. climb: m/s on walls and ceilings. spring: { full s, k × jump }
+// wallRun: { at: share of run speed }, entered and held sprinting. climb: m/s on walls and ceilings. spring: { full s, k × jump, hop: m/s a tap jumps (else jump) }
 // shove: { mass: its capsule's, so Bullet's contacts knock vehicles; sprint: only sprinting; cap: m/s faster than a vehicle moves away that it closes on it }
 // sprintSpd: on-foot sprint m/s (default speed); jet.sprint: flight sprint m/s
 // swing: { range m, pace: m/s it travels }. bones: { box_man bone: [x, y, z] } (y: length). sparks: running-spark colour
@@ -688,7 +688,8 @@ const CHARS = [
     // card #30: his sprint, 11.5 m/s (it was his speed, 7.4): past the city's traffic (7-11 m/s cruise) and every freak
     // (7.6 at most), far short of a car (59). Walking, 4.44; whirling the chain, he walks
     sprintSpd: 11.5,
-    spring: { full: 1.15, k: 3.4 }, leapSmash: true, smash: { speed: 18, r: 2.4, depth: 0.35 },
+    // card #50: a tap of jump is a plain hop at 6.6 m/s, about 1 m up and 0.6 s in the air; held past SPRING_TAP, the leap-smash
+    spring: { full: 1.15, k: 3.4, hop: 6.6 }, leapSmash: true, smash: { speed: 18, r: 2.4, depth: 0.35 },
     swing: { range: 60, pace: 24 }, hurl: { speed: 20, dmg: 0, reach: 1.5 },
     chain: { full: 1.1, speed: 20, boost: 38, range: 16, extra: 44, reel: 12 },
     shape: { torso: [1.34, 1, 1.24], arm: [1.36, 1, 1.3], hand: [1.24, 1, 1.2], leg: [1.16, 1, 1.12], boot: [1.1, 1, 1.06] },
@@ -782,13 +783,17 @@ const GUNS = [
   // the freaks'
   { name:'Shiv',     rate:0.60, dmg: 8, spread:0.25, pellets:2, range: 2.3, knock: 2.0, color:0xb9b2a0,
     melee:true, held:false, punch:'jab', punchMs:200 },
-  { name:'Sledge',   rate:1.60, dmg:26, spread:0.45, pellets:3, range: 3.2, knock:14.0, color:0x9a948a, melee:true },
+  // card #35: two-handed, swung as the bats are; offGrip: where the other fist takes the haft; lean: carried on the right shoulder
+  { name:'Sledge',   rate:1.60, dmg:26, spread:0.45, pellets:3, range: 3.2, knock:14.0, color:0x9a948a, melee:true, punch:'swing', grip:'bat', model:'Sledge',
+    offGrip:-0.3, lean:[-1.4, 0.6] },
   { name:'Leap-smash', rate:0.8, dmg:24, range:4.2, knock:14, color:0xe8e2d4,
     special:true, melee:true, held:false, kind:'radius', punch:'slam', punchMs:650,
     dive:{ speed:22, pull:16, ref:12, cap:2.6 } },
   { name:'Cinderblock', special:true, held:false, rate:0.8, dmg:45, knock:24, refSpeed:58, minScale:0.15, range:60, color:0xc9c0ae,
     scarLife:45, scarMax:32, scarArea:16, scarAreaMax:4 },
-  // card #7, the villains'. grip: how a rigged fist holds it (MODELS aims/shoots by grip, else by name); model: its PROP_MODELS look
+  // card #7, the villains'. grip: how a rigged fist holds it (MODELS aims/shoots by grip, else by name); model: its PROP_MODELS look.
+  // offGrip (card #35): a two-handed weapon's other hand, its distance along the haft from the grip in the look's units (- toward the end).
+  // lean (card #35): its stance's turn on a rig, [about his left axis, about his forward axis] rad about the grip (a blow eases it out)
   { name:'Knife',        rate:0.45, dmg: 9, spread:0.30, pellets:2, range: 2.3, knock: 2.5, color:0xc9c5bb, melee:true, punch:'slash', grip:'knife', model:'Knife' },
   // Misery Master's: salt in the wound (POWERS Salted)
   { name:'Salted knife', rate:0.40, dmg:13, spread:0.34, pellets:2, range: 2.6, knock: 4.0, color:0xe8e2d6, melee:true, punch:'slash', grip:'knife', model:'Knife',
@@ -937,7 +942,7 @@ const ASSETS =
 // decoder, loaded under their pins like GEO_LIBS. The skeleton is one for every rig: 65 joints (root, pelvis, spine_01-03,
 // neck_01, Head, clavicles, arms, fingers, thighs, calves, feet, balls), and the clips in RIG_FILES.anims drive them all
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.e1b7f042.glb', civ_f_coat: 'civ_f_coat.7a3d0837.glb', civ_f_dress: 'civ_f_dress.c14a98d8.glb', civ_freak: 'civ_freak.f5f89315.glb', civ_m_coat: 'civ_m_coat.6ea1934e.glb', civ_m_suit: 'civ_m_suit.e7777903.glb', civ_m_worker: 'civ_m_worker.6058eb0b.glb', maniak: 'maniak.dae0434f.glb', maniak_moves: 'maniak_moves.cae276a8.glb', props: 'props.c509eb59.glb' }
+const RIG_FILES = { freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.3bb7b4e4.glb', pacifier: 'pacifier.94c4fbdb.glb', teardrop: 'teardrop.16ebc873.glb', thug: 'thug.504963e8.glb', tony: 'tony.4c4a7506.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.042f986d.glb', civ_f_coat: 'civ_f_coat.c0cbe611.glb', civ_f_dress: 'civ_f_dress.508b1ffe.glb', civ_freak: 'civ_freak.a8bca9bb.glb', civ_m_coat: 'civ_m_coat.d75175a8.glb', civ_m_suit: 'civ_m_suit.f4378210.glb', civ_m_worker: 'civ_m_worker.3ccf28a6.glb', maniak: 'maniak.dae0434f.glb', maniak_moves: 'maniak_moves.cae276a8.glb', props: 'props.c509eb59.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -964,20 +969,22 @@ const MODELS = {
     kind: 'rig', file: RIG_FILES.maniak, anims: [RIG_FILES.anims, RIG_FILES.maniak_moves], yaw: Math.PI, gripReach: 0.85,
     clips: { idle: 'idle', walk: 'walk', run: 'run', sprint: 'maniak_sprint', fall: 'fall', crouch: 'smash_charge', crouchRun: 'crouch_walk',
       climb: 'chain_hang', dive: 'smash_air', fly: 'fall', drive: 'drive', sit: 'sit', lift: 'smash_air', death: 'death',
-      leap: 'smash_air', land: 'smash_land', hits: ['hit_chest', 'hit_head'], aim: 'pistol_idle', shoot: 'pistol_shoot' },
+      leap: 'smash_air', land: 'smash_land', jump: 'jump', hopLand: 'land', hits: ['hit_chest', 'hit_head'], aim: 'pistol_idle', shoot: 'pistol_shoot' },
     pace: { walk: 0.62, run: 1.55, sprint: 5.867, crouch: 0.41 },
     // card #30: his sprint is his own clip (assets/maniak_moves.*, the second clip file), its planted feet carried back at
     // 5.867 statures/s at rate 1 (11.5 m/s), so the stride meets the road. gaits: run and sprint part where their rates meet
     // (sprintAt statures/s, +- band), each rate held to its range; plants: the sprint's footfalls (cycle phase, left, right)
     gaits: { sprintAt: 3.016, band: 0.06, rates: { run: [0.55, 2.1], sprint: [0.48, 1.6] } }, plants: [0, 0.5],
     punches: { jab: [['jab', 0.12], ['cross', 0.18], ['hook', 0.04]], rise: [['haymaker', 0.36]], slam: [['smash_land', 0]] },
+    chargeGait: true,      // card #50: charging on the move, his legs keep walking, running or sprinting (rigAnimate), the charge over them
     lods: [12, 28], cape: ['cape_01', 'cape_02', 'cape_03'], capeK: 0.11, capeMax: 1.25, deathShow: 2.2,
   },
   // the freaks until card #7 brings the comic's (card #23's stand-ins): the Freak hunched, gaunt and pale in a long ragged
   // coat, the Brute a broad butcher in cap and apron; a creeping walk, the freak's swipe for a shiv, a hook for anything else
-  // swung (the Brute's sledge)
+  // swung. Card #35: the Brute carries his sledge on the shoulder and swings it two-handed, with the freaks' bat clips
   freak: { ...RIG_CIV, file: RIG_FILES.civ_freak, punches: { jab: [['freak_attack', 0.35]], melee: [['hook', 0.04]] } },
-  brute: { ...RIG_CIV, file: RIG_FILES.civ_brute, punches: { jab: [['hook', 0.04]], melee: [['hook', 0.04], ['cross', 0.18]] } },
+  brute: { ...RIG_CIV, file: RIG_FILES.civ_brute, anims: [RIG_FILES.anims, RIG_FILES.freak_anims], aims: { bat: 'bat_idle' },
+    punches: { jab: [['hook', 0.04]], melee: [['hook', 0.04], ['cross', 0.18]], swing: [['bat_swing', 0.05]] } },
   // card #7, the villains: their own bodies, the shared clips plus their own (RIG_FILES.freak_anims: knife stance and slashes, a bat
   // on the shoulder and its two-handed swing, a rifle held and its kick). aims and shoots: a held weapon's stance and shot by its
   // GUNS grip (else its name), over the legs' clip; punches as the Maniak's, by the weapon's punch kind
@@ -1276,6 +1283,15 @@ const PROP_MODELS = {
   Pipe(k) {
     k.add({ g: ['lathe', [[0.0, -0.13], [0.024, -0.13], [0.024, -0.085], [0.019, -0.075], [0.019, 0.56], [0.027, 0.57], [0.027, 0.64], [0.0, 0.64]], 10],
       m: 'accent', tag: 'pipe' })
+  },
+  // card #35: the Brute's sledgehammer, held two-handed: the right fist at the origin, the left lower down the haft (GUNS offGrip);
+  // a hickory haft swelling to its end, and a forged head on it with a striking face each end
+  Sledge(k) {
+    k.add({ g: ['lathe', [[0.0, -0.375], [0.02, -0.372], [0.024, -0.355], [0.022, -0.33], [0.0175, -0.27], [0.0165, 0.2], [0.019, 0.43], [0.02, 0.53],
+      [0.0, 0.535]], 10], m: 'wood', tag: 'haft' })
+    k.box('accent', [0.074, 0.08, 0.17], [0, 0.49, 0], 'head', undefined, 0.01)
+    for (const z of [-0.088, 0.088]) k.box('steel', [0.07, 0.076, 0.018], [0, 0.49, z], 'face', undefined, 0.006)
+    k.box('dark', [0.03, 0.006, 0.05], [0, 0.532, 0], 'wedge')
   },
   Hammer(k) {
     k.grip()
@@ -1691,7 +1707,9 @@ function cityChunk(seed, S, ci, cj, B = [], scenery = [], spot = [[], [], [], []
 // Metres, Y up. The room sends only seed + size. Every cell is a pure integer-seeded plan.
 // v1 budget (city only, shadows included): 220 draw calls / 180,000 submitted triangles.
 // The skyline has two instanced boxes per lot; detail and Bullet bodies are disposable.
-const FAUST = { cell: 96, lid: 1200, detail: 2, physics: 1, retain: 3, calls: 220, triangles: 180000,
+// card #18: the world is 32 km across, ±16 km about the city's centre (Bullet here is single precision: keep within it),
+// and its lid clears the globe's top (3,540 m), so the whole sky set is inside the world. The navmesh keeps 1,200 m.
+const FAUST = { cell: 96, lid: 3800, world: 16000, navTop: 1200, detail: 2, physics: 1, retain: 3, calls: 220, triangles: 180000,
   // The cruise altitude is the globe's underside, above the tallest transit mast.
   airBand: [540, 840], cruiseY: 740, skyFar: 40000, globe: { x: 0, y: 2140, z: -3000, radius: 1400 },
   head: { position: [0, 1550, -1579.2], size: [1380, 1672.5, 405.6],
@@ -1913,18 +1931,106 @@ function faustLevel(gen, theme) {
   const S = Math.max(16, Math.min(32, (gen.size || 20) & ~1)), A = S * 48, seed = gen.seed >>> 0
   // One unbroken plane is a safety net beneath all chunk seams. Local floor ray meshes unload normally.
   const boxes = [faustBox(0, -1, 0, A + 2, 1, A + 2, { vis: false })]
-  for (const axis of [0, 2]) for (const side of [-1, 1]) boxes.push(faustBox(axis ? 0 : side * A, 600, axis ? side * A : 0, axis ? A : 1, 600, axis ? 1 : A, { vis: false }))
-  boxes.push(faustBox(0, FAUST.lid, 0, A, 1, A, { vis: false }))
+  // The world's edges and lid are planes facing in (Bullet's contacts against a box that wide go astray); their boxes
+  // stay for the code that reads extents. Out past the city, faustSolids lays the fields (a crater cannot tile them).
+  const W = FAUST.world, L = FAUST.lid
+  for (const axis of [0, 2]) for (const side of [-1, 1]) boxes.push(faustBox(axis ? 0 : side * W, L / 2, axis ? side * W : 0, axis ? W : 1, L / 2, axis ? 1 : W,
+    { vis: false, plane: axis ? [0, 0, -side, -W] : [-side, 0, 0, -W] }))
+  boxes.push(faustBox(0, L, 0, W, 1, W, { vis: false, plane: [0, -1, 0, -L] }))
   // The globe floats: the central plaza has no monument body or plinth.
   const pads = [[0, 0, 130], [130, 0, 0], [-130, 0, 0], [0, 0, -130], [192, 0, 96], [-192, 0, -96]]
   const car = VEHICLES.find(v => v.name === 'Car') || VEHICLES[0]
   const objects = car ? [[[6, 0, 144], car.name, 0, faustMix(seed, 1, 1)], [[-6, 0, -144], car.name, Math.PI, faustMix(seed, 2, 2)]] : []
   // card #33: on the paving and pavements, off the road (faustSpawns); 5 m clear of the pads and the parked cars
   const spawns = faustSpawns(seed, S, [...pads, ...objects.map(o => o[0])].map(p => [p[0], p[2], 5]))
-  return { faust: true, A, theme: { ...THEME, ...theme, size: A, height: 1200, lid: FAUST.lid,
+  return { faust: true, A, W: FAUST.world, theme: { ...THEME, ...theme, size: A, height: FAUST.lid, lid: FAUST.lid, navTop: FAUST.navTop,
     fog: [0x243044, 360 / A, 2300 / A], ramp: [0, 340], pad: 0xd6c5a0 },
     boxes, pads, spawns, objects, scenery: [{ kind: 'faustland' }], screens: [], screenRule: null,
     grow: { seed, S, ring: [], kind: 'faustland' } }
+}
+
+// ---------------------------------------------------------------- card #18: the world past the city, and the sky set made solid
+// The globe as drawn (64 by 40, mm-rounded), shared by the sky set, its collider and its depth stand-in.
+function faustGlobeGeometry() {
+  const G = FAUST.globe, g = new THREE.SphereGeometry(G.radius, 64, 40), p = g.attributes.position
+  g.rotateY(-Math.PI / 2)
+  for (let i = 0; i < p.count; i++) p.setXYZ(i, Math.round(p.getX(i) * 1000) / 1000, Math.round(p.getY(i) * 1000) / 1000, Math.round(p.getZ(i) * 1000) / 1000)
+  g.translate(G.x, G.y, G.z)
+  return g
+}
+// a geometry's triangles, flat (x y z ×3 apiece), as rayMesh takes them
+function faustTris(g) {
+  const p = g.attributes.position, ix = g.index, n = ix ? ix.count : p.count, out = new Float32Array(n * 3)
+  for (let i = 0; i < n; i++) { const j = ix ? ix.getX(i) : i; out[3 * i] = p.getX(j); out[3 * i + 1] = p.getY(j); out[3 * i + 2] = p.getZ(j) }
+  return out
+}
+// Faust's head's collider: the sculpt's own lod1, placed as FAUST.head.model places it. Its 40,000 triangles lie within
+// 0.2 m of the near model at the median (0.8 m at the 90th percentile; lod2 is 1.9 m off, a convex decomposition worse).
+// Only lod1's two buffers are decoded, never the textures, so the dedicated server stays light. Every machine loads it;
+// until it lands there, the head isn't solid on that machine (it is 870 m up, out of reach at the start).
+let faustHeadTrisMemo = null, faustHeadTrisLoading = null
+function faustHeadTrisLoad() {
+  if (faustHeadTrisMemo || faustHeadTrisLoading) return faustHeadTrisLoading
+  return faustHeadTrisLoading = (async () => {
+    const M = FAUST.head.model, get = base => fetch(base + M.file).then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('HTTP ' + r.status)))
+    const [env, buf] = await Promise.all([geoLoad(RIG_LIBS.filter(L => L.name === 'meshopt')),
+      get(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? get(RIG_SITE) : Promise.reject(e))])
+    const D = env.Meshopt.MeshoptDecoder; await D.ready
+    const dv = new DataView(buf), jl = dv.getUint32(12, true), J = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl)))
+    const bin = new Uint8Array(buf, 28 + jl, dv.getUint32(20 + jl, true))
+    const view = i => { const v = J.bufferViews[i], e = v.extensions?.EXT_meshopt_compression
+      if (!e) return new DataView(bin.slice(v.byteOffset || 0, (v.byteOffset || 0) + v.byteLength).buffer)
+      const out = new Uint8Array(e.count * e.byteStride)
+      D.decodeGltfBuffer(out, e.count, e.byteStride, bin.subarray(e.byteOffset || 0, (e.byteOffset || 0) + e.byteLength), e.mode, e.filter)
+      return new DataView(out.buffer) }
+    const mi = J.meshes.findIndex(m => m.name === 'faust_lod1'), node = J.nodes.find(n => n.mesh === mi), P = J.meshes[mi]?.primitives[0]
+    if (!P || !node) throw new Error('no lod1')
+    const pa = J.accessors[P.attributes.POSITION], ia = J.accessors[P.indices], pv = view(pa.bufferView), iv = view(ia.bufferView)
+    const stride = J.bufferViews[pa.bufferView].byteStride || 12, short = pa.componentType === 5122, k = short && pa.normalized ? 1 / 32767 : 1
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(...node.translation || [0, 0, 0]), new THREE.Quaternion(...node.rotation || [0, 0, 0, 1]), new THREE.Vector3(...node.scale || [1, 1, 1]))
+    m.premultiply(new THREE.Matrix4().compose(new THREE.Vector3(...M.position), new THREE.Quaternion().setFromEuler(new THREE.Euler(M.pitch, 0, 0)), new THREE.Vector3(1, 1, 1)))
+    const pts = new Float32Array(pa.count * 3), v = new THREE.Vector3()
+    for (let i = 0; i < pa.count; i++) {
+      const o = (pa.byteOffset || 0) + i * stride, c = j => short ? pv.getInt16(o + 2 * j, true) * k : pv.getFloat32(o + 4 * j, true)
+      v.set(c(0), c(1), c(2)).applyMatrix4(m); pts[3 * i] = v.x; pts[3 * i + 1] = v.y; pts[3 * i + 2] = v.z
+    }
+    const tris = new Float32Array(ia.count * 3), wide = ia.componentType === 5125
+    for (let i = 0; i < ia.count; i++) { const j = wide ? iv.getUint32((ia.byteOffset || 0) + 4 * i, true) : iv.getUint16((ia.byteOffset || 0) + 2 * i, true)
+      tris[3 * i] = pts[3 * j]; tris[3 * i + 1] = pts[3 * j + 1]; tris[3 * i + 2] = pts[3 * j + 2] }
+    faustHeadTrisMemo = tris; faustHeadSolid()
+    return tris
+  })().catch(e => { faustHeadTrisLoading = null; console.warn('Faust head: not solid yet,', e?.message || e) })
+}
+// the head's solid, once its triangles are here (a level built before they landed gets it now)
+function faustHeadSolid() {
+  if (faustHeadTrisMemo && LV.faust && world && !statics.some(c => c.cell === 'sky head')) addChunk([], 'sky head', faustHeadTrisMemo, null, true)
+}
+// The fields from the city's edge out to the world's (1 km tiles: one solid mesh, walked and driven on, and its own ray
+// copy), the edges' ray copies, the globe and the head. The city's floor box keeps its size: a crater tiles it 96 m apiece.
+// Each is a chunk named by a string, so the streaming's per-cell bookkeeping passes it by.
+function faustSolids() {
+  const W = FAUST.world, L = FAUST.lid, a = ARENA + 1, T = 1000, ground = [], edge = []
+  // two triangles, wound to face n (a ray copy's back faces are never hit)
+  const quad = (out, n, ...q) => { for (const t of [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]) {
+    const u = t[1].map((v, k) => v - t[0][k]), v = t[2].map((v, k) => v - t[0][k])
+    const d = (u[1] * v[2] - u[2] * v[1]) * n[0] + (u[2] * v[0] - u[0] * v[2]) * n[1] + (u[0] * v[1] - u[1] * v[0]) * n[2]
+    out.push(d < 0 ? [t[0], t[2], t[1]] : t) } }
+  for (const [x0, z0, x1, z1] of [[-W, -W, W, -a], [-W, a, W, W], [-W, -a, -a, a], [a, -a, W, a]])
+    for (let x = x0; x < x1; x += T) for (let z = z0; z < z1; z += T) {
+      const X = Math.min(x + T, x1), Z = Math.min(z + T, z1)
+      quad(ground, [0, 1, 0], [x, 0, z], [x, 0, Z], [X, 0, Z], [X, 0, z])
+    }
+  for (let s = -W; s < W; s += T) for (let y = 0; y < L; y += T) {
+    const e = Math.min(s + T, W), Y = Math.min(y + T, L)
+    for (const side of [-1, 1]) {
+      quad(edge, [0, 0, -side], [s, y, side * W], [s, Y, side * W], [e, Y, side * W], [e, y, side * W])
+      quad(edge, [-side, 0, 0], [side * W, y, s], [side * W, Y, s], [side * W, Y, e], [side * W, y, e])
+    }
+  }
+  addChunk([], 'outskirts', ground, null, true)
+  addChunk([], 'world edges', edge)
+  addChunk([], 'sky globe', faustTris(faustGlobeGeometry()), null, true)
+  faustHeadSolid(); faustHeadTrisLoad()
 }
 
 // Pure road routing for v1 bots: cardinal street corners, no per-chunk Recast allocation.
@@ -1969,6 +2075,7 @@ function faustPhysics(c) {
   const t = performance.now()
   c.physics = addChunk(c.plan.boxes, [c.ci, c.cj], [], new Set(c.plan.boxes.filter(b => b.slim)))
   BOXES.push(...c.plan.boxes); grown.add(c.key)
+  craterRegrow({ a0: c.ci * 96 - ARENA, a1: (c.ci + 1) * 96 - ARENA, b0: c.cj * 96 - ARENA, b1: (c.cj + 1) * 96 - ARENA })
   faustState.stats.maxPhysicsMs = Math.max(faustState.stats.maxPhysicsMs, performance.now() - t)
 }
 function faustRange(points, r) {
@@ -1986,7 +2093,10 @@ function faustEnsure(points) {
 }
 function faustDrop(c) {
   if (c.physics) {
-    dropChunk(c.physics)
+    // A failed drop is reported and contained to this cell: rethrown, it would recur every tick and stop the room
+    try { dropChunk(c.physics) } catch (e) { frameFailed('city', e) }
+    c.physics = null
+    try { craterDropSources(c.plan.boxes) } catch (e) { frameFailed('city', e) }
     const gone = new Set(c.plan.boxes)
     for (let i = BOXES.length; i--;) if (gone.has(BOXES[i])) BOXES.splice(i, 1)
     grown.delete(c.key)
@@ -2044,7 +2154,8 @@ function faustTick() {
   const points = [...participants, ...movers].map(c => [c.x, c.z])
   if (!points.length) points.push([0, 144])
   const vp = me ? [me.x, me.z, me.y] : points[0]
-  faustStream(points, vp); GAME.fogGrown.x = 1e9
+  try { faustStream(points, vp) } catch (e) { frameFailed('city', e) }
+  GAME.fogGrown.x = 1e9
   faustState.stats.maxTickMs = Math.max(faustState.stats.maxTickMs, performance.now() - t)
 }
 
@@ -2490,6 +2601,7 @@ function* faustVisualSteps(c) {
   }
   root.userData.cell = [c.ci, c.cj]; c.visual = root; worldGroup.add(root); still(root)
   faustSkyCell(c, false)
+  craterRegrow({ a0: X, a1: X + 96, b0: Z, b1: Z + 96 })
 }
 function faustSkyCell(c, visible) {
   const sky = faustState.skyline
@@ -2523,7 +2635,10 @@ function faustRender(render, s, cam) {
   if (!LV.faust || s !== scene || !F?.skyScene || renderHeadless) return render(s, cam)
   if (!faustHeadLoading && (FAUST_HEAD.software || !softGL())) faustHeadLoad()
   const skyCam = F.skyCamera, autoClear = renderer.autoClear, reset = renderer.info.autoReset, background = s.background
-  skyCam.copy(cam, false); skyCam.near = 10; skyCam.far = FAUST.skyFar; skyCam.updateProjectionMatrix(); skyCam.updateMatrixWorld(true)
+  // card #18: on the globe or the head, the sky pass's near plane comes in with the camera, so it never cuts the surface
+  faustSkyHead()
+  const gap = faustSkyGap(cam.position)
+  skyCam.copy(cam, false); skyCam.near = clamp(gap * 0.5, 0.1, 10); skyCam.far = FAUST.skyFar; skyCam.updateProjectionMatrix(); skyCam.updateMatrixWorld(true)
   F.skyScene.background = background
   const t = performance.now() / 1000
   for (const beam of F.skyBeams || []) {
@@ -2540,6 +2655,7 @@ function faustRender(render, s, cam) {
     render(F.skyScene, skyCam)
     F.lastSkyDraw = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }
     renderer.autoClear = false; s.background = null; renderer.clearDepth()
+    if (F.skyOccluder && gap < cam.far) render(F.skyOccluder, cam)
     render(s, cam)
   } finally {
     s.background = background; renderer.autoClear = autoClear; renderer.info.autoReset = reset
@@ -2555,6 +2671,8 @@ function faustDisposeSky() {
   for (const geometry of geometries) geometry.dispose()
   for (const texture of textures) texture.dispose()
   F.skyScene.clear(); F.skyScene = null; F.skyCamera = null; F.skyBeams = []; F.headMesh = null
+  // the stand-in's globe is the sky's own geometry (gone above); the head's geometry views the collider's kept triangles
+  F.skyHead?.geometry.dispose(); F.skyStand?.dispose(); F.skyOccluder = F.skyStand = F.skyHead = F.skyBounds = null
 }
 function faustGlobeMap() {
   // Original, deliberately angular continent outlines in longitude/latitude. No external imagery.
@@ -2706,11 +2824,7 @@ function faustMonument() {
   polygon([[-29, 330, 61], [29, 330, 61], [25, 312, 59], [-25, 312, 59]], 0xc0c5c7)
   // The collar is part of the floating sculpture; nothing connects it to the ground.
   for (const side of [-1, 1]) polygon([[side * 12, 302, 39], [side * 47, 315, 30], [side * 48, 292, 23], [side * 27, 282, 45]], 0x596575)
-  const G = FAUST.globe, globeGeometry = new THREE.SphereGeometry(G.radius, 64, 40)
-  globeGeometry.rotateY(-Math.PI / 2)
-  const globePositions = globeGeometry.attributes.position
-  for (let i = 0; i < globePositions.count; i++) globePositions.setXYZ(i, Math.round(globePositions.getX(i) * 1000) / 1000, Math.round(globePositions.getY(i) * 1000) / 1000, Math.round(globePositions.getZ(i) * 1000) / 1000)
-  globeGeometry.translate(G.x, G.y, G.z)
+  const globeGeometry = faustGlobeGeometry()
   const globeMap = faustGlobeMap()
   const globe = new THREE.Mesh(globeGeometry, new THREE.MeshStandardMaterial({ map: globeMap, emissiveMap: globeMap, color: 0xd7dfe3, roughness: 0.95, metalness: 0.05, emissive: 0x8093a8, emissiveIntensity: 0.18, fog: false }))
   globe.material.onBeforeCompile = shader => {
@@ -2741,8 +2855,23 @@ function faustMonument() {
   flood.target.position.fromArray(at); far.add(flood, flood.target)
   faustHeadInstall()
   faustSkyWeather(far)
-  // The airborne sculpture has no Bullet body in v1. Future aircraft use the published analytic bounds.
+  // card #18: the sky set is solid (faustSolids). The city's pass clears depth after the sky's, so near the globe or the
+  // head their stand-ins (the globe as drawn, the head's collider) write depth first: the city behind them stays hidden.
+  F.skyOccluder = new THREE.Scene(); F.skyStand = new THREE.MeshBasicMaterial({ colorWrite: false })
+  F.skyOccluder.add(new THREE.Mesh(globeGeometry, F.skyStand))
+  const G = FAUST.globe; F.skyBounds = [[G.x, G.y, G.z, G.radius]]
+  faustSkyHead()
 }
+// the head's stand-in and bound, once its collider's triangles are here
+function faustSkyHead() {
+  const F = faustState, t = faustHeadTrisMemo
+  if (!t || !F?.skyOccluder || F.skyHead) return
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(t, 3)); g.computeBoundingSphere()
+  F.skyHead = new THREE.Mesh(g, F.skyStand); F.skyOccluder.add(F.skyHead)
+  const b = g.boundingSphere; F.skyBounds.push([b.center.x, b.center.y, b.center.z, b.radius])
+}
+// metres from p to the sky set's nearest bound (below 0 inside one)
+const faustSkyGap = p => Math.min(...(faustState?.skyBounds || []).map(b => Math.hypot(p.x - b[0], p.y - b[1], p.z - b[2]) - b[3]), Infinity)
 // Small local pools and shafts carry the night lighting without a light per building.
 function faustAtmosphere() {
   const F = faustState, root = worldGroup
@@ -2797,6 +2926,46 @@ function faustFarLights() {
   worldGroup.add(new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xff3925, size: 3, sizeAttenuation: true, transparent: true, opacity: 0.95, depthWrite: false, toneMapped: false })))
 }
 
+// card #18: the fields, from the city's edge to the world's (one ring of 8 triangles; the plots, furrows and hedges are
+// the shader's, from world position), and the world's edge: a dark border wall standing just outside it, with pylons
+// every 400 m, each with a sodium lamp on top
+function faustOutskirts() {
+  const W = FAUST.world, a = ARENA, p = []
+  for (const [x0, z0, x1, z1] of [[-W, -W, W, -a], [-W, a, W, W], [-W, -a, -a, a], [a, -a, W, a]])
+    p.push(x0, 0, z0, x0, 0, z1, x1, 0, z1, x0, 0, z0, x1, 0, z1, x1, 0, z0)
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3))
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(p.map((_, i) => i % 3 === 1 ? 1 : 0), 3))
+  const m = new THREE.MeshStandardMaterial({ color: 0x2e3530, roughness: 1 })
+  m.onBeforeCompile = shader => {
+    shader.vertexShader = 'varying vec2 faustField;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n faustField = (modelMatrix * vec4(transformed, 1.0)).xz;')
+    shader.fragmentShader = 'varying vec2 faustField;\n' + shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+      vec2 plot = floor(faustField / 160.0), inPlot = fract(faustField / 160.0);
+      vec3 p3 = fract(vec3(plot.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33);
+      float h = fract((p3.x + p3.y) * p3.z);
+      vec3 tint = h < 0.4 ? vec3(0.8, 0.92, 0.66) : h < 0.75 ? vec3(0.66, 0.56, 0.46) : vec3(1.0, 0.92, 0.7);
+      float along = h < 0.55 ? faustField.x : faustField.y, fw = fwidth(along) / 2.4;
+      float furrow = 1.0 - 0.2 * (1.0 - smoothstep(0.25, 0.6, fw)) * smoothstep(0.35, 0.65, abs(fract(along / 2.4) - 0.5) * 2.0);
+      float edge = min(min(inPlot.x, 1.0 - inPlot.x), min(inPlot.y, 1.0 - inPlot.y)) * 160.0;
+      float hedge = 1.0 - 0.55 * (1.0 - smoothstep(1.5, 3.0 + fwidth(edge), edge));
+      diffuseColor.rgb *= tint * furrow * hedge;`)
+  }
+  m.customProgramCacheKey = () => 'faust-fields-1'
+  const fields = new THREE.Mesh(g, m); fields.position.y = -0.025; fields.receiveShadow = true; fields.frustumCulled = false; worldGroup.add(fields)
+  // the wall: its inner face on the world's edge, 36 m tall, with a coping; the pylons and lamps
+  const H = 36, pylons = Math.ceil((2 * W - 200) / 400), wall = faustBatch(4 * 36 * (2 + 2 * pylons))
+  for (const side of [-1, 1]) for (const axis of [0, 1]) {
+    // u along the wall, ev its half-depth outward from the edge
+    const at = (u, eu, ey, ev, y) => axis ? faustBox(side * (W + ev), y, u, ev, ey, eu) : faustBox(u, y, side * (W + ev), eu, ey, ev)
+    wall.box(at(0, W + 8, H / 2, 2, H / 2), 0x2a2f37)
+    wall.box(at(0, W + 8, 0.6, 2.6, H + 0.6), 0x4a525d)
+    for (let u = -W + 200; u < W; u += 400) {
+      wall.box(at(u, 3, H / 2 + 4, 4, H / 2 + 4), 0x353b45)
+      wall.box(at(u, 1.2, 0.5, 1.2, H + 8.5), 0xffb35a, -1)
+    }
+  }
+  const border = new THREE.Mesh(wall.geometry(), faustState.materials.stone); border.receiveShadow = true; worldGroup.add(border)
+}
+
 function faustBuildWorld() {
   if (!faustState) faustReset()
   faustState.selection = null; faustState.visualJob = null; faustState.materials = faustMaterials(); faustSkyline(); faustMonument(); faustAtmosphere(); faustFarLights()
@@ -2805,6 +2974,7 @@ function faustBuildWorld() {
   if (sunLight) { sunLight.color.setHex(0xb8d3ff); sunLight.intensity = FAUST_NIGHT.moon; sunLight.shadow.camera.far = 1800; sunLight.shadow.bias = -0.0003; sunLight.shadow.normalBias = 0.12; sunLight.shadow.camera.updateProjectionMatrix() }
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ color: 0x303741, roughness: 1 }))
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.025; ground.receiveShadow = true; worldGroup.add(ground)
+  faustOutskirts()
   for (const c of faustState.chunks.values()) c.visual = null
   const me = isHost ? players.get(0) : predicted, p = me ? [me.x, me.z] : [0, 144]
   for (const key of faustRange([p], 1)) faustDraw(faustGet(...key.split(' ').map(Number)))
@@ -2995,7 +3165,8 @@ const HULL_LIB = { url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm
 const HULL_MAX = 4096
 
 let levelId = 0
-let LV = compileLevel(LEVELS[levelId]), ARENA = LV.A
+// ARENA: the half-width of the level's grid (Faustland's city); WORLD: of the world a body may reach (card #18: ±16 km)
+let LV = compileLevel(LEVELS[levelId]), ARENA = LV.A, WORLD = LV.W || LV.A
 let BOXES = LV.boxes, PADS = LV.pads, SPAWNS = LV.spawns
 
 // pads launch in applyIntent: replayed identically, nothing on the wire
@@ -3369,10 +3540,11 @@ function runOver(c, inp, spd) {
 }
 
 // Column 28: a web's anchor as one integer, x z y at 1/8 m, snapped alike by host and guest. Within 1024 m of the centre
-// it is 1..2^39 (14-bit x and z); farther out, to 2048 m, it is 2^39 plus the same with 15-bit x and z.
+// it is 1..2^39 (14-bit x and z); farther out, to 2048 m, it is 2^39 plus the same with 15-bit x and z. Off the city or
+// above 192 m, to ±16,384 m out and 4,032 m up (card #18: the globe's top), it is 2^42 plus x, z and y at 18, 18 and 15 bits.
 const WEB_FAR = 2 ** 39, WEB_CITY = 2 ** 42, WEB_GRID = 262144
 const webPack = (x, y, z) => { const ix = Math.round((x + 1024) * 8), iz = Math.round((z + 1024) * 8), iy = Math.round((y + 64) * 8)
-  if (Math.abs(x) > 16383 || Math.abs(z) > 16383 || y < -64 || y >= 1984) return 0
+  if (Math.abs(x) > 16383 || Math.abs(z) > 16383 || y < -64 || y >= 4032) return 0
   if (Math.abs(x) >= 2047 || Math.abs(z) >= 2047 || y >= 192) return WEB_CITY + 1 + Math.round((x + 16384) * 8) + WEB_GRID * (Math.round((z + 16384) * 8) + WEB_GRID * iy)
   if (ix >= 0 && ix < 16384 && iz >= 0 && iz < 16384) return 1 + ix + 16384 * (iz + 16384 * iy)
   const jx = ix + 8192, jz = iz + 8192
@@ -3381,11 +3553,11 @@ const webPack = (x, y, z) => { const ix = Math.round((x + 1024) * 8), iz = Math.
 function webPoint(v) {
   if (!Number.isSafeInteger(v) || v < 1) return null
   if (v > WEB_CITY) { const n = v - WEB_CITY - 1, x = n % WEB_GRID / 8 - 16384, z = Math.floor(n / WEB_GRID) % WEB_GRID / 8 - 16384, y = Math.floor(n / WEB_GRID ** 2) / 8 - 64
-    return Math.abs(x) < 16384 && Math.abs(z) < 16384 && y >= -64 && y < 1984 ? [x, y, z] : null }
+    return Math.abs(x) < 16384 && Math.abs(z) < 16384 && y >= -64 && y < 4032 ? [x, y, z] : null }
   if (v > WEB_FAR * 5) return null
   const far = v > WEB_FAR, B = far ? 32768 : 16384, o = far ? 2048 : 1024, n = v - 1 - (far ? WEB_FAR : 0)
   const x = n % B / 8 - o, z = Math.floor(n / B) % B / 8 - o, y = Math.floor(n / (B * B)) / 8 - 64
-  return Math.abs(x) <= ARENA + 8 && Math.abs(z) <= ARENA + 8 ? [x, y, z] : null
+  return Math.abs(x) <= WORLD + 8 && Math.abs(z) <= WORLD + 8 ? [x, y, z] : null
 }
 // The Maniak's move state is simulated by the host. The guest predicts his leap and the existing Bullet swing;
 // the swept block and the chain's constrained particles are carried in his snapshot, never accepted from a guest.
@@ -3414,13 +3586,14 @@ function chainClear(c) {
 }
 function moveReset(c) {
   chainClear(c)
-  c.smashCam = c.springT = c.leap = c.leapAir = c.hayT = c.hayReady = c.hayAge = 0
+  c.smashCam = c.springT = c.leap = c.leapAir = c.hop = c.hopAir = c.hayT = c.hayReady = c.hayAge = 0
   c.chainLock = false; c.blockKills = []
 }
 function leapStart(c, inp, q) {
   c.leap = q + 0.001; c.leapAir = false
   const d = aimDir(inp.yaw, 0), speed = 5 + q * 17
-  c.leapVX = d[0] * speed; c.leapVZ = d[2] * speed
+  c.leapVX = d[0] * speed + LEAP_CARRY * (c.vx || 0); c.leapVZ = d[2] * speed + LEAP_CARRY * (c.vz || 0)     // card #50: his run-up
+  c.leapPace = Math.hypot(c.leapVX, c.leapVZ)
 }
 function chainLine(a, b, skin = CHAIN_SKIN) {
   const d = b.map((v, i) => v - a[i]), n = Math.hypot(...d)
@@ -3488,7 +3661,7 @@ function chainIntent(c, inp, dt) {
   if (!S) return
   if (c.dead > 0 || seatOf(c)) { chainClear(c); return }
   if (!isHost) { // the guest predicts the existing swing and reel, using only the host's catch
-    if (c.tie) { c.tie.want = inp.descend ? 1.25 : c.tie.len; c.leap = 0; c.dove = false }
+    if (c.tie) { c.tie.want = inp.descend ? 1.25 : c.tie.len; c.leap = 0; c.hop = 0; c.dove = false }
     return
   }
   let g = c.chain
@@ -3637,7 +3810,7 @@ function chainLodge(c,g,safe,ptr) {
   }
   chainMark(g);chainImpact(c,point,normal,speed,0,g.lodgeId)
   tie(c,webPack(...anchor),anchor);if(c.tie)c.tie.want=c.tie.len
-  c.leap=0;c.dove=false;c.springT=0
+  c.leap=0;c.hop=0;c.dove=false;c.springT=0
 }
 function chainRelease(c) {
   const g=c.chain;if(!g)return
@@ -3680,7 +3853,13 @@ function chainCorrect(c) {
 
 // A capsule cannot turn: it hangs by a point-to-point constraint from a hub that turns but never moves (inertia keeps it stiff).
 let hubShape = null
-const SPRING_TAP = 0.15   // s: a spring row's jump held this long or less is its plain jump
+// card #50: a spring row's jump held this long or less is its plain jump (the Maniak's hop); longer, it charges. Taps
+// last about 0.06-0.2 s on a key or a phone's glass, and a frame at 30 fps adds 0.033: none reaches it
+const SPRING_TAP = 0.25   // s
+const HOP_STEER = 6        // m/s² the stick steers a hop by in the air: he keeps his take-off speed, as a heavy man does
+// card #50: charging on the move he keeps CHARGE_RUN of his pace, easing to it over the charge's first CHARGE_EASE s; a leap
+// carries LEAP_CARRY of his ground speed, so a sprinting leap goes further
+const CHARGE_RUN = 0.85, CHARGE_EASE = 0.5, LEAP_CARRY = 0.8
 const WEB_HOP = 4          // m/s up a swinger takes when it lets go of its web
 const FLING_ACC = 25       // m/s² the stick steers it by after, until it lands or grabs again
 const ZIP_SPEED = 30       // m/s a zip line pulls it along
@@ -3727,7 +3906,7 @@ const webHit = [], WEB_WALL = 3, WEB_UP = 6
 // how far a web or zip ties, -1 for none
 function webCast(c, ey, dx, dy, dz, range) {
   const t = staticRay(c.x, ey, c.z, dx, dy, dz, range, webHit, RAY_GROUP | CROWN_GROUP), y = ey + dy * t
-  return t < range && y < LV.theme.lid - 1.5 && (y < LV.theme.height || Math.max(Math.abs(c.x + dx * t), Math.abs(c.z + dz * t)) < ARENA - 1.01) ? t : -1
+  return t < range && y < LV.theme.lid - 1.5 && (y < LV.theme.height || Math.max(Math.abs(c.x + dx * t), Math.abs(c.z + dz * t)) < WORLD - 1.01) ? t : -1
 }
 function webAt(c, yaw, pitch, range, aimOnly) {
   const ey = eyeOf(c), cast = (dx, dy, dz, t = webCast(c, ey, dx, dy, dz, range)) => dy * t > 1 ? [c.x + dx * t, ey + dy * t, c.z + dz * t] : null
@@ -3856,6 +4035,7 @@ function applyIntent(c, inp, dt) {
   c.smashCam = Math.max(0, (c.smashCam || 0) - dt)
   if (c.leap && c.air) c.leapAir = true
   if (c.leap && c.leapAir && c.grounded) { c.slam = Math.max(1, -c.fallVy); c.slamGun = gunNamed('Leap-smash'); c.smashCam = 0.7; c.leap = 0; c.dove = false }
+  if (c.hop) { if (c.air) c.hopAir = true; else if (c.hopAir || ++c.hop > 6) c.hop = c.hopAir = 0 }     // card #50: no slam, no smash
   chainIntent(c, inp, dt)
   if (c.dove && c.grounded) c.slam = -c.fallVy, c.slamGun = c.dove, c.dove = false
   if (c.air) c.fallVy = c.vy
@@ -3918,7 +4098,9 @@ function applyIntent(c, inp, dt) {
     if (!c.grounded) c.springT = 0
     c.jAir = !!inp.j && (c.jAir || !c.grounded)     // held since the air: not a ground press
     if (P && !c.tie && c.grounded && inp.j && (!c.jAir || c.ai?.doCharge)) { c.springT = (c.springT || 0) + dt; c.jLock = true }
-    else if (P && c.springT) { const q = clamp((c.springT - SPRING_TAP) / (P.full - SPRING_TAP), 0, 1); vy = (1 + (P.k - 1) * q) * stat(c, 'jump', c.jump)
+    else if (P && c.springT) { const q = clamp((c.springT - SPRING_TAP) / (P.full - SPRING_TAP), 0, 1)
+      if (c.springT > SPRING_TAP || !P.hop) vy = (1 + (P.k - 1) * q) * stat(c, 'jump', c.jump)
+      else { vy = stat(c, 'jump', P.hop); c.hop = 1; c.hopAir = false }     // card #50: a tap, the plain hop
       if (c.springT > SPRING_TAP && GAME.participantOf(c).leapSmash) leapStart(c, inp, q)
       c.springT = 0; c.jLock = true }
     else if (!P && inp.j && c.grounded && !c.jLock) { vy = stat(c, 'jump', c.jump); c.jLock = true }
@@ -3956,17 +4138,23 @@ function applyIntent(c, inp, dt) {
     if (sm > lim) { mx *= lim / sm; mz *= lim / sm }
   }
   if (cling) [mx, , mz] = surfV(c.wnx, 0, c.wnz, wx, wz, GAME.participantOf(c).climb)
+  else if (c.hop && c.air) {
+    if (Math.hypot(wx, wz) < 0.1) mx = c.vx, mz = c.vz
+    else { const dx = mx - c.vx, dz = mz - c.vz, d = Math.hypot(dx, dz), k = d > HOP_STEER * dt ? HOP_STEER * dt / d : 1; mx = c.vx + dx * k; mz = c.vz + dz * k }
+  }
   else if (c.air && !c.tie && Math.hypot(wx, wz) < 0.1 && GAME.participantOf(c)?.swing) mx = c.vx, mz = c.vz
   else if (c.flung) {
     const dx = mx - c.vx, dz = mz - c.vz, d = Math.hypot(dx, dz), k = d > FLING_ACC * dt ? FLING_ACC * dt / d : 1
     mx = c.vx + dx * k; mz = c.vz + dz * k
   }
   if (c.leap) {
-    if (m > 0.1) { const k = Math.min(1, dt * 1.5), pace = 5 + (c.leap - 0.001) * 17; c.leapVX += (wx * pace - c.leapVX) * k; c.leapVZ += (wz * pace - c.leapVZ) * k }
+    if (m > 0.1) { const k = Math.min(1, dt * 1.5), pace = c.leapPace || 5 + (c.leap - 0.001) * 17; c.leapVX += (wx * pace - c.leapVX) * k; c.leapVZ += (wz * pace - c.leapVZ) * k }
     mx = c.leapVX; mz = c.leapVZ
   }
   if (c.ceil) [mx, vy, mz] = surfV(0, -1, 0, wx, wz, GAME.participantOf(c).climb)
-  if (c.springT > 0 && c.grounded) { const k = stat(c, 'move', GAME.participantOf(c).run ?? c.speed * RUN) / 2; mx = wx * k; mz = wz * k }
+  if (c.springT > SPRING_TAP && c.grounded) {      // card #50: a walk stays near a walk, a sprint becomes a hard driving run
+    const e = clamp((c.springT - SPRING_TAP) / CHARGE_EASE, 0, 1), k = 1 - (1 - CHARGE_RUN) * e * e * (3 - 2 * e); mx *= k; mz *= k
+  }
   const fly = flyFast(c, inp.yaw) && (c.flyTurn || tiltFits(c, inp.yaw))
   if (fly || c.flyTurn) { c.flyTurn = fly; teleportBody(c.body, c.x, c.y, c.z, turnOf(c, inp.yaw)) }
   const runner = GAME.participantOf(c)?.wallRun && !J && !c.tie && !seatOf(c), R = runner && runUpWall(c, inp, spd, wx, wz, dt)
@@ -4220,7 +4408,7 @@ const navGeo = boxes => {
 }
 // a 96 m chunk's boxes + the 4 m border Recast reads
 const navQueue = []
-const navTile = (ci, cj) => navWorker.postMessage({ level: levelId, tile: [ci, cj], A: ARENA, top: LV.theme.lid,
+const navTile = (ci, cj) => navWorker.postMessage({ level: levelId, tile: [ci, cj], A: ARENA, top: LV.theme.navTop ?? LV.theme.lid,
   ...navGeo(BOXES.filter(q => Math.abs(q.cx - ci * 96 + ARENA - 48) < q.ex + 52 && Math.abs(q.cz - cj * 96 + ARENA - 48) < q.ez + 52)) })
 
 // runs in the worker
@@ -5028,7 +5216,7 @@ function heldFade(r, me, o) {
 }
 function camRay(me, yaw, pitch, R = heldR(me)) {
   const [dx, dy, dz] = aimDir(yaw, pitch)
-  const settle = clamp((me.smashCam || 0) / 0.5, 0, 1), landing = settle * settle * (3 - 2 * settle), move = GAME.participantOf(me)?.leapSmash ? me.leap ? 1 : me.smashCam > 0 ? landing : Math.min(0.3, (me.springT || 0) / 1.15 * 0.3) : 0
+  const settle = clamp((me.smashCam || 0) / 0.5, 0, 1), landing = settle * settle * (3 - 2 * settle), move = GAME.participantOf(me)?.leapSmash ? me.leap ? 1 : me.smashCam > 0 ? landing : Math.min(0.3, Math.max(0, (me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP) * 0.3) : 0
   const back = CAM.back + 3.2 * move + 3.5 * landing, up = CAM.up + 2.1 * move + 2.4 * landing, aim = CAM.aim - 22 * move - 14 * landing
   const eyeY = eyeOf(me)
   // pivot >= 1 m over the feet; bodies under 0.9 m get the camera closer
@@ -5066,7 +5254,7 @@ function camBlock(px, py, pz, nx, ny, nz, len) {
   return far * camCb.get_m_closestHitFraction()
 }
 
-const chase = { yaw: NaN, t: 0, look: 0, inYaw: NaN, idle: 0, x: NaN, z: NaN, v: 0, vb: 0, vFilt: 0, lag: 0 }
+const chase = { yaw: NaN, t: 0, look: 0, inYaw: NaN, inPitch: NaN, idle: 0, x: NaN, z: NaN, v: 0, vb: 0, vFilt: 0, lag: 0 }
 const LOOK_REST = 1500          // ms idle, moving, before free look recentres
 // a tick of the chase camera's easing: heading, speed, lag and free look
 function chaseStep(o, inp) {
@@ -5080,10 +5268,15 @@ function chaseStep(o, inp) {
   const wantLag = clamp((chase.vb - chase.vFilt) * 0.3, -1, 2.5)
   chase.lag = on ? chase.lag + clamp(wantLag - chase.lag, -dt * 0.003, dt * 0.003) : 0
   if (!on) chase.look = 0
-  if (turned) { chase.look = wrapPi(chase.look + turned); chase.idle = 0 } else chase.idle += on ? dt : 0
-  if (chase.v > 3 && chase.idle > LOOK_REST) chase.look *= Math.exp(-dt / 250)
-  chase.inYaw = inp.yaw; chase.x = o.x; chase.z = o.z; chase.t = now_
+  const tilted = on && inp.pitch !== chase.inPitch
+  if (turned) chase.look = wrapPi(chase.look + turned)
+  if (turned || tilted) chase.idle = 0; else chase.idle += on ? dt : 0
+  if (chase.v > 3 && chase.idle > LOOK_REST) { const k = Math.exp(-dt / 250); chase.look *= k; inp.pitch *= k }
+  chase.inYaw = inp.yaw; chase.inPitch = inp.pitch; chase.x = o.x; chase.z = o.z; chase.t = now_
 }
+// card #58, the car camera looking up: low: the orbit's lowest elevation, rad; past it the camera sinks to floor m over
+// the ground by sinkBy of the way up, once clear m outside the car's footprint, and the view tilts up to PITCH_MAX
+const CAR_CAM = { low: 0.05, floor: 0.75, sinkBy: 0.5, clear: 0.6 }
 function vehicleCamera(o, me, inp, cam, firstPerson) {
   const pass = (seatOf(me)?.[1] ?? me.ride?.[1]) > 0
   if (chase.yaw !== chase.yaw || tickAt - chase.t >= 500) chaseStep(o, inp)
@@ -5102,14 +5295,27 @@ function vehicleCamera(o, me, inp, cam, firstPerson) {
   const ground = Y + off[1] + o.low, py = ground + H
   const pull = 1 + drive(V, 'chase') * clamp(chase.v / V.speed, 0, 1), up = (1.5 + 0.15 * L) * pull
   const back = 1.3 * L * pull + chase.lag
-  const len = Math.hypot(back, up), el = clamp(Math.atan2(up, back) - inp.pitch, 0.05, 1.3)
+  const len = Math.hypot(back, up), el0 = Math.atan2(up, back), el = clamp(el0 - inp.pitch, CAR_CAM.low, 1.3)
   const ox = -sx * len * Math.cos(el), oy = len * Math.sin(el), oz = -sz * len * Math.cos(el)
   const t = camBlock(x0, py, z0, ox / len, oy / len, oz / len, len)
-  const cx = x0 + ox / len * t, cy = py + oy / len * t, cz = z0 + oz / len * t
+  let cx = x0 + ox / len * t, cy = py + oy / len * t, cz = z0 + oz / len * t
+  // card #58: pitched up past the orbit's floor (s 0..1 of the rest of the way to PITCH_MAX), the camera sinks toward the
+  // road, only where it is clear of the car's footprint, and the view tilts up past the car
+  const s = clamp((inp.pitch - (el0 - CAR_CAM.low)) / (PITCH_MAX - (el0 - CAR_CAM.low)), 0, 1)
+  if (s > 0) {
+    const fw = rotq(Q, [0, 0, -1]), fh = Math.hypot(fw[0], fw[2]) || 1, fx = fw[0] / fh, fz = fw[2] / fh, rx = cx - x0, rz = cz - z0
+    const out = Math.max(Math.abs(rx * fx + rz * fz) - L / 2, Math.abs(rx * fz - rz * fx) - (V.w || o.R) / 2)
+    const sink = THREE.MathUtils.smoothstep(s, 0, CAR_CAM.sinkBy) * clamp(out / CAR_CAM.clear, 0, 1)
+    const drop = Math.max(0, cy - Math.max(ground, FLOOR_TOP) - CAR_CAM.floor) * sink
+    if (drop > 0) cy -= camBlock(cx, cy, cz, 0, -1, 0, drop + CAM.pad)
+  }
+  cy = Math.max(cy, FLOOR_TOP + 0.35)
+  const lx = x0 + sx * L - cx, ly = py - cy, lz = z0 + sz * L - cz, lh = Math.hypot(lx, lz) || 1
+  const p0 = Math.atan2(ly, lh), p = p0 + (PITCH_MAX - p0) * s, ch = Math.cos(p)
+  const dx = lx / lh * ch, dy = Math.sin(p), dz = lz / lh * ch
   cam.position.set(cx, cy, cz)
-  cam.lookAt(x0 + sx * L, py, z0 + sz * L)
-  const lx = x0 + sx * L - cx, ly = py - cy, lz = z0 + sz * L - cz, ln = Math.hypot(lx, ly, lz) || 1
-  return { dist: t, hideSelf: false, fade: 1, seatRay: pass ? { x: cx, y: cy, z: cz, dx: lx / ln, dy: ly / ln, dz: lz / ln, near: t } : null }
+  cam.lookAt(cx + dx, cy + dy, cz + dz)
+  return { dist: t, hideSelf: false, fade: 1, seatRay: pass ? { x: cx, y: cy, z: cz, dx, dy, dz, near: t } : null }
 }
 
 // on the wall the aim's pitch eases by WALL_LOOK times the run's share up (k, -1..1), so the camera looks the way it runs,
@@ -5228,7 +5434,7 @@ function initPhysics(Ammo) {
 let statics = [], awaySig = ''
 function loadStatics() {
   for (const c of [...statics]) dropChunk(c)
-  if (LV.faust) { faustReset(); addChunk(BOXES, ['base']); return }
+  if (LV.faust) { faustReset(); addChunk(BOXES.slice(), ['base']); faustSolids(); return }
   awaySig = ''
   const cells = new Map()
   for (const b of BOXES) { const k = Math.floor((b.cx + ARENA) / 96) + ' ' + Math.floor((b.cz + ARENA) / 96)
@@ -5261,8 +5467,8 @@ function addChunk(boxes, cell, tris = [], slim, solid, crowns = []) {
     if (slim?.has(b) || b.paint) continue
     const up = b.mark ? PAD_REACH / 2 : 0      // pad trigger reaches over its top
     // arena-wide floor = plane: Bullet's contacts against a box that wide go astray
-    const flat = !b.mark && b.ex >= ARENA && b.ez >= ARENA && b.cy + b.ey <= 0, v = new A.btVector3(...flat ? [0, 1, 0] : [b.ex, b.ey + up, b.ez])
-    const B = flat ? makeBody(new A.btStaticPlaneShape(v, b.cy + b.ey), 0, 0, 0, 0) : makeBody(new A.btBoxShape(v), 0, b.cx, b.cy + up, b.cz), body = B.body
+    const flat = !b.mark && b.ex >= ARENA && b.ez >= ARENA && b.cy + b.ey <= 0, v = new A.btVector3(...b.plane ? b.plane.slice(0, 3) : flat ? [0, 1, 0] : [b.ex, b.ey + up, b.ez])
+    const B = b.plane ? makeBody(new A.btStaticPlaneShape(v, b.plane[3]), 0, 0, 0, 0) : flat ? makeBody(new A.btStaticPlaneShape(v, b.cy + b.ey), 0, 0, 0, 0) : makeBody(new A.btBoxShape(v), 0, b.cx, b.cy + up, b.cz), body = B.body
     A.destroy(v)
     body.setFriction(0.9)
     if (cell[0] === 'g') body.setContactProcessingThreshold(0.0005)      // crater pieces abut: solve only what touches
@@ -5274,12 +5480,15 @@ function addChunk(boxes, cell, tris = [], slim, solid, crowns = []) {
   statics.push(c); return c
 }
 function dropChunk(c) {
+  if (!c || c.dropped) return
+  c.dropped = true
   for (const b of [...c.bodies, c.ray, c.crown].filter(Boolean)) {
     padBodies.delete(A.getPointer(b.body)); dropBody(b)
   }
   if (c.ray) A.destroy(c.ray.mesh)
   if (c.crown) A.destroy(c.crown.mesh)
-  statics.splice(statics.indexOf(c), 1)
+  const i = statics.indexOf(c)
+  if (i >= 0) statics.splice(i, 1)
 }
 
 // chunk = f(seed, cell): grown alike on host and guest, never sent nor dropped; host reach is Normal's view end
@@ -5374,13 +5583,17 @@ const RAY_TRIS = [0, 1, 2].flatMap(k => [1, -1].flatMap(s => {
 }))
 // solid: crater bowl, walked on too. Never build an empty mesh: it corrupts Ammo's heap
 function rayMesh(boxes, tris = [], solid, kind = 'ray') {
+  boxes = boxes.filter(b => !b.plane)      // a world edge or lid: its ray copy, if any, comes tiled (faustSolids)
   if (!tris.length && !boxes.some(b => !b.mark && !b.paint)) return null
   const mesh = new A.btTriangleMesh(), v = [0, 1, 2].map(() => new A.btVector3(0, 0, 0))
   for (const b of boxes) if (!b.mark && !b.paint) for (const t of RAY_TRIS) {
     t.forEach(([x, y, z], i) => v[i].setValue(b.cx + x * b.ex, b.cy + y * b.ey, b.cz + z * b.ez))
     mesh.addTriangle(v[0], v[1], v[2], false)
   }
-  for (const t of tris) { t.forEach(([x, y, z], i) => v[i].setValue(x, y, z)); mesh.addTriangle(v[0], v[1], v[2], false) }
+  if (ArrayBuffer.isView(tris)) for (let i = 0; i + 8 < tris.length; i += 9) {
+    for (let k = 0; k < 3; k++) v[k].setValue(tris[i + 3 * k], tris[i + 3 * k + 1], tris[i + 3 * k + 2])
+    mesh.addTriangle(v[0], v[1], v[2], false)
+  } else for (const t of tris) { t.forEach(([x, y, z], i) => v[i].setValue(x, y, z)); mesh.addTriangle(v[0], v[1], v[2], false) }
   const shape = new A.btBvhTriangleMeshShape(mesh, true, true), { body, ms } = makeBody(shape, 0, 0, 0, 0)
   if (solid) { body.setFriction(0.9); body.setContactProcessingThreshold(0.0005) }      // only touching contacts: its edges throw nobody
   world.addRigidBody(body, ...COLLIDE[solid ? 'solid' : kind])
@@ -5395,7 +5608,7 @@ function loadLevel(id, gen) {
   levelId = clamp(id | 0, 0, LEVELS.length - 1)
   const L = LEVELS[levelId], g = L.gen && { ...L.gen, ...['city', 'faustland'].includes(L.gen.kind) && CITY_SIZES[settings.city] && { size: CITY_SIZES[settings.city] }, ...gen }
   levelGen = g && { seed: g.seed >>> 0, size: clamp(g.size | 0, 1, 32) }
-  LV = compileLevel(g ? { ...L, gen: { ...g, ...levelGen } } : L); ARENA = LV.A; lsLeft = 8
+  LV = compileLevel(g ? { ...L, gen: { ...g, ...levelGen } } : L); ARENA = LV.A; WORLD = LV.W || LV.A; lsLeft = 8
   LV.hash = LV.boxes.reduce((h, b) => [b.cx, b.cy, b.cz, b.ex, b.ey, b.ez].reduce((h, v) => Math.imul(h ^ Math.round(v * 1000), 16777619), h), (2166136261 ^ (LV.faust ? levelGen.seed : 0))) >>> 0
   BOXES = LV.boxes; SPAWNS = LV.spawns
   JUMPS = jumpsFrom(BOXES)
@@ -5412,6 +5625,24 @@ function loadLevel(id, gen) {
 // craters: host's [x, z, r, seed, y] list; CRATER_BUILDER.build(list, added, done) → done({ regions, replaces })
 const CRATER_MAX = 64
 let craters = [], craterV = 0, geoToken = 0, craterBehind = false, craterRegions = new Map(), craterReplaced = new Set()
+// Ground cuts belong to source boxes, not their changing indices in the streamed BOXES list.
+let craterSources = new WeakMap(), craterSourceId = 0
+function craterSourceKey(b) {
+  if (!craterSources.has(b)) craterSources.set(b, 'g' + ++craterSourceId)
+  return craterSources.get(b)
+}
+function craterDropSources(boxes) {
+  for (const b of boxes) {
+    const key = craterSources.get(b), c = key && statics.find(c => c.cell === key)
+    if (c) dropChunk(c)
+    if (key) craterRegions.delete(key)
+    craterSources.delete(b); craterReplaced.delete(b)
+  }
+}
+function craterRegrow(cell) {
+  if (!craters.some(([x, z, r]) => over(cell, craterSquare(x, z, r)))) return
+  ;(crb.regrow ||= []).push(cell); buildCrater()
+}
 // overlapping squares merge into regions; boxes reaching in are re-cut as 'g' + index chunks
 // one build at a time, newest list only; a region a since-grown chunk reaches (crb.regrow) is cut again
 const crb = { lv: null, q: null, list: null, regrow: null, regions: new Map() }
@@ -5435,15 +5666,15 @@ function craterBuild(list, done) {
     const key = 'crater ' + Object.values(rect).join(' '), c = cr.map(i => list[i]), g = craterGround(rect, c[0].y)
     if (!g) continue
     const y = top(g), deep = y - Math.max(...c.map(c => c.depth)) - 0.05, was = old.get(key), R = { key, rect, y, n: c.length, tris: was?.tris, render: was?.render }
-    BOXES.forEach((b, i) => { if (!b.paint && over(sq(b), rect) && top(b) <= y + 0.01 && top(b) > deep) gs.set(i, [...gs.get(i) || [], rect]) })
+    BOXES.forEach(b => { if (!b.paint && over(sq(b), rect) && top(b) <= y + 0.01 && top(b) > deep) gs.set(b, [...gs.get(b) || [], rect]) })
     crb.regions.set(key, R)
     for (const [k, o] of old) if (k !== key && o.rect.a0 >= rect.a0 && o.rect.a1 <= rect.a1 && o.rect.b0 >= rect.b0 && o.rect.b1 <= rect.b1) { old.delete(k); out.push({ key: k, gone: [o.render] }) }
     if (was?.n === R.n && !regrow?.some(g => over(g, rect))) { if (!craterRegions.has(key)) out.push(R) } else asks.push([R, c])
   }
-  for (const [i, rects] of gs) { const b = BOXES[i], s = sq(b), t = [], w = b.ex >= ARENA && b.ez >= ARENA ? 96 : Infinity, cut = JSON.stringify(rects)
-    if (craterRegions.get('g' + i)?.cut === cut) continue          // already cut so
+  for (const [b, rects] of gs) { const key = craterSourceKey(b), s = sq(b), t = [], w = b.ex >= ARENA && b.ez >= ARENA ? 96 : Infinity, cut = JSON.stringify(rects)
+    if (craterRegions.get(key)?.cut === cut) continue          // already cut so
     for (let a = s.a0; a < s.a1; a += w) for (let c = s.b0; c < s.b1; c += w) t.push({ a0: a, a1: Math.min(a + w, s.a1), b0: c, b1: Math.min(c + w, s.b1) })
-    out.push({ key: 'g' + i, cut, boxes: t.flatMap(r => subtractRects(r, rects)).map(p => ({ cx: (p.a0 + p.a1) / 2, cy: b.cy, cz: (p.b0 + p.b1) / 2, ex: (p.a1 - p.a0) / 2, ey: b.ey, ez: (p.b1 - p.b0) / 2 })) }) }
+    out.push({ key, source: b, cut, boxes: t.flatMap(r => subtractRects(r, rects)).map(p => ({ cx: (p.a0 + p.a1) / 2, cy: b.cy, cz: (p.b0 + p.b1) / 2, ex: (p.a1 - p.a0) / 2, ey: b.ey, ez: (p.b1 - p.b0) / 2 })) }) }
   const ask = k => LV !== lv ? 0 : k < asks.length ? craterWork(...asks[k], d => { const R = asks[k][0]      // sequential: each on the ground the last left
     if (d) { R.gone = [R.render]; Object.assign(R, d); out.push(R) } else crb.regions.delete(R.key); ask(k + 1) }) : done({ regions: out, replaces: [...gs.keys()] })
   ask(0)
@@ -5467,7 +5698,7 @@ function addCrater(x, z, r, y) {
 }
 // append-only: anything but the held list plus more is refused
 const craterOk = cr => Array.isArray(cr) && cr.length <= CRATER_MAX && cr.every(e => Array.isArray(e) && e.length === 5 &&
-  e.every(Number.isFinite) && Math.abs(e[0]) <= ARENA && Math.abs(e[1]) <= ARENA && e[2] >= 0.5 && e[2] <= GAME.crater.maxR() && e[3] === e[3] >>> 0 &&
+  e.every(Number.isFinite) && Math.abs(e[0]) <= WORLD && Math.abs(e[1]) <= WORLD && e[2] >= 0.5 && e[2] <= GAME.crater.maxR() && e[3] === e[3] >>> 0 &&
   e[4] >= -64 && e[4] <= 192) && craterHeld(cr)       // y: webPoint's range
 const craterHeld = cr => craters.every((e, i) => Array.isArray(cr[i]) && e.every((v, k) => v === cr[i][k]))
 function takeCraters(cr, cv) {
@@ -5484,20 +5715,27 @@ function buildCrater(added) {
 }
 function craterTake({ regions, replaces }) {
   for (const g of regions) {
+    if (g.source && !BOXES.includes(g.source)) continue // unloaded while the cutter was working
     const c = statics.find(c => c.cell === g.key)
     if (c) dropChunk(c)
     if (g.boxes?.length || g.tris?.length) addChunk(g.boxes || [], g.key, g.tris, null, !g.boxes)
     onCrater(craterRegions.get(g.key), g); craterRegions.set(g.key, g)
   }
-  for (const b of replaces.map(i => BOXES[i]).filter(b => !craterReplaced.has(b))) {
-    const c = statics.find(c => c.src.includes(b)); craterReplaced.add(b); dropChunk(c); addChunk(c.src.filter(o => o !== b), c.cell, [], c.slim, false, c.crowns)
+  for (const b of replaces.filter(b => BOXES.includes(b) && !craterReplaced.has(b))) {
+    const c = statics.find(c => c.src.includes(b))
+    if (!c) continue
+    const owner = LV.faust && faustState?.chunks.get(faustKey(...c.cell))
+    craterReplaced.add(b); dropChunk(c)
+    const next = addChunk(c.src.filter(o => o !== b), c.cell, [], c.slim, false, c.crowns)
+    // A streamed cell must unload the replacement, never the already destroyed bodies.
+    if (owner?.physics === c) owner.physics = next
   }
   // an object over a crater loses its ground; all else dropped here is back where it was
   for (const o of objs) if (regions.some(g => g.rect && over(g.rect, { a0: o.x - o.R, a1: o.x + o.R, b0: o.z - o.R, b1: o.z + o.R }))) { inWorld(o); o.body.activate() }
 }
 function craterClear() {
   for (const k of craterRegions.keys()) { const c = statics.find(c => c.cell === k); if (c) dropChunk(c) }
-  craterRegions = new Map(); craterReplaced = new Set(); geoToken++
+  craterRegions = new Map(); craterReplaced = new Set(); craterSources = new WeakMap(); craterSourceId = 0; geoToken++
   if (isHost && (craters.length || craterV)) craterV++
   craters = []
 }
@@ -5641,7 +5879,7 @@ function stepObjects() {
     if (o.row && !o.body.isActive()) continue
     o.body.getMotionState().getWorldTransform(tmpTrans)
     const p = tmpTrans.getOrigin(), q = tmpTrans.getRotation(), x = p.x(), y = p.y(), z = p.z()
-    if (!(y >= VOID_Y && Math.abs(x) <= ARENA && Math.abs(z) <= ARENA)) {
+    if (!(y >= VOID_Y && Math.abs(x) <= WORLD && Math.abs(z) <= WORLD)) {
       inWorld(o); teleportBody(o.body, ...o.at, null, [0, 0, 0], [0, 0, 0]); o.body.activate()
       continue
     }
@@ -8906,15 +9144,17 @@ function streetGround(street, walks = [], into) {
 }
 // uploads only the appended range; capacity doubles when full
 function groundAdd(m, o) {
-  const g = m.geometry, at = g.drawRange.count, n = o.p.length / 3, N = new Float32Array(n * 3), v = new THREE.Vector3(), w = new THREE.Vector3(), fields = [['position',3],['normal',3],['uv',2],...g.attributes.color ? [['color',3]] : []]
+  const g = m.geometry, at = g.drawRange.count, n = o.p.length / 3, N = new Float32Array(n * 3), v = new THREE.Vector3(), w = new THREE.Vector3(), fields = Object.entries({ position: 3, normal: 3, uv: 2, ...Object.fromEntries(Object.entries(g.attributes).map(([k, a]) => [k, a.itemSize])) })
   if (!g.attributes.position || at + n > g.attributes.position.count) for (const [k, s] of fields) {
     const a = new Float32Array(Math.ceil(Math.max(4096, (at + n) * (at ? 2 : 1.3)) / 3) * 3 * s)
     if (g.attributes[k]) a.set(g.attributes[k].array.subarray(0, at * s))
     g.setAttribute(k, dyn(a, s)) }
+  for (const [k, s] of fields) if (!['position', 'normal', 'uv', 'color', 'faustGlow'].includes(k)) g.attributes[k].array.fill(0, at * s, (at + n) * s)
   for (let i = 0; i < n * 3; i += 9) { const a = new THREE.Vector3().fromArray(o.p, i)
     v.fromArray(o.p, i + 3).sub(a).cross(w.fromArray(o.p, i + 6).sub(a)).normalize(); for (let k = 0; k < 3; k++) v.toArray(N, i + k * 3) }
   for (const [k, s, src] of [['position', 3, o.p], ['normal', 3, N], ['uv', 2, o.uv]]) { const a = g.attributes[k]; a.array.set(src, at * s); a.addUpdateRange(at * s, n * s); a.needsUpdate = true }
   if(g.attributes.color){const a=g.attributes.color;a.array.set(o.color||new Float32Array(n*3).fill(1),at*3);a.addUpdateRange(at*3,n*3);a.needsUpdate=true}
+  if(g.attributes.faustGlow){const a=g.attributes.faustGlow;a.array.set(o.faustGlow||new Float32Array(n),at);a.addUpdateRange(at,n);a.needsUpdate=true}
   g.setDrawRange(0, at + n)
 }
 let cityGround = null, groundStale = false      // the City's two ground meshes, which a grown chunk's sidewalks join
@@ -9045,6 +9285,8 @@ function inkPrepare(root) {
       }
       inkPatched.add(m)
       const before = m.onBeforeCompile, key = m.customProgramCacheKey(), lit = !m.isMeshBasicMaterial && !m.isSpriteMaterial
+      const character = !!(o.geometry?.attributes.skinIndex && o.geometry?.attributes.skinWeight)
+      const signal = typeof trafficLights !== 'undefined' && o === trafficLights?.lamps
       const facade = m === faustState?.materials?.facade || m === faustState?.materials?.far
       const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe, groundLight = !!m.userData.inkGroundLight, vehicleLamp = m.name === 'vehicle-headlamp' || m.name === 'vehicle-taillamp'
       m.onBeforeCompile = function(shader, r) {
@@ -9072,11 +9314,50 @@ function inkPrepare(root) {
           uniform float inkExtent;
           varying vec3 inkViewPosition, inkPoint, inkWorldPoint;
           float inkLuma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+          // Select red pigment, not warm illumination or brown skin/wood/brick. The last
+          // test excludes orange-brown hues; deep red cloth and blood retain their accent.
+          float inkRed(vec3 albedo) {
+            float r = max(albedo.r, 0.0001);
+            return smoothstep(0.015, 0.03, albedo.r - max(albedo.g, albedo.b))
+              * (1.0 - smoothstep(0.42, 0.55, albedo.g / r))
+              * (1.0 - smoothstep(0.025, 0.07, (albedo.g - albedo.b) / r));
+          }
           float inkStroke(float p, float width) {
             float d = abs(fract(p) - 0.5), aa = max(fwidth(p), 0.015);
             return 1.0 - smoothstep(width - aa, width + aa, d);
           }\n` + shader.fragmentShader
-        const shade = lit ? `
+        const shade = lit && character ? `
+          // Character light follows the interpolated skin normals, never normal-map grain or
+          // per-triangle hatch projections. Read irradiance independently of the surface pigment.
+          float base = inkLuma(diffuseColor.rgb);
+          float light = inkLuma(reflectedLight.directDiffuse + reflectedLight.indirectDiffuse)
+            / max(inkLuma(material.diffuseColor), 0.0001);
+          float keyLight = max(0.0, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0))));
+          light = max(light, 0.10 + 0.25 * keyLight);
+          float aa = max(fwidth(light) * 0.7, 0.035);
+          float mid = smoothstep(0.18 - aa, 0.18 + aa, light);
+          float paperBand = smoothstep(0.52 - aa, 0.52 + aa, light);
+          float pigment = smoothstep(0.025, 0.14, base);
+          float tone = mix(mix(0.009, 0.055, pigment), mix(0.055, 0.38, pigment), mid);
+          tone = mix(tone, mix(0.20, 0.94, pigment), paperBand);
+          // A continuous bind-space plane field bends with the skin. No dominant-axis choice
+          // can switch at a triangle edge. Unresolved lines average to their analytic coverage.
+          float pen = dot(inkPoint, vec3(0.80, 0.62, 0.35)) / 0.075;
+          float hatch = inkStroke(pen, 0.10);
+          hatch = mix(hatch, 0.20, smoothstep(0.20, 0.50, fwidth(pen)));
+          // Where the skin turns parallel to the pen planes the lines would widen into blots: fade them out.
+          hatch *= smoothstep(0.22, 0.45, fwidth(pen) * 0.075 / max(length(fwidth(inkPoint)), 0.00001));
+          tone = mix(tone, 0.006, hatch * (1.0 - mid) * pigment * 0.70);
+          // Low keeps its original silhouette rim; the other tiers keep the crisp outline pass.
+          float facing = abs(dot(normal, normalize(-inkViewPosition)));
+          float rim = (1.0 - smoothstep(0.13, 0.25, facing)) * smoothstep(0.0002, 0.004, length(fwidth(normal)));
+          if (!inkScreenLines) tone = mix(tone, 0.006, rim);
+          vec3 ink = mix(vec3(tone), vec3(max(tone * 0.72, 0.075), 0.008, 0.012), inkRed(diffuseColor.rgb));
+          float glow = inkLuma(totalEmissiveRadiance);
+          vec3 emission = totalEmissiveRadiance;
+          float warm = step(emission.b * 1.3 + 0.015, emission.r) * step(emission.b * 1.15, emission.g);
+          outgoingLight = mix(ink, mix(vec3(0.94), vec3(1.0, 0.66, 0.28), warm), smoothstep(0.08, 0.5, glow));
+        ` : lit ? `
           float base = inkLuma(diffuseColor.rgb);
           float light = inkLuma(reflectedLight.directDiffuse + reflectedLight.indirectDiffuse) / max(base, 0.0001);
           ${!paper && !sky ? 'light = max(light, 0.22 + 0.40 * max(0.0, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)))));' : ''}
@@ -9126,7 +9407,7 @@ function inkPrepare(root) {
           vec3 emission = totalEmissiveRadiance;
           float warm = step(emission.b * 1.3 + 0.015, emission.r) * step(emission.b * 1.15, emission.g);
           ink = mix(ink, mix(vec3(0.94), vec3(1.0, 0.66, 0.28), warm), ${globe ? '0.0' : 'smoothstep(0.08, 0.5, glow)'});
-          float blood = step(diffuseColor.g * 2.0 + 0.04, diffuseColor.r) * step(diffuseColor.b * 1.8, diffuseColor.r);
+          float blood = inkRed(diffuseColor.rgb);
           outgoingLight = mix(ink, vec3(max(tone, 0.18), 0.008, 0.012), blood);
           ${vehicleLamp ? 'outgoingLight = max(outgoingLight, totalEmissiveRadiance);' : ''}
         ` : cloud ? `
@@ -9139,13 +9420,17 @@ function inkPrepare(root) {
           outgoingLight = vec3(tone); diffuseColor.a = 0.96;
         ` : `
           float grey = inkLuma(outgoingLight);
-          float red = step(outgoingLight.g * 2.0 + 0.08, outgoingLight.r);
-          float warm = step(outgoingLight.b * 1.4 + 0.08, outgoingLight.r) * step(outgoingLight.b * 1.2, outgoingLight.g);
-          ${groundLight ? 'discard' : 'outgoingLight = mix(vec3(grey), outgoingLight, max(red, warm))'};
+          float red = inkRed(diffuseColor.rgb);
+          float warm = step(diffuseColor.b * 1.4 + 0.08, diffuseColor.r) * step(diffuseColor.b * 1.2, diffuseColor.g);
+          ${groundLight ? 'discard' : signal ? 'outgoingLight = diffuseColor.rgb' : 'outgoingLight = mix(vec3(grey), outgoingLight, max(red, warm))'};
         `
         if (lit) shader.fragmentShader = shader.fragmentShader
           .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n vec3 inkSurfaceNormal = normal;')
-          .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n if (inkEnabled) normal = inkSurfaceNormal;')
+          .replace('#include <normal_fragment_maps>', 'if (!inkEnabled) {\n#include <normal_fragment_maps>\n}')
+        // Ink characters use diffuse irradiance even on metal plates: metallic texture grain
+        // must not remove their lamp light or become another source of patchy tone boundaries.
+        if (character) shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_fragment>',
+          '#include <lights_physical_fragment>\n if (inkEnabled) material.diffuseColor = diffuseColor.rgb;')
         if (facade) shader.fragmentShader = shader.fragmentShader
           .replace('#include <map_fragment>', `vec3 inkBaseAlbedo = diffuseColor.rgb; float inkGridFade = 0.0;
             #include <map_fragment>
@@ -9168,7 +9453,7 @@ function inkPrepare(root) {
             gl_FragColor.rgb *= 1.0 - edgeFade;
           }`)
       }
-      m.customProgramCacheKey = () => key + '|ink-5|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight) + Number(vehicleLamp)
+      m.customProgramCacheKey = () => key + '|ink-6|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight) + Number(character) + Number(signal) + Number(vehicleLamp)
       m.needsUpdate = true
     }
   })
@@ -9473,11 +9758,11 @@ const REAL_MEAN = [[0.241, 0.241, 0.239], [0.255, 0.170, 0.107], [0.127, 0.120, 
 // iron, else stone). Keep in step with faustVisualSteps' tints.
 const REAL_KIND = { stone: 0, brick: 1, concrete: 2, asphalt: 3, sidewalk: 4, setts: 5, granite: 6, darkGranite: 7,
   paintWhite: 8, paintYellow: 9, paintBike: 10, iron: 11, steel: 12, brass: 13, door: 14, shadow: 15, lamp: 16,
-  pier: 17, cornice: 18, crown: 19 }
+  pier: 17, cornice: 18, crown: 19, shutter: 20 }
 const REAL_TINTS = [
   [0x242a33, 'asphalt'], [0x5d626a, 'setts'], [0x404b5b, 'setts'], [0x8e9399, 'granite'], [0x737983, 'sidewalk'],
   [0xa1a5a9, 'granite'], [0x3d5557, 'paintBike'], [0xa3adb0, 'paintWhite'], [0xb4a77d, 'paintYellow'],
-  [0xadb0ad, 'paintWhite'], [0x343d4b, 'darkGranite'], [0x969b9e, 'concrete'], [0x111a26, 'door'], [0xa1a8ae, 'cornice'],
+  [0xadb0ad, 'paintWhite'], [0x343d4b, 'darkGranite'], [0x969b9e, 'concrete'], [0x111a26, 'shutter'], [0xa1a8ae, 'cornice'],
   [0x080f1a, 'door'], [0x283342, 'iron'], [0x8b939b, 'iron'], [0x6a7480, 'iron'], [0xb3bac0, 'pier'], [0xadb0b1, 'cornice'],
   [0x515963, 'darkGranite'], [0xa4a9ac, 'stone'], [0x8d949c, 'stone'], [0x1b222b, 'door'], [0x080e18, 'shadow'],
   [0xc0c5c7, 'stone'], [0x596574, 'stone'], [0xadb5b9, 'cornice'], [0xc1c6c7, 'stone'], [0xc6c8c3, 'steel'],
@@ -9546,7 +9831,8 @@ RealK realKind(int k) {
   else if (k == 11) { m.layer = -1.0; m.gain = 0.8; m.rough = 0.42; m.metal = 0.35; m.wet = 0.2; }
   else if (k == 12) { m.layer = -1.0; m.rough = 0.2; m.metal = 1.0; }
   else if (k == 13) { m.layer = -1.0; m.rough = 0.28; m.metal = 1.0; m.sat = 1.0; }
-  else if (k == 14) { m.layer = -1.0; m.gain = 0.5; m.rough = 0.08; m.emit = vec3(1.0, 0.66, 0.36) * 0.5; }
+  else if (k == 14) { m.layer = 0.0; m.scale = 1.2; m.sat = 0.3; }
+  else if (k == 20) { m.layer = -1.0; m.rough = 0.5; m.metal = 0.5; }
   else if (k == 15) { m.layer = -1.0; m.gain = 0.4; m.rough = 0.9; }
   else if (k == 16) { m.layer = -1.0; m.rough = 0.3; m.emit = vec3(1.0, 0.56, 0.22) * 40.0; }
   else if (k == 17 || k == 18 || k == 19) { m.layer = 0.0; m.gain = 0.9; }
@@ -9683,6 +9969,57 @@ void realShop(vec3 N, vec3 T, float u, float hw, float lod, inout RealSurf s, in
   if (step(wu, 0.015) + step(0.985, wu) + step(wv, 0.02) + step(0.98, wv) > 0.0) { s.albedo = vec3(0.04); s.metal = 0.7; s.rough = 0.4; nT = vec3(0, 0, 1); return; }
   s.albedo = vec3(0.01); s.metal = 0.0; s.rough = 0.04; s.ao = 1.0; nT = vec3(0, 0, 1); s.emit = inside * 3.0;
 }
+// #3's doors as entrances (card #37), not lit slabs. On a door box's broad faces: a stone surround round a recessed
+// opening, and in it glazed double doors with brass push bars, side lights over panelled dados, and a transom, all onto
+// a lobby (interior-mapped, lit in most). Its thin faces and top are the surround's stone. Kind 20, the industrial
+// shed's door, is a steel roller shutter in the opening. y is the height in the box, H its height; det carries the
+// stone texture's detail.
+void realDoor(int k, vec3 N, vec3 T, float u, float hw, float y, float H, float det, float lod, inout RealSurf s, inout vec3 nT) {
+  s.albedo = vec3(0.3, 0.29, 0.27) * det; s.metal = 0.0; s.emit = vec3(0.0);
+  float a = abs(u), ow = hw - 0.3, top = H - 0.3;
+  if (abs(N.y) > 0.5 || hw < 1.0) return;
+  if (a > ow || y > top) {
+    // the surround, with a reveal round the opening
+    float e = min(a - ow, y - top);
+    if (e < 0.06) { s.ao *= 0.6; nT = normalize(vec3(a > ow ? sign(u) * -0.6 : 0.0, y > top ? -0.6 : 0.0, 1.0)); }
+    return;
+  }
+  s.ao *= 0.55 + 0.45 * smoothstep(0.0, 0.3, min(ow - a, top - y));
+  if (k == 20) {
+    // the shutter: rolled steel slats (fading to flat where a slat is under ~3 px, so they can't alias), guide rails at
+    // its sides, a bottom bar
+    float sl = fract(y / 0.1), near = 1.0 - smoothstep(0.015, 0.035, fwidth(y));
+    s.albedo = vec3(0.12, 0.13, 0.125) * (0.75 + 0.5 * realNoise(vec2(u * 0.6, y * 0.4))); s.metal = 0.55; s.rough = 0.5;
+    nT = normalize(vec3(0.0, cos(sl * 6.2831853) * 0.45 * near, 1.0)); s.ao *= mix(0.9, 0.8 + 0.2 * smoothstep(0.0, 0.15, sl), near);
+    if (a > ow - 0.1 || y < 0.12) { s.albedo = vec3(0.05); s.rough = 0.4; nT = vec3(0.0, 0.0, 1.0); }
+    return;
+  }
+  float dh = min(2.7, top - 0.55), leaf = min(1.0, ow * 0.45);
+  vec3 bronze = vec3(0.05, 0.038, 0.028), brass = vec3(0.42, 0.31, 0.15);
+  bool glass = false;
+  if (y > dh) {
+    // the transom: a bar over the doors, then glass in bronze mullions
+    glass = y > dh + 0.1 && y < top - 0.06 && abs(fract((u + ow) / (2.0 * ow / max(1.0, floor(2.0 * ow / 0.7)))) - 0.5) < 0.46;
+  } else if (a < leaf) {
+    // the double doors: stiles at the meeting edge and the hinges, a kick plate and rails, push bars near the meeting
+    bool stile = a < 0.05 || a > leaf - 0.06, rail = y < 0.32 || y > dh - 0.1;
+    glass = !stile && !rail;
+    if (abs(a - 0.2) < 0.02 && y > 0.85 && y < 1.6) { s.albedo = brass; s.metal = 1.0; s.rough = 0.3; nT = vec3(sign(u) * 0.5, 0.0, 1.0); return; }
+    if (y < 0.3 && !stile) { s.albedo = brass * 0.7; s.metal = 1.0; s.rough = 0.45; nT = vec3(0.0, 0.0, 1.0); return; }
+  } else {
+    // the side lights over panelled dados
+    float c = (a - leaf) / max(ow - leaf, 1e-3);
+    glass = y > 0.95 && y < dh - 0.06 && c > 0.08 && c < 0.92;
+    if (y < 0.9 && y > 0.12 && c > 0.12 && c < 0.88) { s.albedo = bronze * 1.6; s.metal = 0.3; s.rough = 0.5; nT = vec3(0.0, 0.0, 1.0); s.ao *= 0.8; return; }
+  }
+  if (!glass) { s.albedo = bronze; s.metal = 0.7; s.rough = 0.35; nT = vec3(0.0, 0.0, 1.0); return; }
+  // the lobby behind the glass
+  vec3 seed = realHash32(vRealBox.xy * 0.37 + 5.3);
+  float lit = step(seed.x, 0.8);
+  vec3 lamp = vec3(1.0, 0.74, 0.48), V = normalize(vRealW - cameraPosition), rd = vec3(dot(V, T), V.y, max(-dot(V, N), 1e-3));
+  vec3 inside = mix(realRoom(vec3(u + ow, y, 0.0), rd, vec3(2.0 * ow, top, 5.0 + 2.0 * seed.y), seed, lamp, lit, false), lamp * lit * 0.5, lod);
+  s.albedo = vec3(0.012); s.metal = 0.0; s.rough = 0.05; s.ao = 1.0; nT = vec3(0.0, 0.0, 1.0); s.emit = inside * 1.6;
+}
 `
 
 // One shader patch for the four city surfaces. kind: 'ornament' | 'facade' | 'far' | 'ground'.
@@ -9767,6 +10104,7 @@ RealSurf realSurface() {
   s.metal = m.metal; s.emit = m.emit;
   if (isBox && k >= 17) realTrim(k, u, hw, hy, vRealBoxY.y, nT, s);
   if (isBox && k == 7 && abs(N.y) < 0.5 && abs(vRealBoxY.y - 2.0) < 0.15 && y0 < 0.1 && hw > 4.0) realShop(N, T, u, hw, lod, s, nT);
+  if (isBox && (k == 14 || k == 20)) realDoor(k, N, T, u, hw, vRealW.y - y0, 2.0 * vRealBoxY.y, dot(s.albedo, REAL_LW) / max(dot(tone, REAL_LW), 1e-4), lod, s, nT);
   // concrete flags: 1.5 m slabs, each its own shade, with dark joints between
   if (k == 4 && N.y > 0.5) {
     vec2 fq = vRealW.xz / 1.52, fj = abs(fract(fq) - 0.5);
@@ -10073,16 +10411,24 @@ void main() {
 }`,
   // wet-street reflections: march the reflected ray against depth; an escaped ray sees the sky at infinity
   // (globe, head, beams) where the screen shows sky. Alpha of the scene colour carries 1 - reflectivity.
-  ssr: `uniform sampler2D tColor; uniform int uSteps; uniform float uTime;
+  // It is steady (card #37): nothing in it changes from one frame to the next, so a still view keeps every reflected
+  // pixel and a moving one carries them smoothly.
+  // - The city's wet surfaces are level: where the normal from depth is within 14 degrees of up, it is up exactly.
+  //   The depth buffer's steps would otherwise tilt it pixel by pixel, and differently as the camera moves.
+  // - The march starts part of a step out, fixed per pixel (a dither the glossy pass removes), never per frame.
+  // - A step that lands behind the depth, coming from in front of it, is refined first and judged by its thickness
+  //   after, so a long late step can't pass through a facade. Hits fade out over the march's last quarter.
+  // - A glossy surface's spread is the glossy pass that follows, by roughness, in place of random rays.
+  ssr: `uniform sampler2D tColor; uniform int uSteps; uniform vec3 uUp;
 void main() {
   float refl = 1.0 - texture2D(tColor, vUv).a, d = realD(vUv);
   if (refl < 0.03 || d >= 1.0) { gl_FragColor = vec4(0.0); return; }
   vec3 p = realView(vUv, d), n = realNormalAt(vUv, p);
-  float j = realIGN(gl_FragCoord.xy + fract(uTime) * 64.0), a = 6.2831853 * realIGN(gl_FragCoord.yx * 1.7 + 11.0);
-  n = normalize(n + vec3(cos(a), 0.0, sin(a)) * (1.0 - refl) * 0.12 * j);
+  if (dot(n, uUp) > 0.97) n = uUp;
   vec3 v = normalize(p), r = reflect(v, n);
-  float t = 0.0, dt = (0.25 + 0.012 * -p.z) * (0.6 + 0.8 * j), prev = 0.0;
-  vec2 hit = vec2(-1.0);
+  float dt0 = 0.25 + 0.012 * -p.z, dt = dt0, t = dt0 * realIGN(gl_FragCoord.xy), prev = t, th = 0.0;
+  float reach = t + dt0 * (pow(1.16, float(uSteps)) - 1.0) / 0.16;
+  vec2 hit = vec2(-1.0); bool front = true;
   for (int i = 0; i < 64; i++) {
     if (i >= uSteps) break;
     prev = t; t += dt; dt *= 1.16;
@@ -10091,24 +10437,43 @@ void main() {
     vec2 u = realProj(q);
     if (u.x < 0.0 || u.x > 1.0 || u.y < 0.0 || u.y > 1.0) break;
     float sd = realD(u);
-    if (sd >= 1.0) continue;
-    float behind = realView(u, sd).z - q.z;
-    if (behind > 0.0 && behind < max(0.35, t * 0.08)) {
+    if (sd >= 1.0) { front = true; continue; }
+    float behind = realView(u, sd).z - q.z, thick = max(0.35, t * 0.08);
+    if (behind > 0.0 && (front || behind < thick)) {
       float lo = prev, hi = t;
       for (int k = 0; k < 5; k++) { float m = 0.5 * (lo + hi); vec3 qm = p + r * m; vec2 um = realProj(qm); if (realView(um, realD(um)).z - qm.z > 0.0) hi = m; else lo = m; }
-      hit = realProj(p + r * hi); break;
+      vec3 qh = p + r * hi; vec2 uh = realProj(qh);
+      if (realView(uh, realD(uh)).z - qh.z < thick) { hit = uh; th = hi; break; }
     }
+    front = behind <= 0.0;
   }
   vec3 col = vec3(0.0); float w = 0.0;
   if (hit.x >= 0.0) {
     col = texture2D(tColor, hit).rgb; vec2 e = smoothstep(0.0, 0.12, hit) * smoothstep(1.0, 0.88, hit);
-    w = e.x * e.y * (1.0 - smoothstep(0.25, 0.55, length(hit - vUv))) * smoothstep(0.35, -0.1, r.z) * smoothstep(1.5, 4.0, -realView(hit, realD(hit)).z);
+    w = e.x * e.y * (1.0 - smoothstep(0.25, 0.55, length(hit - vUv))) * smoothstep(0.35, -0.1, r.z) * smoothstep(1.5, 4.0, -realView(hit, realD(hit)).z)
+      * (1.0 - smoothstep(0.75, 1.0, th / reach));
   }
   else if (r.y > -0.2) {
     vec4 c = uProj * vec4(r, 0.0); vec2 u = c.xy / c.w * 0.5 + 0.5;
     if (c.w > 0.0 && u.x > 0.0 && u.x < 1.0 && u.y > 0.0 && u.y < 1.0 && realD(u) >= 1.0) { col = texture2D(tColor, u).rgb; vec2 e = smoothstep(0.0, 0.07, u) * smoothstep(1.0, 0.93, u); w = e.x * e.y; }
   }
   gl_FragColor = vec4(min(col, vec3(60.0)) * w, w);
+}`,
+  // the glossy spread of wet surfaces (card #37), in place of random rays: a depth-aware blur whose step grows from
+  // uStep0 to uStep with the surface's roughness (1 - reflectivity, the scene colour's alpha), so a puddle stays sharp
+  // and wet asphalt spreads a light. Run across, then down the screen with the longer step, as a wet street streaks a
+  // lamp. Its weights are smooth in depth, so an edge can't flip a tap on and off as the camera moves.
+  glossy: `uniform sampler2D tSrc, tColor; uniform vec2 uStep0, uStep;
+void main() {
+  float z0 = -realView(vUv, realD(vUv)).z, tol = 0.04 * z0 + 0.2;
+  vec2 st = mix(uStep0, uStep, smoothstep(0.05, 0.85, texture2D(tColor, vUv).a));
+  vec4 s = vec4(0.0); float w = 0.0;
+  for (int i = -3; i <= 3; i++) {
+    vec2 uv = vUv + st * float(i);
+    float z = -realView(uv, realD(uv)).z, wi = exp(-0.15 * float(i * i)) * mix(1.0, 0.01, smoothstep(0.6, 1.4, abs(z - z0) / tol));
+    s += texture2D(tSrc, uv) * wi; w += wi;
+  }
+  gl_FragColor = s / w;
 }`,
   // light shafts: the globe's searchlights and the nearest lamps as cones of lit haze along each view ray, stopped by
   // the city's depth (and, for the sky, by the globe)
@@ -10283,7 +10648,8 @@ function realInit() {
     const r = Math.sqrt(1 - z * z), s = 0.15 + 0.85 * ((i + 1) / 16) ** 2; return new THREE.Vector3(Math.cos(a) * r * s, Math.sin(a) * r * s, z * s) })
   Object.assign(R.pass.ao.uniforms, { uRadius: { value: 1.1 }, uPower: { value: 1.6 }, uSamples: { value: 8 }, uKernel: { value: kernel } })
   for (const k of ['blur']) Object.assign(R.pass[k].uniforms, { tSrc: { value: null }, uStep: { value: new THREE.Vector2() } })
-  Object.assign(R.pass.ssr.uniforms, { tColor: { value: null }, uSteps: { value: 16 }, uTime: { value: 0 } })
+  Object.assign(R.pass.ssr.uniforms, { tColor: { value: null }, uSteps: { value: 16 }, uUp: { value: new THREE.Vector3(0, 1, 0) } })
+  Object.assign(R.pass.glossy.uniforms, { tSrc: { value: null }, tColor: { value: null }, uStep0: { value: new THREE.Vector2() }, uStep: { value: new THREE.Vector2() } })
   const cones = n => Array.from({ length: n }, () => new THREE.Vector4())
   Object.assign(R.pass.shafts.uniforms, { uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() }, uConeA: { value: cones(14) }, uConeB: { value: cones(14) },
     uConeC: { value: cones(14) }, uCones: { value: 0 }, uSamples: { value: 4 }, uGlobe: { value: new THREE.Vector4(FAUST.globe.x, FAUST.globe.y, FAUST.globe.z, FAUST.globe.radius) }, uTime: { value: 0 } })
@@ -10370,10 +10736,12 @@ function realRender(raw, s, cam) {
       U.blur.uniforms.tSrc.value = T.aoB.texture; U.blur.uniforms.uStep.value.set(0, 1 / T.hh); realPassTo(raw, R, 'blur', T.aoA)
     }
     if (tier.ssr) {
-      U.ssr.uniforms.tColor.value = T.hdr.texture; U.ssr.uniforms.uSteps.value = tier.ssr; U.ssr.uniforms.uTime.value = R.uniforms.time.value
+      const S = U.ssr.uniforms, G = U.glossy.uniforms
+      S.tColor.value = T.hdr.texture; S.uSteps.value = tier.ssr; S.uUp.value.set(0, 1, 0).transformDirection(cam.matrixWorldInverse)
       realPassTo(raw, R, 'ssr', T.ssrA)
-      U.blur.uniforms.tSrc.value = T.ssrA.texture; U.blur.uniforms.uStep.value.set(1.2 / T.hw, 0); realPassTo(raw, R, 'blur', T.ssrB)
-      U.blur.uniforms.tSrc.value = T.ssrB.texture; U.blur.uniforms.uStep.value.set(0, 1.8 / T.hh); realPassTo(raw, R, 'blur', T.ssrA)
+      G.tColor.value = T.hdr.texture
+      G.tSrc.value = T.ssrA.texture; G.uStep0.value.set(0.8 / T.hw, 0); G.uStep.value.set(1.6 / T.hw, 0); realPassTo(raw, R, 'glossy', T.ssrB)
+      G.tSrc.value = T.ssrB.texture; G.uStep0.value.set(0, 1.2 / T.hh); G.uStep.value.set(0, 3.2 / T.hh); realPassTo(raw, R, 'glossy', T.ssrA)
     }
     if (tier.shafts) { realCones(R, cam, tier); realPassTo(raw, R, 'shafts', T.shaft) }
     let frame = T.hdr
@@ -11904,16 +12272,27 @@ function rigAnimate(a, want, dt, t) {
   else if (hold === 'dive' || want === 6) name = K.dive
   else if (hold === 'fly' || hold === 'hover' || hold === 'ascend' || hold === 'descend' || want === 5) name = K.fly
   else if (want === 'crouch') { name = K.crouch; fade = 0.12 }
-  else if (want === 'crouchRun') { name = K.crouchRun; rate = clamp(v / (M.pace.crouch * H), 0.6, 1.6) }
-  else if (airborne) name = t - (R.charged ?? -Infinity) < 2500 ? K.leap : K.fall           // a charged jump flies arms-high
-  else if (want === 1 || v > 0.6) {
+  else if (want === 'crouchRun' && !M.chargeGait) { name = K.crouchRun; rate = clamp(v / (M.pace.crouch * H), 0.6, 1.6) }
+  else if (airborne) {     // a charged jump flies arms-high; a hop (card #50) rises in the jump clip, then falls
+    name = t - (R.charged ?? -Infinity) < 2500 ? K.leap : K.jump && want === 2 && R.name !== K.fall ? K.jump : K.fall
+    once = name === K.jump; fade = name === K.jump ? 0.08 : fade
+  }
+  else if (want === 1 || want === 'crouchRun' || v > 0.6) {
     const P = M.pace, Gt = M.gaits, walk = P.walk * H, run = P.run * H, sprint = P.sprint * H, at = Gt?.sprintAt ? Gt.sprintAt * H : (run + sprint) / 2
     R.gait = v < (R.gait === 'walk' ? 1.12 : 0.9) * (walk + run) / 2 ? 'walk' : v < (R.gait === 'sprint' ? (Gt?.band ? 1 - Gt.band : 0.9) : (Gt?.band ? 1 + Gt.band : 1.12)) * at ? 'run' : 'sprint'
     const [lo, hi] = Gt?.rates?.[R.gait] || [0.55, 1.6]
     name = K[R.gait]; rate = clamp(v / (P[R.gait] * H), lo, hi)
   }
   // landing from a charged jump or a dive: the two-arm smash over everything
+  if (airborne && !R.wasAir) R.airAt = t
   if (R.wasAir && !airborne && t - (R.charged ?? -Infinity) < 4000 && want !== 'crouch') { R.charged = -Infinity; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
+  // card #50: a hop or a fall of a quarter second or more lands heavily: the land clip's absorb over everything (lighter and
+  // quicker if he lands moving), your camera thumps, and dust and a stomp at his feet. A kerb's step down is shorter
+  else if (K.hopLand && R.wasAir && !airborne && t - (R.airAt ?? t) > 250 && want !== 'crouch' && a.dying < 0) {
+    const clip = rigClip(M, K.hopLand), going = want === 1 || v > 0.6
+    if (clip) R.over = { clip, t0: 0.04, at: t, full: true, speed: going ? 2.2 : 1.5, w: going ? 0.65 : 1 }
+    rigHopLand(a, R)
+  }
   if (a.landAt !== undefined && a.landAt !== R.landSeen && t - a.landAt < 150) { R.landSeen = a.landAt; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
   R.wasAir = airborne
   const next = rigAction(R, name)
@@ -11975,6 +12354,14 @@ function rigAnimate(a, want, dt, t) {
   } else R.inst.position.y = R.inst.userData.y
   rigMovePose(a, R, want, t)
   rigCape(a, R, dt)
+}
+// card #50: a hop's landing. Your own thumps your camera (harder than a footfall); both feet kick up dust; a stomp
+function rigHopLand(a, R) {
+  if (!a.mesh.visible) return
+  const mine = a === avatars.get(myId), p = a.mesh.position, floor = p.y - a.spec.h - a.spec.r
+  if (mine) kick(0.11, p.x, floor, p.z, 9, 220)
+  if (R.lod < 2) for (const side of ['l', 'r']) { const b = R.bones.get('ball_' + side); if (b) { b.getWorldPosition(rigV); burst('dust', rigV.x, floor + 0.06, rigV.z, 0, 1.1, 0, 0xc9c0ae, 0.5) } }
+  moveSound('stomp', mine ? { id: myId } : { x: p.x, y: floor, z: p.z }, 0.9)
 }
 // a sprinting footfall (card #30): the ball of the foot hits the road. Your own thumps your camera; a near one kicks up dust
 function rigFootfall(a, R, side) {
@@ -12073,9 +12460,13 @@ function rigMovePose(a, R, want, t) {
     arm('l', [0.62, 1.24 + 0.05 * Math.sin(round), 0.02], [0.95, 0.95, -0.55])
     if (ease < 1) keep.forEach((b, i) => b.quaternion.copy(was[i].slerp(b.quaternion, ease)))
   } else if (charge >= 0) {
+    // card #50: on the move his legs keep their gait (rigAnimate) and he hunches over it, his eyes ahead; standing, he sinks
+    if (moving) { turn('spine_01',[1,0,0],0.16*charge); turn('spine_02',[1,0,0],0.08*charge); turn('Head',[1,0,0],-0.18*charge) }
+    else {
     const idle = rigClip(R.M,'idle'); if (idle) rigPose(R,idle,0.4,0.75*(1-charge),null)
     for(const side of ['l','r']) {turn('thigh_'+side,[1,0,0],-0.20*charge);turn('calf_'+side,[1,0,0],0.34*charge);turn('foot_'+side,[1,0,0],-0.14*charge)}
     turn('spine_01',[1,0,0],0.12*charge)
+    }
     turn('spine_02',[0,1,0],Math.sin(t*0.045)*0.025*charge)
     turn('upperarm_r',[1,0,0],Math.sin(t*0.045)*0.035*charge)
     turn('upperarm_l',[1,0,0],-Math.sin(t*0.045)*0.035*charge)
@@ -12095,7 +12486,7 @@ function rigMovePose(a, R, want, t) {
 
     R.inst.rotateX(-0.25*wind)
   }
-  if (planted) R.inst.position.y += floor-feet()
+  if (planted && !(charge >= 0 && moving)) R.inst.position.y += floor-feet()     // card #50: a charged run keeps its own stride
 }
 
 // the cape: one angle on a damped spring, pulled back by speed with a flutter, held near plumb when the torso pitches
@@ -12190,11 +12581,40 @@ const GRIP_REST = { knife: gripBasis([0, 0, 1], [1, 0, 0], [0, 1, 0]), bat: grip
 const gripQ = new THREE.Quaternion()
 function gripTurn(a, held, G) {
   a.socket.object.getWorldQuaternion(gripQ)
-  held.quaternion.copy(gripQ).multiply(a.rig.M.gripRest).multiply(GRIP_REST[G.grip] || GRIP_REST.knife)
+  held.quaternion.copy(gripQ).multiply(a.socket.rest).multiply(GRIP_REST[G.grip] || GRIP_REST.knife)
+}
+// card #35: a rig without grip sockets holds in its hand bone, where villain.py puts the sockets: the mean of the bind pose's
+// vertices weighted over 0.6 to that bone, then 2.2 cm along the bone and 2.6 cm down. rest: the bone's bind turn undone (as
+// M.gripRest is the right socket's), which gripTurn turns a weapon from. Measured once a model and side
+const RIG_HANDS = { r: /^(hand_r|hand\.r|right_?hand|.*:righthand)$/i, l: /^(hand_l|hand\.l|left_?hand|.*:lefthand)$/i }
+const fistI = new THREE.Vector4(), fistW = new THREE.Vector4(), fistV = new THREE.Vector3()
+function rigFist(R, side) {
+  const key = side > 0 ? 'r' : 'l', mesh = R.lods[0] || R.inst.getObjectByProperty('isSkinnedMesh', true), skel = mesh?.skeleton
+  const j = skel ? skel.bones.findIndex(b => RIG_HANDS[key].test(b.name)) : -1
+  if (j < 0) return null
+  const fists = R.M.fists ||= {}
+  if (!(key in fists)) {
+    const g = mesh.geometry, P = g.attributes.position, I = g.attributes.skinIndex, W = g.attributes.skinWeight, sum = new THREE.Vector3()
+    let n = 0
+    for (let i = 0; i < P.count; i++) {
+      fistI.fromBufferAttribute(I, i); fistW.fromBufferAttribute(W, i)
+      let on = 0, all = 0
+      for (let k = 0; k < 4; k++) { all += fistW.getComponent(k); if (fistI.getComponent(k) === j) on += fistW.getComponent(k) }
+      if (on > 0.6 * all) { sum.add(fistV.fromBufferAttribute(P, i).applyMatrix4(mesh.bindMatrix).applyMatrix4(skel.boneInverses[j])); n++ }
+    }
+    // in the bone's own frame (metres: a packed file's bind space is its quantized units, the inverse bind matrices scale them),
+    // along is its +Y and down the model's -Y turned into it
+    const rest = new THREE.Quaternion(); skel.boneInverses[j].decompose(fistV, rest, new THREE.Vector3())
+    fists[key] = n ? { point: sum.divideScalar(n).add(fistV.set(0, 0.022, 0)).add(new THREE.Vector3(0, -0.026, 0).applyQuaternion(rest)), rest } : null
+  }
+  const f = fists[key]
+  return f && { object: skel.bones[j], point: f.point.clone(), rest: f.rest }
 }
 function handSocket(a, side = 1, tag = 'hand') {
   const grip = a.rig && tag === 'hand' && a.rig.inst.getObjectByName(side > 0 ? 'grip_r' : 'grip_l')
-  if (grip) return { object: grip, point: new THREE.Vector3() }
+  if (grip) return { object: grip, point: new THREE.Vector3(), rest: side > 0 ? a.rig.M.gripRest : undefined }
+  const fist = a.rig && tag === 'hand' && rigFist(a.rig, side)
+  if (fist) return fist
   a.mesh.updateWorldMatrix(true, true)
   let best = null, right = -Infinity
   a.mesh.traverse(n => {
@@ -12241,6 +12661,46 @@ function heldGun(id, state, t) {
   const a = avatars.get(id)
   return GUNS[a?.shotGun]?.heldMs > t - a.shotAt ? a.shotGun : Number.isInteger(state.gun) && GUNS[state.gun] ? state.gun : handsOf(GAME.participant(id, a.cid))
 }
+// card #35: a two-handed weapon's other hand (GUNS offGrip). Over whatever the clips do with the left arm, it reaches (two bones,
+// the elbow out to his left and down) so the left fist's socket takes the haft there: the socket rides the forearm (the clips'
+// wrist kept), so the chain is shoulder, elbow, socket
+// card #35: a weapon's stance lean (GUNS lean), in the body's own frame about the grip; eased out while a blow plays over the
+// arms (by the blow's own weight, as rigAnimate blends it) and back after it
+const leanQ = [new THREE.Quaternion(), new THREE.Quaternion()], leanV = new THREE.Vector3()
+function leanHeld(a, held, G, t) {
+  const R = a.rig, o = R.over, ct = o && (o.clock ?? o.t0 + (t - o.at) / 1000 * (o.speed || 1))
+  const w = 1 - (o && !o.hit && ct < o.clip.duration ? clamp(Math.min((t - o.at) / 60, (o.clip.duration - ct) / 0.15), 0, 1) : 0)
+  if (w <= 0) return
+  R.inst.getWorldQuaternion(leanQ[0])
+  held.quaternion.premultiply(leanQ[1].setFromAxisAngle(leanV.set(0, 0, 1).applyQuaternion(leanQ[0]), G.lean[1] * w))
+    .premultiply(leanQ[1].setFromAxisAngle(leanV.set(1, 0, 0).applyQuaternion(leanQ[0]), G.lean[0] * w))
+}
+const OFF_POLE = [0.6, 0.9, 0], offV = Array.from({ length: 8 }, () => new THREE.Vector3()), offQ = [0, 1, 2].map(() => new THREE.Quaternion())
+function offHand(a, held, G) {
+  const R = a.rig, upper = R.bones.get('upperarm_l'), lower = R.bones.get('lowerarm_l')
+  if (!upper || !lower) return
+  const [goal, sh, el, fist, pole, to, from, hinge] = offV, [pq, dq, iq] = offQ
+  const rotate = (b, u, v) => { b.parent.getWorldQuaternion(pq); dq.setFromUnitVectors(u.normalize(), v.normalize()); b.quaternion.premultiply(iq.copy(pq).invert().multiply(dq).multiply(pq)) }
+  held.updateMatrixWorld(); goal.set(0, G.offGrip, 0).applyMatrix4(held.matrixWorld)
+  pole.set(...OFF_POLE); R.inst.localToWorld(pole)
+  upper.getWorldPosition(sh); lower.getWorldPosition(el); handAt(a, fist, 1)
+  const u = sh.distanceTo(el), f = el.distanceTo(fist), reach = u + f - 0.005
+  // out of reach (a blow's fastest frames sweep the haft's end away from him): the hand slides up the haft toward the other fist,
+  // to the first point it reaches, as the hands slide on a swung sledge
+  if (goal.distanceTo(sh) > reach) {
+    to.subVectors(held.position, goal); from.subVectors(goal, sh)
+    const A = to.lengthSq(), B = from.dot(to), D = B * B - A * (from.lengthSq() - reach * reach)
+    goal.addScaledVector(to, clamp(D >= 0 ? (-B - Math.sqrt(D)) / A : -B / A, 0, 1))
+  }
+  to.subVectors(goal, sh)
+  const d = clamp(to.length(), Math.abs(u - f) + 0.001, u + f - 0.005), along = (u * u - f * f + d * d) / (2 * d)
+  to.normalize()
+  hinge.subVectors(pole, sh); hinge.addScaledVector(to, -hinge.dot(to)).normalize()
+  hinge.multiplyScalar(Math.sqrt(Math.max(0, u * u - along * along))).addScaledVector(to, along).add(sh)      // the elbow
+  rotate(upper, from.subVectors(el, sh), hinge.sub(sh))
+  lower.getWorldPosition(el); handAt(a, fist, 1)
+  rotate(lower, from.subVectors(fist, el), to.multiplyScalar(d).add(sh).sub(el))
+}
 function drawHeld(id, state, t, view = null, fade = 1) {
   const a = avatars.get(id)
   if (!a) return
@@ -12283,7 +12743,7 @@ function drawHeld(id, state, t, view = null, fade = 1) {
     held.scale.setScalar(Math.min(1.1, Math.max(0.65, (a.spec.h + a.spec.r) / 0.9)) * (G.heldScale || 1))
     const pitch = Number.isFinite(state.pitch) ? state.pitch : a.shotPitch || 0, yaw = a.seatAim?.active ? state.yaw || 0 : a.face ?? (state.yaw || 0)
     held.rotation.set(pitch, yaw + (G.tether && a.shotGun === gun && age >= 0 && age < SLASH_MS ? (age / SLASH_MS - 0.5) * 2 * G.spread : 0), 0, 'YXZ')
-    if (a.rig?.M.gripRest && (G.melee || G.grip === 'knife') && a.socket?.object?.name === 'grip_r') gripTurn(a, held, G)
+    if (a.socket?.rest && (G.melee || G.grip === 'knife')) gripTurn(a, held, G)
   }
   if (G.tether) {
     const L = G.tether / held.scale.x, w = 0.07 / held.scale.x
@@ -12291,9 +12751,13 @@ function drawHeld(id, state, t, view = null, fade = 1) {
   }
   else if (G.melee) {
     held.rotateX(-0.42)
-    held.rotateZ(-Math.sin(Math.min(1, age / 300) * Math.PI))
+    // card #35: the flick swings a weapon no clip swings. In a rigged fist with a clip for the blow, the clip's swing is the swing:
+    // the flick turned the weapon up to 57° against the hand, mid-blow (a bat or sledge head pointing down, a blade back)
+    if (view || !(a.socket?.rest && a.rig?.M.punches?.[G.punch])) held.rotateZ(-Math.sin(Math.min(1, age / 300) * Math.PI))
   }
   else held.rotateX(kick * 0.10)
+  if (G.lean && !view && a.rig) leanHeld(a, held, G, t)
+  if (G.offGrip !== undefined && !view && a.rig) offHand(a, held, G)
   if (held.userData.paired && !view) {
     const other = held.children[1]
     handAt(a, other.position, 1)
@@ -12526,12 +12990,12 @@ function craterWork(R, craters, done) {
   worldGroup.traverse(m => { const g = m.geometry, bs = g?.boundingSphere || g?.computeBoundingSphere() || g?.boundingSphere
     if (!m.isMesh || m.isInstancedMesh || m === scarMesh || m.userData.crater || g.index || !g.attributes.uv ||
       Math.max(a0 - bs.center.x, 0, bs.center.x - a1) ** 2 + Math.max(b0 - bs.center.z, 0, bs.center.z - b1) ** 2 > bs.radius ** 2) return
-    const P = g.attributes.position.array, U = g.attributes.uv.array, C = g.attributes.color, at = [], pos = [], uv = [], colors = []
+    const P = g.attributes.position.array, U = g.attributes.uv.array, C = g.attributes.color, G = g.attributes.faustGlow, at = [], pos = [], uv = [], colors = [], glow = []
     for (let i = 0; i < 3 * Math.min(g.attributes.position.count, g.drawRange.count); i += 9) {
       const x = [P[i], P[i + 3], P[i + 6]], y = [P[i + 1] - R.y, P[i + 4] - R.y, P[i + 7] - R.y], z = [P[i + 2], P[i + 5], P[i + 8]]
       if (Math.max(...x) > a0 && Math.min(...x) < a1 && Math.max(...z) > b0 && Math.min(...z) < b1 && y.every(v => v > -.01 && v < .05)) {
-        at.push(i / 9); pos.push(x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]); uv.push(...U.subarray(i / 1.5, i / 1.5 + 6));if(C)for(let j=i/3;j<i/3+3;j++)colors.push(C.getX(j),C.getY(j),C.getZ(j)) } }
-    if (at.length) slots.push({ m, at, paint: C && {p:pos,c:colors}, pos: Float32Array.from(pos), uv: Float32Array.from(uv) }) })
+        at.push(i / 9); pos.push(x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]); uv.push(...U.subarray(i / 1.5, i / 1.5 + 6));for(let j=i/3;j<i/3+3;j++){if(C)colors.push(C.getX(j),C.getY(j),C.getZ(j));if(G)glow.push(G.getX(j))} } }
+    if (at.length) slots.push({ m, at, paint: C && {p:pos,c:colors}, glow: G && {p:pos,c:glow}, pos: Float32Array.from(pos), uv: Float32Array.from(uv) }) })
   const ask = { rect: R.rect, craters, under: slots.map(({ pos, uv }) => ({ pos, uv })), K: { ...CRATER_CUT, depth: craters[0].depth } }, lv = LV
   // no worker: this page cuts it (the bowl is physics)
   const here = () => (geoHere ||= (self.THREE = THREE, geoLoad(GEO_LIBS.filter(L => L.name === 'bvh' || L.name === 'csg')))).then(env => take(craterOp(ask, { THREE, ...env }).reply), e => take({ fail: String(e) }))
@@ -12539,12 +13003,12 @@ function craterWork(R, craters, done) {
   geoFail ? go() : geoEnsure(go)
   function take(data) {
       if (data.fail || LV !== lv) return done(null)
-      slots.forEach(({ m, at, paint }, i) => { const g = m.geometry, gone = new Set(at), n = Math.min(g.attributes.position.count, g.drawRange.count) / 3, keep = n - gone.size
-        for (const [k, s] of [['position', 3], ['normal', 3], ['uv', 2], ...g.attributes.color ? [['color',3]] : []]) { const a = g.attributes[k].array, o = new Float32Array(keep * 3 * s); let w = 0
+      slots.forEach(({ m, at, paint, glow }, i) => { const g = m.geometry, gone = new Set(at), n = Math.min(g.attributes.position.count, g.drawRange.count) / 3, keep = n - gone.size
+        for (const [k, s] of Object.entries(g.attributes).map(([k, a]) => [k, a.itemSize])) { const a = g.attributes[k].array, o = new Float32Array(keep * 3 * s); let w = 0
           for (let t = 0; t < n; t++) if (!gone.has(t)) { o.set(a.subarray(t * 3 * s, (t + 1) * 3 * s), w); w += 3 * s }
           g.setAttribute(k, dyn(o, s)) }
         g.setDrawRange(0, keep * 3); m.userData.cut = true
-        groundAdd(m, { p: data.parts[i][0].map((v, k) => k % 3 === 1 ? v + R.y : v), uv: data.parts[i][1], color: paint && craterPaint(paint,data.parts[i][0]) }) })
+        groundAdd(m, { p: data.parts[i][0].map((v, k) => k % 3 === 1 ? v + R.y : v), uv: data.parts[i][1], color: paint && craterPaint(paint,data.parts[i][0]), faustGlow: glow && craterPaint(glow,data.parts[i][0],1,0) }) })
       const S = data.surface, tris = [], mesh = new THREE.Mesh(new THREE.BufferGeometry(), craterMat ||= craterLook())
       for (let i = 0; i < S.length; i += 9) tris.push([0, 3, 6].map(k => [S[i + k], S[i + k + 1] + R.y, S[i + k + 2]]))
       mesh.geometry.setAttribute('position', new THREE.BufferAttribute(Float32Array.from([...data.bowl, ...data.rims]), 3))
@@ -12676,7 +13140,7 @@ function queueScars(list) {
   for (const f of list) {
     if (scarQueue.length === 128) break
     const kind = GUNS[f[6]]?.scar
-    if (SCARS[kind] && f[7] < 2 && f[9] !== 1 && f.slice(0, 6).every(v => Number.isFinite(v) && Math.abs(v) < ARENA * 2)) scarQueue.push({ f, kind })
+    if (SCARS[kind] && f[7] < 2 && f[9] !== 1 && f.slice(0, 6).every(v => Number.isFinite(v) && Math.abs(v) < WORLD * 2)) scarQueue.push({ f, kind })
   }
 }
 function prepareScars() {
@@ -12758,7 +13222,7 @@ function addTracers(list, t) {
   for (const f of list) {
     if (f[7] === 9) {
       if (![0, 1, 2, 3, 4, 5, 9].every(i => Number.isFinite(f[i])) || f[9] <= 0 || f[9] > 10000 ||
-          [0, 2, 3, 5].some(i => Math.abs(f[i]) > ARENA + 8) || [1, 4].some(i => f[i] < -64 || f[i] > 192)) continue
+          [0, 2, 3, 5].some(i => Math.abs(f[i]) > WORLD + 8) || [1, 4].some(i => f[i] < -64 || f[i] > LV.theme.lid)) continue
       for (const o of liveTracers) if (o.f[7] === 9 && o.f[8] === f[8]) o.born = t - lifeOf(o.f)
     }
     const skip = stride > 1 && fxDecor(f) && (decor++ % stride) !== 0
@@ -13877,17 +14341,17 @@ function smashDustVisible(p,f,e) {
   const radius=Math.hypot(p[1]-f[0],p[3]-f[2]),cx=e.x-f[0],cz=e.z-f[2],n=Math.hypot(cx,cz)||1
   return radius>1.25&&((p[1]-f[0])*cx+(p[3]-f[2])*cz)/Math.max(1,radius*n)<.2&&Math.hypot(p[1]-e.x,p[2]-e.y,p[3]-e.z)-p[4]>3.5
 }
-// The retained crater cutter originally rebuilt only positions/normals/UVs. Faustland's batches also have colours:
-// preserve them when removing triangles, and interpolate the old face colours onto the newly clipped ground.
-function craterPaint(paint,positions) {
-  const out=new Float32Array(positions.length),P=paint.p,C=paint.c
-  for(let i=0;i<positions.length;i+=3){const x=positions[i],y=positions[i+1],z=positions[i+2];let best=Infinity,color=[1,1,1]
+// Keep colours and emission aligned with positions through both triangle removal and clipped-face append.
+// A stale faustGlow array would assign shopfront or lamp emission to road vertices after a crater.
+function craterPaint(paint,positions,size=3,fill=1) {
+  const out=new Float32Array(positions.length/3*size),P=paint.p,C=paint.c
+  for(let i=0;i<positions.length;i+=3){const x=positions[i],y=positions[i+1],z=positions[i+2];let best=Infinity,color=Array(size).fill(fill)
     for(let j=0;j<P.length;j+=9){const ax=P[j],az=P[j+2],bx=P[j+3],bz=P[j+5],cx=P[j+6],cz=P[j+8],d=(bz-cz)*(ax-cx)+(cx-bx)*(az-cz);if(Math.abs(d)<1e-10)continue
       const u=((bz-cz)*(x-cx)+(cx-bx)*(z-cz))/d,v=((cz-az)*(x-cx)+(ax-cx)*(z-cz))/d,w=1-u-v,dy=Math.abs(y-(u*P[j+1]+v*P[j+4]+w*P[j+7]))
       if(u<-.001||v<-.001||w<-.001||dy>=best)continue
-      best=dy;color=[0,1,2].map(k=>u*C[j+k]+v*C[j+3+k]+w*C[j+6+k])
+      best=dy;const at=j/3*size;color=Array.from({length:size},(_,k)=>u*C[at+k]+v*C[at+size+k]+w*C[at+2*size+k])
     }
-    out.set(color,i)
+    out.set(color,i/3*size)
   }
   return out
 }
@@ -14057,7 +14521,7 @@ const INPUT_SCHEMA = {
              j: !!(bits & B.j), fire: !!(bits & B.fire),
              sh: !!(bits & B.sh), alt: !!(bits & B.alt), sw: !!(bits & B.sw), sprint: !!(bits & B.sprint), descend: !!(bits & B.descend), use: !!(bits & B.use) }
   },
-  consume(input) { input.sw = input.sh = input.use = false },
+  consume(input) { input.sw = input.sh = input.use = false; jumpTapped = false },
   key: { forward: 'KeyW', back: 'KeyS', right: 'KeyD', left: 'KeyA', jump: 'Space',
          descend: 'KeyQ', swap: 'KeyR', shift: 'KeyF', use: 'KeyE', sprint: 'ShiftLeft' },
   keyDown(e) {
@@ -14066,7 +14530,7 @@ const INPUT_SCHEMA = {
       e.preventDefault(); openChat(e.key === '/' ? '/' : ''); return
     }
     keys[e.code] = true
-    if (e.code === INPUT_SCHEMA.key.jump) e.preventDefault()
+    if (e.code === INPUT_SCHEMA.key.jump) { e.preventDefault(); if (!e.repeat) jumpTapped = true }
     if (e.code === 'KeyV') setView(!firstPerson)
     if (e.code === 'KeyM') GAME.audio.toggle()
     if (e.code === 'KeyB' && !e.repeat) GAME.audio.cycle()
@@ -14107,7 +14571,7 @@ const INPUT_SCHEMA = {
   stopStick() { input.f = 0; input.r = 0 },
   touchHolds(hold) {
     hold('btn-fire', () => { input.fire = true }, () => { input.fire = false }, true)
-    hold('btn-jump', () => { keys[INPUT_SCHEMA.key.jump] = true }, () => { keys[INPUT_SCHEMA.key.jump] = false })
+    hold('btn-jump', () => { keys[INPUT_SCHEMA.key.jump] = true; jumpTapped = true }, () => { keys[INPUT_SCHEMA.key.jump] = false })
     hold('btn-descend', () => { descendHeld = true }, () => { descendHeld = false })
     hold('btn-alt', () => { input.alt = true }, () => { input.alt = false })
   },
@@ -14128,14 +14592,14 @@ const INPUT_SCHEMA = {
   lookTouch: t => !!(t && t.closest && t.closest('#btn-fire')),
   sample() {
     if (chatOpen || menuUp()) {
-      input.f = 0; input.r = 0; input.j = false; input.fire = false; input.alt = false; input.descend = false; return
+      input.f = 0; input.r = 0; input.j = false; input.fire = false; input.alt = false; input.descend = false; jumpTapped = false; return
     }
     if (keys[INPUT_SCHEMA.key.sprint] && !sprintHeld) sprintToggle()
     sprintHeld = !!keys[INPUT_SCHEMA.key.sprint]
     input.sprint = sprintOn
     // touch: the stick sets f/r
     if (IS_TOUCH) {
-      input.j = !!keys[INPUT_SCHEMA.key.jump]
+      input.j = !!keys[INPUT_SCHEMA.key.jump] || jumpTapped
       input.descend = descendHeld
       input.sw ||= tapSwap; tapSwap = false
       input.sh ||= tapShift; tapShift = false
@@ -14144,7 +14608,7 @@ const INPUT_SCHEMA = {
     }
     input.f = (keys[INPUT_SCHEMA.key.forward] ? 1 : 0) - (keys[INPUT_SCHEMA.key.back] ? 1 : 0)
     input.r = (keys[INPUT_SCHEMA.key.right] ? 1 : 0) - (keys[INPUT_SCHEMA.key.left] ? 1 : 0)
-    input.j = !!keys[INPUT_SCHEMA.key.jump]
+    input.j = !!keys[INPUT_SCHEMA.key.jump] || jumpTapped
     input.descend = !!keys[INPUT_SCHEMA.key.descend]
     // one-shot presses stay set until a sim tick takes them: a frame runs 0 to MAX_CATCHUP ticks
     input.sw ||= (!!keys[INPUT_SCHEMA.key.swap] && !swapHeld) || wheelSwap
@@ -14184,7 +14648,7 @@ function resetInput() {
   const { yaw, pitch } = input
   Object.assign(input, INPUT_SCHEMA.empty(), { yaw, pitch, alt: false, view: null, aimed: null, aimAt: 0 })
   shiftHeld = swapHeld = wheelSwap = useHeld = tapUse = sprintHeld = false
-  tapSwap = tapShift = descendHeld = sprintOn = tabOpen = false
+  tapSwap = tapShift = descendHeld = sprintOn = tabOpen = jumpTapped = false
   document.body.classList.remove('sprinting')
   resetTouch()
 }
@@ -14250,6 +14714,7 @@ let useHeld = false, tapUse = false
 let sprintOn = false, sprintHeld = false
 const sprintToggle = () => { sprintOn = !sprintOn; document.body.classList.toggle('sprinting', sprintOn) }
 let tapSwap = false, tapShift = false, descendHeld = false        // set by the touch buttons
+let jumpTapped = false        // card #50: a jump pressed since the last tick (input.j holds until a tick has seen it)
 
 // bots borrow member rows: only players' entities (id < BOT_ID0) count
 function teamNow(me, others) {
@@ -14415,11 +14880,12 @@ function toggleDebug(on) {
   if (stats) stats.dom.style.display = dbgOpen ? 'block' : 'none'
 }
 
-const COMPASS = ['south', 'south-west', 'west', 'north-west',
-                 'north', 'north-east', 'east', 'south-east']
+// by compass heading, clockwise from north (-z; east is +x), as /look and the radar name them: heading = -yaw
+const COMPASS = ['north', 'north-east', 'east', 'south-east',
+                 'south', 'south-west', 'west', 'north-west']
+const headingOf = yaw => ((-yaw * 180 / Math.PI) % 360 + 360) % 360
 function facing(yaw) {
-  const a = ((yaw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
-  return COMPASS[Math.round(a / (Math.PI / 4)) % 8]
+  return COMPASS[Math.round(headingOf(yaw) / 45) % 8]
 }
 
 // the optimizer is off (Edge's 'Enhance your security') when no warm run, in up to three windows 2 s apart, is 6x the cold one
@@ -14480,7 +14946,7 @@ function drawDebug(me, fps) {
     row('sim life', phase + ' ' + document.visibilityState + ' server ' + serving + ' host ticks ' + pageLife.hostTicks + '/' + pageLife.hostAttempts + ' gap ' + pageLife.gap + 'ms') +
     row('input', 'move ' + f(input.f, 4, 1) + '/' + f(input.r, 4, 1) + ' fire ' + input.fire + ' menu ' + menuUp() + ' chat ' + chatOpen + ' dead ' + !!me.dead) +
     row('xyz', v(f(me.x, 7, 2)) + ' / ' + v(f(me.y, 6, 2)) + ' / ' + v(f(me.z, 7, 2))) +
-    row('facing', facing(me.yaw).padEnd(11) + ' yaw ' + f(me.yaw, 5, 2) +
+    row('facing', (fy => facing(fy).padEnd(11) + f(Math.round(headingOf(fy)) % 360, 3, 0) + '°  yaw ' + f(fy, 5, 2))(!(me.dead > 0) && (seatOf(me) || rideOf(me)) && chase.yaw === chase.yaw ? chase.yaw + chase.look : me.yaw) +
         '  pitch ' + f(input.pitch, 5, 2)) +
     row('vel', f(me.vx, 6, 2) + ' / ' + f(me.vy, 6, 2) + ' / ' + f(me.vz, 6, 2) +
         '  grounded ' + (me.grounded ? v('yes') : ' no')) +
@@ -15640,6 +16106,7 @@ const COMMANDS = {
   nick:   { args: '<name>', help: 'change your display name', run: cmdNick },
   cap:    { args: '[text]', help: 'write on your cap, blank for random', run: cmdCap },
   list:   { args: '', help: 'who is in the room', run: cmdList },
+  look:   { args: '<yaw°> [pitch°]', help: 'turn your view: compass degrees (0 north, 90 east), pitch up, level when left out', run: cmdLook },
   debug:  { args: '', help: 'toggle the debug panel (same as F3)', run: () => {
               toggleDebug(); sysMsg('§7Debug ' + (dbgOpen ? '§aon' : '§coff')) } },
   seed:   { args: '[0-4294967295]', help: 'show the seed; host: set it, or use random for a fresh city', run: a => {
@@ -15731,6 +16198,17 @@ function sendCap(text) {
   } else {
     sendHost({ k: 'cap', t })
   }
+}
+
+// card #58: the view turned as the mouse would turn it: in a car the yaw step goes through the chase camera's free look
+function cmdLook(a) {
+  const w = String(a || '').trim().split(/\s+/), h = Number(w[0]), q = w[1] === undefined ? 0 : Number(w[1])
+  if (!w[0] || w.length > 2 || !Number.isFinite(h) || !Number.isFinite(q)) return sysMsg('§cUsage: §f/look <yaw degrees> [pitch degrees]')
+  if (serving) return sysMsg('§cA server has no view.')
+  const me = selfChar(), car = me && !(me.dead > 0) && (seatOf(me) || rideOf(me)) && chase.yaw === chase.yaw
+  input.yaw += wrapPi(-h * Math.PI / 180 - (car ? chase.yaw + chase.look : input.yaw))
+  input.pitch = clamp(q * Math.PI / 180, -PITCH_MAX, PITCH_MAX)
+  sysMsg('§7Looking §f' + h + '° §7pitched §f' + Math.round(input.pitch * 180 / Math.PI) + '°')
 }
 
 function cmdList() {
@@ -16213,8 +16691,8 @@ function takeObjects(o, t) {
     if (was === undefined && objSeeds[id] === undefined) objFirst.set(id, Math.round(2 * x) + ' ' + Math.round(2 * z))
     if (was === undefined && objFirst.has(id) && !parked.has(objFirst.get(id))) planSpots(x, z)
     if (V && OBJECTS[k].name === V.wreck) GAME.audio.play('boom', { x, y, z }, 'world', 1, 0, 0, OBJECTS[was].name)
-    track(objTracks, id, OBJ_MAX, t, [k, clamp(x, -ARENA, ARENA), clamp(y, VOID_Y, ARENA),
-      clamp(z, -ARENA, ARENA), ...(n > 1e-9 && n < Infinity ? q.map(v => v / n) : [0, 0, 0, 1])])
+    track(objTracks, id, OBJ_MAX, t, [k, clamp(x, -WORLD, WORLD), clamp(y, VOID_Y, Math.max(ARENA, LV.theme.lid)),
+      clamp(z, -WORLD, WORLD), ...(n > 1e-9 && n < Infinity ? q.map(v => v / n) : [0, 0, 0, 1])])
   }
 }
 // `oh`: [object, holder] pairs, sent on change; malformed = dropped whole
@@ -16248,10 +16726,10 @@ const burnHeard = new Map()
 // near it; malformed = none
 let objVel = null, vehHp = null       // `vh`: hp of this guest's vehicle
 const exactRow = e => Array.isArray(e) && e.length === 14 && Number.isInteger(e[0]) && e[0] >= 0 && e[0] < OBJ_MAX && e.every(Number.isFinite) &&
-  e.slice(1, 4).every(x => Math.abs(x) <= ARENA) && Math.abs(Math.hypot(...e.slice(4, 8)) - 1) < 0.01 && e.slice(8).every(x => Math.abs(x) < 200)
+  e.slice(1, 4).every(x => Math.abs(x) <= WORLD) && Math.abs(Math.hypot(...e.slice(4, 8)) - 1) < 0.01 && e.slice(8).every(x => Math.abs(x) < 200)
 // `pv`: [x, y, z, vx, vy, vz], this guest's own character exactly; malformed = none
 let ownExact = null
-const takeOwn = v => { ownExact = Array.isArray(v) && v.length === 6 && v.every(Number.isFinite) && Math.abs(v[0]) <= ARENA + 8 && Math.abs(v[2]) <= ARENA + 8 &&
+const takeOwn = v => { ownExact = Array.isArray(v) && v.length === 6 && v.every(Number.isFinite) && Math.abs(v[0]) <= WORLD + 8 && Math.abs(v[2]) <= WORLD + 8 &&
   v[1] >= VOID_Y && v[1] <= LV.theme.lid && v.slice(3).every(x => Math.abs(x) < 200) ? v : null }
 function takeVel(v) {
   objVel = Array.isArray(v) && v.length <= 16 && v.every(exactRow) && new Set(v.map(e => e[0])).size === v.length ? new Map(v.map(e => [e[0], e.slice(1)])) : null
@@ -19018,11 +19496,11 @@ const OWN_PREDICTION = (F => {
   const S = GAME.schema.step, fuelEps = S.fuel + S.fuel / 10
   if (REWIND_EPS < Math.hypot(S.x, S.y, S.z)) throw Error('REWIND_EPS is under the wire step')
   return {
-    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0]; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
+    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
       const bh = c.body?.getBroadphaseHandle(); e.dsh = [!!c.dashOn, c.dashRun || 0, c.dashHit && [...c.dashHit], bh && A.getPointer(bh) ? bh.get_m_collisionFilterMask() : null]; return e },
     err: (e, a) => Math.hypot(e.x - a[F.x], e.y - a[F.y], e.z - a[F.z]),
     agrees: (e, a, web) => (e.web || 0) === web && Math.abs(e.fuel - a[F.fuel]) <= fuelEps && e.jl === !!a[F.jLock],
-    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.springT = e.sp; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove] = e.leap; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
+    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.springT = e.sp; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace] = e.leap; [c.hop, c.hopAir] = e.hop; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
       c.dashOn = e.dsh[0]; c.dashRun = e.dsh[1]; c.dashMask = e.dsh[3]; c.dashHit = e.dsh[2] && new Set(e.dsh[2]) },
     // re-tying the web its own prediction had, it keeps that prediction's reel target (off the wire); the length is the restored distance
     restore: (c, a, web) => { const [x, y, z, vx, vy, vz] = ownExact || [a[F.x], a[F.y], a[F.z], a[F.vx], a[F.vy], a[F.vz]]; restoreChar(c, x, y, z, vx, vy, vz, a[F.fuel])
@@ -19362,12 +19840,12 @@ function draw(dt, t) {
   const meP = drawnPose(me), meD = meP ? { ...me, x: meP[0], y: meP[1], z: meP[2] } : me
   meMesh.position.set(meD.x, meD.y, meD.z)
   const myHold = holdOf(myId, me) || me.ceil && 'ceiling'
-  avatars.get(myId).moveState = me.leap ? 2 : me.springT > SPRING_TAP ? 1 : 0; avatars.get(myId).moveCharge = clamp((me.springT || 0) / 1.15, 0, 1)
+  avatars.get(myId).moveState = me.leap ? 2 : me.springT > SPRING_TAP ? 1 : 0; avatars.get(myId).moveCharge = clamp(((me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1)
   avatars.get(myId).chainState = isHost ? chainPack(me) : me.chainNet; avatars.get(myId).hayAge = me.hayAge || 0
   const myTicks = tickSamples.get(myId) || []
   meMesh.rotation.y = GAME.view.faceYaw(myId, me, animOf(me), myHold || firstPerson || carries.has(myId), t, dt, input.fire || input.alt, myTicks)
   if (!drawSeat(meMesh, me, sits.get(myId), obl) && !drawCeiling(meMesh, meD, myHold === 'ceiling', dt, myTicks)) drawTurned(meMesh, meD, animOf(me) === 4 && GAME.participantOf(me)?.wallRun, dt, myTicks)
-  setAnim(myId, crouchOf(myId, me.cid, animOf(me), me.springT > 0, myHold), dt, t, myHold, false, myTicks, [me.x - meD.x, me.y - meD.y, me.z - meD.z])
+  setAnim(myId, crouchOf(myId, me.cid, animOf(me), me.springT > SPRING_TAP, myHold), dt, t, myHold, false, myTicks, [me.x - meD.x, me.y - meD.y, me.z - meD.z])
   const myArmed = GAME.view.passengerAim(myId, me, t, sits.get(myId)?.[1])
   poseSeatAim(myId, myArmed && me, t)
   drawHealth(myId, me.hp)
@@ -19383,13 +19861,13 @@ function draw(dt, t) {
     const C = GAME.participant(o.id, o.cid)
     o.ceil = o.anim === 4 && C.climb && !C.wallRun && ceilAbove(o.x, o.y, o.z, C.r, 0.1)
     const hold = holdOf(o.id, o) || o.ceil && 'ceiling'
-    avatars.get(o.id).moveState = o.move; avatars.get(o.id).moveCharge = clamp((o.springT || 0) / 1.15, 0, 1); avatars.get(o.id).chainState = o.chainNet; avatars.get(o.id).hayAge = o.hayAge || 0
+    avatars.get(o.id).moveState = o.move; avatars.get(o.id).moveCharge = clamp(((o.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1); avatars.get(o.id).chainState = o.chainNet; avatars.get(o.id).hayAge = o.hayAge || 0
     const ticks = isHost ? tickSamples.get(o.id) || [] : undefined
     m.rotation.y = GAME.view.faceYaw(o.id, o, o.anim || 0, hold || carries.has(o.id), t, dt, false, ticks)
     if (o.anim === 4 && C.wallRun && o.wy === undefined) o.wy = wallYawAt(o.x, o.y, o.z, C.h + C.r + 0.4)
     if (!drawSeat(m, o, sits.get(o.id), obl) && !drawCeiling(m, o, hold === 'ceiling', dt, ticks)) drawTurned(m, o, o.anim === 4 && C.wallRun, dt, ticks)
     const still = !posed(m.position)
-    setAnim(o.id, crouchOf(o.id, o.cid, o.anim || 0, o.jl, hold), dt, t, hold, still, ticks, o.sim && [o.sim.x - o.x, o.sim.y - o.y, o.sim.z - o.z])
+    setAnim(o.id, crouchOf(o.id, o.cid, o.anim || 0, o.move === 1, hold), dt, t, hold, still, ticks, o.sim && [o.sim.x - o.x, o.sim.y - o.y, o.sim.z - o.z])
     const armed = GAME.view.passengerAim(o.id, o, t, sits.get(o.id)?.[1])
     poseSeatAim(o.id, armed && o, t)
     drawHealth(o.id, o.hp)
