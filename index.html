@@ -25551,7 +25551,7 @@ function dsSignalLook(L, i, n, s) {
 // ---- the state: per chunk, its broken things as records, the same on host and guests
 let dsState = null
 function dsReset() {
-  if (dsState && isHost && dsPersist.dirty && !dsPersist.reading && dsPersist.key && dsPersist.key === 'world-' + dsState.seed + '-' + dsState.S) { const doc = dsSaveDoc(); doc.seed = dsState.seed; doc.size = dsState.S; dsStorePut(dsPersist.key, doc) }
+  dsPersistFlushOld()                                    // card #70: the old city's changed tiles (or the whole city)
   dsPersist.key = ''
   dsFxClear()
   dsState = { seed: faustState?.seed, S: faustState?.S, plans: new Map(), all: new Map(), chunks: new Map(), fresh: [], guests: new Map(),
@@ -25595,6 +25595,7 @@ function dsKindRegister(id, def) {
   dsKinds.set(id, def)
   const kept = dsPersist.kept?.[id]
   if (kept && isHost && dsCheck()) { delete dsPersist.kept[id]; dsLoadKind(id, kept) }
+  if (isHost && dsCheck()) for (const t of dsPersist.tiles?.values() || []) if (t.kept[id]) { const k = t.kept[id]; delete t.kept[id]; dsLoadKind(id, k) }
   return true
 }
 // a post's record: its lamp, parts and foot, and its avenue collider if it has one
@@ -25614,7 +25615,7 @@ function dsAdd(rec) {
   if (st.all.has(rec.key)) return false
   st.all.set(rec.key, rec)
   let ch = st.chunks.get(rec.chunk)
-  if (!ch) st.chunks.set(rec.chunk, ch = { v: 0, recs: new Map(), changed: 0 })
+  if (!ch) st.chunks.set(rec.chunk, ch = { v: st.chunkV?.get(rec.chunk) || 0, recs: new Map(), changed: 0 })
   ch.recs.set(rec.key, rec); ch.v++; ch.changed = dsNow()
   st.stats.applied++
   if (rec.kind === DS_KIND.pane) { st.tableDirty = true; st.buildings.add(rec.p.ci + ' ' + rec.p.cj + ' ' + rec.p.slot) }
@@ -25654,7 +25655,7 @@ function dsBreak(kind, key, info) {
   if (!rec) return false
   dsAdd(rec)
   dsState.fresh.push({ rec, n: 0 }); dsState.stats.breaks++
-  dsPersistLater()
+  dsTileTouch(rec.chunk); dsPersistLater()
   const [x, , z] = rec.p.at, st = dsState
   st.panics = st.panics.filter(q => T - q[2] < DESTRUCT.panicMs)
   if (!st.panics.some(q => Math.hypot(q[0] - x, q[1] - z) < DESTRUCT.panicR)) { st.panics.push([x, z, T]); try { GAME.streetLife?.panic?.(x, z) } catch (e) {} }
@@ -25841,6 +25842,7 @@ function dsWireFor(gid) {
   const T = tickAt || now(), S = faustState.S, ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96), near = DESTRUCT.near
   const due = []
   for (const [chunk, ch] of st.chunks) {
+    if (dsTileBusy(chunk)) continue                      // card #70: its tile is being read
     const dx = Math.floor(chunk / S) - ci, dz = chunk % S - cj
     if (Math.abs(dx) > near || Math.abs(dz) > near) continue
     let h = g.get(chunk)
@@ -26355,7 +26357,7 @@ function dsFrame(t, dt) {
   const t0 = performance.now(), st = dsState
   if (st.view && camera) { camera.position.set(...st.view.p); camera.lookAt(...st.view.t); camera.updateMatrixWorld() }   // debug: a free camera (view)
   if (!dsFx) dsFxKit()          // made, and its shader compiled, before anything breaks
-  if (isHost) { dsPersistStart(); if (dsCraterOn() && dsPersist.key && craterV !== dsPersist.cv) { dsPersist.cv = craterV; dsPersistLater() } }
+  if (isHost) { dsPersistStart(); dsTilesTick(); if (dsCraterOn() && dsPersist.key && craterV !== dsPersist.cv) { dsPersist.cv = craterV; dsPersist.manifestDirty = true; dsPersistLater() } }
   dsHeld()
   dsTakeDue()
   if (st.fx.length) {
@@ -26387,23 +26389,58 @@ function dsNotify() {
   st.buildings.clear()
 }
 
-// ---- persistence (phase 3): the server's changed world, kept wherever the server runs; guests never save (it belongs to
-// the server portion, so anyone who hosts a server, or anywhere a server is hosted, can save the server data).
-// A host in a browser keeps it in the browser's storage (IndexedDB; where that is blocked, quietly nothing)
-// and can save it to a file and load one back (the pause menu); the dedicated server keeps it in a file on its disk, and in
-// R2 when that is set up (its own functions, serverWorldSave and serverWorldLoad). One save per city (seed and size),
-// versioned and in sections, so other server state can join it later:
-//   { maniak: 'world', v: 1, seed, size, saved, state: { destruction: { v: 1, kinds: { <kind>: { <chunk>: <base64> } } } } }
-// a chunk's text being its records' (code, info) pairs as varints, codes in order and each as its step from the last. A
-// section this build doesn't know is kept as it came and written back; a save for another city is refused with a message.
-const DS_SAVE = { v: 1, debounceMs: 5000, db: 'maniak', store: 'worlds' }
-let dsPersist = { key: '', dirty: false, timer: 0, other: {}, saving: null, loads: 0, saves: 0, last: '' }
-// the plan's content version is in the save's name and in it (card #70): a city planned differently keeps its changes apart
-// (they'd land on other windows, lamps and posts), and a changed city starts clean. The name before the versions held saves
-// made under plan 2
+// ---- persistence (phase 3; in tiles since card #70): the server's changed world, kept wherever the server runs; guests never
+// save (it belongs to the server portion, so anyone who hosts a server, or anywhere a server is hosted, can save the server
+// data). A host in a browser keeps it in the browser's storage (IndexedDB; where that is blocked, quietly nothing) and can save
+// the city to a file and load one back (the pause menu); the dedicated server keeps it on its disk and in R2 when that is set up
+// (its own functions: serverWorldSave, serverWorldGet, serverWorldDrop).
+// The world is kept in tiles of 10 x 10 city cells (960 m), the tile of a record its chunk's (ci, cj) / 10, of a point
+// floor((x + S·48) / 960), out over the fields too. The host reads a tile in when a player comes within DS_SAVE.near of it,
+// writes a changed one back a few seconds after the change, and lets a clean one go a minute after the last player left: its
+// records leave the set (its chunks keep their versions, so a guest's sets stay in order), and the server drops its local copy
+// once R2 has it. A tile that couldn't be read is read again (5 s, doubling to a minute) and never written until it has been;
+// what broke in it meanwhile waits, and joins it then. No guest is sent a chunk's set while its tile is being read. Named:
+//   world-<seed>-<size>/t-<tx>-<tz>   { maniak: 'world-tile', v: 1, seed, size, tile: [tx, tz], saved,
+//                                       state: { destruction: { v: 1, kinds: { <kind>: { <chunk>: <base64> } } } } }
+//   world-<seed>-<size>/manifest      { maniak: 'world', v: 2, seed, size, tile: 960, tiles: [[tx, tz], ...], saved, migrated?,
+//                                       state: { craters?, ...other cards' sections } }
+// a chunk's text being its records' (code, info) pairs as varints, codes in order and each as its step from the last. The
+// manifest is written after its tiles, and lists what has been written (a reader reads a tile by its name: none there is
+// nothing changed). A city kept whole before the tiles (world-<seed>-<size>: the v 1 document below) is read once when there is
+// no manifest, written out as tiles (each read first), then the manifest; the old one stays. A server that keeps the world whole
+// (no serverWorldGet) is kept whole, as before. The pause menu's file is the city whole, as one v 1 document:
+//   { maniak: 'world', v: 1, seed, size, saved, state: { destruction: { v: 1, kinds }, craters?, ... } }
+// A section or kind this build doesn't know is kept as it came and written back; a save for another city is refused.
+const DS_SAVE = { v: 1, debounceMs: 5000, db: 'maniak', store: 'worlds', tileCells: 10, near: 500, idleMs: 60000, retryMs: [5000, 60000], tickMs: 1000 }
+let dsPersist = { key: '', dirty: false, timer: 0, other: {}, kept: {}, saving: null, loads: 0, saves: 0, last: '', reading: false, cv: 0,
+  mode: '', tiles: new Map(), listed: new Set(), manifestDirty: false, migrated: '', tickAt: 0, said: '', lastOthers: null }
+// the plan's content version is in the save's name and in every document (fix-forward 2): a city planned differently keeps its
+// changes apart (they'd land on other windows, lamps and posts), and a changed city starts clean. The name before the versions
+// held saves made under plan 2
 const dsPlanVersion = () => { const F = faustState; if (!F) return 0; if (dsPlanVersion.city !== F) { dsPlanVersion.city = F; dsPlanVersion.v = faustPlan(F.seed, 0, 0, F.S)?.version | 0 } return dsPlanVersion.v }
 const DS_UNVERSIONED = 2, dsWorldKeyOld = () => faustState ? 'world-' + faustState.seed + '-' + faustState.S : ''
 const dsWorldKey = () => faustState ? dsWorldKeyOld() + '-p' + dsPlanVersion() : ''
+// ---- the tiles: one set of functions for both hosts, so a name is the same wherever the world is kept
+const dsTileOfChunk = (chunk, S = faustState.S) => { const n = DS_SAVE.tileCells; return [Math.floor(Math.floor(chunk / S) / n), Math.floor(chunk % S / n)] }
+const dsTileOfPoint = (x, z, S = faustState.S) => { const m = DS_SAVE.tileCells * 96, A = S * 48; return [Math.floor((x + A) / m), Math.floor((z + A) / m)] }
+const dsTileName = (key, tx, tz) => key + '/t-' + tx + '-' + tz
+const dsManifestName = key => key + '/manifest'
+const dsTilesOn = () => !!dsPersist.key && dsPersist.mode === 'tiles'
+const dsTileNew = (tx, tz) => ({ tx, tz, state: 'idle', gen: 0, savedGen: 0, neededAt: 0, retryAt: 0, tries: 0, kept: {}, saving: false })
+function dsTileAt(tx, tz) {
+  const k = tx + ' ' + tz
+  let t = dsPersist.tiles.get(k)
+  if (!t) dsPersist.tiles.set(k, t = dsTileNew(tx, tz))
+  return t
+}
+// a chunk whose tile is being read (or couldn't be): its set isn't whole yet, so no guest is sent it
+function dsTileBusy(chunk) {
+  if (!dsTilesOn()) return false
+  const [tx, tz] = dsTileOfChunk(chunk), t = dsPersist.tiles.get(tx + ' ' + tz)
+  return !!t && t.state !== 'in'
+}
+// a change on the host to a record in chunk: its tile has something to write
+function dsTileTouch(chunk) { if (dsTilesOn()) { const [tx, tz] = dsTileOfChunk(chunk); dsTileAt(tx, tz).gen++ } }
 function dsVarints(nums) {
   const b = []
   for (let n of nums) { n = Math.max(0, Math.floor(n)); while (n >= 128) { b.push(n % 128 | 128); n = Math.floor(n / 128) } b.push(n) }
@@ -26417,41 +26454,74 @@ function dsUnvarints(text) {
   for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); n += (c & 127) * m; if (c & 128) m *= 128; else { out.push(n); n = 0; m = 1 } }
   return out
 }
+// a chunk's records, packed by kind into kinds ({ <kind>: { <chunk>: text } })
+function dsPackChunk(chunk, ch, kinds) {
+  const by = new Map()
+  for (const r of ch.recs.values()) { if (!by.has(r.kind)) by.set(r.kind, []); by.get(r.kind).push([dsCode(r), r.info]) }
+  for (const [kind, list] of by) {
+    list.sort((a, b) => a[0] - b[0])
+    const nums = []
+    let prev = 0
+    for (const [code, info] of list) { nums.push(code - prev, info); prev = code }
+    ;(kinds[kind] ||= {})[chunk] = dsVarints(nums)
+  }
+}
+// what the whole city's sections hold besides the records: the craters, and other cards' sections as they came
+function dsStateOthers() { const cr = dsCratersSave(); return { ...dsPersist.other, ...cr && { craters: cr } } }
+// the city whole, as one v 1 document (the file; a server that keeps it whole): what is in the set, and every tile's kept kinds
 function dsSaveDoc() {
   const st = dsState, F = faustState, kinds = {}
-  for (const [chunk, ch] of st.chunks) {
-    const by = new Map()
-    for (const r of ch.recs.values()) { if (!by.has(r.kind)) by.set(r.kind, []); by.get(r.kind).push([dsCode(r), r.info]) }
-    for (const [kind, list] of by) {
-      list.sort((a, b) => a[0] - b[0])
-      const nums = []
-      let prev = 0
-      for (const [code, info] of list) { nums.push(code - prev, info); prev = code }
-      ;(kinds[kind] ||= {})[chunk] = dsVarints(nums)
-    }
-  }
-  for (const [kind, chunks] of Object.entries(dsPersist.kept || {})) if (!kinds[kind]) kinds[kind] = chunks      // nobody's kind yet: as it came
-  const cr = dsCratersSave()
-  return { maniak: 'world', v: DS_SAVE.v, seed: F.seed, size: F.S, plan: dsPlanVersion(), saved: new Date().toISOString(), state: { ...dsPersist.other, destruction: { v: 1, kinds }, ...cr && { craters: cr } } }
+  for (const [chunk, ch] of st.chunks) dsPackChunk(chunk, ch, kinds)
+  const kept = [dsPersist.kept, ...[...dsPersist.tiles.values()].map(t => t.kept)]
+  for (const K of kept) for (const [kind, chunks] of Object.entries(K || {})) kinds[kind] = { ...chunks, ...kinds[kind] || {} }      // nobody's kind yet: as it came
+  return { maniak: 'world', v: DS_SAVE.v, seed: F.seed, size: F.S, plan: dsPlanVersion(), saved: new Date().toISOString(), state: { ...dsStateOthers(), destruction: { v: 1, kinds } } }
 }
-// a save, into this city (the host's): the number of things it brought, or a message why not
+// a tile's document: the records of its chunks in the set, and its kept kinds
+function dsTileDoc(t) {
+  const st = dsState, F = faustState, kinds = {}
+  for (const [chunk, ch] of st.chunks) { const [tx, tz] = dsTileOfChunk(chunk); if (tx === t.tx && tz === t.tz) dsPackChunk(chunk, ch, kinds) }
+  for (const [kind, chunks] of Object.entries(t.kept)) kinds[kind] = { ...chunks, ...kinds[kind] || {} }
+  return { maniak: 'world-tile', v: 1, seed: F.seed, size: F.S, plan: dsPlanVersion(), tile: [t.tx, t.tz], saved: new Date().toISOString(), state: { destruction: { v: 1, kinds } } }
+}
+// the manifest: the tiles written, and the city's sections (state: those given, else the city's now)
+function dsManifestDoc(state = dsStateOthers()) {
+  const F = faustState
+  return { maniak: 'world', v: 2, seed: F.seed, size: F.S, plan: dsPlanVersion(), tile: DS_SAVE.tileCells * 96, tiles: [...dsPersist.listed].map(k => k.split(' ').map(Number)).sort((a, b) => a[0] - b[0] || a[1] - b[1]),
+    saved: new Date().toISOString(), ...dsPersist.migrated && { migrated: dsPersist.migrated }, state }
+}
+// a save, into this city (the host's): the number of things it brought, or a message why not. The whole city's (v 1: the file,
+// an old server's); records go to their tiles (in tiles, a tile not read yet is read before any of it is written)
 function dsLoadDoc(doc) {
   if (!doc || typeof doc !== 'object' || doc.maniak !== 'world' || !Number.isInteger(doc.v) || doc.v < 1) return 'it is not a saved Faustland'
-  if (doc.v > DS_SAVE.v) return 'it was saved by a newer version of the game'
+  if (doc.v > 1) return doc.v === 2 ? 'it is a list of a city\'s tiles, not a city' : 'it was saved by a newer version of the game'
   const F = faustState
   if (!F || !dsCheck()) return 'there is no city to load it into'
   if (doc.seed >>> 0 !== F.seed || doc.size !== F.S) return 'it is for city seed ' + (doc.seed >>> 0) + ' (size ' + doc.size + '), and this city is seed ' + F.seed + ' (size ' + F.S + ')'
   if ((doc.plan ?? DS_UNVERSIONED) !== dsPlanVersion()) return 'it is for this city as it was planned before (plan ' + (doc.plan ?? DS_UNVERSIONED) + '; it is plan ' + dsPlanVersion() + ' now)'
-  const { destruction, craters: cr, ...other } = doc.state && typeof doc.state === 'object' ? doc.state : {}
-  dsPersist.other = other
-  // craters: through the game's own path; kept as they came where this level has none
-  let n = dsCraterOn() ? dsCratersLoad(cr) : (cr !== undefined && (other.craters = cr), 0)
+  const { destruction, ...others } = doc.state && typeof doc.state === 'object' ? doc.state : {}
+  let n = dsOthersLoad(others)
   if (destruction?.v === 1 && destruction.kinds && typeof destruction.kinds === 'object') for (const [kind, chunks] of Object.entries(destruction.kinds)) {
     if (!chunks || typeof chunks !== 'object') continue
-    if (+kind <= DS_KIND.pole || dsKinds.has(+kind)) n += dsLoadKind(+kind, chunks)
-    else if (+kind > DS_KIND.pole && +kind <= 255) { const K = dsPersist.kept ||= {}; K[kind] = { ...K[kind] || {}, ...chunks } }      // nobody's kind yet: kept
+    if (dsTilesOn()) {
+      // in tiles: by tile, each touched tile to write (once it has been read)
+      const byTile = new Map()
+      for (const [chunk, text] of Object.entries(chunks)) { if (!(+chunk >= 0 && +chunk < F.S * F.S)) continue; const [tx, tz] = dsTileOfChunk(+chunk), k = tx + ' ' + tz; if (!byTile.has(k)) byTile.set(k, {}); byTile.get(k)[chunk] = text }
+      for (const part of byTile.values()) { const [tx, tz] = dsTileOfChunk(+Object.keys(part)[0]), t = dsTileAt(tx, tz); n += dsKindIn(+kind, part, t); t.gen++ }
+    } else n += dsKindIn(+kind, chunks, null)
   }
   return n
+}
+// craters (the game's own path) and other cards' sections, from a whole city's or a manifest's state: kept as they came
+function dsOthersLoad(others) {
+  const { craters: cr, ...other } = others || {}
+  dsPersist.other = { ...dsPersist.other, ...other }
+  return dsCraterOn() ? dsCratersLoad(cr) : (cr !== undefined && (dsPersist.other.craters = cr), 0)
+}
+// a save's records of one kind into the set, or (a kind nobody has registered yet) kept as they came, with their tile or the city
+function dsKindIn(kind, chunks, t) {
+  if (kind <= DS_KIND.pole || dsKinds.has(kind)) return dsLoadKind(kind, chunks)
+  if (kind > DS_KIND.pole && kind <= 255) { const K = t ? t.kept : dsPersist.kept; K[kind] = { ...K[kind] || {}, ...chunks } }
+  return 0
 }
 // a save's records of one kind (its chunks' texts) into the set: the number added
 function dsLoadKind(kind, chunks) {
@@ -26472,6 +26542,18 @@ function dsLoadKind(kind, chunks) {
   }
   return n
 }
+// a tile's document, read: into the set (what broke in it while it was read stays, and the tile is written with both)
+function dsTileLoad(t, doc) {
+  const F = faustState
+  if (!doc || doc.maniak !== 'world-tile' || doc.v !== 1 || doc.seed >>> 0 !== F.seed || doc.size !== F.S || doc.plan !== dsPlanVersion() || !Array.isArray(doc.tile) || doc.tile[0] !== t.tx || doc.tile[1] !== t.tz) return -1
+  const kinds = doc.state?.destruction?.v === 1 ? doc.state.destruction.kinds : null
+  let n = 0
+  if (kinds && typeof kinds === 'object') for (const [kind, chunks] of Object.entries(kinds)) if (chunks && typeof chunks === 'object') {
+    const mine = Object.fromEntries(Object.entries(chunks).filter(([c]) => { const [tx, tz] = dsTileOfChunk(+c); return tx === t.tx && tz === t.tz }))
+    n += dsKindIn(+kind, mine, t)
+  }
+  return n
+}
 // craters (#6, #52): the host's list, kept with the city's changes. A save's list comes back through the game's own path: the
 // list set, sent to guests as ever (levelSeed), and built (buildCrater; a cell not loaded yet is cut when it loads)
 const dsCraterOn = () => typeof craters !== 'undefined' && typeof buildCrater === 'function' && !!GAME.crater?.spec?.()
@@ -26487,20 +26569,30 @@ function dsCratersLoad(sec) {
 }
 // the server's own store: the dedicated server's functions, else this browser's IndexedDB
 const dsServerStore = () => serving && typeof globalThis.serverWorldSave === 'function' && typeof globalThis.serverWorldLoad === 'function'
+// in tiles where the store can tell a thing that isn't there from one it couldn't read (a server from card #70 on; a browser)
+const dsTilesCan = () => dsServerStore() ? typeof globalThis.serverWorldGet === 'function' : !serving
 function dsIdb() {
   return new Promise(ok => {
     try { const q = indexedDB.open(DS_SAVE.db, 1); q.onupgradeneeded = () => q.result.createObjectStore(DS_SAVE.store); q.onsuccess = () => ok(q.result); q.onerror = q.onblocked = () => ok(null) }
     catch (e) { ok(null) }
   })
 }
-async function dsStoreGet(key) {
+// a kept thing by name: { doc }, { absent: true } (nothing there), or { failed } (couldn't be read: never written over)
+async function dsStoreRead(name) {
+  const parse = text => { try { return { doc: JSON.parse(text) } } catch (e) { return { failed: 'not JSON' } } }
   try {
-    if (dsServerStore()) { const text = await globalThis.serverWorldLoad(key); return text ? JSON.parse(text) : null }
-    if (serving) return null           // a dedicated server with nowhere set up to keep it: nothing kept
+    if (dsServerStore()) {
+      if (typeof globalThis.serverWorldGet === 'function') { const r = await globalThis.serverWorldGet(name); return typeof r?.text === 'string' ? parse(r.text) : r?.absent ? { absent: true } : { failed: r?.failed || 'unknown' } }
+      const text = await globalThis.serverWorldLoad(name)          // an older server: none and a failure look the same
+      return text ? parse(text) : { absent: true }
+    }
+    if (serving) return { absent: true }            // a dedicated server with nowhere set up to keep it: nothing kept
     const db = await dsIdb()
-    return db && await new Promise(ok => { try { const q = db.transaction(DS_SAVE.store).objectStore(DS_SAVE.store).get(key); q.onsuccess = () => ok(q.result ?? null); q.onerror = () => ok(null) } catch (e) { ok(null) } })
-  } catch (e) { return null }
+    if (!db) return { absent: true }                // storage blocked (a sandboxed frame): nothing kept, quietly
+    return await new Promise(ok => { try { const q = db.transaction(DS_SAVE.store).objectStore(DS_SAVE.store).get(name); q.onsuccess = () => ok(q.result == null ? { absent: true } : { doc: q.result }); q.onerror = () => ok({ failed: 'storage' }) } catch (e) { ok({ failed: 'storage' }) } })
+  } catch (e) { return { failed: String(e?.message || e).slice(0, 80) } }
 }
+async function dsStoreGet(key) { const r = await dsStoreRead(key); return r.doc || null }
 async function dsStorePut(key, doc) {
   try {
     if (dsServerStore()) return !!await globalThis.serverWorldSave(key, JSON.stringify(doc))
@@ -26509,45 +26601,186 @@ async function dsStorePut(key, doc) {
     return !!db && await new Promise(ok => { try { const t = db.transaction(DS_SAVE.store, 'readwrite'); t.objectStore(DS_SAVE.store).put(doc, key); t.oncomplete = () => ok(true); t.onerror = t.onabort = () => ok(false) } catch (e) { ok(false) } })
   } catch (e) { return false }
 }
-// the host's city: what it saved last time comes back (merged with anything already broken), once per city
+// every tile of a city this browser keeps (for the file): their names
+async function dsIdbNames(prefix) {
+  const db = await dsIdb()
+  if (!db) return []
+  return new Promise(ok => { try { const q = db.transaction(DS_SAVE.store).objectStore(DS_SAVE.store).getAllKeys(IDBKeyRange.bound(prefix, prefix + '￿')); q.onsuccess = () => ok(q.result || []); q.onerror = () => ok([]) } catch (e) { ok([]) } })
+}
+function dsPersistSay(msg) { if (dsPersist.said !== msg) { dsPersist.said = msg; console.warn('destruction: ' + msg) } }
+// the host's city: what it saved last time comes back (merged with anything already broken), once per city. In tiles: its
+// manifest (its craters and other sections; or, none there, a city kept whole before the tiles, written out as tiles), then the
+// tiles players are near (dsTilesTick)
 function dsPersistStart() {
   const key = dsWorldKey()
   if (!isHost || !key || dsPersist.key === key) return
-  dsPersist = { ...dsPersist, key, dirty: false, other: {}, kept: {}, reading: true, cv: typeof craterV === 'undefined' ? 0 : craterV }
-  // none under this name: the save from before the versions, if the plan is still the one it was made under (then written
-  // again under this name); a changed city starts clean, and says once that the old one isn't read
-  const read = dsStoreGet(key).then(doc => doc || dsStoreGet(dsWorldKeyOld()).then(old => {
-    if (!old) return null
-    if (dsPlanVersion() === DS_UNVERSIONED) { dsPersist.fromOld = true; return old }
-    console.error('destruction: this city\'s save from before plan versions is not read: the city is planned differently now (plan ' + dsPlanVersion() + ')')
-    return null
-  }))
-  read.then(() => {}, () => {}).then(() => { if (dsPersist.key === key) { dsPersist.reading = false; if (dsPersist.dirty) dsPersistLater() } })
-  read.then(doc => {
-    if (!doc || dsPersist.key !== key || dsWorldKey() !== key || !isHost) return
-    const n = dsLoadDoc(doc)
-    dsPersist.loads++; dsPersist.last = typeof n === 'number' ? 'loaded ' + n : n
-    if (dsPersist.fromOld) { dsPersist.fromOld = false; if (typeof n === 'number') dsPersistLater() }      // under its new name
-    if (typeof n === 'number' && n > 0) try { sysMsg('§7This city\'s broken glass and lamps from last time: §f' + n + '§7.') } catch (e) {}
+  dsPersist = { ...dsPersist, key, dirty: false, other: {}, kept: {}, reading: true, cv: typeof craterV === 'undefined' ? 0 : craterV,
+    mode: dsTilesCan() ? 'tiles' : 'whole', tiles: new Map(), listed: new Set(), manifestDirty: false, migrated: '', tickAt: 0, said: '' }
+  dsPersistRead(key, 0)
+}
+function dsPersistRead(key, tries) {
+  const done = n => { dsPersist.reading = false; dsPersist.loads++; if (typeof n === 'number') { dsPersist.last = 'loaded ' + n; if (n > 0) try { sysMsg('§7This city\'s broken glass and lamps from last time: §f' + n + '§7.') } catch (e) {} } else if (n) dsPersist.last = n
+    if (dsPersist.dirty || dsPersist.manifestDirty) dsPersistLater(); dsTilesTick(true) }
+  const again = why => { dsPersist.last = 'read failed (' + why + '): trying again'; dsPersistSay('the city\'s save couldn\'t be read (' + why + '); trying again'); setTimeout(() => { if (dsPersist.key === key) dsPersistRead(key, tries + 1) }, Math.min(DS_SAVE.retryMs[1], DS_SAVE.retryMs[0] * 2 ** tries)) }
+  if (dsPersist.mode === 'whole') return dsStoreRead(key).then(async r => {
+    if (dsPersist.key !== key || dsWorldKey() !== key || !isHost) return
+    if (r.failed) return again(r.failed)
+    const old = r.doc ? null : await dsReadUnversioned()
+    if (dsPersist.key !== key) return
+    if (old?.failed) return again(old.failed)
+    const doc = r.doc || old?.doc
+    const n = doc ? dsLoadDoc(doc) : 0
+    if (old?.doc && typeof n === 'number') dsPersist.dirty = true            // written again under its new name
+    done(n)
+  })
+  dsStoreRead(dsManifestName(key)).then(async m => {
+    if (dsPersist.key !== key || dsWorldKey() !== key || !isHost) return
+    if (m.failed) return again(m.failed)
+    if (m.doc) {
+      const d = m.doc
+      if (d.maniak !== 'world' || d.v !== 2 || d.seed >>> 0 !== faustState.seed || d.size !== faustState.S) return done('its list of tiles is not this city\'s')
+      for (const p of Array.isArray(d.tiles) ? d.tiles : []) if (Array.isArray(p) && p.every(Number.isInteger)) dsPersist.listed.add(p[0] + ' ' + p[1])
+      dsPersist.migrated = typeof d.migrated === 'string' ? d.migrated : ''
+      const n = dsOthersLoad(d.state)
+      dsPersist.lastOthers = dsStateOthers()
+      return done(n)
+    }
+    // none: a city kept whole before the tiles (under this name, else under the one before the versions while the plan is the
+    // one it was made under), read once and written out as tiles (each read first: a migration cut short and run again merges),
+    // the manifest after them; the old one stays
+    let old = await dsStoreRead(key)
+    if (dsPersist.key !== key || dsWorldKey() !== key || !isHost) return
+    if (old.failed) return again(old.failed)
+    if (!old.doc) { old = await dsReadUnversioned(); if (dsPersist.key !== key) return; if (old.failed) return again(old.failed) }
+    if (!old.doc) return done(0)
+    const n = dsLoadDoc(old.doc)
+    if (typeof n === 'number') { dsPersist.migrated = String(old.doc.saved || 'yes'); dsPersist.manifestDirty = true; dsPersistSay('the city kept whole (' + n + ' things) goes into tiles') }
+    done(n)
   })
 }
+// the save from before the versions: read while the plan is the one it was made under; else said once that it isn't
+async function dsReadUnversioned() {
+  const r = await dsStoreRead(dsWorldKeyOld())
+  if (!r.doc || dsPlanVersion() === DS_UNVERSIONED) return r
+  console.error('destruction: this city\'s save from before plan versions is not read: the city is planned differently now (plan ' + dsPlanVersion() + ')')
+  return { absent: true }
+}
+// the host, about once a second: the tiles players are near read in (and ones that failed, again), clean ones nobody has been
+// near for a minute let go
+function dsTilesTick(now = false) {
+  const P = dsPersist, T = performance.now()
+  if (!isHost || !dsTilesOn() || P.reading || !dsState || !now && T - P.tickAt < DS_SAVE.tickMs) return
+  P.tickAt = T
+  const need = new Set(), r = DS_SAVE.near
+  for (const c of players.values()) {
+    if (!Number.isFinite(c.x) || !Number.isFinite(c.z)) continue
+    const [a0, b0] = dsTileOfPoint(c.x - r, c.z - r), [a1, b1] = dsTileOfPoint(c.x + r, c.z + r)
+    for (let tx = a0; tx <= a1; tx++) for (let tz = b0; tz <= b1; tz++) need.add(tx + ' ' + tz)
+  }
+  for (const k of need) { const [tx, tz] = k.split(' ').map(Number); dsTileAt(tx, tz).neededAt = T }
+  for (const [k, t] of P.tiles) {
+    if (t.state === 'idle' || t.state === 'failed' && T >= t.retryAt) dsTileRead(t)
+    else if (t.state === 'in' && t.gen === t.savedGen && !t.saving && !need.has(k) && T - t.neededAt > DS_SAVE.idleMs) dsTileEvict(k, t)
+  }
+}
+function dsTileRead(t) {
+  const P = dsPersist, key = P.key
+  t.state = 'reading'
+  dsStoreRead(dsTileName(key, t.tx, t.tz)).then(r => {
+    if (P !== dsPersist || dsPersist.key !== key || dsPersist.tiles.get(t.tx + ' ' + t.tz) !== t) return
+    const n = r.doc ? dsTileLoad(t, r.doc) : 0
+    if (r.failed || n < 0) {
+      t.state = 'failed'; t.tries++; t.retryAt = performance.now() + Math.min(DS_SAVE.retryMs[1], DS_SAVE.retryMs[0] * 2 ** (t.tries - 1))
+      return dsPersistSay('a tile of the city couldn\'t be read (' + (r.failed || 'not this city\'s') + '); trying again, and nothing written over it')
+    }
+    t.state = 'in'; t.tries = 0
+    if (r.doc) P.listed.add(t.tx + ' ' + t.tz)
+    if (t.gen !== t.savedGen) dsPersistLater()          // what broke while it was read: written now, with what it had
+  })
+}
+// a tile nobody is near: its records out of the set (its chunks remember their versions), and the server's local copy dropped
+function dsTileEvict(k, t) {
+  const st = dsState, V = st.chunkV ||= new Map()
+  for (const [chunk, ch] of [...st.chunks]) {
+    const [tx, tz] = dsTileOfChunk(chunk)
+    if (tx !== t.tx || tz !== t.tz) continue
+    for (const key of ch.recs.keys()) st.all.delete(key)
+    V.set(chunk, ch.v); st.chunks.delete(chunk)
+  }
+  st.tableDirty = true; st.fallenDirty = true
+  dsPersist.tiles.delete(k)
+  if (dsServerStore() && typeof globalThis.serverWorldDrop === 'function') globalThis.serverWorldDrop(dsTileName(dsPersist.key, t.tx, t.tz)).catch(() => {})
+}
 // a change on the host: saved a few seconds after the last one (debounced)
-function dsPersistLater() {
+function dsPersistLater(ms = DS_SAVE.debounceMs) {
   if (!isHost || !dsPersist.key) return
   dsPersist.dirty = true
-  clearTimeout(dsPersist.timer); dsPersist.timer = setTimeout(() => dsPersistNow(), DS_SAVE.debounceMs)
+  clearTimeout(dsPersist.timer); dsPersist.timer = setTimeout(() => dsPersistNow(), ms)
 }
-// save now if anything changed (or always, when asked); resolves true once stored
+// save now if anything changed (always: whether or not the debounce ran out); resolves true once all of it is stored. In
+// tiles: each changed tile that has been read, then the manifest if a tile is new or the city's sections changed; a write that
+// failed is tried again
 function dsPersistNow(always = false) {
-  if (!isHost || !dsState || !dsPersist.key || dsPersist.key !== dsWorldKey() || !dsPersist.dirty && !always || dsPersist.reading) return Promise.resolve(false)
-  clearTimeout(dsPersist.timer); dsPersist.dirty = false
-  const doc = dsSaveDoc(), key = dsPersist.key
-  return dsPersist.saving = dsStorePut(key, doc).then(ok => { dsPersist.saves++; if (!ok) dsPersist.dirty = true; return ok })
+  const P = dsPersist
+  if (!isHost || !dsState || !P.key || P.key !== dsWorldKey() || !P.dirty && !P.manifestDirty && !always || P.reading) return Promise.resolve(false)
+  clearTimeout(P.timer); P.dirty = false
+  const key = P.key
+  if (P.mode === 'whole') return P.saving = dsStorePut(key, dsSaveDoc()).then(ok => { P.saves++; if (!ok) dsPersistLater(DS_SAVE.retryMs[0]); return ok })
+  const todo = [...P.tiles.values()].filter(t => t.state === 'in' && t.gen !== t.savedGen && !t.saving)
+  return P.saving = (async () => {
+    const oks = await Promise.all(todo.map(async t => {
+      const gen = t.gen
+      t.saving = true
+      const ok = await dsStorePut(dsTileName(key, t.tx, t.tz), dsTileDoc(t)).catch(() => false)
+      t.saving = false
+      if (ok) { t.savedGen = Math.max(t.savedGen, gen); const k = t.tx + ' ' + t.tz; if (!P.listed.has(k)) { P.listed.add(k); P.manifestDirty = true } }
+      return ok
+    }))
+    if (P !== dsPersist) return false
+    let ok = oks.every(Boolean)
+    // the manifest after its tiles; while a migration's tiles aren't all written, not yet
+    const migrating = P.migrated && [...P.tiles.values()].some(t => t.gen !== t.savedGen)
+    if (P.manifestDirty && !migrating) { P.manifestDirty = false; const others = dsStateOthers(); if (await dsStorePut(dsManifestName(key), dsManifestDoc(others)).catch(() => false)) P.lastOthers = others; else { P.manifestDirty = true; ok = false } }
+    P.saves++
+    if (!ok) dsPersistSay('a save of the city wasn\'t taken; trying again')
+    if (!ok || P.manifestDirty || [...P.tiles.values()].some(t => t.state === 'in' && t.gen !== t.savedGen)) dsPersistLater(ok ? DS_SAVE.debounceMs : DS_SAVE.retryMs[0])
+    return ok
+  })()
 }
-// the pause menu: the host saves the city's changes to a file, or loads a file's back
-function dsWorldExport() {
+// the city's tiles nobody could read, with changes waiting on them (said when the server stops)
+const dsTilesWaiting = () => [...dsPersist.tiles.values()].filter(t => t.state !== 'in' && t.gen !== t.savedGen).length
+// the old city on a change of city: its changed tiles (and manifest), or the whole city, written as they are
+function dsPersistFlushOld() {
+  const P = dsPersist, st = dsState
+  if (!st || !isHost || P.reading || !P.key || P.key !== 'world-' + st.seed + '-' + st.S) return
+  const F = faustState
+  try {
+    faustState = { ...F, seed: st.seed, S: st.S }        // the docs are made in the old city's terms
+    if (P.mode === 'whole') { if (P.dirty) dsStorePut(P.key, dsSaveDoc()) }
+    else {
+      const todo = [...P.tiles.values()].filter(t => t.state === 'in' && t.gen !== t.savedGen), docs = todo.map(t => [dsTileName(P.key, t.tx, t.tz), dsTileDoc(t)])
+      for (const t of todo) { const k = t.tx + ' ' + t.tz; if (!P.listed.has(k)) { P.listed.add(k); P.manifestDirty = true } }
+      // the manifest with the city's sections as last read or written: by now the level may have let the craters go
+      const man = P.manifestDirty && dsManifestDoc(P.lastOthers || { ...dsPersist.other }), key = P.key
+      Promise.all(docs.map(([n, d]) => dsStorePut(n, d))).then(() => man && dsStorePut(dsManifestName(key), man))
+    }
+  } finally { faustState = F }
+}
+// the pause menu: the host saves the city's changes to a file (the city whole: every tile this browser keeps, and what is in
+// play), or loads a file's back
+async function dsWorldExport() {
   if (!isHost || !dsCheck()) return sysMsg('§7Only the host keeps the city\'s changes.')
-  const doc = dsSaveDoc(), url = URL.createObjectURL(new Blob([JSON.stringify(doc)], { type: 'application/json' })), a = document.createElement('a')
+  const doc = dsSaveDoc()
+  if (dsTilesOn() && !dsServerStore()) {
+    // the tiles not in play, from this browser's storage (what is in play is newer, and already in doc)
+    const inPlay = new Set([...dsPersist.tiles.values()].filter(t => t.state === 'in').map(t => dsTileName(dsPersist.key, t.tx, t.tz)))
+    for (const name of await dsIdbNames(dsPersist.key + '/t-')) {
+      if (inPlay.has(name)) continue
+      const r = await dsStoreRead(name), kinds = r.doc?.state?.destruction?.kinds
+      if (kinds) for (const [kind, chunks] of Object.entries(kinds)) for (const [chunk, text] of Object.entries(chunks || {})) ((doc.state.destruction.kinds[kind] ||= {})[chunk] ??= text)
+    }
+  }
+  const url = URL.createObjectURL(new Blob([JSON.stringify(doc)], { type: 'application/json' })), a = document.createElement('a')
   a.href = url; a.download = 'faustland-' + doc.seed + '-' + doc.size + '.json'; document.body.appendChild(a); a.click(); a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10000)
   sysMsg('§7Saved this city\'s changes to a file.')
@@ -26558,11 +26791,10 @@ function dsWorldImport(file) {
     let doc = null
     try { doc = JSON.parse(text) } catch (e) {}
     const n = dsLoadDoc(doc)
-    if (typeof n === 'number') { dsPersistLater(); sysMsg('§7Loaded the city\'s changes from the file: §f' + n + '§7 new.') }
+    if (typeof n === 'number') { dsPersistLater(); dsTilesTick(true); sysMsg('§7Loaded the city\'s changes from the file: §f' + n + '§7 new.') }
     else sysMsg('§cCould not load that file: ' + n + '.')
   }, () => sysMsg('§cCould not read that file.'))
 }
-
 // ---- hooks into the engine and the game
 {
   const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems, left = L.left
@@ -26575,7 +26807,7 @@ function dsWorldImport(file) {
   L.sessionEnd = function () { dsPersistNow(); return end.apply(this, arguments) }
   const bp = HOST_PHASES.beforePhysics, ap = HOST_PHASES.afterPhysics
   HOST_PHASES.beforePhysics = t => { bp(t); if (LV.faust) dsBodiesBefore(t.all || []) }
-  HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust) { const t0 = performance.now(); dsBodiesAfter(t.all || [], t.dt); if (dsState) { dsPersistStart(); dsPostsTick(t.all || [], t.dt); dsObjectsTick(t.dt); dsNotify(); dsState.stats.hostMs = +(performance.now() - t0).toFixed(3) } } }
+  HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust) { const t0 = performance.now(); dsBodiesAfter(t.all || [], t.dt); if (dsState) { dsPersistStart(); dsTilesTick(); dsPostsTick(t.all || [], t.dt); dsObjectsTick(t.dt); dsNotify(); dsState.stats.hostMs = +(performance.now() - t0).toFixed(3) } } }
 }
 // /saveworld (the host's chat command; on a dedicated server the action API's POST /command reaches it, card #70): the city's
 // changes saved now, and how it went said. A dedicated server saves through its own serverWorldSaveNow, which waits for R2's
@@ -26623,7 +26855,10 @@ GAME.destruction = {
   fellSignal(key, dx = 1, dz = 0) { const p = dsCheck() && dsSignal(key); return !!p && dsFellSignal(p, dx, dz, 2) },
   // persistence (host): the save as it would be written, loading one, saving now, the file export and import, and its state
   persist: { doc: () => dsCheck() ? dsSaveDoc() : null, load: doc => dsLoadDoc(doc), now: () => dsPersistNow(true), export: () => dsWorldExport(), import: f => dsWorldImport(f),
-    get state() { return { key: dsPersist.key, dirty: dsPersist.dirty, loads: dsPersist.loads, saves: dsPersist.saves, last: dsPersist.last, server: dsServerStore() } } },
+    get state() { const T = [...dsPersist.tiles.values()], n = s => T.filter(t => t.state === s).length
+      return { key: dsPersist.key, dirty: dsPersist.dirty, loads: dsPersist.loads, saves: dsPersist.saves, last: dsPersist.last, server: dsServerStore(), mode: dsPersist.mode,
+        tiles: { in: n('in'), reading: n('reading') + n('idle'), failed: n('failed'), changed: T.filter(t => t.gen !== t.savedGen).length, listed: dsPersist.listed.size } } },
+    tileOf: (x, z) => dsCheck() ? dsTileOfPoint(x, z) : null, tick: () => dsTilesTick(true) },
   // debug and tests: draw from a free camera at p = [x, y, z] looking at t until view(null)
   view(p, t) { if (dsCheck()) dsState.view = p ? { p, t } : null },
   get table() { return dsTex && { slots: dsTex.image.data.length, count: dsUniforms.dsCity.value.z } },
