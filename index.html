@@ -4436,6 +4436,40 @@ function faustDecoShed(g, lot) {
   g.box(faustBox(sx, y + 36.0, sz, 2.2, 0.1, 2.2), 0xe1d2a9, 0.7)
   for (const a of [-1, 1]) for (const b of [-1, 1]) g.box(faustBox(sx + a * 1.65, y + 20, sz + b * 1.65, 0.12, 15, 0.12), 0x8b939b)
 }
+// card #69: relief on a tower's setbacks. Each ledge (the base's top, the middle's top) gets a low wall just inside its
+// cornice with a row of zig-zag teeth along it, drawn both ways round; the front pier over the door carries a stack of brass
+// chevrons flush on its face (from 5.4 m up, over the marquee). Pure in the lot.
+function faustDecoRelief(g, lot) {
+  const { x, z, d, height: H, mass } = lot, D = FAUST_DECO
+  if (mass.length < 3) return
+  for (const m of [mass[0], mass[1]]) {
+    const top = m.cy + m.ey, y = top + 0.45
+    // the wall: four slabs 0.2 m thick, 0.7 m high, 0.9 m inside the faces (the cornice ring is 0.7 m in at its inner edge)
+    const ex = m.ex - 0.9, ez = m.ez - 0.9
+    g.box(faustBox(m.cx, y + 0.35, m.cz + ez, ex, 0.35, 0.1), D.band); g.box(faustBox(m.cx, y + 0.35, m.cz - ez, ex, 0.35, 0.1), D.band)
+    g.box(faustBox(m.cx + ex, y + 0.35, m.cz, 0.1, 0.35, ez), D.band); g.box(faustBox(m.cx - ex, y + 0.35, m.cz, 0.1, 0.35, ez), D.band)
+    // the teeth: a triangle each 1.6 m, both ways round
+    const n = a => Math.max(2, Math.floor(a * 2 / 1.6))
+    for (const sz of [-1, 1]) {
+      const nx = n(ex), step = ex * 2 / nx
+      for (let i = 0; i < nx; i++) {
+        const a = m.cx - ex + i * step, p = [a, y + 0.7, m.cz + sz * ez], q = [a + step, y + 0.7, m.cz + sz * ez], t = [a + step / 2, y + 0.7 + 1.1, m.cz + sz * ez]
+        g.tri(p, q, t, D.band); g.tri(q, p, t, D.band)
+      }
+      const nz = n(ez), sp = ez * 2 / nz
+      for (let i = 0; i < nz; i++) {
+        const a = m.cz - ez + i * sp, p = [m.cx + sz * ex, y + 0.7, a], q = [m.cx + sz * ex, y + 0.7, a + sp], t = [m.cx + sz * ex, y + 0.7 + 1.1, a + sp / 2]
+        g.tri(p, q, t, D.band); g.tri(q, p, t, D.band)
+      }
+    }
+  }
+  // chevrons on the front pier (its face is at z + d + 1.13; the door's marquee ends at 4.4 m)
+  const f = z + d + 1.15, top = Math.min(4.6 + 14, H * 0.64 - 2)
+  for (let y = 5.4; y + 0.62 < top; y += 0.8) {
+    const L = [[x - 0.55, y], [x, y + 0.4], [x, y + 0.62], [x - 0.55, y + 0.22]], R = [[x, y + 0.4], [x + 0.55, y], [x + 0.55, y + 0.22], [x, y + 0.62]]
+    for (const q of [L, R]) { g.tri([q[0][0], q[0][1], f], [q[1][0], q[1][1], f], [q[2][0], q[2][1], f], D.brass); g.tri([q[0][0], q[0][1], f], [q[2][0], q[2][1], f], [q[3][0], q[3][1], f], D.brass) }
+  }
+}
 function* faustVisualSteps(c) {
   const facade = faustBatch(3072), ornament = faustBatch(26624), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
@@ -4549,6 +4583,7 @@ function* faustVisualSteps(c) {
     }
     // card #69: the tower's Art Deco crown, setback pylons and corner fins
     faustDecoTower(ornament, lot)
+    faustDecoRelief(ornament, lot)
     yield
   }
   // Slender paired lamps on the avenue, merged with all other street detail.
