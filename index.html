@@ -736,6 +736,122 @@ const TEXT = {
 const enemyName = id => NAMES[id] ?? id
 const gameText = (key, v) => TEXT[key].replace(/\{(\w+)\}/g, (m, k) => v?.[k] ?? m)
 
+// ================================================================ GAME SOUNDS (card #76)
+// ---- edit sounds here: one row per sound, key = the sound's id (never change a key: the code and the saves ask for it by name).
+// Where a sound comes from, in this order: a replacement set at run time (gameHooks.sounds.set, /sound), then `file`, then `synth`.
+//   file:  a file in assets/ with a versioned name, e.g. 'punch.1a2b3c4d.mp3' (one name, or a list of VARIANTS: one is chosen each
+//          play, never the same twice running). The page fetches it in the background after the game starts and decodes it the first
+//          time it plays; until it is ready, or if it is missing or fails to load, the row's `synth` plays instead (null: silence)
+//   synth: the name of a recipe in SYNTH (the sound section further down) that makes the sound, null for none. `say` is the text
+//          for a generator of effects (sfxMake) when one is set
+//   vol:   the row's loudness (default 1); vary: random pitch spread, 0.05 is ±5% (default 0)
+//   reach: how far it carries (default 1; more = further), see SFX_REACH for the rows that set it
+// The text after each row says where it plays. A row with `file: null, synth: null` is silent: that's how a new game starts.
+// Try one without a release: /sound <key> in chat (host), or gameHooks.sounds.set('<key>', '<url>'); /sound alone lists the keys.
+// Ids: SOUNDS keys: a GUNS name (+ ' charge'), or an event; '<name> <event>' overrides it (CHARS/BOTS body, gun, power)
+const SOUNDS = {
+  // ---- weapons, as they fire: every weapon needs one, each distinct (at the shooter; yours quieter, others at their place)
+  Fists: { say: 'a quick bare-knuckle punch: a short whoosh and a meaty smack', seed: 0, file: null, synth: null },              // every punch
+  Pistol: { say: 'a short, punchy pistol shot', seed: 0, file: null, synth: null },                                              // a pistol's shot
+  Scatter: { say: 'a booming shotgun blast with a pump-action rack after it', seed: 0, file: null, synth: null },                 // a shotgun's blast
+  Needler: { say: 'a tiny, sharp, high needle-gun tick', seed: 0, file: null, synth: null },                                       // a needle gun's shot
+  Railer: { say: 'a crack and a long descending electric zing, with a low hum left behind', seed: 0, file: null, synth: null },    // a rail gun's shot
+  Haymaker: { say: 'a huge wound-up haymaker: a deep whoosh and a bone-rattling crack', seed: 0, file: null, synth: null },       // the Maniak's haymaker landing (right-click)
+  'Leap-smash': { say: 'two huge fists hit concrete: a deep impact, scattering rubble and dust', seed: 0, file: null, synth: null },   // the charged leap's two-arm smash
+  'Glass break': { say: 'a window pane shattering: a sharp crack, then a spill of glass shards tinkling onto the pavement', seed: 0, file: null, synth: null },   // a window or glass pane broken (card #46)
+  'Chain whirl': { say: 'a fast overhead metal chain whirl: rushing air and accelerating steel rattles', seed: 0, file: null, synth: null },   // the chain and block swung round, repeated while it spins
+  'Chain throw': { say: 'a heavy concrete block thrown hard: a strong rush of air and chain clatter', seed: 0, file: null, synth: null },      // the block let fly
+  'Chain catch': { say: 'concrete catches masonry and a steel chain snaps taut with a metallic clack', seed: 0, file: null, synth: null },     // the block lodging in a surface, the chain going taut
+  'Move stomp': { say: 'one heavy sprinting footfall: a big boot slamming down on pavement, a deep short thud', seed: 0, file: null, synth: null },   // each heavy footfall of the Maniak's sprint
+  'Move charge': { say: 'the strain of winding a heavy swing or leap: a held breath and a creak of effort', seed: 0, file: null, synth: null },   // while the chain swing or leap charges, over and over, louder as it fills
+  // cards #15 and #16, placed at the player who does them
+  'Pipe flick': { say: 'a metal lighter flicked open and struck: a bright steel click, then a soft whoosh of flame', seed: 0, file: null, synth: null },   // the pipe's lighter (P, first stage)
+  'Pipe sizzle': { say: 'a long slow draw on a glass pipe: a crackling, sizzling inhale, a faint bubbling hiss', seed: 0, file: null, synth: null },      // the pipe's draw (second stage)
+  'Pipe exhale': { say: 'a long, slow, satisfied exhale of smoke: a soft airy breath out, fading', seed: 0, file: null, synth: null },                    // the exhale (last stage, he heals)
+  'Disguise change': { say: 'a heavy coat shrugged on and a cowl pulled off: a quick swish of cloth and a brief rustle', seed: 0, file: null, synth: null },   // changing coat (G)
+  'Haymaker charge': { say: 'a short breath of effort and a rising heavy swing', seed: 0, file: null, synth: null },   // the haymaker winding up (held right-click), as long as the wind-up
+  'Leap-smash charge': { say: 'a deep breath and a low rising strain as he crouches to leap', seed: 0, file: null, synth: null },   // the leap's charge (held space), as long as the charge
+  Shiv: { say: 'a fast, thin blade slash: a hiss of air and a scrape', seed: 0, file: null, synth: null },     // a shiv's slash
+  Sledge: { say: 'a sledgehammer swung through the air into a dull iron thud', seed: 0, file: null, synth: null },   // a sledgehammer's swing
+  // card #7, the villains' weapons
+  Knife: { say: 'a short knife slash: a thin whip of air and a sharp scrape of steel', seed: 0, file: null, synth: null },   // a villain's knife slash
+  'Salted knife': { say: 'a long knife drawn fast through the air, with a gritty hiss of salt', seed: 0, file: null, synth: null },   // the salted knife's slash
+  'Knife fan': { say: 'five knives flung at once: a fanned flutter of spinning steel', seed: 0, file: null, synth: null },   // the knife fan thrown
+  Bat: { say: 'a wooden baseball bat swung hard: a low whoosh and a hollow wooden crack', seed: 0, file: null, synth: null },   // a bat's swing
+  Pipe: { say: 'a steel pipe swung hard: a heavy whoosh and a ringing metal clang', seed: 0, file: null, synth: null },         // a steel pipe's swing
+  Rifle: { say: 'a three-round rifle burst: three tight, hard cracks', seed: 0, file: null, synth: null },                       // a rifle's burst (an enforcer's, a villain's)
+  Baton: { say: 'a police baton swung hard: a short whoosh and a hard, hollow crack', seed: 0, file: null, synth: null },         // an enforcer's baton
+  Revolver: { say: 'a heavy revolver shot: a loud, flat crack with a short echo', seed: 0, file: null, synth: null },             // a revolver's shot
+  // card #59, the street performer
+  Shank: { say: 'a quick jab of a crude blade: a short scuff of cloth and a wet stab', seed: 0, file: null, synth: null },   // the performer's shank
+  'Tin cup': { say: 'a tin cup shaken at a passer-by: coins rattled hard once', seed: 0, file: null, synth: null },          // the performer's cup, when its gun fires
+  'Coin rattle': { say: 'a few coins jiggled in a tin cup', seed: 0, file: null, synth: 'coins', vol: 1, reach: 0.8 },                    // the performer's cup, shaken when he demands and when he dances near you
+  'Street performer demand': { say: 'a hoarse, wheedling street voice demanding money, and coins rattled in a tin cup', seed: 0, file: null, synth: null },   // not played: his lines are heard through VOICES below ('Street performer'/demand)
+
+  Punt: { say: 'a big boot punting something heavy: a deep leathery thump and a rush of air after it', seed: 0, file: null, synth: null },   // punting a carried thing
+  Flung: { say: 'a body slamming into another at speed: a heavy, meaty collision', seed: 0, file: null, synth: null },                      // a thrown body hitting someone
+  Cinderblock: { say: 'a heavy concrete block thuds into flesh or cracks masonry with a cascade of chips', seed: 0, file: null, synth: null },   // the block hitting
+  // card #57
+  'Car punch': { say: 'a fist smashing into a car body: a hard bang, crumpling sheet steel and a tinkle of glass', seed: 0, file: null, synth: null },   // a punch landing on a car, at the car
+  'Door rip': { say: 'a car door wrenched off its hinges: groaning steel, a shriek of tearing metal and a sharp snap', seed: 0, file: null, synth: null },   // a car's door torn off (hold E)
+  // ---- you, never placed
+  hit: { say: 'the hit confirmation: a short, bright tick above the gunfire, the same every time, since players learn it', seed: 0, file: null, synth: null },   // your hit landing on something
+  kill: { say: 'a kill confirmation: the hit tick and a bright note after it', seed: 0, file: null, synth: null },   // your kill
+  hurt: { say: 'being hit: a dull body thud, played as loud as the damage', seed: 0, file: null, synth: null },      // you taking damage (small hits summed)
+  die: { say: 'dying: a falling, fading groan of a tone', seed: 0, file: null, synth: null },                        // you dying
+  spawn: { say: 'respawning: a short, rising shimmer', seed: 0, file: null, synth: null },                           // you respawning
+  jump: { say: 'a jump: a brief upward whoosh of effort', seed: 0, file: null, synth: null },                        // your jump
+  land: { say: 'landing on your feet, played louder for a longer fall', seed: 0, file: null, synth: null },          // your landing after a fall
+  pad: { say: 'a jump pad launching you: a springy, rising boing', seed: 0, file: null, synth: null },               // a jump pad launching you, or anyone near
+  gun: { say: 'picking up a new weapon: a clack and a cock', seed: 0, file: null, synth: null },                     // picking up a weapon
+  power: { say: 'picking up a power: a short rising arpeggio', seed: 0, file: null, synth: null },                   // picking up a power
+  heal: { say: 'picking up health: two soft rising notes', seed: 0, file: null, synth: null },                       // health gained
+  powerdown: { say: 'a power running out: two falling notes', seed: 0, file: null, synth: null },                    // a power ending
+  swap: { say: 'changing weapon, or a weapon running dry: a small mechanical click', seed: 0, file: null, synth: null },   // swapping weapon
+  shift: { say: 'turning into another character: a warping, rising sweep', seed: 0, file: null, synth: null },       // shifting form (F)
+  thrust: { say: 'a flyer\'s thrusters: a steady, airy hiss that loops for as long as they fire', seed: 0, file: null, synth: null },   // a flyer's jet, looped while it fires
+
+  // ---- everyone else, where they are
+  down: { say: 'another player dying, heard where they fell', seed: 0, file: null, synth: null },                    // another player or enemy dying, where they fall
+  boom: { say: "a vehicle's fuel tank going up: a deep, rolling boom, then falling metal and glass", seed: 0, file: null, synth: null },   // a vehicle's explosion (also the pram's blast, card #45)
+  burning: { say: 'a vehicle on fire: a roaring, crackling blaze that builds for three seconds', seed: 0, file: null, synth: null },      // a vehicle's fuse, burning before it goes up
+  // card #12, his car
+  Whistle: { say: 'a piercing two-finger whistle, loud and rising, that carries down the street', seed: 0, file: null, synth: null },   // the finger whistle (H) for his car
+  Eject: { say: 'an ejector seat firing: a hatch blown open with a sharp bang and a short rocket roar going straight up', seed: 0, file: null, synth: null },   // the ejector seat firing (at the wheel, H)
+
+  // ---- carried things, where they are; '<object> pickup' for one's own
+  pickup: { say: 'lifting something off the ground: a scrape and a short grunt of effort', seed: 0, file: null, synth: null },   // lifting something up (E)
+  throw: { say: 'something heavy hurled through the air: a low whoosh', seed: 0, file: null, synth: null },                           // throwing it
+
+  // ---- the match
+  frags: { say: 'the leader is 3, then 1, kills from the limit: two short alert notes', seed: 0, file: null, synth: null },   // the leader nears the frag limit
+  'frags mine': { say: 'you are 3, then 1, kills from the limit: the same alert, higher', seed: 0, file: null, synth: null },   // you near the frag limit
+  win: { say: 'the round over and you on top: a rising fanfare', seed: 0, file: null, synth: null },                                  // the results, you won
+  over: { say: 'the round over and you beaten: a short falling phrase', seed: 0, file: null, synth: null },                           // the results, you lost
+  ui: { say: 'the volume slider\'s preview: one soft tone at the new level', seed: 0, file: null, synth: null },                      // the volume slider's preview, the only UI sound so far
+
+  // ---- not played yet: places kept for the cards that add them (#11 fills them). Each plays only through /sound until a call site
+  //      (playSound(key, { at, cat, lvl })) is added
+  Footstep: { say: 'a footfall on pavement', seed: 0, file: null, synth: null },                                   // a walking footstep (not wired yet)
+  Siren: { say: 'a police siren, wailing up and down', seed: 0, file: null, synth: null },                           // an enforcer's car (card #14; not wired yet)
+  'Car engine': { say: 'a car engine idling and revving', seed: 0, file: null, synth: null },                       // a car driving (not wired yet)
+  Zeppelin: { say: 'a zeppelin\'s deep engine drone, passing overhead', seed: 0, file: null, synth: null },       // the rooftop transit airships (not wired yet)
+  Train: { say: 'a train rumbling past on its rail, with a bell', seed: 0, file: null, synth: null },              // the transit rail (not wired yet)
+}
+// ---- edit voice lines here: speaker → line group → { text, files, ... }. A line's words live in TEXT (`text` is its key there, so
+// a list like TEXT.demands gives one spoken line per entry); `files` is the audio, ONE ENTRY PER TEXT ENTRY, in the same order: a file name
+// in assets/ (versioned, as SOUNDS' `file`), a list of names (variants), or null (no recording: the `synth` voice, else silent; the
+// words still show in their speech bubble). `vol`, `vary`, `reach`, `synth` are as in SOUNDS. A speaker or group not listed is mute.
+// Try one: /sound <speaker>/<group> [n] (host), or gameHooks.sounds.set('<speaker>/<group>', '<url>') for every entry of the group,
+// '<speaker>/<group>:<n>' for one. Card #13 adds the Maniak's lines and the enforcers' shouts here.
+const VOICES = {
+  'Street performer': {                          // card #59
+    demand: { text: 'demands', files: [], synth: 'perfVoice', vol: 0.9, reach: 1.6 },   // each demand, said where he stands as his speech bubble shows (about every 20 s to someone near)
+  },
+  // 'The Maniak': { taunt: { text: 'maniakTaunts', files: ['taunt1.1a2b3c4d.mp3', ...] } },   // card #13: add the text to TEXT first
+  // Enforcer: { shout: { text: 'enforcerShouts', files: [...] } },                                // card #14, card #13
+}
+
 // ---------------------------------------------------------------- tuning
 // ---- CONTENT, what a reskin edits: CHARS (bots: BOTS; teams: TEAMS + `team`), SIDES, GUNS + SOUNDS,
 //   POWERS, HEALS, OBJECTS, LEVELS, VEHICLES, MODELS (COSTUMES), RADIO, and the game's ids and title face just below
@@ -2014,84 +2130,6 @@ const PROP_MODELS = {
       k.tube('gold', [[x, -0.28, 0], [x, -0.45, 0]], [0.075, 0], 'flame')
     }
   },
-}
-// SOUNDS keys: a GUNS name (+ ' charge'), or an event; '<name> <event>' overrides it (CHARS/BOTS body, gun, power)
-const SOUNDS = {
-  // ---- weapons, as they fire: every weapon needs one, each distinct
-  Fists: { say: 'a quick bare-knuckle punch: a short whoosh and a meaty smack', seed: 0 },
-  Pistol: { say: 'a short, punchy pistol shot', seed: 0 },
-  Scatter: { say: 'a booming shotgun blast with a pump-action rack after it', seed: 0 },
-  Needler: { say: 'a tiny, sharp, high needle-gun tick', seed: 0 },
-  Railer: { say: 'a crack and a long descending electric zing, with a low hum left behind', seed: 0 },
-  Haymaker: { say: 'a huge wound-up haymaker: a deep whoosh and a bone-rattling crack', seed: 0 },
-  'Leap-smash': { say: 'two huge fists hit concrete: a deep impact, scattering rubble and dust', seed: 0 },
-  'Glass break': { say: 'a window pane shattering: a sharp crack, then a spill of glass shards tinkling onto the pavement', seed: 0 },
-  'Chain whirl': { say: 'a fast overhead metal chain whirl: rushing air and accelerating steel rattles', seed: 0 },
-  'Chain throw': { say: 'a heavy concrete block thrown hard: a strong rush of air and chain clatter', seed: 0 },
-  'Chain catch': { say: 'concrete catches masonry and a steel chain snaps taut with a metallic clack', seed: 0 },
-  'Move stomp': { say: 'one heavy sprinting footfall: a big boot slamming down on pavement, a deep short thud', seed: 0 },
-  // cards #15 and #16, placed at the player who does them
-  'Pipe flick': { say: 'a metal lighter flicked open and struck: a bright steel click, then a soft whoosh of flame', seed: 0 },
-  'Pipe sizzle': { say: 'a long slow draw on a glass pipe: a crackling, sizzling inhale, a faint bubbling hiss', seed: 0 },
-  'Pipe exhale': { say: 'a long, slow, satisfied exhale of smoke: a soft airy breath out, fading', seed: 0 },
-  'Disguise change': { say: 'a heavy coat shrugged on and a cowl pulled off: a quick swish of cloth and a brief rustle', seed: 0 },
-  'Haymaker charge': { say: 'a short breath of effort and a rising heavy swing', seed: 0 },
-  Shiv: { say: 'a fast, thin blade slash: a hiss of air and a scrape', seed: 0 },
-  Sledge: { say: 'a sledgehammer swung through the air into a dull iron thud', seed: 0 },
-  // card #7, the villains' weapons
-  Knife: { say: 'a short knife slash: a thin whip of air and a sharp scrape of steel', seed: 0 },
-  'Salted knife': { say: 'a long knife drawn fast through the air, with a gritty hiss of salt', seed: 0 },
-  'Knife fan': { say: 'five knives flung at once: a fanned flutter of spinning steel', seed: 0 },
-  Bat: { say: 'a wooden baseball bat swung hard: a low whoosh and a hollow wooden crack', seed: 0 },
-  Pipe: { say: 'a steel pipe swung hard: a heavy whoosh and a ringing metal clang', seed: 0 },
-  Rifle: { say: 'a three-round rifle burst: three tight, hard cracks', seed: 0 },
-  Baton: { say: 'a police baton swung hard: a short whoosh and a hard, hollow crack', seed: 0 },
-  Revolver: { say: 'a heavy revolver shot: a loud, flat crack with a short echo', seed: 0 },
-  // card #59 (the performer's demand is heard now by perfVoice; these rows are for the sound card's generator)
-  Shank: { say: 'a quick jab of a crude blade: a short scuff of cloth and a wet stab', seed: 0 },
-  'Street performer demand': { say: 'a hoarse, wheedling street voice demanding money, and coins rattled in a tin cup', seed: 0 },
-
-  Punt: { say: 'a big boot punting something heavy: a deep leathery thump and a rush of air after it', seed: 0 },
-  Flung: { say: 'a body slamming into another at speed: a heavy, meaty collision', seed: 0 },
-  Cinderblock: { say: 'a heavy concrete block thuds into flesh or cracks masonry with a cascade of chips', seed: 0 },
-  // card #57
-  'Car punch': { say: 'a fist smashing into a car body: a hard bang, crumpling sheet steel and a tinkle of glass', seed: 0 },
-  'Door rip': { say: 'a car door wrenched off its hinges: groaning steel, a shriek of tearing metal and a sharp snap', seed: 0 },
-  // ---- you, never placed
-  hit: { say: 'the hit confirmation: a short, bright tick above the gunfire, the same every time, since players learn it', seed: 0 },
-  kill: { say: 'a kill confirmation: the hit tick and a bright note after it', seed: 0 },
-  hurt: { say: 'being hit: a dull body thud, played as loud as the damage', seed: 0 },
-  die: { say: 'dying: a falling, fading groan of a tone', seed: 0 },
-  spawn: { say: 'respawning: a short, rising shimmer', seed: 0 },
-  jump: { say: 'a jump: a brief upward whoosh of effort', seed: 0 },
-  land: { say: 'landing on your feet, played louder for a longer fall', seed: 0 },
-  pad: { say: 'a jump pad launching you: a springy, rising boing', seed: 0 },
-  gun: { say: 'picking up a new weapon: a clack and a cock', seed: 0 },
-  power: { say: 'picking up a power: a short rising arpeggio', seed: 0 },
-  heal: { say: 'picking up health: two soft rising notes', seed: 0 },
-  powerdown: { say: 'a power running out: two falling notes', seed: 0 },
-  swap: { say: 'changing weapon, or a weapon running dry: a small mechanical click', seed: 0 },
-  shift: { say: 'turning into another character: a warping, rising sweep', seed: 0 },
-  thrust: { say: 'a flyer\'s thrusters: a steady, airy hiss that loops for as long as they fire', seed: 0 },
-
-  // ---- everyone else, where they are
-  down: { say: 'another player dying, heard where they fell', seed: 0 },
-  boom: { say: "a vehicle's fuel tank going up: a deep, rolling boom, then falling metal and glass", seed: 0 },
-  burning: { say: 'a vehicle on fire: a roaring, crackling blaze that builds for three seconds', seed: 0 },
-  // card #12, his car
-  Whistle: { say: 'a piercing two-finger whistle, loud and rising, that carries down the street', seed: 0 },
-  Eject: { say: 'an ejector seat firing: a hatch blown open with a sharp bang and a short rocket roar going straight up', seed: 0 },
-
-  // ---- carried things, where they are; '<object> pickup' for one's own
-  pickup: { say: 'lifting something off the ground: a scrape and a short grunt of effort', seed: 0 },
-  throw: { say: 'something heavy hurled through the air: a low whoosh', seed: 0 },
-
-  // ---- the match
-  frags: { say: 'the leader is 3, then 1, kills from the limit: two short alert notes', seed: 0 },
-  'frags mine': { say: 'you are 3, then 1, kills from the limit: the same alert, higher', seed: 0 },
-  win: { say: 'the round over and you on top: a rising fanfare', seed: 0 },
-  over: { say: 'the round over and you beaten: a short falling phrase', seed: 0 },
-  ui: { say: 'the volume slider\'s preview: one soft tone at the new level', seed: 0 },
 }
 const RADIO_START = -1          // a vehicle's station until a driver tunes it: off
 // B or RADIO in a vehicle changes station, and a driver's last station goes with them into the next vehicle. A station
@@ -16722,7 +16760,7 @@ function perfDraw(id, state, t) {
   if (!M?.cup) return
   const T = isHost ? now() : renderT, s = perfSays.get(id), up = !!state && !(state.dead > 0) && a.mesh.visible
   a.perfN = id
-  if (s && !s.shown && T >= s.at) { s.shown = true; if (up && T - s.at < 1500) { a.sayAt = s.at; perfVoice(a.mesh.position, s.n) } }
+  if (s && !s.shown && T >= s.at) { s.shown = true; if (up && T - s.at < 1500) { a.sayAt = s.at; playVoice('Street performer', 'demand', s.n, { at: perfPlace(a.mesh.position), cat: 'world' }) } }
   if (!a.cup) { a.cup = propModel('gun', gunNamed(M.cup)).clone(); ownMaterials(a.cup); avatarGroup.add(a.cup) }
   a.cup.visible = up
   if (!up) return
@@ -16732,7 +16770,7 @@ function perfDraw(id, state, t) {
   a.cup.scale.setScalar(Math.min(1.1, Math.max(0.8, (a.spec.h + a.spec.r) / 0.9)))
   ghost(a.cup, state.prot || 0)
   if ((dancing || ask) && T > (a.rattleAt || 0) && camera && a.mesh.position.distanceTo(camera.position) < 14) {
-    a.rattleAt = T + (ask ? 500 : 900 + Math.random() * 700); perfRattle(a.mesh.position, ask ? 0.7 : 0.3)
+    a.rattleAt = T + (ask ? 500 : 900 + Math.random() * 700); playSound('Coin rattle', { at: perfPlace(a.mesh.position), cat: 'world', lvl: ask ? 0.7 : 0.3 })
   }
 }
 function perfDrop(a) {
@@ -16771,57 +16809,9 @@ function perfBubbles() {
   }
   for (; k < perfEls.length; k++) perfEls[k].style.display = 'none'
 }
-// the voice: a hoarse mumble, a syllable a few letters, through two formant filters, then coins rattled in the tin; placed as
-// sfxPlay places sounds (the game's generated sounds wait on card #11; card #13 may give these lines voices)
-let perfNoise = null
-function perfBus(p, reach, lvl) {
-  if (!sfxLive() || !sfxOut) return null
-  const P = sfxPlace(p.x, p.y + 0.8, p.z, reach), gain = P.gain * lvl
-  if (!(gain >= SFX_FLOOR)) return null
-  const out = actx.createGain(), lp = actx.createBiquadFilter()
-  out.gain.value = gain; lp.type = 'lowpass'; lp.frequency.value = P.cut; out.connect(lp)
-  let to = lp
-  if (actx.createStereoPanner) { const pan = actx.createStereoPanner(); pan.pan.value = P.pan; lp.connect(pan); to = pan }
-  to.connect(sfxOut)
-  return out
-}
-function perfRattle(p, lvl, t0, out = perfBus(p, 0.8, lvl)) {
-  if (!out) return
-  let t = t0 ?? actx.currentTime + 0.01
-  for (let i = 0, n = 3 + (Math.random() * 4 | 0); i < n; i++) {
-    const o = actx.createOscillator(), g = actx.createGain(), f = 2400 + Math.random() * 3200
-    o.type = 'triangle'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.22, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.07)
-    o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.08)
-    t += 0.025 + Math.random() * 0.06
-  }
-  setTimeout(() => out.disconnect(), (t - actx.currentTime + 0.2) * 1000)
-}
-function perfVoice(p, n) {
-  const out = perfBus(p, 1.6, 0.9)
-  if (!out) return
-  const t0 = actx.currentTime + 0.03, rnd = genRng(n * 7919 + 17)
-  const osc = actx.createOscillator(), f1 = actx.createBiquadFilter(), f2 = actx.createBiquadFilter(), env = actx.createGain()
-  osc.type = 'sawtooth'; f1.type = f2.type = 'bandpass'; f1.Q.value = 5; f2.Q.value = 8; env.gain.value = 0
-  osc.connect(f1); osc.connect(f2); f1.connect(env); f2.connect(env); env.connect(out)
-  if (!perfNoise) { perfNoise = actx.createBuffer(1, actx.sampleRate / 4, actx.sampleRate); const c = perfNoise.getChannelData(0); for (let i = 0; i < c.length; i++) c[i] = Math.random() * 2 - 1 }
-  const V = [[730, 1090], [530, 1840], [570, 840], [300, 870], [390, 2300], [660, 1700]]
-  const syl = PERF_LINES[n].split(/\s+/).flatMap(w => { const k = Math.max(1, Math.round(w.replace(/[^a-z]/gi, '').length / 3)); return Array.from({ length: k }, (_, i) => i === k - 1) })
-  let t = t0
-  syl.forEach((end, i) => {
-    const v = V[rnd() * V.length | 0], d = 0.07 + rnd() * 0.07, f0 = 132 - 34 * i / syl.length + rnd() * 20
-    osc.frequency.setValueAtTime(f0, t); osc.frequency.linearRampToValueAtTime(f0 * 0.88, t + d)
-    f1.frequency.setValueAtTime(v[0], t); f2.frequency.setValueAtTime(v[1], t)
-    env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(0.55, t + 0.016); env.gain.setValueAtTime(0.5, t + d); env.gain.linearRampToValueAtTime(0, t + d + 0.03)
-    if (rnd() < 0.6) {
-      const ns = actx.createBufferSource(), hp = actx.createBiquadFilter(), g = actx.createGain()
-      ns.buffer = perfNoise; hp.type = 'highpass'; hp.frequency.value = 3000; g.gain.setValueAtTime(0.18, t - 0.01); g.gain.linearRampToValueAtTime(0, t + 0.02)
-      ns.connect(hp); hp.connect(g); g.connect(out); ns.start(Math.max(t0, t - 0.012)); ns.stop(t + 0.03)
-    }
-    t += d + 0.04 + (end ? 0.06 : 0)
-  })
-  osc.start(t0); osc.stop(t + 0.05)
-  perfRattle(p, 1, t + 0.05, out)
-}
+// his voice and the coins are playVoice('Street performer', 'demand', n) and the 'Coin rattle' row: the synth recipes perfVoice and coins in SYNTH
+const perfSpot = { x: 0, y: 0, z: 0 }
+const perfPlace = p => { perfSpot.x = p.x; perfSpot.y = p.y + 0.8; perfSpot.z = p.z; return perfSpot }
 function clearHeld(a) {
   if (!a.held) return
   a.held.removeFromParent()
@@ -18916,21 +18906,11 @@ function moveCameraFade(me,cam) {
   const fade=THREE.MathUtils.smoothstep(nearest-.45,CAM.fadeNear,CAM.fadeFar)
   cam.fade=Math.min(cam.fade,1-below*(1-fade*fade));if(cam.fade<.01)cam.fade=0
 }
-// Move sounds come only from the effects provider; with none loaded, the moves are silent.
+// Move sounds are the 'Move ...' and 'Chain ...' rows of SOUNDS; a row with no file or synth is silent. The punches, haymaker, smash and
+// block themselves play from sfxFx, by their GUNS names.
 function moveSound(kind, p, level = 1, charge = 0) {
-  if (!sfxLive() || !sfxMake) return
+  if (!sfxLive()) return
   sfxPlay((['whirl', 'throw', 'catch'].includes(kind) ? 'Chain ' : 'Move ') + kind, p?.id === myId ? null : p, 'world', level)
-}
-function moveFxSound(list, only) {
-  if (!sfxLive() || !Array.isArray(list)) return
-  const heard = new Set()
-  for (const f of list) {
-    const G = GUNS[f[6]], key = f[8] + ':' + f[6] + ':' + f[9]
-    if (!G || heard.has(key) || only === (f[8] === myId ? 2 : 1)) continue
-    heard.add(key)
-    if (!['Fists', 'Haymaker', 'Leap-smash', 'Cinderblock'].includes(G.name)) continue
-    moveSound(G.name === 'Cinderblock' ? f[12]===1?'whirl':'catch' : f[9] === 1 ? 'whirl' : G.name === 'Leap-smash' ? 'smash' : 'punch', { id: f[8], x: f[0], y: f[1], z: f[2] }, G.name === 'Fists' ? 0.7 : 1)
-  }
 }
 
 // Cracks are projected onto the struck surface with the existing pinned DecalGeometry library. The host keeps a bounded
@@ -19994,6 +19974,7 @@ function sfxStart(starting) {
     // iOS can hold the context suspended until the next touch or key
     addEventListener('pointerdown', sfxWake, true)
     addEventListener('keydown', sfxWake, true)
+    background.run('sounds', soundPrefetch).catch(() => {})      // card #76: the files the SOUNDS and VOICES tables name
   }
   sfxApply(starting)
 }
@@ -20077,22 +20058,71 @@ function sfxPlace(x, y, z, reach) {
   return sfxAt
 }
 
-// at: null for your own; cat: the cap; who: a '<who> <name>' row overrides
-function sfxPlay(name, at, cat, lvl, delay, span, who) {
-  if (who && SOUNDS[who + ' ' + name] !== undefined) name = who + ' ' + name
-  const R = SOUNDS[name]
-  if (!R || !R.say || !sfxMake || !sfxLive()) return null
-  let gain = lvl === undefined ? 1 : lvl, pan = 0, cut = 20000
+// ---- playing a sound (card #76): everything the game plays goes through playSound(key, opts) (sfxPlay below is its positional
+// shorthand), so the SOUNDS table is the only place a sound's source is named. A voice line goes through playVoice(speaker, group, n, opts).
+// opts: at {x,y,z} (null: your own, unplaced), cat (the cap: 'mine' 'you' 'gun' 'world' 'jet'), lvl, delay s, span (Infinity loops until
+// stopped), who: a '<who> <key>' row overrides the key's.
+// Files: named in the tables, fetched in the background once the game starts (soundPrefetch), decoded the first time they play. A file
+// that is not ready yet, or is missing or broken, plays the row's synth (or nothing) instead, so a swap can never break the game.
+const soundSwap = new Map()        // key -> url, set at run time (gameHooks.sounds.set); wins over the tables' files
+const soundBytes = new Map(), soundBuf = new Map(), soundBad = new Set(), soundWait = new Set(), soundLast = new Map()
+const SOUND_RAW = /^(blob:|data:|https?:|\/|\.\.?\/)/       // a url used as written; any other name is a file in assets/
+// the file's bytes: from assets/ beside the page, else the published site (as rigFetch does)
+function soundFetch(name) {
+  const get = url => fetch(url).then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('HTTP ' + r.status)))
+  if (SOUND_RAW.test(name)) return get(name)
+  return get(RIG_BASE + name).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? get(RIG_SITE + name) : Promise.reject(e))
+}
+// every file the tables name, once the game has started: a background job, one fetch at a time, nothing when no row names a file
+function* soundPrefetch() {
+  const names = new Set()
+  for (const R of Object.values(SOUNDS)) for (const n of [].concat(R.file ?? [])) names.add(n)
+  for (const S of Object.values(VOICES)) for (const L of Object.values(S)) for (const f of L.files || []) for (const n of [].concat(f ?? [])) names.add(n)
+  for (const n of names) {
+    if (soundBytes.has(n) || soundBuf.has(n) || soundBad.has(n)) continue
+    try { soundBytes.set(n, yield soundFetch(n)) } catch (e) { soundBad.add(n); console.warn('sound file ' + n + ': ' + (e?.message || e)) }
+  }
+}
+// the decoded file, or null: the first call starts its fetch (if the prefetch has not) and decode, off the frame
+function soundReady(name) {
+  const b = soundBuf.get(name)
+  if (b || !actx || soundBad.has(name) || soundWait.has(name)) return b || null
+  soundWait.add(name)
+  Promise.resolve(soundBytes.get(name) || soundFetch(name)).then(buf => actx.decodeAudioData(buf))
+    .then(d => { soundBuf.set(name, d) }, e => { soundBad.add(name); console.warn('sound file ' + name + ': ' + (e?.message || e)) })
+    .finally(() => { soundWait.delete(name); soundBytes.delete(name) })
+  return null
+}
+// one name of a row's `file` (a name or a list of variants), never the same twice running
+function soundPick(id, f) {
+  if (f == null) return null
+  if (!Array.isArray(f)) return f
+  if (!f.length) return null
+  let i = f.length > 1 ? Math.floor(Math.random() * (f.length - 1)) : 0
+  if (f.length > 1 && i >= (soundLast.get(id) ?? -1)) i++
+  soundLast.set(id, i)
+  return f[i]
+}
+// the engine behind playSound and playVoice: R the row, ids the run-time swap keys to look for, in order
+function soundPlay(name, R, o, ids) {
+  if (!R || !sfxLive()) return null
+  let file = null
+  for (const k of ids) if (soundSwap.has(k)) { file = soundSwap.get(k); break }
+  file ??= soundPick(name, R.file)
+  const buf = file && soundReady(file), synth = R.synth && SYNTH[R.synth], gen = R.say && sfxMake
+  if (!buf && !synth && !gen) return null
+  const at = o.at, lvl = o.lvl, span = o.span
+  let gain = (lvl === undefined ? 1 : lvl) * (R.vol ?? 1), pan = 0, cut = 20000
   if (at) {
     if (!(Number.isFinite(at.x) && Number.isFinite(at.y) && Number.isFinite(at.z))) return null
-    const p = sfxPlace(at.x, at.y, at.z, SFX_REACH[name])
+    const p = sfxPlace(at.x, at.y, at.z, R.reach ?? SFX_REACH[name])
     gain *= p.gain; pan = p.pan; cut = p.cut
   }
   if (!(gain >= SFX_FLOOR)) return null
-  const t = actx.currentTime + (delay > 0 ? delay : 0)
+  const t = actx.currentTime + (o.delay > 0 ? o.delay : 0), cat = o.cat
   if (!sfxRoom(cat, gain, t)) return null
 
-  const v = { cat, gain, t0: t, end: t, srcs: [], out: actx.createGain() }
+  const v = { cat, gain, t0: t, end: t, srcs: [], out: actx.createGain(), how: buf ? 'file' : synth ? 'synth' : 'generator' }
   v.out.gain.value = gain
   let to = v.out
   if (cut < 16000) {
@@ -20105,13 +20135,114 @@ function sfxPlay(name, at, cat, lvl, delay, span, who) {
     p.pan.value = pan
     to.connect(p); to = p
   }
-  const made = sfxMake(name, R.say, R.seed, v.out, t, span || 0)
+  let made
+  if (buf) {
+    const s = actx.createBufferSource(), rate = 1 + (R.vary > 0 ? (Math.random() * 2 - 1) * R.vary : 0)
+    s.buffer = buf; s.playbackRate.value = rate; s.loop = span === Infinity
+    s.connect(v.out); s.start(t)
+    made = { srcs: [s], len: buf.duration / rate }
+  } else made = synth ? synth(v.out, t, span || 0, o) : sfxMake(name, R.say, R.seed, v.out, t, span || 0)
   if (!made || !made.srcs || !made.srcs.length) { v.out.disconnect(); return null }
   to.connect(sfxOut)
   v.srcs = made.srcs
   v.end = t + (span === Infinity ? 0.25 : (made.len > 0 ? made.len : 1) + 0.01)
   sfxVoices.push(v)
   return v
+}
+function playSound(key, o = {}) {
+  const name = o.who && Object.hasOwn(SOUNDS, o.who + ' ' + key) ? o.who + ' ' + key : key
+  return Object.hasOwn(SOUNDS, name) ? soundPlay(name, SOUNDS[name], o, [name]) : null
+}
+// speaker's group's nth line: its words come from TEXT (o.text, for a synth voice), its audio from the group's files[n]
+function playVoice(speaker, group, n = 0, o = {}) {
+  const L = Object.hasOwn(VOICES, speaker) && Object.hasOwn(VOICES[speaker], group) ? VOICES[speaker][group] : null
+  if (!L) return null
+  const id = speaker + '/' + group, words = TEXT[L.text]
+  return soundPlay(id, { file: L.files?.[n], synth: L.synth, vol: L.vol, vary: L.vary, reach: L.reach }, { ...o, line: n, text: Array.isArray(words) ? words[n] : words }, [id + ':' + n, id])
+}
+// the shorthand most call sites use: at null for your own; cat: the cap; who: a '<who> <name>' row overrides
+function sfxPlay(name, at, cat, lvl, delay, span, who) { return playSound(name, { at, cat, lvl, delay, span, who }) }
+
+// ---- synth recipes: what a row's `synth` names. A recipe is (out, t, span, o) -> { srcs, len }: it builds its nodes into the gain node
+// `out`, to start at context time t, and returns every source it started (they are stopped if the voice is cut) and how long it lasts s.
+// span is 0, or Infinity for a loop it must keep going; o is the playSound options (o.line, o.text for a voice line).
+let soundNoise = null
+function coinRattle(out, t, srcs) {
+  for (let i = 0, n = 3 + (Math.random() * 4 | 0); i < n; i++) {
+    const o = actx.createOscillator(), g = actx.createGain(), f = 2400 + Math.random() * 3200
+    o.type = 'triangle'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.22, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.07)
+    o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.08)
+    srcs.push(o)
+    t += 0.025 + Math.random() * 0.06
+  }
+  return t
+}
+const SYNTH = {
+  // card #59: coins rattled in the tin cup
+  coins(out, t) {
+    const srcs = [], end = coinRattle(out, t + 0.01, srcs)
+    return { srcs, len: end - t + 0.1 }
+  },
+  // card #59: the performer's hoarse mumble, a syllable a few letters, through two formant filters, then coins rattled in the tin
+  perfVoice(out, t, span, o) {
+    const t0 = t + 0.03, rnd = genRng((o.line | 0) * 7919 + 17), srcs = []
+    const osc = actx.createOscillator(), f1 = actx.createBiquadFilter(), f2 = actx.createBiquadFilter(), env = actx.createGain()
+    osc.type = 'sawtooth'; f1.type = f2.type = 'bandpass'; f1.Q.value = 5; f2.Q.value = 8; env.gain.value = 0
+    osc.connect(f1); osc.connect(f2); f1.connect(env); f2.connect(env); env.connect(out)
+    if (!soundNoise) { soundNoise = actx.createBuffer(1, actx.sampleRate / 4, actx.sampleRate); const c = soundNoise.getChannelData(0); for (let i = 0; i < c.length; i++) c[i] = Math.random() * 2 - 1 }
+    const V = [[730, 1090], [530, 1840], [570, 840], [300, 870], [390, 2300], [660, 1700]]
+    const syl = String(o.text || 'x').split(/\s+/).flatMap(w => { const k = Math.max(1, Math.round(w.replace(/[^a-z]/gi, '').length / 3)); return Array.from({ length: k }, (_, i) => i === k - 1) })
+    let s = t0
+    syl.forEach((end, i) => {
+      const v = V[rnd() * V.length | 0], d = 0.07 + rnd() * 0.07, f0 = 132 - 34 * i / syl.length + rnd() * 20
+      osc.frequency.setValueAtTime(f0, s); osc.frequency.linearRampToValueAtTime(f0 * 0.88, s + d)
+      f1.frequency.setValueAtTime(v[0], s); f2.frequency.setValueAtTime(v[1], s)
+      env.gain.setValueAtTime(0, s); env.gain.linearRampToValueAtTime(0.55, s + 0.016); env.gain.setValueAtTime(0.5, s + d); env.gain.linearRampToValueAtTime(0, s + d + 0.03)
+      if (rnd() < 0.6) {
+        const ns = actx.createBufferSource(), hp = actx.createBiquadFilter(), g = actx.createGain()
+        ns.buffer = soundNoise; hp.type = 'highpass'; hp.frequency.value = 3000; g.gain.setValueAtTime(0.18, s - 0.01); g.gain.linearRampToValueAtTime(0, s + 0.02)
+        ns.connect(hp); hp.connect(g); g.connect(out); ns.start(Math.max(t0, s - 0.012)); ns.stop(s + 0.03)
+        srcs.push(ns)
+      }
+      s += d + 0.04 + (end ? 0.06 : 0)
+    })
+    osc.start(t0); osc.stop(s + 0.05)
+    srcs.push(osc)
+    const end = coinRattle(out, s + 0.05, srcs)
+    return { srcs, len: end - t + 0.1 }
+  },
+}
+
+// ---- /sound and gameHooks.sounds: try a sound, or a file in its place, without a release
+const soundVoiceIds = () => Object.entries(VOICES).flatMap(([s, G]) => Object.keys(G).map(g => s + '/' + g))
+function soundKnown(id) {
+  const v = String(id).match(/^(.+\/[^:]+?)(?::(\d+))?$/)
+  return Object.hasOwn(SOUNDS, id) || !!v && soundVoiceIds().includes(v[1])
+}
+// one sound by its key or voice id ('Speaker/group', n for a line), on you, unplaced: what it played from, or '' (nothing)
+function soundTry(w, n) {
+  const low = String(w).trim().toLowerCase(), key = Object.keys(SOUNDS).find(k => k.toLowerCase() === low)
+  if (key) return playSound(key, { cat: 'you' })?.how || ''
+  const id = soundVoiceIds().find(k => k.toLowerCase() === low)
+  return id ? playVoice(id.slice(0, id.lastIndexOf('/')), id.slice(id.lastIndexOf('/') + 1), n | 0, { cat: 'you' })?.how || '' : ''
+}
+function soundCmd(a) {
+  if (!isHost) return sysMsg('§cOnly the host tries sounds.')
+  const w = String(a || '').trim(), m = w.match(/^(.*?)(?:\s+(\d+))?$/), keys = Object.keys(SOUNDS), ids = soundVoiceIds()
+  const has = k => { const R = SOUNDS[k]; return !!(R.file || R.synth || soundSwap.has(k)) }
+  if (!w) {
+    sysMsg('§7Sounds §8(§aset§8 = has a file or a synth): §7/sound <key>')
+    for (let i = 0; i < keys.length; i += 8) sysMsg(keys.slice(i, i + 8).map(k => (has(k) ? '§a' : '§f') + k).join('§8, '))
+    return sysMsg('§7Voices: §f' + (ids.join('§8, §f') || 'none') + ' §7— /sound <speaker>/<group> [n]')
+  }
+  const pick = (list, x) => list.find(k => k.toLowerCase() === x.toLowerCase())
+  let name = pick(keys, w), n = 0
+  if (!name) { name = pick(ids, m[1]); n = +m[2] || 0 }
+  if (!name) return sysMsg('§cNo sound ' + w + '. §7/sound lists them.')
+  const how = soundTry(name, n)
+  if (how) return sysMsg('§7Played §f' + name + (ids.includes(name) ? ' ' + n : '') + ' §8(' + how + ')')
+  sysMsg(!settings.sound ? '§cSound is off (N).' : !sfxLive() ? '§cSound is not running yet: click in the game.'
+    : '§7Nothing plays for §f' + name + '§7: no file or synth is set (or its file is still loading: try again).')
 }
 
 function sfxRoom(cat, gain, t) {
@@ -20135,7 +20266,6 @@ function sfxRoom(cat, gain, t) {
 const sfxSpot = { x: 0, y: 0, z: 0 }
 let sfxFaults = 0
 function sfxFx(list, only) {
-  if (!sfxMake) moveFxSound(list, only)
   if (!sfxLive() || !Array.isArray(list)) return
   try {
     const me = myId
@@ -20373,7 +20503,7 @@ function bcastSound() {
 }
 
 // the audio the engine plays through: per frame, the radio, effects and one sound
-GAME.audio = { frame: sfxFrame, radio: radioTick, fx: sfxFx, play: sfxPlay, takeRadio, toggle: sfxToggle, cycle: radioCycle, apply: sfxApply, start: sfxStart, gesture: sfxGesture }
+GAME.audio = { frame: sfxFrame, radio: radioTick, fx: sfxFx, play: sfxPlay, sound: playSound, voice: playVoice, takeRadio, toggle: sfxToggle, cycle: radioCycle, apply: sfxApply, start: sfxStart, gesture: sfxGesture }
 
 // ---------------------------------------------------------------- pause
 // nothing pauses: the host keeps simulating
@@ -21634,6 +21764,19 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   },
   // card #75: scripted input on the host's own character: await gameHooks.auto.run([{ look: [90, 0] }, { hold: { keys: ['w', 'sprint'], ms: 3000 }, capture: { n: 20, every: 9 } }])
   auto: autoApi,
+  // card #76: try a sound without a release. set('jump', 'my.mp3') plays that file (a name in assets/, or a url) in place of the SOUNDS key;
+  // a voice line is 'Speaker/group' (every line) or 'Speaker/group:n'; clear(key) undoes it; play(key, n) plays one, returning what it
+  // played from ('file', 'synth', '' for nothing); keys() lists the keys. Local to this page: nothing goes over the network or into a save
+  sounds: Object.freeze({
+    keys: () => [...Object.keys(SOUNDS), ...soundVoiceIds()],
+    set(key, url) {
+      hookCheck(soundKnown(key), 'no sound ' + key + ': keys() lists them')
+      hookCheck(typeof url === 'string' && url.length > 0 && url.length < 2048, 'set(key, url) needs a url or a file name')
+      soundSwap.set(key, url); soundBad.delete(url); soundReady(url)
+    },
+    clear(key) { return soundSwap.delete(key) },
+    play: (key, n) => soundTry(key, n),
+  }),
   // a hook's own event, to whoever listens for its type or for '*'
   emit(type, data = {}) {
     hookCheck(!HOOK_TYPES.includes(type) && HOOK_TYPE.test(type) && type.length <= 40, 'not a type a hook may emit: ' + type)
@@ -28132,6 +28275,7 @@ GAME.commands = {
               if (got.length && conns.size) pushRoster()
               sysMsg(got.length ? '§7Spawned §f' + got.map(i => enemyName(BOTS[i].name)).join(', ')
                                 : '§7Already out.') } },
+  sound:  { args: '[key]', help: 'host only, test: play a sound or voice line by its key (blank lists them)', run: soundCmd },
   wanted: { args: '<0-5>', help: 'host only, set your own heat in stars', run: a => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
               const n = parseInt(a, 10)
