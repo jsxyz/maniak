@@ -2827,6 +2827,167 @@ function railCar(route, k, j, tMs, out = {}) {
   out.end = j === 0 ? 1 : j === K.n - 1 ? -1 : 0
   return out
 }
+// ---------------------------------------------------------------- street features (card #69): plaza monuments and furniture
+// Every plaza cell (and the central plaza's sixteen) gets a centrepiece (a statue of Faust, an obelisk or a fountain, by the cell's
+// seed), four corner clusters (a planter with topiary and two benches), a lantern ring (faustLampSites) and, at the middle of
+// each edge, a newsstand, telephone boxes, a clock column or a mailbox with a hydrant. Pure in (seed, gx, gz): the same for every
+// player. The walkers' loops in a plaza keep to FAUST_FEAT.loop (metres from its centre: slCell), clear of all of it. A feature
+// is { k, x, z, s, q, h }: kind, centre, scale, quarter turns, a hash for its variants. Its parts are local (x across, z forward,
+// y up); the solid ones are the cell's colliders (slim: one compound body) and the drawn ones one more batch on the stone material.
+const FAUST_FEAT = { loop: [23, 28], lamps: [[9, 0], [-9, 0], [0, 9], [0, -9], [32, 32], [-32, 32], [32, -32], [-32, -32]],
+  stone: 0x6f767f, pale: 0x9aa1a8, dark: 0x3c4450, iron: 0x2b333d, bronze: 0x4d5c52, gold: 0xc9a85a, water: 0x2f6a8c, warm: 0xffd7a0,
+  leaf: 0x2f4a3b, earth: 0x2a2a22, wood: 0x4a3a2c, post: 0x2a3a52, red: 0x7a2f2a }
+function faustFeatures(seed, gx, gz, c) {
+  if (!c.plaza || c.diagonal) return []
+  const rng = genRng(faustMix(seed ^ 0x6e657773, gx, gz)), cx = gx * 96 + 48, cz = gz * 96 + 48, out = []
+  const inner = c.centralPlaza && gx >= -1 && gx <= 0 && gz >= -1 && gz <= 0
+  // the central plaza: fountains in its middle four cells, a statue in each corner cell and an obelisk in each edge cell
+  const kind = inner ? 'fountain' : c.centralPlaza ? ((gx === -2 || gx === 1) && (gz === -2 || gz === 1) ? 'statue' : 'obelisk') : ['statue', 'obelisk', 'fountain', 'statue'][rng() * 4 | 0]
+  const big = c.centralPlaza ? 1 : 0, scale = { statue: [1.25, 1.7], obelisk: [1.4, 1.9], fountain: [1, 1.4] }[kind][big]      // the walkers ring (loop) keeps 11.5 m off the centre: a plinth 4 k wide (its corners 5.7 k out), and the lanterns at 9 m, stay inside it
+  out.push({ k: kind, x: cx, z: cz, s: scale, q: rng() * 4 | 0, h: 0 })
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) out.push(
+    { k: 'planter', x: cx + sx * 28, z: cz + sz * 28, s: 1, q: 0, h: 0 },
+    { k: 'bench', x: cx + sx * 28, z: cz + sz * 23.6, s: 1, q: sz > 0 ? 2 : 0, h: 0 },
+    { k: 'bench', x: cx + sx * 23.6, z: cz + sz * 28, s: 1, q: sx > 0 ? 3 : 1, h: 0 })
+  const kinds = ['news', 'phone', 'clock', 'mail']
+  for (const [dx, dz, q] of [[32.5, 0, 3], [-32.5, 0, 1], [0, 32.5, 2], [0, -32.5, 0]]) out.push({ k: kinds[rng() * 4 | 0], x: cx + dx, z: cz + dz, s: 1, q, h: rng() * 4 | 0 })
+  return out
+}
+// a feature's parts in its own frame: { b: [cx, cy, cz, ex, ey, ez], t: tint, g: glow, solid: 0 drawn | 1 drawn and a collider | 2 a
+// collider only }, { u: [a, b], r: [r0, r1], n, t, turn, cap, dbl } a tube or cone between two points, { v: [3 points], t } a flat
+// triangle seen from both sides
+function faustFeatParts(f) {
+  const k = f.s, P = [], T = FAUST_FEAT
+  const B = (cx, cy, cz, ex, ey, ez, t, g = 0, solid = 0) => P.push({ b: [cx, cy, cz, ex, ey, ez], t, g, solid })
+  const U = (a, b, r0, r1, n, t, turn = 0, cap = 1, dbl = 0) => P.push({ u: [a, b], r: [r0, r1], n, t, turn, cap, dbl })
+  // an octagon, its flats on the axes: R its circumradius; as a collider, a plus and a square
+  const oct = (R, y0, y1, t, solid) => {
+    U([0, y0, 0], [0, y1, 0], R, R, 8, t, 0.5)
+    if (solid) for (const [ex, ez] of [[0.924 * R, 0.383 * R], [0.383 * R, 0.924 * R], [0.653 * R, 0.653 * R]]) B(0, (y0 + y1) / 2, 0, ex, (y1 - y0) / 2, ez, t, 0, 2)
+  }
+  // a ball of eight-sided rings
+  const ball = (x, y, z, r, t) => { for (const [y0, y1, r0, r1] of [[-1, -0.7, 0, 0.714], [-0.7, 0, 0.714, 1], [0, 0.7, 1, 0.714], [0.7, 1, 0.714, 0]]) U([x, y + y0 * r, z], [x, y + y1 * r, z], r0 * r, r1 * r, 8, t) }
+  if (f.k === 'statue') {
+    // Diedrich Faust in full armour (COMIC.md): enormous hands crossed on the pommel of a planted greatsword, long wavy dark hair
+    // down his back, a bar of red light for eyes; a dark stone plinth with his DF monogram in gold
+    B(0, 0.25 * k, 0, 4 * k, 0.25 * k, 4 * k, 0x353b44, 0, 1); B(0, 0.75 * k, 0, 3.3 * k, 0.25 * k, 3.3 * k, 0x454b54, 0, 1)
+    B(0, 3.5 * k, 0, 2.5 * k, 2.5 * k, 2.5 * k, 0x5f656d, 0, 1); B(0, 6.2 * k, 0, 2.9 * k, 0.2 * k, 2.9 * k, 0x4e545c, 0, 1)
+    for (const a of [-1, 1]) for (const b of [-1, 1]) B(a * 2.45 * k, 3.5 * k, b * 2.45 * k, 0.3 * k, 2.5 * k, 0.3 * k, 0x6d737b)
+    B(0, 5.5 * k, 0, 2.55 * k, 0.1 * k, 2.55 * k, T.gold, 0.25)
+    // the monogram on the front face: D and F, each a 1.7 k tall stroke work of boxes
+    for (const [x0, F] of [[-1.15 * k, 0], [0.35 * k, 1]]) {
+      const z = 2.53 * k, w = 0.12 * k
+      B(x0, 3.4 * k, z, w, 0.85 * k, 0.02 * k, T.gold, 0.35)
+      if (F) { B(x0 + 0.4 * k, 4.2 * k, z, 0.4 * k, w, 0.02 * k, T.gold, 0.35); B(x0 + 0.33 * k, 3.45 * k, z, 0.33 * k, w, 0.02 * k, T.gold, 0.35) }
+      else { B(x0 + 0.35 * k, 4.2 * k, z, 0.35 * k, w, 0.02 * k, T.gold, 0.35); B(x0 + 0.35 * k, 2.6 * k, z, 0.35 * k, w, 0.02 * k, T.gold, 0.35); B(x0 + 0.7 * k, 3.4 * k, z, w, 0.5 * k, 0.02 * k, T.gold, 0.35) }
+    }
+    const y = 6.4 * k, M = 0x2c3733, M2 = 0x3f524b, HL = 0x8fa89c
+    for (const a of [-1, 1]) U([a * 0.55 * k, y, 0.1 * k], [a * 0.6 * k, y + 2.6 * k, 0], 0.5 * k, 0.45 * k, 6, M2)
+    U([0, y + 2.4 * k, 0], [0, y + 3.6 * k, 0], 1.35 * k, 1.05 * k, 8, M); U([0, y + 3.5 * k, 0], [0, y + 5.4 * k, 0], 1.05 * k, 1.4 * k, 8, M2)
+    B(0, y + 4.5 * k, 0.98 * k, 0.5 * k, 0.5 * k, 0.04 * k, HL); B(0, y + 3.5 * k, 0, 1.3 * k, 0.07 * k, 1.0 * k, T.gold, 0.25)
+    for (const a of [-1, 1]) { B(a * 1.75 * k, y + 5.45 * k, 0, 0.7 * k, 0.4 * k, 0.85 * k, M); B(a * 1.75 * k, y + 5.9 * k, 0, 0.55 * k, 0.07 * k, 0.7 * k, T.gold, 0.25)
+      U([a * 1.9 * k, y + 5.9 * k, 0], [a * 2.1 * k, y + 7.0 * k, -0.1 * k], 0.25 * k, 0, 5, HL)
+      U([a * 1.55 * k, y + 5.1 * k, 0.1 * k], [a * 1.05 * k, y + 3.7 * k, 0.9 * k], 0.42 * k, 0.36 * k, 6, M2) }
+    U([0, y + 5.4 * k, 0], [0, y + 5.8 * k, 0], 0.5 * k, 0.5 * k, 8, M); U([0, y + 5.8 * k, 0], [0, y + 7 * k, 0], 0.55 * k, 0.5 * k, 8, 0x4a5a52)
+    U([0, y + 7 * k, 0], [0, y + 7.25 * k, 0], 0.5 * k, 0.3 * k, 8, 0x1d1f26); B(0, y + 6.25 * k, 0.45 * k, 0.4 * k, 0.28 * k, 0.2 * k, 0x4a5a52)
+    B(0, y + 6.62 * k, 0.5 * k, 0.4 * k, 0.05 * k, 0.03 * k, 0xff3322, 1.2)
+    // hair: long wavy strands from the crown to the shoulder blades
+    for (let j = -4; j <= 4; j++) { const x = j * 0.13 * k, sway = Math.sin(j * 1.3) * 0.18 * k
+      P.push({ v: [[x - 0.12 * k, y + 7 * k, -0.2 * k], [x + 0.12 * k, y + 7 * k, -0.2 * k], [j * 0.2 * k + sway, y + 4.3 * k - Math.abs(j) * 0.1 * k, -0.85 * k]], t: 0x1d1f26 }) }
+    // the sword: blade down into the plinth, cross-guard, pommel; the hands over it
+    U([0, y, 1.15 * k], [0, y + 3.0 * k, 1.1 * k], 0.12 * k, 0.2 * k, 4, 0x8d949c, 0.5); B(0, y + 3.05 * k, 1.1 * k, 1.0 * k, 0.09 * k, 0.12 * k, T.gold, 0.25)
+    ball(0, y + 3.95 * k, 1.1 * k, 0.26 * k, T.gold); B(0, y + 3.5 * k, 1.1 * k, 0.75 * k, 0.45 * k, 0.45 * k, M2)
+    B(0, y + 3.5 * k, 1.1 * k, 0.78 * k, 0.04 * k, 0.48 * k, HL)
+    B(0, y + 3.8 * k, 0, 1.5 * k, 3.8 * k, 1.0 * k, 0, 0, 2)
+  } else if (f.k === 'obelisk') {
+    B(0, 0.25 * k, 0, 3.6 * k, 0.25 * k, 3.6 * k, 0x353b44, 0, 1); B(0, 0.75 * k, 0, 2.9 * k, 0.25 * k, 2.9 * k, 0x454b54, 0, 1); B(0, 1.45 * k, 0, 2.3 * k, 0.45 * k, 2.3 * k, 0x5f656d, 0, 1)
+    U([0, 1.9 * k, 0], [0, 22 * k, 0], 2.12 * k, 1.27 * k, 4, 0xc2c8cd, 0.5); U([0, 22 * k, 0], [0, 25 * k, 0], 1.27 * k, 0, 4, T.gold, 0.5)
+    B(0, 22 * k, 0, 0.95 * k, 0.12 * k, 0.95 * k, T.gold, 1.5); B(0, 11.9 * k, 0, 1.45 * k, 10 * k, 1.45 * k, 0, 0, 2)
+    for (const [sx, sz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) B(sx * 2.32 * k, 1.45 * k, sz * 2.32 * k, sx ? 0.02 * k : 1.4 * k, 0.25 * k, sx ? 1.4 * k : 0.02 * k, 0x4a3b24, 0.3)
+  } else if (f.k === 'fountain') {
+    // an octagonal basin with a lit pool, a column and a bowl, a gold finial, four lanterns on the rim
+    const R = 5.2 * k
+    oct(R, 0, 0.7 * k, T.stone, 0); oct(R, 0, 1.15 * k, T.stone, 2); U([0, 0.7 * k, 0], [0, 1.15 * k, 0], R, R, 8, T.pale, 0.5, 0, 1)
+    for (const [ex, ez] of [[0.924 * (R - 0.4 * k), 0.383 * (R - 0.4 * k)], [0.383 * (R - 0.4 * k), 0.924 * (R - 0.4 * k)], [0.653 * (R - 0.4 * k), 0.653 * (R - 0.4 * k)]]) B(0, 0.75 * k, 0, ex, 0.005, ez, T.water, 0.6)
+    U([0, 0.7 * k, 0], [0, 3.4 * k, 0], 1.1 * k, 0.8 * k, 8, 0xb4bac0, 0.5); U([0, 3.4 * k, 0], [0, 4 * k, 0], 1.2 * k, 3 * k, 8, 0xb4bac0, 0.5, 3)
+    for (const a of [-1, 1]) for (const b of [-1, 1]) B(a * 0.8 * k, 2 * k, b * 0.8 * k, 0.07 * k, 1.1 * k, 0.07 * k, T.warm, 1)
+    for (const [ex, ez] of [[2.6 * k, 1.08 * k], [1.08 * k, 2.6 * k], [1.84 * k, 1.84 * k]]) B(0, 4.03 * k, 0, ex, 0.005, ez, T.water, 0.6)
+    U([0, 4 * k, 0], [0, 6.3 * k, 0], 0.5 * k, 0.35 * k, 8, T.pale, 0.5); U([0, 6.3 * k, 0], [0, 8.6 * k, 0], 0.45 * k, 0, 8, T.gold, 0.5)
+    for (const a of [-1, 1]) for (const b of [-1, 1]) { B(a * 3.3 * k, 1.7 * k, b * 3.3 * k, 0.25 * k, 0.55 * k, 0.25 * k, T.stone); B(a * 3.3 * k, 2.4 * k, b * 3.3 * k, 0.3 * k, 0.14 * k, 0.3 * k, T.warm, 1.8) }
+    B(0, 3.4 * k, 0, 1.0 * k, 2.2 * k, 1.0 * k, 0, 0, 2)
+  } else if (f.k === 'planter') {
+    oct(1.9, 0, 0.7, T.stone, 1); oct(1.7, 0.7, 0.74, T.earth, 0); U([0, 0.74, 0], [0, 3.4, 0], 1.15, 0, 8, T.leaf); U([0, 3.4, 0], [0, 3.8, 0], 0.18, 0.18, 6, T.leaf)
+    B(0, 1.3, 0, 0.6, 1.3, 0.6, 0, 0, 2)
+  } else if (f.k === 'bench') {
+    B(0, 0.45, 0, 1.1, 0.06, 0.32, T.wood); B(0, 0.85, -0.3, 1.1, 0.3, 0.04, T.wood)
+    for (const a of [-1, 1]) B(a * 1.0, 0.25, 0, 0.08, 0.25, 0.3, T.iron)
+    B(0, 0.5, -0.05, 1.15, 0.5, 0.36, 0, 0, 2)
+  } else if (f.k === 'news') {
+    B(0, 1.15, 0, 1.3, 1.15, 0.9, 0x39424e); B(0, 1.5, 0.905, 1.0, 0.45, 0.02, T.warm, 1.5); B(0, 0.95, 1.0, 1.1, 0.05, 0.2, T.pale)
+    B(0, 2.45, 0, 1.55, 0.1, 1.2, T.pale); B(0, 2.65, 0, 1.0, 0.07, 0.8, T.stone); B(0, 2.1, 0.92, 1.2, 0.18, 0.03, FAUST_NIGHT.shops.signs[f.h], FAUST_NIGHT.shops.signGlow)
+    U([0, 2.72, 0], [0, 3.6, 0], 0.12, 0, 6, T.gold); B(0, 1.2, 0.1, 1.4, 1.2, 1.0, 0, 0, 2)
+  } else if (f.k === 'phone') {
+    for (const a of [-1, 1]) {
+      B(a * 0.55, 1.1, 0, 0.45, 1.1, 0.45, T.iron); B(a * 0.55, 1.3, 0.455, 0.3, 0.6, 0.02, T.warm, 1.2); B(a * 0.55, 2.28, 0, 0.5, 0.08, 0.5, T.pale)
+    }
+    B(0, 1.15, 0, 1.05, 1.15, 0.5, 0, 0, 2)
+  } else if (f.k === 'clock') {
+    B(0, 0.3, 0, 0.7, 0.3, 0.7, T.stone); B(0, 3, 0, 0.38, 2.7, 0.38, T.pale); B(0, 5.4, 0, 0.8, 0.8, 0.8, T.stone)
+    for (const [sx, sz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      B(sx * 0.82, 5.4, sz * 0.82, sx ? 0.02 : 0.6, 0.6, sx ? 0.6 : 0.02, T.warm, 1.2)
+      B(sx * 0.84, 5.5, sz * 0.84, sx ? 0.01 : 0.04, 0.25, sx ? 0.04 : 0.01, T.iron); B(sx * 0.84 + sz * 0.15, 5.4, sz * 0.84 + sx * 0.15, sx ? 0.01 : 0.15, 0.04, sx ? 0.15 : 0.01, T.iron)
+    }
+    B(0, 6.35, 0, 0.9, 0.1, 0.9, T.stone); B(0, 6.6, 0, 0.5, 0.15, 0.5, T.pale); U([0, 6.75, 0], [0, 8, 0], 0.25, 0, 8, T.gold); B(0, 3, 0, 0.7, 3, 0.7, 0, 0, 2)
+  } else if (f.k === 'mail') {
+    B(-0.5, 0.55, 0, 0.28, 0.55, 0.25, T.post); B(-0.5, 1.12, 0, 0.3, 0.06, 0.27, T.iron); B(-0.5, 0.8, 0.255, 0.18, 0.03, 0.01, T.gold)
+    U([0.5, 0, 0], [0.5, 0.7, 0], 0.19, 0.19, 8, T.red); U([0.5, 0.7, 0], [0.5, 0.8, 0], 0.24, 0, 8, T.red)
+    for (const a of [-1, 1]) B(0.5 + a * 0.26, 0.45, 0, 0.07, 0.07, 0.07, T.red)
+    B(-0.5, 0.6, 0, 0.3, 0.6, 0.27, 0, 0, 2); B(0.5, 0.4, 0, 0.26, 0.4, 0.26, 0, 0, 2)
+  }
+  return P
+}
+// a local (lx, lz) in the world: the feature's centre and quarter turns
+const faustFeatAt = (f, lx, lz) => { const q = f.q & 3; return q === 0 ? [f.x + lx, f.z + lz] : q === 1 ? [f.x + lz, f.z - lx] : q === 2 ? [f.x - lx, f.z - lz] : [f.x - lz, f.z + lx] }
+function faustFeatBox(f, b) { const [x, z] = faustFeatAt(f, b[0], b[2]), odd = f.q & 1; return faustBox(x, b[1], z, odd ? b[5] : b[3], b[4], odd ? b[3] : b[5], { slim: true }) }
+const faustFeatBoxes = features => features.flatMap(f => faustFeatParts(f).filter(p => p.b && p.solid).map(p => faustFeatBox(f, p.b)))
+// a tube or cone from a to b (r0, r1 their radii, n sides, turn: a fraction of a side), as flat triangles facing out
+function faustFeatTube(g, a, b, r0, r1, n, tint, turn, cap, dbl) {
+  const ax = b[0] - a[0], ay = b[1] - a[1], az = b[2] - a[2], L = Math.hypot(ax, ay, az) || 1, wx = ax / L, wy = ay / L, wz = az / L
+  let ux = -wz, uz = wx; const ul = Math.hypot(ux, uz)
+  if (ul < 1e-3) { ux = 1; uz = 0 } else { ux /= ul; uz /= ul }
+  const vx = wy * uz, vy = wz * ux - wx * uz, vz = -wy * ux
+  const ring = (c, r, i) => { const t = (i + turn) * 6.283185307 / n, cs = Math.cos(t) * r, sn = Math.sin(t) * r; return [c[0] + ux * cs + vx * sn, c[1] + vy * sn, c[2] + uz * cs + vz * sn] }
+  const face = (p, q, r, o) => {
+    const nx = (q[1] - p[1]) * (r[2] - p[2]) - (q[2] - p[2]) * (r[1] - p[1]), ny = (q[2] - p[2]) * (r[0] - p[0]) - (q[0] - p[0]) * (r[2] - p[2]), nz = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    if (dbl) { g.tri(p, q, r, tint); g.tri(p, r, q, tint) } else if (nx * o[0] + ny * o[1] + nz * o[2] >= 0) g.tri(p, q, r, tint); else g.tri(p, r, q, tint)
+  }
+  const P0 = [], P1 = []
+  for (let i = 0; i <= n; i++) { P0.push(ring(a, r0, i)); P1.push(ring(b, r1, i)) }
+  for (let i = 0; i < n; i++) {
+    const big = r0 >= r1 ? P0 : P1, c = r0 >= r1 ? a : b, o = [(big[i][0] + big[i + 1][0]) / 2 - c[0], (big[i][1] + big[i + 1][1]) / 2 - c[1], (big[i][2] + big[i + 1][2]) / 2 - c[2]]
+    if (r1 < 1e-6) face(P0[i], P0[i + 1], b, o)
+    else if (r0 < 1e-6) face(a, P1[i + 1], P1[i], o)
+    else { face(P0[i], P0[i + 1], P1[i + 1], o); face(P0[i], P1[i + 1], P1[i], o) }
+    if ((cap & 1) && r1 > 1e-6) face(b, P1[i], P1[i + 1], [wx, wy, wz])
+    if ((cap & 2) && r0 > 1e-6) face(a, P0[i], P0[i + 1], [-wx, -wy, -wz])
+  }
+}
+function faustFeatDraw(g, f) {
+  const at = (p, y) => { const [x, z] = faustFeatAt(f, p[0], p[2]); return [x, y, z] }
+  for (const p of faustFeatParts(f)) {
+    if (p.b) { if (p.solid !== 2) { const [x, z] = faustFeatAt(f, p.b[0], p.b[2]), odd = f.q & 1; g.box(faustBox(x, p.b[1], z, odd ? p.b[5] : p.b[3], p.b[4], odd ? p.b[3] : p.b[5]), p.t, p.g) } }
+    else if (p.u) faustFeatTube(g, at(p.u[0], p.u[0][1]), at(p.u[1], p.u[1][1]), p.r[0], p.r[1], p.n, p.t, p.turn, p.cap, p.dbl)
+    else if (p.v) { const [a, b, c] = p.v.map(v => at(v, v[1])); g.tri(a, b, c, p.t); g.tri(a, c, b, p.t) }
+  }
+}
+// a cell's features as one mesh on the stone material (null when it has none)
+function faustFeatMesh(P) {
+  if (!P.features?.length) return null
+  const g = faustBatch(8192)
+  for (const f of P.features) faustFeatDraw(g, f)
+  const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true
+  return mesh
+}
 function faustPlan(seed, ci, cj, S = 20) {
   const gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96
   const rng = genRng(faustMix(seed, gx, gz)), { districtHash, distance, district, centralPlaza, plaza, diagonal, layout } = faustCell(seed, gx, gz)
@@ -2896,6 +3057,9 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (H > 36 && i === 0) screens.push({ x, y: 20, z: z + d + 0.12, w: 16, h: 9, yaw: 0, ground: null })
   }
   for (const q of faustLampOffsets(diagonal)) boxes.push(faustBox(X + 11.4, 4.5, Z + q, 0.14, 4.5, 0.14, { slim: true }))
+  // card #69: a plaza's monument and furniture, and their colliders
+  const features = faustFeatures(seed, gx, gz, { plaza, centralPlaza, diagonal })
+  boxes.push(...faustFeatBoxes(features))
   boxes.push(...rail.byCell.get(faustKey(ci, cj)) || [])
   const railLights = rail.lightsByCell.get(faustKey(ci, cj)) || []
   const nodes = new Map(), edges = []
@@ -2911,7 +3075,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 2, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights }
+  const content = { version: 3, seed: seed >>> 0, ci, cj, S, plaza, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -4193,6 +4357,7 @@ function faustLampSites(P) {
     for (const side of [1, -1]) for (const along of side > 0 ? own ? [] : L.near : L.far)
       out.push({ x: road.a[0] + ux * along + nx * side * L.head, z: road.a[2] + uz * along + nz * side * L.head, nx: nx * side, nz: nz * side })
   }
+  if (P.plaza && !P.diagonal) for (const [dx, dz] of FAUST_FEAT.lamps) out.push({ x: X + 48 + dx, z: Z + 48 + dz, nx: 0, nz: 0 })      // card #69
   const clear = (x, z) => Math.abs(z - x - (Z - X)) * Math.SQRT1_2 > 14
   return P.diagonal ? out.filter(s => s.own || !s.nx && !s.nz || clear(s.x, s.z) && clear(s.x + s.nx * (L.post - L.head), s.z + s.nz * (L.post - L.head))) : out
 }
@@ -4688,6 +4853,7 @@ function* faustVisualSteps(c) {
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }      // card #46: each box's extents, for its windows' bays
     else dsLampLook(c, mesh.geometry)                    // card #46: its broken lamp heads dark
   }
+  { const feat = faustFeatMesh(P); if (feat) root.add(feat) }      // card #69
   if (faustState.poolMaterial) for (const q of faustLampOffsets(c.plan.diagonal)) {
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
     pool.rotation.x = -Math.PI / 2; pool.position.set(X + 8.6, 0.065, Z + q); root.add(pool)
@@ -21634,6 +21800,29 @@ function autoCarNear(me, skip) {
   }
   return best
 }
+// the nearest lane point to (x, z) for a car of V: { d, p } (Infinity: no lane loaded; the plaza has none), lanes loaded 2 cells round it
+function autoLane(x, z, V) {
+  trafficState ||= (trafficReset(), trafficState)
+  trafficNear(x, z, 2)
+  let best = { d: Infinity, p: null }
+  for (const e of trafficState.edges) {
+    if (!trafficFits(e, V)) continue
+    const p = trafficPoint(e, clamp((x - e.from.x) * e.dx + (z - e.from.z) * e.dz, 12, e.length - 12)), d = Math.hypot(x - p.x, z - p.z)
+    if (d < best.d) best = { d, p }
+  }
+  return best
+}
+// the traffic AI's own pure pursuit and braking, straight at W over open ground
+function autoOpenInput(o, W) {
+  const fw = rotq(o.q, [0, 0, -1]), yaw = Math.atan2(-fw[0], -fw[2]), v = o.body.getLinearVelocity(), fs = v.x() * fw[0] + v.z() * fw[2]
+  const dist = Math.hypot(W.x - o.x, W.z - o.z), err = wrapPi(Math.atan2(o.x - W.x, o.z - W.z) - yaw)
+  const reach = 5 + fs * fs / 10, rays = [-0.7, 0, 0.7].map(s => castRay(o.x - fw[2] * s + fw[0] * (o.V.l / 2 + 0.3), o.y + 0.2, o.z + fw[0] * s + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], reach, RAY_GROUP | G_OBJ) * reach)
+  let desired = Math.min(10, Math.max(3, dist * 0.4))
+  if (Math.abs(err) > 0.6) desired = Math.min(desired, 4)
+  if (Math.min(...rays) < reach) desired = Math.min(desired, Math.sqrt(Math.max(0, Math.min(...rays) - 3) * 6))
+  const f = fs < -0.5 ? 1 : desired < 0.3 ? fs > 0.5 ? -1 : 0 : fs > desired + 0.2 ? -1 : clamp((desired - fs) * 0.45, 0, 0.7)
+  return { f, r: trafficSteer(o, err, dist, Math.abs(fs)), j: desired < 0.3 }
+}
 AUTO_STEPS.drive = (R, a) => {
   const me = selfChar()
   if (!LV.faust || !isHost || !me) throw new Error('drive: Faustland host only')
@@ -21670,19 +21859,35 @@ AUTO_STEPS.drive = (R, a) => {
     const s = seatOf(m)
     if (!s || s[1] !== 0 || (st.car && s[0] !== st.car)) throw new Error('drive: you left the car')
     const o = st.car = s[0]
-    if (st.phase === 'plan') {
+    if (st.phase === 'plan' || st.phase === 'open' && !st.w.goal && t - st.tried > 1000) {
+      st.tried = t
       const riders = o.riders.slice(); o.riders.fill(undefined)
       let ok = false
       try { ok = trafficDriveTo(o, { x: gx, z: gz }, { driver: false, urgent: !!A.urgent, speed: Number(A.speed) || 12 }) } finally { riders.forEach((r, k) => { o.riders[k] = r }) }
-      if (!ok) throw new Error('drive: no road route from here to ' + what + ' (the car must be within 28 m of a street)')
-      autoSay('§7drive: on the road, §f' + Math.round(Math.hypot(gx - o.x, gz - o.z)) + ' m §7to go')
-      st.a = o.traffic; o.traffic = null; st.phase = 'drive'; st.deadline = t + Math.min(1200, 60 + Math.hypot(gx - o.x, gz - o.z) / 2.5) * 1000
+      if (ok) {
+        autoSay('§7drive: on the road, §f' + Math.round(Math.hypot(gx - o.x, gz - o.z)) + ' m §7to go')
+        if (st.goalOpen === undefined) st.goalOpen = autoLane(gx, gz, o.V).d > 28            // a goal on open ground (the plaza): the last of it off the road
+        st.a = o.traffic; o.traffic = null; st.phase = 'drive'; st.deadline = t + Math.min(1200, 60 + Math.hypot(gx - o.x, gz - o.z) / 2.5) * 1000
+      } else if (st.phase === 'plan') {
+        const here = autoLane(o.x, o.z, o.V), goal = autoLane(gx, gz, o.V)
+        if (here.d <= 10) throw new Error('drive: no road route from here to ' + what + ' (the car is ' + Math.round(here.d) + ' m from a lane, the goal ' + Math.round(goal.d) + ' m)')
+        // off the roads (the central plaza has no lanes): straight over open ground to the nearest lane, or to a goal that is open ground too
+        st.w = goal.d > 28 && here.p ? { x: gx, z: gz, goal: true } : here.p
+        if (!st.w) throw new Error('drive: no lanes anywhere near ' + Math.round(o.x) + ' ' + Math.round(o.z))
+        autoSay('§7drive: ' + Math.round(here.d) + ' m from the nearest lane (open ground): straight to §f' + (st.w.goal ? what : 'the road, ' + Math.round(here.d) + ' m'))
+        st.phase = 'open'; st.deadline = t + Math.min(1200, 90 + Math.hypot(gx - o.x, gz - o.z) / 2.5) * 1000; st.openT0 = t
+      } else if (t - st.openT0 > 10000 && !st.w.goal && Math.hypot(st.w.x - o.x, st.w.z - o.z) < 8) throw new Error('drive: no road route from the road at ' + Math.round(o.x) + ' ' + Math.round(o.z) + ' to ' + what)
     }
-    o.traffic = st.a
     let inp
-    try { inp = trafficThink(o, dt, [...players.values()].filter(c => !c.bot && c.owner === undefined)) } finally { o.traffic = null }
+    if (st.phase === 'open') inp = autoOpenInput(o, st.w)
+    else { o.traffic = st.a; try { inp = trafficThink(o, dt, [...players.values()].filter(c => !c.bot && c.owner === undefined)) } finally { o.traffic = null } }
     const left = Math.hypot(gx - o.x, gz - o.z), v = speedOf(o)
-    if (st.a.arrived || left < 6 && v < 0.6) { hold(); sub.out = { arrived: true, x: Math.round(o.x), z: Math.round(o.z), left: Math.round(left * 10) / 10, ms: Math.round(t - st.t0), what }; input.j = true; return true }
+    if (st.phase === 'open' ? st.w.goal && Math.hypot(st.w.x - o.x, st.w.z - o.z) < 6 && v < 0.6 : (st.a.arrived && !(st.goalOpen && left > 12)) || left < 6 && v < 0.6) { hold(); sub.out = { arrived: true, x: Math.round(o.x), z: Math.round(o.z), left: Math.round(left * 10) / 10, ms: Math.round(t - st.t0), what }; input.j = true; return true }
+    if (st.phase === 'drive' && st.a.arrived && st.goalOpen && left > 12) {          // the road ended short of a goal on open ground: across it the rest of the way
+      hold(); st.a = null; st.w = { x: gx, z: gz, goal: true }; st.phase = 'open'; st.tried = t; st.openT0 = t
+      autoSay('§7drive: off the road, §f' + Math.round(left) + ' m §7over open ground')
+      return false
+    }
     input.f = inp.f; input.r = inp.r; input.j = inp.j
     st.still = v < 0.3 ? st.still + dt : 0
     if (st.still > 25) throw new Error('stuck at ' + Math.round(o.x) + ' ' + Math.round(o.z) + ' (waiting 25 s), ' + Math.round(left) + ' m from ' + what)
@@ -24719,8 +24924,8 @@ function slCell(ci, cj) {
   if (P.plaza || !cell.rings.length) {
     const cx = X + 48, cz = Z + 48, R0 = P.plaza ? 34 : 30
     for (let i = 0; i < n && k < 60; i++) {
-      const m = 3 + (rng() * 3 | 0), a0 = rng() * 6.283, pts = []
-      for (let j = 0; j < m; j++) { const a = a0 + j * 6.283 / m + (rng() - 0.5) * 0.6, r = R0 * (0.25 + 0.7 * rng()); pts.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]) }
+      const m = 3 + (rng() * 3 | 0), a0 = rng() * 6.283, pts = [], ft = P.features?.length      // card #69: a plaza's ring of walking, clear of its monument
+      for (let j = 0; j < m; j++) { const a = a0 + j * 6.283 / m + (ft ? 0 : (rng() - 0.5) * 0.6), r = ft ? FAUST_FEAT.loop[0] + (FAUST_FEAT.loop[1] - FAUST_FEAT.loop[0]) * rng() : R0 * (0.25 + 0.7 * rng()); pts.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]) }
       if (rng() < STREET.share.idle) { const p = pts[0]; cell.agents.push({ id: id(k++), kind: SL_K.idle, body: body(), tint: tint(), x: p[0], z: p[1], yaw: rng() * 6.283, clip: ['idle', 'phone', 'talk', 'arms_folded'][rng() * 4 | 0], ph: rng(), home: slLoop(pts, STREET.walk[0], 0) }); continue }
       const v = STREET.walk[0] + rng() * (STREET.walk[1] - STREET.walk[0]), dir = rng() < 0.5
       const R = slLoop(dir ? pts : pts.slice().reverse(), v, 0, null, -rng() * 3e5)
