@@ -27752,7 +27752,7 @@ function slCell(ci, cj) {
   }
   // Under the avenue's lamps, at the plan's shared offsets: someone loitering, facing the street.
   for (const q of faustLampOffsets(P.diagonal)) if (rng() < 0.55 * q_(q)) {
-    const x = X + 11.4 + 0.55, z = Z + q + (rng() - 0.5) * 0.8, ring = cell.rings.find(g => g.r[1] < z && g.r[3] > z) || cell.rings[0]
+    const x = X + 11.4 + 0.55, z = Z + q + (rng() - 0.5) * 0.8, ring = slNearestRing(cell.rings, x, z)
     if (cell.rings.some(g => slInside(g.r, x, z, -0.2)) || near.bodies.some(g => slPointGap(x, z, g) < SL_CLEAR.r + 0.05)) continue
     cell.agents.push({ id: id(k++), kind: SL_K.idle, body: body(), tint: tint(), x, z, yaw: -Math.PI / 2 + (rng() - 0.5) * 0.6,
       clip: ['idle', 'phone', 'arms_folded'][rng() * 3 | 0], ph: rng(), home: ring && slRingLoop(ring, false, 0, null, STREET.walk[0]) })
@@ -27928,15 +27928,31 @@ function slHeading(R, lo, yaw) {
     if (ex * ex + ez * ez > 1e-6) return Math.atan2(ex, ez) }
   return yaw
 }
+// a lamp loiterer's home ring: the one nearest its spot (card #63: the first ring spanning its z could be the cell's far
+// side, 48 m off, and a panic sent it there in one frame)
+function slNearestRing(rings, x, z) {
+  let best = null, bd = Infinity
+  for (const g of rings) { const d = Math.hypot(Math.max(g.r[0] - x, 0, x - g.r[2]), Math.max(g.r[1] - z, 0, z - g.r[3])); if (d < bd) { bd = d; best = g } }
+  return best
+}
+const slDogAt = [{ x: 0, z: 0, yaw: 0 }, { x: 0, z: 0, yaw: 0 }, { x: 0, z: 0, yaw: 0 }]
 // an agent's own schedule at t: on its route, or standing at its spot
 function slAmbient(ag, t, o) {
   if (ag.companion) {
     const owner = ag.companion; slAmbient(owner, t, o)
     // beside the owner along the way they walk; stopped, the way they came, not the window they face (card #56)
-    const yaw = o.mode === 1 && owner.route ? slHeading(owner.route, o.i, o.yaw) : o.yaw, w = Math.sin(t / 1300 + owner.id) * 0.25
-    o.x += Math.cos(yaw) * (-0.6 + w) + Math.sin(yaw) * 0.9
-    o.z += -Math.sin(yaw) * (-0.6 + w) + Math.cos(yaw) * 0.9
-    o.yaw = yaw + Math.sin(t / 2100 + owner.id * 1.7) * 0.3
+    // card #63: placed by the path, 0.9 m ahead along it and to the side of its direction over 3 m, not by his heading, which
+    // switches in one frame at ring corners and lamp-post step-arounds (the dog swung 0.4-1.75 m in a frame there)
+    const R = owner.route, w = Math.sin(t / 1300 + owner.id) * 0.25, lat = -0.6 + w
+    if (R && R.cum[R.n - 1] > 3) {
+      const s = o.s + 0.9, c = slAlong(R, s, slDogAt[0]), a = slAlong(R, s - 1.5, slDogAt[1]), b = slAlong(R, s + 1.5, slDogAt[2])
+      let fx = b.x - a.x, fz = b.z - a.z; const L = Math.hypot(fx, fz) || 1; fx /= L; fz /= L
+      o.x = c.x + fz * lat; o.z = c.z - fx * lat; o.yaw = Math.atan2(fx, fz) + Math.sin(t / 2100 + owner.id * 1.7) * 0.3
+    } else {
+      const yaw = o.mode === 1 && R ? slHeading(R, o.i, o.yaw) : o.yaw
+      o.x += Math.cos(yaw) * lat + Math.sin(yaw) * 0.9; o.z += -Math.sin(yaw) * lat + Math.cos(yaw) * 0.9
+      o.yaw = yaw + Math.sin(t / 2100 + owner.id * 1.7) * 0.3
+    }
     if (o.mode === 1) o.mode = 6
     return o
   }
@@ -27949,7 +27965,7 @@ function slFleeStart(ag, at) {
   if (!R) return null
   if (ag.route && ag._s0 !== undefined && ag._s0t === at.t) return [R, ag._s0]
   let s0 = at.s
-  if (!ag.route) { // project the spot onto the ring
+  if (!ag.route || ag.companion) { // project the spot onto the ring (a walked dog onto its owner's route, card #63: no hook back)
     let best = 1e9; const K = R.keys
     for (let i = 0; i + 1 < R.n; i++) { const ax = K[i * 5 + 1], az = K[i * 5 + 2], bx = K[i * 5 + 6], bz = K[i * 5 + 7], dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1
       const f = Math.max(0, Math.min(1, ((at.x - ax) * dx + (at.z - az) * dz) / L2)), d = Math.hypot(ax + dx * f - at.x, az + dz * f - at.z)
@@ -28003,8 +28019,11 @@ function slDetached(ag, r, t, o) {
     const k0 = r.kind === 1 ? S.knockS : 0, k1 = k0 + (r.kind === 1 ? S.lieS : 0), k2 = k1 + (r.kind === 1 ? S.getupS : 0)
     const face = Math.atan2(r.x - r.x1, r.z - r.z1)
     if (r.kind === 1 && tau < k0) {
-      const u = tau / k0, e = 1 - (1 - u) * (1 - u)
-      o.x = r.x + (r.x1 - r.x) * e; o.z = r.z + (r.z1 - r.z) * e; o.y = Math.sin(Math.PI * u) * 0.45 + (ag.kind === SL_K.cyclist ? (1 - u) * 0.55 : 0)
+      // card #63: off at the hit's speed (it left at twice it: a 0.5-0.8 m first frame), and a rider rises off the saddle
+      // instead of starting 0.55 m up; down at 85% of the way, the last of it a slide along the ground; the hop scales with the
+      // fling (d04a91af: a 0.3 m stumble must not hop 0.45 m)
+      const u = tau / k0, e = u * (1 + u - u * u)
+      o.x = r.x + (r.x1 - r.x) * e; o.z = r.z + (r.z1 - r.z) * e; o.y = Math.sin(Math.PI * Math.min(1, u / 0.85)) * (ag.kind === SL_K.cyclist ? 0.8 : 0.45) * clamp(Math.hypot(r.x1 - r.x, r.z1 - r.z) / 2.5, 0.2, 1)
       o.yaw = face; o.clip = dog ? 'flinch' : 'knockback'; o.ct = u * 0.8; o.down = true
       if (dog) { o.roll = u * Math.PI / 2; o.y += Math.sin(o.roll) * 0.22 }
     } else if (tau < k1) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = dog ? 'idle' : 'death'; o.ct = 2.39; o.down = true
@@ -28018,23 +28037,29 @@ function slDetached(ag, r, t, o) {
       const end = d / S.run
       if (tau - k2 > end) { const g = (tau - k2 - end) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
     }
-    if (ag.kind === SL_K.cyclist) { o.bikeDown = r.bike || [r.x1, r.z1, face]; o.wheel = 0 }
+    if (ag.kind === SL_K.cyclist) {          // card #63: the bike falls over and slides from under him to where it lies
+      const b = r.bike || [r.x1, r.z1, face], f = r.kind === 1 ? Math.min(1, tau / k0) : 1, e = f * (1 + f - f * f), y0 = b[2] - (slRnd(ag.id) - 0.5)
+      o.bikeDown = [r.x + (b[0] - r.x) * e, r.z + (b[1] - r.z) * e, y0 + (b[2] - y0) * e, e]; o.wheel = 0
+    }
     return
   }
   // a panic or a dodge: off along the route (away from the trouble), then gone into a doorway for a while
   const at = slAmbient(ag, r.t, slTmp), fs = slFleeStart(ag, at)
   if (!fs) { o.hidden = true; o.scale = 0; return }
-  const [R, s0] = fs
+  // card #63: from where it stands: someone off the route (a walked dog beside its owner, an idler at a shopfront or a lamp)
+  // runs straight to the route's point first, then along it; that step was a one-frame jump, up to 48 m
+  const [R, s0] = fs, ax = at.x, az = at.z, q0 = slAlong(R, s0, { x: 0, z: 0, yaw: 0 }), g0 = Math.hypot(q0.x - ax, q0.z - az), d0 = g0 > 0.05 ? g0 : 0
   let dir = r.dir
   if (r.kind === 2 || !dir) {
     const p = slAlong(R, s0 + 2, { x: 0, z: 0, yaw: 0 }), m = slAlong(R, s0 - 2, { x: 0, z: 0, yaw: 0 })
     dir = Math.hypot(p.x - r.x, p.z - r.z) >= Math.hypot(m.x - r.x, m.z - r.z) ? 1 : -1
   }
   // close to the trouble, a person first cowers where they stand, then runs
-  const cow = r.kind === 2 && !dog && ag.kind !== SL_K.pram && Math.hypot(at.x - r.x, at.z - r.z) < 6 ? 1.3 : 0
-  if (tau < cow) { const q = slAlong(R, s0, o); o.x = q.x; o.z = q.z; o.yaw = Math.atan2(r.x - o.x, r.z - o.z); o.clip = 'cower'; o.ct = tau; o.v = 0; o.s = 0; return }
+  const cow = r.kind === 2 && !dog && ag.kind !== SL_K.pram && Math.hypot(ax - r.x, az - r.z) < 6 ? 1.3 : 0
+  if (tau < cow) { o.x = ax; o.z = az; o.yaw = Math.atan2(r.x - o.x, r.z - o.z); o.clip = 'cower'; o.ct = tau; o.v = 0; o.s = 0; return }
   const v = ag.kind === SL_K.pram ? 3 : dog ? 5.5 : S.run, run = Math.min(tau - cow, S.fleeS) * v
-  slAlong(R, s0 + dir * run, o); if (dir < 0) o.yaw = slWrap(o.yaw + Math.PI)
+  if (run < d0) { const f = run / d0; o.x = ax + (q0.x - ax) * f; o.z = az + (q0.z - az) * f; o.yaw = Math.atan2(q0.x - ax, q0.z - az) }
+  else { slAlong(R, s0 + dir * (run - d0), o); if (dir < 0) o.yaw = slWrap(o.yaw + Math.PI) }
   o.v = tau < S.fleeS ? v : 0
   if (tau - cow > S.fleeS) { const g = (tau - cow - S.fleeS) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
   o.s = run
@@ -28599,7 +28624,7 @@ function slFrame(t, dt, obl) {
     if (slRnd(ag.id, 77) >= qn && !st.byId.has(ag.id)) continue
     ag.line = L; const p = slPose(ag, T, slPoseA); p.bikeDown = p.rec?.kind === 1 || p.rec?.kind === 8 || p.rec?.kind === 9 ? p.bikeDown : null
     if (p.bikeDown) { const [bx, bz, by] = p.bikeDown, d = Math.hypot(bx - cx, bz - cz)
-      if (near(bx, bz, D.bike) && seen(bx, 0.4, bz, 1.6)) slBikeDown(kit, d < 16 ? '' : '_lod1', bx, bz, by) }
+      if (near(bx, bz, D.bike) && seen(bx, 0.4, bz, 1.6)) slBikeDown(kit, d < 16 ? '' : '_lod1', bx, bz, by, p.bikeDown[3] ?? 1) }
     if (p.hidden || !near(p.x, p.z, D.bike) || !seen(p.x, 1, p.z, 2.4)) continue
     const d = Math.hypot(p.x - cx, p.z - cz), lod = d < 16 ? '' : '_lod1'
     if (!p.bikeDown) slBike(kit, lod, p)
@@ -28632,10 +28657,11 @@ function slBike(kit, lod, p) {
   }
 }
 // a knocked-down bike where it slid: every part, rolled a quarter turn onto its side
-function slBikeDown(kit, lod, bx, bz, yaw) {
-  const c = Math.cos(yaw), sn = Math.sin(yaw), B = STREET.bike, R = Math.PI / 2
-  const at = (ax, ay, az) => [bx - c * ay + sn * az, 0.3 + ax, bz + sn * ay + c * az]          // (ax, ay, az) rolled, turned, placed
-  slSet(kit.parts['bike_frame' + lod], bx, 0.3, bz, yaw, 1, R)
+function slBikeDown(kit, lod, bx, bz, yaw, fall = 1) {
+  // fall 0 upright, 1 on its side (card #63: it falls over through the knock-down instead of appearing there on its side)
+  const c = Math.cos(yaw), sn = Math.sin(yaw), B = STREET.bike, R = Math.PI / 2 * fall, cr = Math.cos(R), sr = Math.sin(R), lift = 0.3 * sr
+  const at = (ax, ay, az) => { const rx = ax * cr - ay * sr, ry = ax * sr + ay * cr; return [bx + c * rx + sn * az, lift + ry, bz - sn * rx + c * az] }      // (ax, ay, az) rolled, turned, placed
+  slSet(kit.parts['bike_frame' + lod], bx, lift, bz, yaw, 1, R)
   for (const az of B.axles) { const [x, y, z] = at(0, 0.35, az); slSet(kit.parts['bike_wheel' + lod], x, y, z, yaw, 1, R) }
   { const [x, y, z] = at(0, B.bb[1], B.bb[2]); slSet(kit.parts['bike_crank' + lod], x, y, z, yaw, 1, R) }
   for (const side of [1, -1]) { const [x, y, z] = at(side > 0 ? -B.pedalOut : B.pedalOut, B.bb[1] - side * B.crank, B.bb[2]); slSet(kit.parts['bike_pedal' + lod], x, y, z, yaw, 1, R) }
