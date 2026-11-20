@@ -16754,7 +16754,7 @@ function buildWorld() {
         try { if (renderer.properties.has) s.traverse(o => { if (!o.material) return
           for (const m of Array.isArray(o.material) ? o.material : [o.material]) { const own = renderer.properties.has(m) && fresh.get(renderer.properties.get(m).currentProgram)
             if (own && own.length < 2) own.push((m.name || m.type) + '@' + (o.name || o.parent?.name || o.type)) } }) } catch (e) {}
-        for (const [p, own] of fresh) background.noteProgram((p.name || String(p.cacheKey).split(',')[0] || '?') + (own.length ? ' ' + own.join(' ') : ''))
+        for (const [p, own] of fresh) background.noteProgram((p.name || String(p.cacheKey).split(',')[0] || '?') + (own.length ? ' ' + own.join(' ') : '') + programWhy(p, fresh))
         background.sec(null)
       }
       if (phase === 'playing' && renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) {
@@ -18271,7 +18271,7 @@ function rigAnimate(a, want, dt, t) {
   else if (K.hopLand && R.wasAir && !airborne && t - (R.airAt ?? t) > 250 && want !== 'crouch' && a.dying < 0) {
     const clip = rigClip(M, K.hopLand), going = want === 1 || v > 0.6
     if (clip) R.over = { clip, t0: 0.04, at: t, full: true, speed: going ? 2.2 : 1.5, w: going ? 0.65 : 1 }
-    rigHopLand(a, R)
+    rigHopLand(a, R, t - (R.airAt ?? t))
   }
   if (a.landAt !== undefined && a.landAt !== R.landSeen && t - a.landAt < 150) { R.landSeen = a.landAt; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
   R.wasAir = airborne
@@ -18371,10 +18371,10 @@ function rigAnimate(a, want, dt, t) {
   rigCape(a, R, dt)
 }
 // card #50: a hop's landing. Your own thumps your camera (harder than a footfall); both feet kick up dust; a stomp
-function rigHopLand(a, R) {
+function rigHopLand(a, R, air = 405) {     // air: ms off the ground
   if (!a.mesh.visible) return
   const mine = a === avatars.get(myId), p = a.mesh.position, floor = p.y - a.spec.h - a.spec.r
-  if (mine) kick(0.06, p.x, floor, p.z, 9, 220, now(), true)      // a thump: one dip, not the shake
+  if (mine) kick(clamp(0.06 * air / 405, 0.03, 0.14), p.x, floor, p.z, 9, 220, now(), 'land')      // a thump: one dip, deeper the longer he fell
   if (R.lod < 2) for (const side of ['l', 'r']) { const b = R.bones.get('ball_' + side); if (b) { b.getWorldPosition(rigV); burst('dust', rigV.x, floor + 0.06, rigV.z, 0, 1.1, 0, 0xc9c0ae, 0.5) } }
   moveSound('stomp', mine ? { id: myId } : { x: p.x, y: floor, z: p.z }, 0.9)
 }
@@ -20470,13 +20470,17 @@ function kick(a, x, y, z, far, ms, born = now(), dip = false) {
   const k = kicks[kickAt++ % kicks.length]
   k.a = a; k.x = x; k.y = y; k.z = z; k.far = far; k.ms = ms; k.born = born; k.dip = dip
 }
+// a heavy landing's dip over its kick (u 0..1): down in `down` of it, back over the rest, overshooting by `over` of its depth
+const LAND_DIP = { down: 0.2, over: 0.4 }
+const landDip = u => { if (u < LAND_DIP.down) return Math.sin(Math.PI / 2 * u / LAND_DIP.down)
+  const w = (u - LAND_DIP.down) / (1 - LAND_DIP.down); return 1 - w * w * (3 - 2 * w) - LAND_DIP.over * Math.sin(Math.PI * w) * w }
 function shake(cam, t) {
   if (!settings.shake) return
   let a = 0, dy = 0
   for (const k of kicks) { const T = Math.max(0, t - k.born)
     if (T >= k.ms) continue
     const near = Math.max(0, 1 - Math.hypot(cam.position.x - k.x, cam.position.y - k.y, cam.position.z - k.z) / k.far)
-    if (k.dip) dy -= k.a * near * Math.sin(Math.PI * T / k.ms); else a = Math.max(a, k.a * near * (1 - T / k.ms)) }
+    if (k.dip) dy -= k.a * near * (k.dip === 'land' ? landDip(T / k.ms) : Math.sin(Math.PI * T / k.ms)); else a = Math.max(a, k.a * near * (1 - T / k.ms)) }
   if (a > 0 || dy) cam.position.set(cam.position.x + a * Math.sin(t * 0.091), cam.position.y + a * Math.sin(t * 0.137) + dy, cam.position.z + a * Math.cos(t * 0.113))
 }
 
@@ -34837,6 +34841,25 @@ function gpuQueueTick(i) {
   while (gpuQ.list.length && gl.getSyncParameter(gpuQ.list[0][1], gl.SYNC_STATUS) === gl.SIGNALED) { const [k, s] = gpuQ.list.shift(); gl.deleteSync(s); background.signaled(k) }
   if (gpuQ.list.length < 60) { const s = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); if (s) gpuQ.list.push([i, s]) }
   return gpuQ.list.length > 1 ? i - gpuQ.list[0][0] : 0
+}
+// card #53: what makes a program new: the cache-key fields that differ from the nearest built program of the same shader
+// (three r171's key: the shader's name or source, its defines, then 52 parameters ending in the custom key)
+const PROGRAM_TAIL = ['precision', 'outputColorSpace', 'envMapMode', 'envMapCubeUVHeight', 'mapUv', 'alphaMapUv', 'lightMapUv', 'aoMapUv', 'bumpMapUv', 'normalMapUv', 'displacementMapUv', 'emissiveMapUv', 'metalnessMapUv', 'roughnessMapUv', 'anisotropyMapUv', 'clearcoatMapUv', 'clearcoatNormalMapUv', 'clearcoatRoughnessMapUv', 'iridescenceMapUv', 'iridescenceThicknessMapUv', 'sheenColorMapUv', 'sheenRoughnessMapUv', 'specularMapUv', 'specularColorMapUv', 'specularIntensityMapUv', 'transmissionMapUv', 'thicknessMapUv', 'combine', 'fogExp2', 'sizeAttenuation', 'morphTargetsCount', 'morphAttributeCount', 'numDirLights', 'numPointLights', 'numSpotLights', 'numSpotLightMaps', 'numHemiLights', 'numRectAreaLights', 'numDirLightShadows', 'numPointLightShadows', 'numSpotLightShadows', 'numSpotLightShadowsWithMaps', 'numLightProbes', 'shadowMapType', 'toneMapping', 'numClippingPlanes', 'numClipIntersection', 'depthPacking', 'booleansA', 'booleansB', 'rendererOutputColorSpace', 'customProgramCacheKey']
+function programWhy(p, fresh) {
+  try {
+    const a = String(p.cacheKey).split(',')
+    let best = null
+    for (const q of renderer.info.programs) {
+      if (q === p || fresh.has(q) || q.name !== p.name) continue
+      const b = String(q.cacheKey).split(','), d = []
+      for (let i = 0, n = Math.max(a.length, b.length); i < n && d.length < 6; i++) if (a[i] !== b[i]) d.push(i)
+      if (!best || d.length < best.d.length) best = { d, b }
+    }
+    if (!best) return ' Δ first ' + (p.name || '?')
+    const field = i => { const back = a.length - i; return a.length === best.b.length && back <= PROGRAM_TAIL.length ? PROGRAM_TAIL[PROGRAM_TAIL.length - back] : 'f' + i }
+    const cut = s => String(s ?? '').length > 28 ? '…' + String(s).slice(-27) : String(s ?? '')
+    return ' Δ ' + best.d.slice(0, 4).map(i => field(i) + ': ' + cut(best.b[i]) + '>' + cut(a[i])).join(', ') + (a.length !== best.b.length ? ' (key ' + best.b.length + '>' + a.length + ' fields)' : '')
+  } catch (e) { return '' }
 }
 const pickCard = (wrap, d) => { for (const c of wrap.children) c.classList.remove('sel'); d.classList.add('sel') }
 const members = t => CHARS.flatMap((C, i) => C.team === t ? [i] : [])
