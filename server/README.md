@@ -98,6 +98,10 @@ earlier server (`world-<seed>-<size>.json`) is read once and written out as tile
 playing in a browser keeps the same tiles in the browser, and can save the whole city to a file and load one back from the
 menu. The log has a line a minute on what was saved and read while it goes on, and one line for each trouble with the store.
 
+To see a save go through without waiting for a player, send the host's chat command `/saveworld` (through the action API:
+`POST /command` with `{"line": "/saveworld"}`). The server saves at once and says how it went, R2's answer with it:
+`world: /saveworld: saved: 1 written (to WORLD_DIR); R2 took 1, its last answer 200`.
+
 ## Events
 
 Each event is one JSON object, the same on stdout and to a webhook:

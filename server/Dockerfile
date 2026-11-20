@@ -13,6 +13,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache /root/.npm
 COPY server/server.js server/health.js ./
 COPY index.html game.html
+# the game's asset data (models, textures), served to the page beside it as on the published site
+COPY assets ./assets
 # where guests open the game; the server prints this with '#' and the room code as its join link
 ENV JOIN_URL=https://jsxyz.github.io/maniak/
 USER node

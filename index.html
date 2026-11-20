@@ -26507,6 +26507,19 @@ function dsWorldImport(file) {
   HOST_PHASES.beforePhysics = t => { bp(t); if (LV.faust) dsBodiesBefore(t.all || []) }
   HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust) { const t0 = performance.now(); dsBodiesAfter(t.all || [], t.dt); if (dsState) { dsPersistStart(); dsPostsTick(t.all || [], t.dt); dsObjectsTick(t.dt); dsNotify(); dsState.stats.hostMs = +(performance.now() - t0).toFixed(3) } } }
 }
+// /saveworld (the host's chat command; on a dedicated server the action API's POST /command reaches it, card #70): the city's
+// changes saved now, and how it went said. A dedicated server saves through its own serverWorldSaveNow, which waits for R2's
+// answer and says it in the server's log; a host in a browser saves to its storage. Registered once the page's commands are
+// made (GAME.commands is set after this section)
+setTimeout(() => { if (GAME.commands && !Object.hasOwn(GAME.commands, 'saveworld')) GAME.commands.saveworld = { args: '', help: 'host only: save the city\'s changes now, and say how it went', run: () => {
+  if (!isHost) return sysMsg('§cOnly the host keeps the city\'s changes.')
+  if (!dsCheck()) return sysMsg('§cThere is no city to save.')
+  sysMsg('§7Saving the city\'s changes now…')
+  const said = m => { try { sysMsg('§7' + m) } catch (e) {} }
+  if (typeof dsTilesOn === 'function' && dsTilesOn()) dsPersist.manifestDirty = true          // in tiles: at least the manifest goes
+  if (dsServerStore() && typeof globalThis.serverWorldSaveNow === 'function') globalThis.serverWorldSaveNow().then(m => said('The server ' + m + '.'), () => said('The save could not be made.'))
+  else dsPersistNow(true).then(ok => said(ok ? 'Saved.' : dsPersist.reading ? 'Not saved yet: this city\'s save is still being read.' : 'Not saved.'))
+} } }, 0)
 GAME.destruction = {
   // the pane at a facade point and its rect; the panes near a point; what is broken (a chunk's, or all), and whether a key is
   windowAt: (x, y, z, nx, nz) => dsCheck() ? dsPaneAt(x, y, z, nx, nz)?.key ?? null : null,

@@ -189,7 +189,7 @@ function r2Request(method, name, body) {
   delete headers.host
   return fetch(R2.origin + uri, { method, headers, body, signal: AbortSignal.timeout(15000) })
 }
-const worldStatus = { saves: 0, loads: 0, absent: 0, failed: 0, dropped: 0, r2Puts: 0, r2Gets: 0, failing: '', waiting: 0 }
+const worldStatus = { saves: 0, loads: 0, absent: 0, failed: 0, dropped: 0, r2Puts: 0, r2Gets: 0, failing: '', waiting: 0, r2Last: '' }
 const worldFile = name => path.join(WORLD_DIR, name + '.json')
 // a trouble said once until it clears (each kind on its own), so a long R2 outage is one line, not one a tile
 const worldTrouble = new Map()
@@ -203,9 +203,10 @@ async function r2Put(name, body) {
   try {
     const r = await r2Request('PUT', name, body)
     await r.arrayBuffer().catch(() => {})
+    worldStatus.r2Last = String(r.status)
     if (r.status >= 200 && r.status < 300) { worldStatus.r2Puts++; worldClear('r2put', 'world: R2 takes saves again'); return true }
     worldSay('r2put', 'world: R2 answered ' + r.status + ' to a save')
-  } catch (e) { worldSay('r2put', 'world: R2 ' + (e.name === 'TimeoutError' ? 'gave no answer in 15 s' : 'is unreachable (' + (e.cause?.code || e.name) + ')') + ' for a save') }
+  } catch (e) { const why = e.name === 'TimeoutError' ? 'gave no answer in 15 s' : 'is unreachable (' + (e.cause?.code || e.name) + ')'; worldStatus.r2Last = why; worldSay('r2put', 'world: R2 ' + why + ' for a save') }
   return false
 }
 function r2Write(name, body) {
@@ -305,6 +306,20 @@ function worldTick() {
   if (line === worldLast) return
   worldLast = line; worldLineAt = Date.now(); say('world: ' + line)
 }
+// /saveworld (the host's chat command, so the action API's POST /command reaches it): the page saves now, R2's answers are
+// awaited, and one line says how it went
+async function worldSaveNow() {
+  if (!WORLD_DIR && !R2) { say('world: /saveworld: nothing is kept (neither WORLD_DIR nor R2 is set)'); return 'nothing is kept: neither WORLD_DIR nor R2 is set' }
+  const before = { ...worldStatus }
+  let ok = false
+  try { ok = !!await page.evaluate(() => gameHooks.saveWorld?.()) } catch (e) {}
+  await Promise.all([...r2Chains.values()])
+  const s = worldStatus, wrote = s.saves - before.saves
+  const line = (ok ? 'saved' : 'not saved') + ': ' + wrote + ' written' + (WORLD_DIR ? ' (to WORLD_DIR)' : '') +
+    (R2 ? '; R2 took ' + (s.r2Puts - before.r2Puts) + (s.r2Last ? ', its last answer ' + s.r2Last : '') + (r2Latest.size ? ', ' + r2Latest.size + ' waiting for it' : '') : '')
+  say('world: /saveworld: ' + line)
+  return line
+}
 if (WORLD_DIR || R2) say('world: the city\'s changes are kept' + (WORLD_DIR ? ' in WORLD_DIR' : '') + (WORLD_DIR && R2 ? ' and' : '') + (R2 ? ' in R2' + (WORLD_DIR ? ' (WORLD_DIR holding only what is in play)' : '') : '') + ', in tiles')
 
 let html
@@ -312,7 +327,16 @@ try { html = fs.readFileSync(CFG.game) } catch (e) { die((env.GAME_FILE ? 'GAME_
 
 // ---- the page, served on loopback: the game, and the hook modules under /hooks/
 const unescaped = s => { try { return decodeURIComponent(s) } catch (e) { return '' } }
+// the game's asset data (models, textures; versioned names), from assets/ beside the game file (ASSETS_DIR to put it
+// elsewhere): the page asks for assets/<name>, as on the published site
+const ASSETS_DIR = blank(env.ASSETS_DIR) ? path.join(path.dirname(CFG.game), 'assets') : path.resolve(env.ASSETS_DIR)
+const ASSET_TYPES = { '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.bin': 'application/octet-stream', '.webp': 'image/webp', '.png': 'image/png',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.ktx2': 'image/ktx2', '.json': 'application/json', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav',
+  '.wasm': 'application/wasm' }
 function serveFiles() {
+  let assets = 0
+  try { assets = fs.readdirSync(ASSETS_DIR).filter(n => ASSET_TYPES[path.extname(n).toLowerCase()]).length } catch (e) {}
+  say(assets ? 'assets: ' + assets + ' files beside the game' : 'assets: none beside the game file (the page fetches them from the published site)')
   const files = http.createServer((req, res) => {
     const u = URL.parse(req.url, 'http://localhost'), type = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json' }
     if (req.method !== 'GET') { res.writeHead(405); return res.end() }
@@ -321,6 +345,8 @@ function serveFiles() {
     if (f && f.startsWith(CFG.hooksDir + path.sep) && type[path.extname(f)] && fs.existsSync(f) && fs.statSync(f).isFile()) {
       res.writeHead(200, { 'Content-Type': type[path.extname(f)] + '; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(fs.readFileSync(f))
     }
+    const a = u && /^\/assets\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(u.pathname), af = a && path.join(ASSETS_DIR, a[1]), at = af && ASSET_TYPES[path.extname(af).toLowerCase()]
+    if (at) try { const st = fs.statSync(af); if (st.isFile()) { res.writeHead(200, { 'Content-Type': at, 'Content-Length': st.size, 'Cache-Control': 'public, max-age=31536000, immutable' }); return fs.createReadStream(af).pipe(res) } } catch (e) {}
     res.writeHead(404); res.end()
   })
   return new Promise(ok => files.listen(0, '127.0.0.1', () => ok(files.address().port)))
@@ -424,6 +450,7 @@ let page = null
   await page.exposeFunction('serverOut', onEvent)
   if (WORLD_DIR || R2) { await page.exposeFunction('serverWorldSave', worldSave); await page.exposeFunction('serverWorldLoad', worldLoad)
     await page.exposeFunction('serverWorldGet', worldGet); await page.exposeFunction('serverWorldDrop', worldDrop) }
+  await page.exposeFunction('serverWorldSaveNow', worldSaveNow)
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load', timeout: 180000 })
   await page.waitForFunction(() => globalThis.gameHooks?.room().ready || /fail|broke/i.test(document.getElementById('status')?.textContent || ''),
     null, { timeout: 180000, polling: 500 }).catch(() => {})
