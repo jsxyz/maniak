@@ -8063,7 +8063,7 @@ const background = (() => {
   const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [], lateCount: 0 }
   // frame by frame: what ran before each frame and what its draw linked (the last 900 frames)
   const frameLog = []
-  let open = { steps: [], programs: [] }, lastFrameT = 0
+  let open = { steps: [], programs: [], parts: [] }, lastFrameT = 0, secT = 0
   let scheduled = false, order = 0, current = null
   // a check that throws ends its own job (reported once), never the pump
   const alive = j => { try { return !j.valid || !!j.valid() } catch (e) { if (typeof frameFailed === 'function') frameFailed('background ' + j.key, e); return false } }
@@ -8138,11 +8138,17 @@ const background = (() => {
     mark(text) { if (current) current.phase = text },
     wake: schedule,
     noteProgram(name) { if (open.programs.length < 40) open.programs.push(name) },
+    // the frame's sections: sec(name) closes the section since the last call (null starts afresh); 3 ms or more is kept
+    sec(name) {
+      const t = performance.now()
+      if (name && secT && t - secT >= 3 && open.parts.length < 40) open.parts.push((current ? current.key + '/' : '') + name + ' ' + Math.round(t - secT))
+      secT = t
+    },
     frameEnd(i, draw, phase) {
       const t = performance.now()
-      frameLog.push({ i, t: Math.round(t), ms: lastFrameT ? Math.round(t - lastFrameT) : 0, draw: Math.round(draw), phase, steps: open.steps, programs: open.programs })
+      frameLog.push({ i, t: Math.round(t), ms: lastFrameT ? Math.round(t - lastFrameT) : 0, draw: Math.round(draw), phase, parts: open.parts, steps: open.steps, programs: open.programs })
       if (frameLog.length > 900) frameLog.shift()
-      open = { steps: [], programs: [] }; lastFrameT = t
+      open = { steps: [], programs: [], parts: [] }; lastFrameT = t; secT = 0
     },
     frames(n = 300) { return frameLog.slice(-n) },
   }
@@ -14664,6 +14670,7 @@ function gpuState(target, fn) {
 // Three r171's PMREM, split at cube faces and half-blurs. Its shader/math is kept
 // intact; only scheduling changes. Every pass restores the live render target.
 function* environmentSteps(env) {
+  background.mark('environment')
   const pm = new THREE.PMREMGenerator(renderer), cam = new THREE.PerspectiveCamera(90, 1, .1, 400)
   pm._setSize(256)
   const target = pm._allocateTargets(); target.depthBuffer = true
@@ -14829,9 +14836,11 @@ function requestLook(name) {
       const ratio = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : Q.ratio) * (softGL() ? SOFT_SCALE : 1) * (LOOKS[name]?.scale?.(settings.quality) ?? 1)
       const w = Math.floor(innerWidth * ratio), h = Math.floor(innerHeight * ratio)
       if (name === 'realistic') {
+        background.mark('real init')
         if (!realState) yield* realInitSteps()
         const R = realState
         if (!R.env) R.env = yield* realEnvironmentSteps(R)
+        background.mark('real textures')
         const tier = realTier(); tier.msaa = ratio >= 1.5 ? 0 : { ...(REAL_TIERS[settings.quality] || REAL_TIERS.high), ...realOverride }.msaa
         if (!R.ready && !R.failed) {
           try {
@@ -14844,13 +14853,17 @@ function requestLook(name) {
           } catch (e) { R.failed = true; realStats.error = String(e.message || e) }
         }
         // the effect pools as Realistic's draw patches them (realSwap), so their programs are warmed below
+        background.mark('real fx')
         if (R.ready) for (const o of [...effectPool, ...boxPool, ...orbPool]) if (o.material && (o.fxKind === 'box' || o.fxKind === 'orb' || !o.fxKind)) realFxPatch(o.material)
+        background.mark('real targets')
         const T = realTargets(R, w, h, tier)
         for (const t of T.all) { renderer.initRenderTarget(t); yield 'frame' }
+        background.mark('real post')
         for (const m of Object.values(R.pass)) {
           R.quad.material = m
           yield* compileObjects(R.quad, R.postCam, R.post, warmSetup('plain', T.comp || T.hdr, R))
         }
+        background.mark('real dome')
         yield* compileObjects(R.dome, camera, faustState?.skyScene || scene, warmSetup(name, T.hdr, R))
       } else if (name === 'ink') {
         const outlines = settings.quality !== 'low', field = outlines && (IS_TOUCH || settings.quality === 'medium')
@@ -16311,6 +16324,7 @@ function* realInitSteps() {
   R.fog = new THREE.FogExp2(REAL_SKY.fog, REAL_SKY.fogDensity)
   R.signalGlow = new THREE.Color(6, 6, 6)
   R.env = yield* realEnvironmentSteps(R)
+  background.mark('real materials')
   R.dome = new THREE.Mesh(new THREE.SphereGeometry(30000, 32, 16), realSkyMaterial(R.moonDir)); R.dome.renderOrder = -10; R.dome.frustumCulled = false
   R.mats = { facade: realCityMaterial('facade', R), ornament: realCityMaterial('ornament', R), far: realCityMaterial('far', R), ground: realCityMaterial('ground', R),
     pool: Object.assign(faustState?.poolMaterial?.clone() || new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }), { opacity: 0.16 }),
@@ -16623,10 +16637,20 @@ function buildWorld() {
       if ((landingBusy() || startingGame) && s === scene) { loadingScene ||= new THREE.Scene(); loadingScene.background = scene.background; render(loadingScene, cam); return }
       if (graphics.rebuild && s === scene) rebuildGraphics()
       const programsBefore = renderer.info.programs.length
+      background.sec(s === scene ? 'pre-render' : null)
       lookRender(render, s, cam)
+      background.sec(s === scene ? 'render' : 'render ' + (s.name || s.type))
       if (motionJob && s === scene) try { motionFrame() } catch (e) { motionJob.done('motion failed: ' + (e?.message || e)) }
       if (capJobs.length && s === scene) try { capAfterDraw() } catch (e) { for (const j of [...capJobs]) j.done('capture failed: ' + (e?.message || e)) }       // card #75: the canvas is only valid in this task
-      if (renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) background.noteProgram(p.name || String(p.cacheKey).split(',')[0] || '?')
+      if (renderer.info.programs.length > programsBefore) {
+        // which drawn material holds each new program (a frame that links one is already long: the walk is cheap beside it)
+        const fresh = new Map(renderer.info.programs.slice(programsBefore).map(p => [p, []]))
+        try { if (renderer.properties.has) s.traverse(o => { if (!o.material) return
+          for (const m of Array.isArray(o.material) ? o.material : [o.material]) { const own = renderer.properties.has(m) && fresh.get(renderer.properties.get(m).currentProgram)
+            if (own && own.length < 2) own.push((m.name || m.type) + '@' + (o.name || o.parent?.name || o.type)) } }) } catch (e) {}
+        for (const [p, own] of fresh) background.noteProgram((p.name || String(p.cacheKey).split(',')[0] || '?') + (own.length ? ' ' + own.join(' ') : ''))
+        background.sec(null)
+      }
       if (phase === 'playing' && renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) {
         const k = String(p.cacheKey).split(','), hook = k[k.length - 1]
         background.stats.lateCount++
@@ -21937,7 +21961,7 @@ function drawDebug(me, fps) {
         (background.pending.length ? ' (' + esc(background.jobs.slice(0, 8).join(' ')) + (background.pending.length > 8 ? ' …' : '') + ')' : '') +
         (compileSignal.cuts ? '  compile waits cut ' + v(compileSignal.cuts) + (compileSignal.broken ? ' (no ready signal)' : '') : '') +
         (background.stats.long.length ? '  long ' + esc(background.stats.long.join(', ')) : '') + (background.stats.late.length ? '  late programs ' + esc(background.stats.late.join(', ')) : '') +
-        ((s => s.length ? '  slow frames ' + esc(s.map(f => '#' + f.i + ' @' + f.t + ' ' + f.ms + 'ms draw ' + f.draw + (f.steps.length ? ' [' + f.steps.slice(0, 4).join(', ') + (f.steps.length > 4 ? ' …' : '') + ']' : '') + (f.programs.length ? ' +' + f.programs.length + 'p' : '')).join('; ')) : '')(background.frames(900).filter(f => f.ms >= 50).slice(-6)))) +
+        ((s => s.length ? '  slow frames ' + esc(s.map(f => '#' + f.i + ' @' + f.t + ' ' + f.ms + 'ms draw ' + f.draw + (f.parts?.length ? ' {' + f.parts.slice(0, 4).join(', ') + (f.parts.length > 4 ? ' …' : '') + '}' : '') + (f.steps.length ? ' [' + f.steps.slice(0, 4).join(', ') + (f.steps.length > 4 ? ' …' : '') + ']' : '') + (f.programs.length ? ' +' + f.programs.length + 'p' : '')).join('; ')) : '')(background.frames(900).filter(f => f.ms >= 50).slice(-6)))) +
     row('js', (jit.off ? '<span class="w">optimizer off</span>' : jit.off === null ? 'checking' : 'optimizer on') + (jit.cold > 0 && jit.best > 0 ? '  x' + f(jit.cold / jit.best, 1, 1) : '')) +
     (isHost ? '' : row('predict', 'pending ' + v(p(pending.length, 2)) +
         '  replayed ' + v(p(replaySteps, 2)) + '  err ' +
@@ -24667,7 +24691,7 @@ function startHost() {
     { const sb = el('#set-bots'); if (sb && sb.value !== '') BOT_COUNT = clamp(+sb.value | 0, 0, regulars()) }      // card #59 fix: the Freaks slider, as it stands
     background.mark('bots'); for (const i of foesWanted()) { addBot(i); yield }
     markStart('bots')
-    if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('draw0'); draw(0, now()); yield }
+    if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('draw0'); background.sec(null); draw(0, now()); yield }
     loadingText('Preparing the view…')
     background.mark('effects'); warmEffects()
     yield* warmWithin(3000, 'plain')
@@ -32831,7 +32855,9 @@ function frameBody() {
   const t = now()
   const _s0 = now()
   let dt = 0
+  background.sec(null)
   try { dt = stepSim(t) } catch (e) { frameFailed('sim', e) }
+  background.sec('sim')
   msSim = msSim * 0.9 + (now() - _s0) * 0.1
   drawT0 = now()
   try { if (!startingGame && !landingBusy()) draw(dt, t) } catch (e) { frameFailed('draw', e) }
@@ -32839,9 +32865,13 @@ function frameBody() {
     if (!startLog.frames.length) markStart('frame 1')
     startLog.frames.push(t - (startLog.last ?? t)); startLog.last = t
   }
+  background.sec('draw')
   try { if (phase === 'menu') prepMenu(); prepareStep() } catch (e) { prepQueue.shift(); prepAt = null; frameFailed('prep', e) }      // a failing row drops only itself
+  background.sec('prep')
   try { drawSlices() } catch (e) { frameFailed('chunk', e) }
+  background.sec('slices')
   if (screensDirty) try { screensDraw() } catch (e) { frameFailed('screens', e) }
+  background.sec('screens')
 }
 
 const lastHud = {}
@@ -32906,6 +32936,7 @@ function draw(dt, t) {
   poseSeatAim(myId, myArmed && me, t)
   drawHealth(myId, me.hp)
 
+  background.sec('players')
   cullFrom(camera)
   const live = new Set([myId])
   for (const o of others) {
@@ -32935,6 +32966,7 @@ function draw(dt, t) {
     bodyDraw(o.id, o, t, dt)
     perfDraw(o.id, (!sits.has(o.id) || armed) && o, t)        // card #59: a street performer's cup and its demand
   }
+  background.sec('avatars')
   partsDraw(me, others, t, dt, meD)          // card #55: held bodies in their holders' hands, flights tumbling
   for (const id of [...avatars.keys()]) if (id >= 0 && !live.has(id)) dropAvatar(id)
   for (const id of bodySeen.keys()) if (!live.has(id)) bodySeen.delete(id)
@@ -32942,11 +32974,14 @@ function draw(dt, t) {
   if (!offPlay()) clearPrepared(true)
 
   drawPickups(pkl, t)
+  background.sec('held')
   drawObjects(obl, d => wheelsOf(d, isHost ? now() : renderT, camera.position))      // null: its own stand
+  background.sec('objects')
   spawnFace(me)
   GAME.audio.frame(me, others, t, obl)
   GAME.audio.radio()
 
+  background.sec('audio')
   const cam = updateCamera(meD, input, camera, firstPerson)
   GAME.view.radar(meD, others, t)
   const held = cam.ray && obl.find(o => !o.K.carry && (o.heldBy ?? objHeld.get(o.id)) === myId)
@@ -32954,8 +32989,11 @@ function draw(dt, t) {
   for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP))
   shake(camera, t)
   followSun()
+  background.sec('camera')
   slFrameSafe(t, dt, obl)
+  background.sec('street life')
   dsFrameSafe(t, dt)
+  background.sec('destruction')
   // reticle distance
   input.d = 0; input.view = null
   const view = cam.ray || cam.seatRay || firstPerson && !seatOf(me) && (([dx, dy, dz]) => ({ x: meD.x, y: eyeOf(meD), z: meD.z, dx, dy, dz, near: 0 }))(aimDir(input.yaw, input.pitch))
@@ -32969,6 +33007,7 @@ function draw(dt, t) {
     shotSkip = null
     input.view = { at: [meD.x, meD.y, meD.z], d, cam: !!cam.ray, moved: meD !== me, P: cam.seatRay && [view.x + view.dx * d, view.y + view.dy * d, view.z + view.dz * d] }
   }
+  background.sec('aim')
   moveCameraFade(me, cam)
   meMesh.visible = meMesh.visible && !cam.hideSelf && cam.fade > 0.001
   ghost(meMesh, me.prot || 0, cam.fade, true)
@@ -32981,13 +33020,16 @@ function draw(dt, t) {
   drawTracers(t, me, others, firstPerson ? myId : undefined)
   perfBubbles()
 
+  background.sec('view')
   GAME.view.hud(me, others, t)
+  background.sec('hud')
 
   GAME.view.tab(others)
   GAME.view.results(others)
   drawDebug(me, fps)
   fadeChat(t)
   tickObfuscated(t)
+  background.sec('panels')
 }
 
 // ---------------------------------------------------------------- view
