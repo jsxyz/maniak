@@ -689,6 +689,53 @@
 
 const THREE = ENABLE3D.THREE
 
+// ================================================================ GAME TEXT (card #73)
+// ---- edit enemy display names here: key = the row's id (its CHARS `name`, used everywhere internally: never change the key),
+// value = the name players see (kill and death lines, /list, /spawn, the Tab board, rosters, hook and server events' `name`).
+// A new enemy row adds one line here; a key with no line shows as its id.
+const NAMES = {
+  'Freak': 'Freak', 'Brute': 'Brute', 'Teardrop': 'Teardrop', 'Misery Master': 'Misery Master', 'Thug': 'Thug', 'Tony': 'Tony',
+  'Pacifier': 'Pacifier', 'Street performer': 'Street performer', 'Enforcer': 'Enforcer',
+  'Baby': 'Baby',                      // the armed pram baby (SL_BABY)
+  'Pram': 'Pram',                      // the pram's blast, in its death line
+  'The Maniak': 'The Maniak', 'Alistair': 'Alistair',      // the player's own rows
+}
+// ---- edit the lines players read here. {braces} are filled in by the game; §c §e §f §7 §8 are colours (§f white, §7 grey, §8 dark,
+// §e yellow, §c red). Each entry says where it shows. Command help and usage replies, menus and settings are not in this table yet.
+const TEXT = {
+  welcome: '§eWELCOME TO THE FREAK SHOW',                        // chat, on entering a game, host or guest
+  connected: '§7Connected. §8T to chat · /help for codes · /code for the room code',   // chat, on entering a game
+  kill: '§f{killer} §7dropped §f{victim} §8({weapon})',          // kill feed: any kill
+  killVia: '{via} ({owner})',                                    // {killer} when a player's thing did it: a freak or ally they own
+  killBaby: '§f{killer} §7dropped §f{victim} §8({weapon})',      // kill feed: the armed baby's shot
+  runOver: 'was run over by a {vehicle}',                        // death line, a vehicle with nobody credited
+  blast: 'was caught in a {vehicle}\'s blast',                   // death line, a vehicle's blast with nobody credited
+  pramBlast: 'was caught in a {pram}\'s blast',                  // death line, the pram's blast with nobody credited
+  death: '§f{victim} §7{how}',                                   // death line: any death without a killer
+  enemyTag: 'enemy',                                             // the Tab board and the results: the column for an enemy
+  enemyArrives: '§f{name} §7{line}',                             // announcement, a rare enemy turns up
+  enemyArrivesDefault: 'turned up.',                             // {line} when the enemy has no line of its own below
+  enemyGone: '§f{name} §7is gone.',                              // announcement, a rare enemy leaves
+  arrive: {                                                      // {line} for each rare enemy (by id)
+    'Misery Master': 'crashes the party.', 'Tony': 'is here to collect.', 'Street performer': 'sets up on the corner.' },
+  enforcersAfter: "§cFaust's enforcers are after you",           // chat, you reach one star
+  disguisePill: 'IN DISGUISE',                                   // HUD pill while disguised
+  safePill: 'SAFE {s}s',                                         // HUD pill while spawn-protected
+  tornado: '§e{who} §7kicked up a tornado.',                     // announcement, a tornado starts
+  somebody: 'Something',                                         // {who} when a tornado's maker has no name
+  joined: '§e{name} §7joined', left: '§e{name} §7left', kicked: '§e{name} §7was kicked',   // announcements
+  matchEnd: '§e{why} §f{who} §7wins with §f{kills}',             // announcement, the match is over
+  endWhy: { 'Time.': 'Time.', 'Frag limit.': 'Frag limit.' },    // {why}, by the end's id
+  newRound: '§7New round.',                                      // announcement, a new match starts
+  balance: '§e{name} §7moves to the §f{side}§7 to balance the teams.',   // announcement, team balance moves a player
+  nowPlaying: '§7Now playing §f{name}',                          // chat, after /char
+  demands: ['Spare change for the arts?', 'Tip the talent!', 'Faust taxes the sun. I tax you.', 'Applause is free. Coins aren\'t.',
+    'You watched. You pay.', 'Pay the performer, citizen!', 'Coins in the cup, or a hole in the gut.', 'Support the arts. Or bleed.',
+    'That dance cost you a dollar.', 'A coin for the show, friend?', 'The cup is hungry!', 'Nobody walks past my show for free.'],   // the street performer's speech bubbles
+}
+const enemyName = id => NAMES[id] ?? id
+const gameText = (key, v) => TEXT[key].replace(/\{(\w+)\}/g, (m, k) => v?.[k] ?? m)
+
 // ---------------------------------------------------------------- tuning
 // ---- CONTENT, what a reskin edits: CHARS (bots: BOTS; teams: TEAMS + `team`), SIDES, GUNS + SOUNDS,
 //   POWERS, HEALS, OBJECTS, LEVELS, VEHICLES, MODELS (COSTUMES), RADIO, and the game's ids and title face just below
@@ -758,17 +805,17 @@ const CHARS = [
   { name: 'Teardrop', side: 'freaks', hidden: true, atk: 'Knife', model: 'teardrop', r: 0.34, h: 0.55, speed: 8.2, jump: 9.2, hp: 55, color: 0xe4e0d6,
     role: 'One of Misery Master\'s Teardrops · a knife, and the rest of them' },
   { name: 'Misery Master', side: 'freaks', hidden: true, atk: 'Salted knife', far: 'Knife fan', farAt: 4.5, model: 'misery_master', r: 0.36, h: 0.65,
-    speed: 7.6, jump: 9.2, hp: 600, color: 0xdcd7ca, enter: 'crashes the party.', role: 'Faust\'s son · salted knives, and a fan of them thrown' },
+    speed: 7.6, jump: 9.2, hp: 600, color: 0xdcd7ca, role: 'Faust\'s son · salted knives, and a fan of them thrown' },
   { name: 'Thug', side: 'freaks', hidden: true, atk: 'Bat', model: 'thug', r: 0.43, h: 0.53, speed: 6.8, jump: 8, hp: 110, color: 0x3b2b21,
     role: 'Tony\'s muscle · bats, pipes and pistols' },
   { name: 'Tony', side: 'freaks', hidden: true, atk: 'Bat', far: 'Scatter', farAt: 6, model: 'tony', r: 0.46, h: 0.55, speed: 6.4, jump: 7.6, hp: 340,
-    color: 0x30323a, enter: 'is here to collect.', role: 'One of Faust\'s men · a bat, and a shotgun past arm\'s length' },
+    color: 0x30323a, role: 'One of Faust\'s men · a bat, and a shotgun past arm\'s length' },
   { name: 'Pacifier', side: 'freaks', hidden: true, atk: 'Rifle', model: 'pacifier', r: 0.4, h: 0.55, speed: 6.2, jump: 8, hp: 150, color: 0x2c2f2a,
     role: 'A mercenary paid to kill superheroes · a rifle, in a squad' },
   // card #59, the brief: "another type of freak and call it a street performer. It dances and stabs people. It has a cup and
   // demands money", ragged and homeless. A shank in one hand, a tin cup in the other (MODELS.street_performer cup)
   { name: 'Street performer', side: 'freaks', hidden: true, atk: 'Shank', model: 'street_performer', r: 0.35, h: 0.55, speed: 6.8, jump: 8.2, hp: 80,
-    color: 0x5b5246, enter: 'sets up on the corner.', role: 'Faustland\'s own busker · a dance, a tin cup and a shank' },
+    color: 0x5b5246, role: 'Faustland\'s own busker · a dance, a tin cup and a shank' },
   // card #14: Faust's enforcers, hidden, never in the free-for-all fill: the heat system fields them (see HEAT)
   { name: 'Enforcer', side: 'freaks', hidden: true, atk: 'Baton', model: 'enforcer', r: 0.36, h: 0.54, speed: 7.2, jump: 8.4, hp: 70, color: 0x1c1b1f,
     role: 'Faust\'s enforcer · a baton, a revolver and a warrant' },
@@ -7321,7 +7368,7 @@ function leaveRare(c) {
   players.delete(c.id); inputs.delete(c.id); roster.delete(c.id)
   detachBody(c)
   if (conns.size) pushRoster()
-  announce('§f' + (c.bot ? c.bot.name : '?') + ' §7is gone.')
+  announce(gameText('enemyGone', { name: c.bot ? enemyName(c.bot.name) : '?' }))
 }
 
 const gunsOf = c => !gunless(CHARS[c.cid])
@@ -7977,9 +8024,7 @@ function meleeTurns(all, dt) {
 // for money (perfSay: shown over it and heard, on every machine). A passer-by it then stabs, by the engine's own hit rules (slAim
 // gives its shots the street's people). A player it can see within busk.engage m, or one who has just hurt it, it fights by the bot
 // rules: it dances in (its dance step, at a walk) until it has made its demand, then goes at them, dancing a beat after each stab
-const PERF_LINES = ['Spare change for the arts?', 'Tip the talent!', 'Faust taxes the sun. I tax you.', 'Applause is free. Coins aren\'t.',
-  'You watched. You pay.', 'Pay the performer, citizen!', 'Coins in the cup, or a hole in the gut.', 'Support the arts. Or bleed.',
-  'That dance cost you a dollar.', 'A coin for the show, friend?', 'The cup is hungry!', 'Nobody walks past my show for free.']
+const PERF_LINES = TEXT.demands
 const PERF_SAY_MS = 2800, PERF_DANCE_MS = 7000
 function buskThink(b, tgt, sd, sees, dt) {
   const ai = b.ai, B = b.bot.busk, T = tickAt || now()
@@ -8219,7 +8264,7 @@ function windTornado(b, tgt) {
   if (!t && TORS.length < TOR_MAX) {
     t = { on: 0, x: tgt.x, z: tgt.z, by: b.id, k: rowOf(b).spins, turn: Math.random() * 6.28, pull: 0, life: 0 }
     TORS.push(t)
-    announce('§e' + ((roster.get(b.id) || {}).name || 'Something') + ' §7kicked up a tornado.')
+    announce(gameText('tornado', { who: (roster.get(b.id) || {}).name || TEXT.somebody }))
   }
   if (!t) t = TORS.reduce((a, c) =>
     Math.hypot(tgt.x - c.x, tgt.z - c.z) < Math.hypot(tgt.x - a.x, tgt.z - a.z) ? c : a)
@@ -9165,7 +9210,7 @@ function carryStep(c, inp, dt) {
   for (const p of objs) if (takeable(c, p) && (!best || objGap(c, p) < objGap(c, best))) best = p
   if (best) { c.useT = USE_S; best.V && !canLift(c, best) ? sit(c, best, best.riders.findIndex((r, i) => r === undefined && fits(c, best, i))) : liftUp(best, c) }
   else if (isHost && objs.some(p => p.V && p.riders.includes(undefined) && objGap(c, p) <= 1.5)) {
-    c.useT = USE_S; tell(c.id, '§7' + GAME.participant(c.id, c.cid).name + " doesn't fit") }
+    c.useT = USE_S; tell(c.id, '§7' + enemyName(GAME.participant(c.id, c.cid).name) + " doesn't fit") }
 }
 // Bullet resolves any overlap
 function release(c, o, speed) {
@@ -9338,7 +9383,7 @@ function dropCar(o) {
   o.car = null
 }
 const fell = (c, how, what) => {
-  announce('§f' + ((roster.get(c.id) || {}).name || '?') + ' §7' + how)
+  announce(gameText('death', { victim: (roster.get(c.id) || {}).name || '?', how }))
   if (hooked.death) hookEmit('death', { victim: hookWho(c), weapon: what })
 }
 function clearSeat(c) {
@@ -10308,7 +10353,7 @@ function endMatch(why) {
   resultsLeft = RESULTS_S
   const best = [...players.values()].sort((a, b) => b.kills - a.kills)[0]
   const who = best ? (roster.get(best.id) || {}).name || '?' : '?'
-  announce('§e' + why + ' §f' + who + ' §7wins with §f' + (best ? best.kills : 0))
+  announce(gameText('matchEnd', { why: TEXT.endWhy[why] ?? why, who, kills: best ? best.kills : 0 }))
   hookMatchEnd(why === 'Time.' ? 'time' : 'frags', best)
 }
 
@@ -10320,7 +10365,7 @@ function resetMatch() {
   for (const c of players.values()) { c.kills = 0; respawn(c) }
   for (const p of pickups) p.respawn = 0
   clearTornado()
-  announce('§7New round.')
+  announce(TEXT.newRound)
 }
 
 // ray(i) -> [angle, reach m, rise per m]
@@ -19622,7 +19667,7 @@ function drawDebug(me, fps) {
         '  pitch ' + f(input.pitch, 5, 2)) +
     row('vel', f(me.vx, 6, 2) + ' / ' + f(me.vy, 6, 2) + ' / ' + f(me.vz, 6, 2) +
         '  grounded ' + (me.grounded ? v('yes') : ' no')) +
-    row('char', C.name.padEnd(7) + ' r' + f(me.r, 4, 2) + ' h' + f(me.h * 2 + me.r * 2, 4, 2) +
+    row('char', enemyName(C.name).padEnd(7) + ' r' + f(me.r, 4, 2) + ' h' + f(me.h * 2 + me.r * 2, 4, 2) +
         '  hp ' + p(Math.round(me.hp) + '/' + C.hp, 7) +
         '  ' + (GUNS[me.gun].name + ' ' + ammo).padEnd(11) +
         (C.jet ? ' fuel ' + v(p(f(me.fuel || 0, 1, 1) + '/' + C.jet.fuel, 8)) : '')) +
@@ -20861,7 +20906,7 @@ function requestChar(idx) {
   }
   myCid = settings.cid = idx
   saveSettings()
-  if (!swap) sysMsg('§7Now playing §f' + CHARS[idx].name)
+  if (!swap) sysMsg(gameText('nowPlaying', { name: enemyName(CHARS[idx].name) }))
 }
 
 function cmdCap(a) {
@@ -20900,7 +20945,7 @@ function cmdList() {
   sysMsg('§7' + ids.length + ' player' + (ids.length === 1 ? '' : 's') + ' connected:')
   for (const id of ids) {
     const p = roster.get(id)
-    sysMsg('§8· §f' + p.name + ' §7' + CHARS[p.cid].name +
+    sysMsg('§8· §f' + p.name + ' §7' + enemyName(CHARS[p.cid].name) +
            (id === 0 ? ' §8[host]' : '') + (id === myId ? ' §8(you)' : ''))
   }
 }
@@ -20931,7 +20976,7 @@ function kickId(id) {
     try { c.send(JSON.stringify({ k: 'kicked', by: myName })) } catch (e) {}
     setTimeout(() => { try { c.close() } catch (e) {} }, 150)
   }
-  if (p) announce('§e' + p.name + ' was kicked')
+  if (p) announce(gameText('kicked', { name: p.name }))
 }
 
 function runCommand(line) {
@@ -21099,8 +21144,8 @@ function hookFilter(kind, data, take) {
 function hookWho(c) {
   const R = GAME.participantOf(c), p = roster.get(c.id)
   return !c.bot ? { id: c.id, name: p ? p.name : '?', kind: 'player', character: R.name }
-    : c.owner !== undefined ? { id: c.id, name: R.name, kind: 'ally', character: R.name, owner: c.owner }
-    : { id: c.id, name: p ? p.name : R.name, kind: 'enemy', character: R.name }
+    : c.owner !== undefined ? { id: c.id, name: enemyName(R.name), kind: 'ally', character: R.name, owner: c.owner }
+    : { id: c.id, name: p ? p.name : enemyName(R.name), kind: 'enemy', character: R.name }
 }
 const hookPlayer = id => players.has(id) ? hookWho(players.get(id)) : { id, name: roster.get(id)?.name ?? '?', kind: 'player', character: '?' }
 const hookStandings = () => [...players.values()].filter(c => roster.has(c.id)).sort((a, b) => b.kills - a.kills).map(c => ({ ...hookWho(c), kills: c.kills | 0 }))
@@ -21702,7 +21747,7 @@ function openHostPeer(attempt) {
       players.delete(id); roster.delete(id); GAME.lifecycle.left(id); inputs.delete(id); pkSent.delete(id); tierSent.delete(id); objSent.delete(id)
       inputSeq.delete(id); lastChatSeq.delete(id); lastChatAt.delete(id); lastSeen.delete(id)
       inQ.delete(id); inAck.delete(id)
-      if (p) announce('§e' + p.name + ' left')
+      if (p) announce(gameText('left', { name: p.name }))
       if (gone) hookEmit('player.leave', gone)
       dropAvatar(id)
       pushRoster()
@@ -21795,7 +21840,7 @@ const HOST_MSGS = {
     GAME.rows.joined(players.get(id), cid)
     inputs.set(id, { f: 0, r: 0, j: false, fire: false, yaw: 0, pitch: 0 })
     inQ.set(id, []); inAck.set(id, 0)
-    announce('§e' + name + ' joined')
+    announce(gameText('joined', { name }))
     pushRoster()
     if (hooked['player.join']) hookEmit('player.join', { player: hookWho(players.get(id)) })
       return
@@ -22240,8 +22285,8 @@ function beginPlay() {
   el('#ui').style.display = 'none'
   document.body.classList.add('playing')
   if (navigator.userActivation?.isActive !== false) lockPointer()      // in the click that entered; else the first click in the game
-  sysMsg('§eWELCOME TO THE FREAK SHOW')                                // every entry, host or guest, in the wave title's yellow (#39)
-  sysMsg('§7Connected. §8T to chat · /help for codes · /code for the room code')
+  sysMsg(TEXT.welcome)                                // every entry, host or guest, in the wave title's yellow (#39)
+  sysMsg(TEXT.connected)
   if (qualityAuto && qualityAuto !== QNAMES[0])
     sysMsg('§7Quality §f' + qualityAuto + '§7 — chosen for this machine. Settings can change it.')
   if (softGL() && !softTold) { softTold = true; sysMsg('§eThis browser draws without graphics acceleration, so the game may not keep up here.') }
@@ -22426,7 +22471,7 @@ function addBot(i) {
   const b = newBot(i)
   b.id = id
   players.set(id, b)
-  roster.set(id, { cid: b.cid, name: b.bot.name })
+  roster.set(id, { cid: b.cid, name: enemyName(b.bot.name) })
   if (hooked.spawn) hookEmit('spawn', { who: hookWho(b) })
   return true
 }
@@ -22492,7 +22537,7 @@ function vehicleTick(list, credit, touch, dt) {
     const L = o.launchBy !== undefined, by = L ? o.launchBy !== c.id && players.get(o.launchBy) : players.get(o.riders[0])
     if (was && !hookHit(by, c, L ? GUNS[o.launchG].name : o.K.name, was)) continue
     knockChar(c, dx / d, 0.3, dz / d, into * 0.5)
-    if (downed(c)) by ? credit(by.id, by)(c, L ? GUNS[o.launchG] : { name: o.K.name }) : fell(c, 'was run over by a ' + o.K.name, o.K.name)
+    if (downed(c)) by ? credit(by.id, by)(c, L ? GUNS[o.launchG] : { name: o.K.name }) : fell(c, gameText('runOver', { vehicle: o.K.name }), o.K.name)
   }
   for (const o of objs) if (o.V) {
     if (o.v0) {                         // m/s lost this step
@@ -22525,7 +22570,7 @@ function boom(o, list, credit) {
     c.hp -= stat(c, 'take', B.dmg * k)
     if (was && !hookHit(by, c, o.K.name, was)) continue
     knockChar(c, dx / (d || 1), 0.5, dz / (d || 1), B.knock * k)
-    if (downed(c)) by ? credit(by.id, by)(c, { name: o.K.name }) : fell(c, 'was caught in a ' + o.K.name + '\'s blast', o.K.name)
+    if (downed(c)) by ? credit(by.id, by)(c, { name: o.K.name }) : fell(c, gameText('blast', { vehicle: o.K.name }), o.K.name)
   }
   for (const p of objs) if (p !== o && p.V) {         // chained ones blow on their own turn
     const d = Math.hypot(p.x - at[0], p.y - at[1], p.z - at[2])
@@ -22638,9 +22683,9 @@ const HOST_PHASES = {
     k.kills++
     if (hooked.kill) hookEmit('kill', { killer: hookWho(k), victim: hookWho(victim), weapon: G.name, ...c !== k && { via: hookWho(c) } })
     if (fragLimit && k.kills >= fragLimit) endMatch('Frag limit.')
-    const vn = (roster.get(victim.id) || {}).name || rowOf(victim).name
-    const own = (roster.get(k.id) || {}).name || '?', kn = c === k ? own : rowOf(c).name + ' (' + own + ')'
-    announce('§f' + kn + ' §7dropped §f' + vn + ' §8(' + G.name + ')')
+    const vn = (roster.get(victim.id) || {}).name || enemyName(rowOf(victim).name)
+    const own = (roster.get(k.id) || {}).name || '?', kn = c === k ? own : gameText('killVia', { via: enemyName(rowOf(c).name), owner: own })
+    announce(gameText('kill', { killer: kn, victim: vn, weapon: G.name }))
   }
   const emit = (id, fx) => {
     for (const f of fx) { f.push(id); if (f.low) f.push(0, 1); tracers.push(f) }
@@ -22983,7 +23028,7 @@ function partsStep(c, inp, dt) {
     }
     S.press = -1; S.pulled = false
     if (S.car && objs.includes(S.car) && seat(S.car)) { c.useT = USE_S; sit(c, S.car, S.car.riders.findIndex((r, i) => r === undefined && fits(c, S.car, i))) }
-    else if (isHost && objs.some(p => p.V && p.riders.includes(undefined) && objGap(c, p) <= 1.5)) { c.useT = USE_S; tell(c.id, '§7' + GAME.participant(c.id, c.cid).name + " doesn't fit") }
+    else if (isHost && objs.some(p => p.V && p.riders.includes(undefined) && objGap(c, p) <= 1.5)) { c.useT = USE_S; tell(c.id, '§7' + enemyName(GAME.participant(c.id, c.cid).name) + " doesn't fit") }
     return true
   }
   return true
@@ -26680,7 +26725,7 @@ function slPramBlast(e, credit) {
     c.hp -= stat(c, 'take', B.dmg * k)
     if (was && !hookHit(by, c, 'Pram', was)) continue
     knockChar(c, dx / (d || 1), 0.5, dz / (d || 1), B.knock * k)
-    if (downed(c)) by && credit ? credit(by.id, by)(c, { name: 'Pram' }) : fell(c, 'was caught in a pram\'s blast', 'Pram')
+    if (downed(c)) by && credit ? credit(by.id, by)(c, { name: 'Pram' }) : fell(c, gameText('pramBlast', { pram: enemyName('Pram').toLowerCase() }), 'Pram')
   }
   for (const o of objs) if (o.V) {
     const d = Math.hypot(o.x - at[0], o.y - at[1], o.z - at[2])
@@ -26698,7 +26743,7 @@ function slBabyKill(v) {
   if (resultsLeft > 0) return
   const sh = slState?.bb?.shooter
   if (hooked.kill && sh) hookEmit('kill', { killer: hookWho(sh), victim: hookWho(v), weapon: SL_BABY.gun })
-  announce('§f' + SL_BABY.name + ' §7dropped §f' + ((roster.get(v.id) || {}).name || rowOf(v).name) + ' §8(' + SL_BABY.gun + ')')
+  announce(gameText('killBaby', { killer: enemyName(SL_BABY.name), victim: (roster.get(v.id) || {}).name || enemyName(rowOf(v).name), weapon: SL_BABY.gun }))
 }
 // a straight line from the muzzle to a player's chest, as clearLine tests a bot's
 function slBabySees(ox, oy, oz, c) {
@@ -26928,7 +26973,7 @@ function heatCrime(c, kind, x = c?.x, z = c?.z, n = 1, sure = false) {
   H.pts = Math.min(HEAT.cap, H.pts + (HEAT.crime[kind] ?? 1) * n)
   H.stars = heatStars(H.pts)
   if (H.stars) { H.state = 1; H.seenAt = T; H.last = { x: c.x, y: c.y, z: c.z }; H.left = HEAT.hide + HEAT.hideStar * H.stars }
-  if (!was && H.stars) tell(c.id, "§cFaust's enforcers are after you")
+  if (!was && H.stars) tell(c.id, TEXT.enforcersAfter)
   return true
 }
 // he's clear: the stars go, and the enforcers on him stand down (heatDismiss takes them away)
@@ -27087,7 +27132,7 @@ function rollRare(c) {
     if (!B.visits || players.has(BOT_ID0 + i) || Math.floor(Math.random() * (B.visits === true ? RARE_ONE_IN : B.visits))) return
     addBot(i)
     if (conns.size) pushRoster()
-    announce('§f' + B.name + ' §7' + (B.enter || 'turned up.'))
+    announce(gameText('enemyArrives', { name: enemyName(B.name), line: TEXT.arrive[B.name] || TEXT.enemyArrivesDefault }))
   })
 }
 
@@ -27116,7 +27161,7 @@ function rebalance(c) {
   if (!balanced() || mine - rest < 2) return
   const to = fallbackRow(c.id)
   moveTo(c, to); pushRoster()
-  announce('§e' + (roster.get(c.id)?.name || 'A player') + ' §7moves to the §f' + SIDES[CHARS[to].side].name + '§7 to balance the teams.')
+  announce(gameText('balance', { name: roster.get(c.id)?.name || 'A player', side: SIDES[CHARS[to].side].name }))
 }
 const moveTo = (c, cid) => { becomeChar(c, cid); const p = roster.get(c.id); if (p) p.cid = cid }
 
@@ -27155,7 +27200,7 @@ GAME.death = { down: teamDown, up: teamUp }
 function noSwap(c, cid) {
   const C = CHARS[cid], p = roster.get(c.id), t = now()
   if (!p || !C.team || C.team !== CHARS[c.cid].team || cid === c.cid || c.dead > 0 || c.shiftCool > 0) return
-  const why = !free(c) ? 'Not while you ride or carry' : C.name + (onTeam(c).some(m => m.cid === cid && m.dead <= 0) ? ' is busy' : ' is down')
+  const why = !free(c) ? 'Not while you ride or carry' : enemyName(C.name) + (onTeam(c).some(m => m.cid === cid && m.dead <= 0) ? ' is busy' : ' is down')
   if (!(t - p.noAt <= (why === p.no ? 2000 : 1000))) tell(c.id, '§7' + why)
   p.no = why; p.noAt = t
 }
@@ -27178,12 +27223,12 @@ GAME.commands = {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
               const want = String(a || '').trim().toLowerCase()
               const on = fieldedTeams(), rows = BOTS.map((b, i) => i).filter(i => !on.has(BOTS[i].team) && !BOTS[i].enforcer).filter(i => want === 'all' ||
-                BOTS[i].name.toLowerCase() === want)
+                [BOTS[i].name, enemyName(BOTS[i].name)].some(n => n.toLowerCase() === want))
               if (!want || !rows.length)
-                return sysMsg('§cEnemies: §f' + [...new Set(BOTS.filter(b => !b.enforcer).map(b => b.name))].join(', ') + ' §7or §fall')
+                return sysMsg('§cEnemies: §f' + [...new Set(BOTS.filter(b => !b.enforcer).map(b => enemyName(b.name)))].join(', ') + ' §7or §fall')
               const got = rows.filter(addBot)
               if (got.length && conns.size) pushRoster()
-              sysMsg(got.length ? '§7Spawned §f' + got.map(i => BOTS[i].name).join(', ')
+              sysMsg(got.length ? '§7Spawned §f' + got.map(i => enemyName(BOTS[i].name)).join(', ')
                                 : '§7Already out.') } },
   wanted: { args: '<0-5>', help: 'host only, set your own heat in stars', run: a => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
@@ -27320,7 +27365,7 @@ GAME.rows = {
     if (offEvent(CHARS[cid])) cid = START
     if (sideLocked(CHARS[cid].side, id).locked || taken(CHARS[cid].team, id)) {
       cid = fallbackRow(id)
-      tell(id, '§eThat character is taken here: you play §f' + CHARS[cid].name)
+      tell(id, '§eThat character is taken here: you play §f' + enemyName(CHARS[cid].name))
     }
     return cid
   },
@@ -29097,7 +29142,7 @@ function scoreRows(rows) {
     const bot = r.id >= BOT_ID0
     return '<tr><td style="color:' + col + '">' + esc(p.name) +
            (r.id === myId ? ' <span style="color:#555">(you)</span>' : '') +
-           '</td><td style="color:#86847f">' + (bot ? 'enemy' : CHARS[p.cid].name) +
+           '</td><td style="color:#86847f">' + (bot ? TEXT.enemyTag : enemyName(CHARS[p.cid].name)) +
            '</td><td class="k">' + (r.kills | 0) + '</td></tr>'
   }).join('')
 }
@@ -29156,7 +29201,7 @@ function drawServer(t) {
       const p = roster.get(r.id) || { cid: START, name: '?' }
       const bot = ai(r.id), q = quiet(r.id)
       return '<tr><td style="color:' + css(colorOf(r.id, p.cid)) + '">' +
-             esc(p.name) + '</td><td class="d">' + (bot ? 'enemy' : CHARS[p.cid].name) +
+             esc(p.name) + '</td><td class="d">' + (bot ? TEXT.enemyTag : enemyName(CHARS[p.cid].name)) +
              '</td><td class="k">' + r.kills + '</td><td class="d">' +
              (q ? 'silent ' + (q / 2).toFixed(1) + 's' : '') + '</td><td>' +
              (bot ? '' : '<button data-kick="' + r.id + '">kick</button>') + '</td></tr>'
@@ -29223,8 +29268,8 @@ function drawHud(me, others, t) {
                       PW.name + ' ' + Math.ceil(me.powT || 0) + 's'])
   const MK = (me.markT || 0) > 0 && POWERS[me.mark - 1]
   if (MK) pills.push([css(MK.color), MK.name.toUpperCase()])
-  if (me.prot > 0) pills.push(['#d8cfb8', 'SAFE ' + Math.ceil(me.prot) + 's'])
-  if (me.disguised) pills.push(['#e7e4db', 'IN DISGUISE'])
+  if (me.prot > 0) pills.push(['#d8cfb8', gameText('safePill', { s: Math.ceil(me.prot) })])
+  if (me.disguised) pills.push(['#e7e4db', TEXT.disguisePill])
   const key = pills.map(p => p.join()).join('|')
   if (lastHud.pills !== key) {
     lastHud.pills = key
