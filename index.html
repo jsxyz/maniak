@@ -22829,12 +22829,12 @@ function autoGoTick(s, me, t, ray, nav) {
   if (!me || me.dead > 0) throw new Error('go: you died')
   const dt = clamp((t - s.last) / 1000, 0.001, 0.1); s.last = t
   const left = Math.hypot(s.x - me.x, s.z - me.z), wp = s.via?.length ? s.via[0] : null
-  if (wp && Math.hypot(wp.x - me.x, wp.z - me.z) < 0.6) { s.via.shift(); s.straight = true; s.progT = t; return null }
+  if (wp && (Math.hypot(wp.x - me.x, wp.z - me.z) < (wp.r ?? 0.6) || t - (s.wpT ??= t) > 8000 && Math.hypot(wp.x - me.x, wp.z - me.z) < 4)) { s.via.shift(); s.straight = true; s.progT = t; s.wpT = t; return null }
   if (!wp && left < s.radius) return { arrived: true, x: Math.round(me.x), z: Math.round(me.z), left: Math.round(left * 10) / 10, ms: Math.round(t - s.t0) }
   if (Math.hypot(me.x - s.ax, me.z - s.az) > 1.2) { s.ax = me.x; s.az = me.z; s.progT = t }          // moving: 1.2 m in 6 s
   if (t - s.progT > 6000) throw new Error('stuck at ' + Math.round(me.x) + ' ' + Math.round(me.z) + ', ' + Math.round(left) + ' m from ' + s.what)
   if (t > s.deadline) throw new Error('timeout at ' + Math.round(me.x) + ' ' + Math.round(me.z) + ', ' + Math.round(left) + ' m from ' + s.what)
-  const T = { id: -1, x: wp ? wp.x : s.x, y: s.y, z: wp ? wp.z : s.z, h: 0, r: 0 }, plan = nav(me, T) || { corner: null }, way = plan.corner || T
+  const T = { id: -1, x: wp ? wp.x : s.x, y: s.y, z: wp ? wp.z : s.z, h: 0, r: 0 }, plan = (s.straight ? null : nav(me, T)) || { corner: null }, way = plan.corner || T
   let dx = way.x - me.x, dz = way.z - me.z, hop = false
   const lead = Math.hypot(dx, dz), foot = me.y - me.h - me.r, up = (way.y || 0) - foot
   if (lead > 0.5 && !s.straight && !plan.corner?.stairs) {
@@ -22858,19 +22858,30 @@ function autoGoTick(s, me, t, ray, nav) {
   return null
 }
 const autoBoxes = (ci, cj) => { const S = LV.grow.S; if (ci < 0 || cj < 0 || ci >= S || cj >= S) return []; const c = faustGet(ci, cj); return typeof dsStanding === 'function' ? dsStanding(c.plan) : c.plan.boxes }
+// the bots' way inside a building (inPath), with the corners already passed remembered: faustInNav asks inPath afresh each call and drops a corner
+// only within 0.6 m, and only a bot's ai.inNav keeps a path; for the player, walking on from a corner turns back to the nearest node, and loops there
+function autoNavIn(s, c, T) {
+  const here = inAt(c.x, c.y - c.h - c.r, c.z), there = inAt(T.x, T.y, T.z)
+  if (here?.inside && here.k >= 0) {
+    const kb = there?.inside && there.k >= 0 && there.B === here.B ? there.k : -1
+    let path = inPath(here.B, here.k, { x: c.x, y: c.y, z: c.z, h: c.h, r: c.r }, kb, kb >= 0 ? T : null)
+    if (!path) return autoNavOutside(s, c, T, autoBoxes)
+    const pass = s.passed ||= new Set(), key = q => Math.round(q.x * 10) + ',' + Math.round(q.y * 10) + ',' + Math.round(q.z * 10), feet = c.y - c.h - c.r
+    path = path.filter(q => !pass.has(key(q)))
+    while (path.length && Math.hypot(path[0].x - c.x, path[0].z - c.z) < 0.7 && Math.abs(path[0].y - feet) < 1.2) pass.add(key(path.shift()))
+    return { corner: path[0] || null, there: kb >= 0 || T.y < 5, pad: null }
+  }
+  if (there?.inside && there.k >= 0) {                          // bound in: to its street door, then (from the doorstep) its rooms
+    const D = there.B.door
+    return Math.hypot(D.out[0] - c.x, D.out[2] - c.z) < 4 ? faustInNav(c, T) : autoNavOutside(s, c, { x: D.out[0], y: 0, z: D.out[2] }, autoBoxes)
+  }
+  return autoNavOutside(s, c, T, autoBoxes)
+}
 AUTO_STEPS.go = (R, a) => {
   const me = selfChar(), s = autoGoNew(me, a, (k, c) => testTools.find(k, c))
   autoSay('§7go: ' + s.pace + ' to §f' + s.what + '§7, ' + Math.round(s.d0) + ' m')
   // outside: the route; in a building, or bound into one (to its street door first): the bots' rooms and stairs
-  const nav = (c, T) => {
-    const here = inAt(c.x, c.y - c.h - c.r, c.z), there = inAt(T.x, T.y, T.z)
-    if (here?.inside && here.k >= 0) return faustInNav(c, T) || autoNavOutside(s, c, T, autoBoxes)
-    if (there?.inside && there.k >= 0) {
-      const D = there.B.door
-      return Math.hypot(D.out[0] - c.x, D.out[2] - c.z) < 4 ? faustInNav(c, T) : autoNavOutside(s, c, { x: D.out[0], y: 0, z: D.out[2] }, autoBoxes)
-    }
-    return autoNavOutside(s, c, T, autoBoxes)
-  }
+  const nav = (c, T) => autoNavIn(s, c, T)
   const sub = { tick: t => {
     const m = selfChar(), r = autoGoTick(s, m, t, (y, ux, uz) => { const d = staticRay(m.x, y, m.z, ux, 0, uz, 8); return d > 0.01 && d < 8 ? d : Infinity }, nav)
     if (r) { sub.out = { ...r, what: s.what }; return true }
@@ -29786,7 +29797,7 @@ const testTools = (() => {
       q.x = lx0 + K.lift - 0.9; q.z = C.z1 - K.part - 0.7
       q.what = 'express lift (UP panel) of a ' + B.style + ' tower, ' + B.storeys.length + ' storeys'
       const cx = lx0 + K.lift / 2          // the door's centre line: 0.2 m clear of a jamb each side, so in by it, then across to the UP half
-      q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B, radius: 0.5, via: [{ x: cx, z: C.z1 + 1.5 }, { x: cx, z: q.z }] } } })),
+      q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B, radius: 0.5, via: [{ x: cx, z: C.z1 + 1.5, r: 0.35 }, { x: cx, z: C.z1 - 0.15, r: 0.35 }, { x: cx, z: q.z }] } } })),
     window: c => windowsNear(c, false), brokenwindow: c => windowsNear(c, true),             // intact panes a punch reaches (#77); #46's breaches
     performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk), enforcer: bots(b => b.enforcer),
     squad: () => objs.filter(o => squadIds.has(o.id) && o.squadKind !== 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'squad car (' + (o.V ? o.squadState || 'driving' : 'wrecked') + ')' })),
