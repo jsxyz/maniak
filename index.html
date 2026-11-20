@@ -967,7 +967,7 @@ const VEHICLES = [
 // roof, fenders, trim] schemes, one picked per vehicle by its seed; taxi: the share of that variant's sedans that run in a
 // cab's livery (taxiPaints). A wreck burns out as its style's shell. Only the drawing changes: the rows' physics, hulls and
 // wheel layouts stay as they are, and the models are built on each row's own width, length, height and axles.
-const VEHICLE_FILE = 'vehicles.350d74fc.glb'
+const VEHICLE_FILE = 'vehicles.798fbdfc.glb'
 const NOIR = { black: 0x141518, maroon: 0x3e1a1c, wine: 0x452222, green: 0x1d3a2a, teal: 0x1f3b3e, cream: 0xd9cfb2, ivory: 0xe6dfca,
   grey: 0x5b6066, slate: 0x353c45, navy: 0x1b2433, tan: 0x7d6b52, brown: 0x3a281c, yellow: 0xd9a627, silver: 0x9aa0a6, olive: 0x4a4a32,
   rose: 0x6e4a46, steel: 0x46505a }
@@ -1388,7 +1388,7 @@ function carTriInfo(src) {
     for (let t = 0; t < T; t++) {
       let all = true
       for (let k = 0; k < 3; k++) { const j = I[t * 3 + k], u = A[j * 2], v = A[j * 2 + 1]; if (!(u > u0 && u < u1 && v > v0 && v < v1)) all = false }
-      if (all && !door[t]) glass[t] = 1
+      if (all) glass[t] = 1                      // a door's own window too: it shatters, and goes with its door
     }
   }
   // panes: glass triangles joined through shared corners, by place (an extruded pane's faces have their own vertices)
@@ -16370,14 +16370,16 @@ function periodBake(mesh) {
   out.computeBoundingBox(); out.computeBoundingSphere(); out.userData.shared = true
   return out
 }
-// geometries [g, matrix?] into one
+// geometries [g, matrix?, tag?] into one; a tagged one's index range goes in userData.parts
 function periodMerge(parts) {
   let nv = 0, ni = 0
   for (const [g] of parts) { nv += g.attributes.position.count; ni += g.index.count }
   const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), idx = new Uint32Array(ni), v = new THREE.Vector3()
   let o = 0, j = 0
-  for (const [g, m] of parts) {
+  const ranges = []
+  for (const [g, m, tag] of parts) {
     const P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv, I = g.index.array, nm = m && new THREE.Matrix3().getNormalMatrix(m)
+    if (tag) ranges.push({ tags: tag, start: j, count: I.length })
     for (let i = 0; i < P.count; i++) {
       v.fromBufferAttribute(P, i); if (m) v.applyMatrix4(m); v.toArray(pos, (o + i) * 3)
       v.fromBufferAttribute(N, i); if (m) v.applyMatrix3(nm).normalize(); v.toArray(nor, (o + i) * 3)
@@ -16389,19 +16391,25 @@ function periodMerge(parts) {
   const out = new THREE.BufferGeometry()
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3)); out.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); out.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
   out.setIndex(new THREE.BufferAttribute(idx, 1)); out.computeBoundingBox(); out.computeBoundingSphere(); out.userData.shared = true
+  out.userData.parts = ranges
   return out
 }
 function periodSetup(gltf) {
   const F = periodFleet, geo = {}
   let base = null
   gltf.scene.updateMatrixWorld(true)
-  gltf.scene.traverse(o => { if (o.isMesh) { geo[o.name] = periodBake(o); base ||= o.material } })
+  const doors = {}
+  gltf.scene.traverse(o => { if (!o.isMesh) return
+    geo[o.name] = periodBake(o); base ||= o.material
+    // card #57: a door (<style>_door_<id>_lod<k>_hinge<F|R>), its hinge the node's origin
+    const d = /^(\w+?)_door_(\w\w)_lod(\d)_hinge([FR])$/.exec(o.name)
+    if (d) (doors[d[1] + '_lod' + d[3]] ||= []).push({ id: d[2], edge: d[4], hinge: o.getWorldPosition(new THREE.Vector3()).toArray(), geo: geo[o.name] }) })
   if (!base || !geo.sedan_lod0) throw new Error('not a period fleet file')
   // the palette is sampled at cell centres: nearest, no mipmaps, so a far car never blends neighbouring cells
   for (const t of [base.map, base.emissiveMap, base.roughnessMap, base.metalnessMap]) if (t) { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true }
   base.side = THREE.FrontSide; base.envMap = chrome().envMap; base.emissiveIntensity = PERIOD.lamp; base.name = 'vehicle-period'
   base.userData.vehicleLamps = true; base.needsUpdate = true
-  Object.assign(F, { geo, base, paints: new Map(), whole: new Map(), stats: {} })
+  Object.assign(F, { geo, doors, base, paints: new Map(), whole: new Map(), stats: {} })
   for (const [k, g] of Object.entries(geo)) F.stats[k] = g.index.count / 3
   // the instanced wheels: whitewall and black, LOD0 near and LOD1 out to WHEELS_NEAR
   F.wheels = {}
@@ -16447,15 +16455,24 @@ function periodLook(K, o) {
   periodOf.set(id, { k: o.k, seed: o.seed, P })
   return P
 }
-// a body with its wheels merged in (parked, far, or past the wheel cap): one draw
-function periodWhole(P, lod) {
-  const F = periodFleet, key = P.style + ':' + P.wheels + ':' + P.shape + ':' + lod
+// a body with its doors merged in, and its wheels too when whole (parked, far, or past the wheel cap): one draw. card #57's
+// parts: each door's index range (userData.parts, as batchSteps records today's drawn cars) and its hinge
+// (userData.hinges: { door_fl: { at: [x, y, z] model space, edge: 'F' or 'R' } })
+function periodBody(P, lod, wheels) {
+  const F = periodFleet, key = P.style + ':' + lod + (wheels ? ':' + P.wheels + ':' + P.shape : '')
   if (!F.whole.has(key)) {
-    const W = VEHICLE_SHAPES[P.shape].wheels, wheel = F.geo['wheel_' + P.wheels + '_lod' + lod], m = new THREE.Matrix4()
-    F.whole.set(key, periodMerge([[F.geo[P.style + '_lod' + lod]], ...W.at.map(([x, y, z]) => [wheel, m.clone().makeScale(W.r, W.r, W.r).setPosition(x, y, z)])]))
+    const list = [[F.geo[P.style + '_lod' + lod]]], hinges = {}
+    for (const d of F.doors[P.style + '_lod' + lod] || []) { list.push([d.geo, null, 'door_' + d.id]); hinges['door_' + d.id] = { at: d.hinge, edge: d.edge } }
+    if (wheels) {
+      const W = VEHICLE_SHAPES[P.shape].wheels, wheel = F.geo['wheel_' + P.wheels + '_lod' + lod], m = new THREE.Matrix4()
+      for (const [x, y, z] of W.at) list.push([wheel, m.clone().makeScale(W.r, W.r, W.r).setPosition(x, y, z)])
+    }
+    const g = periodMerge(list); g.userData.hinges = hinges
+    F.whole.set(key, g)
   }
   return F.whole.get(key)
 }
+const periodWhole = (P, lod) => periodBody(P, lod, true)
 // the model a view clones: LOD meshes (userData.lod) for a vehicle, the shell for a wreck
 function periodModel(P, whole) {
   const key = P.key + (whole ? ':whole' : '')
@@ -16463,7 +16480,7 @@ function periodModel(P, whole) {
     const F = periodFleet, root = new THREE.Group()
     if (P.wreck) root.add(new THREE.Mesh(F.geo[P.style + '_wreck'], F.base))
     else for (let i = 0; i < 3; i++) {
-      const m = new THREE.Mesh(whole ? periodWhole(P, i) : F.geo[P.style + '_lod' + i], periodPaint(P.paint))
+      const m = new THREE.Mesh(periodBody(P, i, whole), periodPaint(P.paint))
       m.userData.lod = i; m.visible = !i; root.add(m)
     }
     PERIOD_CACHE.set(key, root)
@@ -16633,9 +16650,11 @@ function carDress(look, o) {
   if (was.v !== v) look.userData.dmgSeen = { v, m: D?.m || 0, n: D?.l.length || 0 }
 }
 function carGlassFx(look, o, D, was) {
-  const l = D.l, i = l.length - CAR_DMG.rec, gone = D.m & ~was.m, door = gone && vehicleDoors(vehicleOf(o.K)?.name || o.K.model || '').find(d => d.bit & gone)
-  let lp, ld
-  if (door && !(l.length > was.n)) { lp = [door.mid[0], door.top + 0.3, door.mid[2]]; ld = [door.s, 0.3, 0] }
+  const l = D.l, i = l.length - CAR_DMG.rec, gone = D.m & ~was.m
+  let lp, ld, box = null
+  // the door that went: its box in the look's own geometry (a period car's parts, or a drawn car's)
+  if (gone) look.traverse(n => { const g = n.userData.carShared; if (!box && g?.index) { const B = carTriInfo(carSrc(g)).doors; const b = Object.entries(B).find(([bit]) => gone & bit); if (b) box = b[1] } })
+  if (box && !(l.length > was.n)) { const s = Math.sign(box.lo[0] + box.hi[0]) || 1; lp = [(box.lo[0] + box.hi[0]) / 2, box.hi[1] + 0.25, (box.lo[2] + box.hi[2]) / 2]; ld = [s, 0.3, 0] }
   else if (i >= 0) { lp = [l[i] / 100, l[i + 1] / 100, l[i + 2] / 100]; ld = [l[i + 3] / 100, l[i + 4] / 100, l[i + 5] / 100] }
   else return
   look.parent.updateMatrixWorld(true)
@@ -16652,15 +16671,52 @@ function carDoorPaint(o) {
   const e = carPartOf(o), V = VEHICLES.find(v => v.name === o.K.doorOf)
   return e && V?.variants?.[e.l[0]]?.color
 }
-// a period car (#44) has doors to tear only once its fleet's file carries door meshes (#44's door parts); a car drawn in code
-// always has them
-const carRippable = o => !(typeof periodLook === 'function' && periodLook(o.K, o)) || Object.keys(periodFleet?.geo || {}).some(k => k.includes('_door_'))
-// a car's doors, with where each is now (its middle and its outer side, world) and whether it is still on
+// a car's doors, with where each is now (its middle and its outer side, world) and whether it is still on: a period car's
+// (#44) from its own model's door parts (none until its fleet file has them), a car drawn in code's from its look; only doors
+// that have a row of their own to become
+const carPeriod = o => typeof periodLook === 'function' && periodLook(o.K, o) || null
+function carPeriodGeo(P) { const root = periodModel(P, false); return root.children.find(c => c.userData.lod === 0)?.geometry || null }
 function carDoorsOf(o) {
   const name = vehicleOf(o.K)?.name
-  if (!name || !o.V || !carRippable(o)) return []
-  const m = carPartOf(o)?.m || 0
-  return vehicleDoors(name).map(d => ({ ...d, on: !(m & d.bit), at: carToWorld(o, d.mid), out: rotq(o.q, [d.s, 0, 0]) }))
+  if (!name || !o.V) return []
+  const m = carPartOf(o)?.m || 0, P = carPeriod(o), has = id => OBJECTS.some(K => K.doorOf === name && K.door === id)
+  let list
+  if (P) {
+    const g = carPeriodGeo(P), D = g?.index && carTriInfo(carSrc(g)).doors || {}
+    list = Object.entries(D).map(([bit, b]) => { const id = Object.keys(CAR_DOOR_BITS).find(k => CAR_DOOR_BITS[k] === +bit), mid = b.lo.map((v, i) => (v + b.hi[i]) / 2), s = Math.sign(mid[0]) || 1
+      return { id, bit: +bit, s, mid, top: b.hi[1], seat: id === 'fl' ? 0 : id === 'fr' ? 1 : -1 } })
+  } else list = vehicleDoors(name)
+  return list.filter(d => has(d.id)).map(d => ({ ...d, on: !(m & d.bit), at: carToWorld(o, d.mid), out: rotq(o.q, [d.s, 0, 0]) }))
+}
+// a torn door's look when its car was a period car: that car's own door, cut from its model, centred on the door row's body,
+// in its paint (its part list: [variant, bit, car row, car seed, car id]); null for a car drawn in code
+const carDoorLooks = new Map()
+function carDoorPeriod(o) {
+  const e = carPartOf(o), l = e?.l
+  if (!l || l.length < 5 || typeof periodLook !== 'function' || !OBJECTS[l[2]]) return null
+  const P = periodLook(OBJECTS[l[2]], { k: l[2], seed: l[3], id: l[4] }), id = Object.keys(CAR_DOOR_BITS).find(k => CAR_DOOR_BITS[k] === l[1])
+  return P && !P.wreck && id ? { P, id } : null
+}
+const carDoorKey = o => { const d = carDoorPeriod(o); return d ? d.P.key + ':' + d.id : '' }
+function carDoorLook(o) {
+  const d = carDoorPeriod(o), H = d && hullOf(o.K)
+  if (!H) return null
+  const key = d.P.key + ':' + d.id
+  if (!carDoorLooks.has(key)) {
+    const g = carPeriodGeo(d.P), part = g?.userData.parts?.find(p => p.tags.split('|').includes('door_' + d.id))
+    if (!part) return null
+    const I = g.index.array.subarray(part.start, part.start + part.count), used = [...new Set(I)].sort((a, b) => a - b), at = new Map(used.map((v, i) => [v, i]))
+    const out = new THREE.BufferGeometry()
+    for (const [k, A] of Object.entries(g.attributes)) { const w = A.itemSize, arr = new A.array.constructor(used.length * w)
+      used.forEach((v, i) => { for (let j = 0; j < w; j++) arr[i * w + j] = A.array[v * w + j] }); out.setAttribute(k, new THREE.BufferAttribute(arr, w, A.normalized)) }
+    out.setIndex(Array.from(I, v => at.get(v)))
+    // centred where the door row's body is: its own middle on the row's hull middle
+    out.computeBoundingBox(); const c = out.boundingBox.getCenter(new THREE.Vector3())
+    out.translate(H.at[0] - c.x, H.at[1] - c.y, H.at[2] - c.z); out.computeBoundingSphere()
+    const root = new THREE.Group(); root.add(new THREE.Mesh(out, periodPaint(d.P.paint)))
+    carDoorLooks.set(key, root)
+  }
+  return carDoorLooks.get(key)
 }
 // host: door d torn off car o: its mask bit set; where its own row's object starts (its hull's middle, world) and that row
 function carTear(o, d) {
@@ -16674,7 +16730,7 @@ function carTear(o, d) {
 // host: the torn door's object as it hung (its car's turn) in its car's paint
 function carDoorDress(door, o, d) {
   teleportBody(door.body, door.x, door.y, door.z, o.q); door.q = o.q.slice(); world.updateSingleAabb(door.body)
-  carPartSet(door, 0, [variantAt(vehicleOf(o.K), o.seed, o.id), d.bit])
+  carPartSet(door, 0, [variantAt(vehicleOf(o.K), o.seed, o.id), d.bit, o.k, o.seed | 0, o.id])
 }
 // host: c tears door `bit` off car o into his hands (#55's pull does this in play; this is the same without it): the door, or null
 function carRip(c, o, bit) {
@@ -16727,7 +16783,7 @@ function drawObjects(list, wheelsAt = () => null) {
       const H = hullOf(K), m = H && hullView(o.id ?? o, held, () => Object.assign(new THREE.Group(), { matrixAutoUpdate: false }))
       if (!m) continue
       if (m.parent !== objGroup) objGroup.add(m)
-      const paint = K.drive ? variantColor(K, o.seed, o.id) : K.doorOf ? carDoorPaint(o) : undefined, P = periodLook(K, o), dress = P ? P.key : ''
+      const paint = K.drive ? variantColor(K, o.seed, o.id) : K.doorOf ? carDoorPaint(o) : undefined, P = periodLook(K, o), dress = P ? P.key : K.doorOf ? carDoorKey(o) : ''
       if (m.userData.k !== o.k || m.userData.paint !== paint || m.userData.dress !== dress) {
         const mats = new Set()
         m.traverse(n => { if (n.material) mats.add(n.material) })
@@ -16735,7 +16791,7 @@ function drawObjects(list, wheelsAt = () => null) {
         m.traverse(n => { if (n.geometry?.userData.carOwn) n.geometry.dispose() })      // card #57
         m.clear(); m.userData = { k: o.k, paint, dress, P }; m.matrixWorldNeedsUpdate = true
         for (const whole of K.drive ? [false, true] : [true]) {
-          const look = (P ? periodModel(P, whole) : propModel('object', o.k, whole, paint)).clone()
+          const look = (K.doorOf && carDoorLook(o) || (P ? periodModel(P, whole) : propModel('object', o.k, whole, paint))).clone()
           ownMaterials(look)
           look.traverse(c => { if (c.isMesh) c.castShadow = c.receiveShadow = true
             if (K.drive && c.userData.part === 'wheel') c.visible = false })
