@@ -13113,6 +13113,7 @@ function onRigLoaded(M, gltf, anims) {
   mixer.stopAllAction(); mixer.uncacheRoot(root)
   if (!b) { console.warn('model has no measurable height'); return }
   M.height = b.h; M.footY = b.minY
+  capeShade(root, M)
   inkPrepare(root)
   yield* uploadTextures(root)
   yield* warmSceneSteps(activeLook || 'plain', [root])
@@ -17479,8 +17480,31 @@ function rigMovePose(a, R, want, t) {
 // the lift as its spring brings it down. Seated in a car, it gets no wind, lifts no more than 0.45 rad and rests on the
 // seat, so it stays in the cabin through starts, stops, turns and crashes. A middle-distance (LOD1) cape is kept off every other frame; a far
 // (LOD2) one only swings.
+// Card #63 (it vibrated): what keeps it off his body is a contact, not a push each frame. A bone lifted clear keeps the
+// lift it was found at as a bound (from below, or from above where the ground stops it), and its spring settles onto that
+// bound instead of sinking back in to be pushed out again; the bound is searched again only when the cloth there is more
+// than 2 mm in, or clear by more than 6 mm (the body moved away), when it eases to where the body now is. The offset back
+// and the gather settle on their contacts the same way, and the ripple is the sprint's alone, so standing and walking it
+// hangs still. Dying, it settles back to his back (no plumb, no wind), kept off his body as he falls. Dying (and lying
+// on the ground: his hips within 70 cm of it), his body rests on it: the death clip, made for a slimmer man, lays his back and
+// arms 20 cm into the road, so he is raised until his lowest capsule touches it. Lying, he lies on his cape: the cape's
+// first bone rests with his back and he is raised until its cloth is off the road; the bones below keep their own cloth
+// off it, the ground their only collision, and the fold the road forced on them as he fell lets out until they lie on it
+// (folded, they stood up from his hips like a wall). Dying, the ground only ever
+// folds the cloth in toward his back, never flings it out away from him; on the ground any fold is
+// at most 16 rad/s, so a fall onto it doesn't snap.
+// At speed (#63/#72: at a sprint a wide sheet hiding his trunk and arms, swinging out to his side, a rigid plank behind
+// him), from 5 m/s to full at 9: the first bone hugs his back and the lower ones stream back (about 25, 35 and 45 degrees
+// from vertical); the lower cape narrows inside his shoulders; the lower bones' hinges and the middle bone's twist follow
+// the way he faces, not his counter-turning chest, so it streams straight back; the ripple runs faster and deeper down it;
+// and the arms pumping past its edges gather it rather than flinging it up.
 const CAPE_ROWS = [0, 0.1, 0.25, 0.42, 0.6, 0.78, 0.93], CAPE_COLS = [-1, -0.5, 0, 0.5, 1]
-const CAPE_MAX = [1.7, 1, 1], CAPE_GATHER = 0.6, CAPE_SLACK = 0.01, CAPE_ASIDE = 0.9, CAPE_SEAT = 0.45, CAPE_HIPS = [0, 0.5, 1]
+const CAPE_MAX = [1.7, 1, 1], CAPE_GATHER = 0.4, CAPE_SLACK = 0.01, CAPE_ASIDE = 0.9, CAPE_SEAT = 0.45, CAPE_HIPS = [0, 0.5, 1]
+const CAPE_IN = 0.002, CAPE_OUT = 0.006, CAPE_BAND = 0.03, CAPE_LYING = 0.7, CAPE_FOLD = 16
+// at speed (card #63/#72: a wide sheet billowing to his side, a rigid plank): each bone's share of the lift (its first
+// hugging his back, the lower ones streaming back), each bone's width (narrower than his shoulders), how far the lower bones'
+// hinges turn to the way he faces rather than his twisting chest (the first hangs from his chest), and the ripple's amplitude per bone and rate (rad/s)
+const CAPE_RUN_BEND = [0.25, 0.85, 1], CAPE_RUN_WIDTH = [1, 0.58, 0.45], CAPE_RUN_HIPS = 0.9, CAPE_RUN_RIPPLE = [0.05, 0.1, 0.15], CAPE_RUN_RATE = 16
 const capeP = new THREE.Vector3(), capeX = new THREE.Vector3(), capeY = new THREE.Vector3(), capeM = new THREE.Matrix4(), capeR = new THREE.Quaternion()
 // once per model: the cloth's points, each its bones, its bind position in each bone's frame, the weights, and the share
 // of it each cape bone carries (a turn of cape bone k moves it by share[k]); and each cape bone's axes in its parent's
@@ -17520,13 +17544,13 @@ function capePoints(R) {
     let l = Infinity, r = -Infinity
     for (const [, p] of near) { l = Math.min(l, p[X]); r = Math.max(r, p[X]) }
     for (const s of CAPE_COLS) {
-      if (f > 0.3 && Math.abs(s) === 0.5) continue          // below the shoulders: its edges and middle
+      if (f > 0.3 && f < 0.55 && Math.abs(s) === 0.5) continue      // its back: its edges and middle (the shoulders and the lower half, where his legs reach: quarters too)
       // the vertex nearest that spot, of the cloth's inner face
       const x = (l + r) / 2 + s * (r - l) / 2
       let best = null, bd = Infinity
       for (const e of near) { const d = Math.abs(e[1][X] - x) + Math.abs(e[1][1] - y) - e[1][Z] * inward * 0.05; if (d < bd) { bd = d; best = e } }
       if (!best) continue
-      const p = { names: [], local: [], w: [], share: [0, 0, 0], top: f < 0.2, side: Math.abs(s) > 0.4, k: 0 }
+      const p = { names: [], local: [], w: [], share: [0, 0, 0], top: f < 0.2, side: Math.abs(s) > 0.4, k: 0, f }
       hinges.forEach((y, k) => { if ((best[1][1] - y) * Math.sign(bot - top) > 0.01) p.k = k })
       for (let c = 0; c < 4; c++) {
         const j = J.getComponent(best[0], c), w = W.getComponent(best[0], c)
@@ -17615,7 +17639,7 @@ function capeGap(S, c, x, y, z) {
 // through H (bone k's hinge: each point by its share of the turn; k < 0: every point below the top rows, wholly); the
 // floor's worst (while he stands on it) left in capeFloor. The top rows, too near the first hinge for a lift to move, are
 // the offset's and the gather's, unless asked for
-let capeFloor = 0
+let capeFloor = 0, capeLying = false, capeGround = false, capeArmsOff = false
 function capeWorst(S, k, H, lift, skin, floor, top, axis) {
   const ax = axis.x, ay = axis.y, az = axis.z, near = k < 0 ? S.every : S.near[k]
   let worst = Infinity
@@ -17628,29 +17652,31 @@ function capeWorst(S, k, H, lift, skin, floor, top, axis) {
     const vx = S.at[i * 3] - H[0], vy = S.at[i * 3 + 1] - H[1], vz = S.at[i * 3 + 2] - H[2], dot = (ax * vx + ay * vy + az * vz) * (1 - c)
     const x = H[0] + vx * c + (ay * vz - az * vy) * s + ax * dot, y = H[1] + vy * c + (az * vx - ax * vz) * s + ay * dot, z = H[2] + vz * c + (ax * vy - ay * vx) * s + az * dot
     if (floor !== null) capeFloor = Math.min(capeFloor, y - floor - skin)
-    for (const n of near) worst = Math.min(worst, capeGap(S, n, x, y, z) - skin)
+    for (const n of near) if (!(capeArmsOff && (p.top || p.side) && S.caps[n].arm)) worst = Math.min(worst, capeGap(S, n, x, y, z) - skin)
   }
   return worst
 }
 // the least change of bone k's lift, from `from`, that clears its points of his body, and of the floor if it can: tried
-// 0.1 rad at a time back (and down, only for the floor), then halved twice. Clear of his body comes first; where
-// nothing clears it, the step that leaves the points least deep. Points less than CAPE_SLACK into the skin are let be,
-// so a cape resting on him (its spring easing it in) is searched again only now and then. Nothing clearing it sets capeStuck
+// 0.1 rad at a time back (and down, only for the floor), then halved six times (to 2 mrad). Clear of his body comes
+// first (lying, `ground`: clear of the ground first); where nothing clears it, the step that leaves the points least
+// deep. Points less than CAPE_IN into the skin are let be. `tuck` (dying): off the ground only by folding in toward his back
+// (face up that tucks it under him, face down it lifts it off the road), never flung out away from him. Nothing clearing it
+// sets capeStuck
 let capeStuck = false
-function capeSearch(S, k, H, axis, skin, floor, from, lo, hi, top) {
-  const score = t => { const w = capeWorst(S, k, H, t, skin, floor, top, axis); return w < 0 ? w - 10 : Math.min(0, capeFloor) }
+function capeSearch(S, k, H, axis, skin, floor, from, lo, hi, top, ground, tuck) {
+  const score = t => { const w = capeWorst(S, k, H, t, skin, floor, top, axis), f = capeFloor; return ground ? (f < 0 ? f - 10 : Math.min(0, w)) : (w < 0 ? w - 10 : Math.min(0, f)) }
   let best = from, bs = score(from)
-  if (bs >= -CAPE_SLACK || bs < -10 && bs >= -10 - CAPE_SLACK) return from
-  const down = bs > -10 && lo < from
+  if (bs >= -CAPE_IN || bs < -10 && bs >= -10 - CAPE_IN) return from
+  const down = (ground || bs > -10) && lo < from, out = !(tuck && (ground ? bs < -10 : bs > -10))
   for (let x = 0.1; x <= Math.max(hi - from, down ? from - lo : 0) + 1e-6; x += 0.1) {
-    for (let side = 0; side < (down ? 2 : 1); side++) {
+    for (let side = out ? 0 : 1; side < (down ? 2 : 1); side++) {
       const t = side ? from - x : from + x
       if (t > hi || t < lo) continue
       const v = score(t)
       if (v > bs) { bs = v; best = t }
       if (v >= 0) {
         let a = t - Math.sign(t - from) * 0.1, b = t
-        for (let i = 0; i < 2; i++) { const m = (a + b) / 2; if (score(m) >= 0) b = m; else a = m }
+        for (let i = 0; i < 6; i++) { const m = (a + b) / 2; if (score(m) >= 0) b = m; else a = m }
         return b
       }
     }
@@ -17659,19 +17685,30 @@ function capeSearch(S, k, H, axis, skin, floor, from, lo, hi, top) {
   return best
 }
 // bone k's lift: its own points (not the top rows: a lift hardly moves them, so near its hinge), then the top rows too if
-// a little more (half a radian) clears them
-function capeLift(S, k, H, axis, skin, floor, lo, hi) {
-  const t = capeSearch(S, k, H, axis, skin, floor, 0, lo, hi, false)
-  if (k || capeWorst(S, k, H, t, skin, floor, true, axis) >= -CAPE_SLACK) return t
-  const u = capeSearch(S, k, H, axis, skin, floor, t, t, Math.min(hi, t + 0.5), true)
-  return capeWorst(S, k, H, u, skin, floor, true, axis) >= 0 ? u : t
+// a little more (half a radian) clears them (R.capeTop: whether they are part of the first bone's contact)
+function capeLift(R, S, k, H, axis, skin, floor, lo, hi, ground, tuck) {
+  const t = capeSearch(S, k, H, axis, skin, floor, 0, lo, hi, false, ground, tuck)
+  if (k || capeWorst(S, k, H, t, skin, floor, true, axis) >= -CAPE_IN) return t
+  const u = capeSearch(S, k, H, axis, skin, floor, t, t, Math.min(hi, t + 0.5), true, ground, tuck)
+  R.capeTop = capeWorst(S, k, H, u, skin, floor, true, axis) >= 0
+  return R.capeTop ? u : t
+}
+// how far bone k's lift can go toward `to` (from where it is) and stay clear of his body and the floor; null if all the way
+function capeEase(S, k, H, axis, skin, floor, top, to) {
+  const ok = t => capeWorst(S, k, H, t, skin, floor, top, axis) >= 0 && !(capeFloor < 0)
+  if (ok(to)) return null
+  let a = to, b = 0
+  for (let i = 0; i < 6; i++) { const m = (a + b) / 2; if (ok(m)) b = m; else a = m }
+  return b
 }
 // cape bone k's hinge in the world (R.capeL[k], as its parent now lies): its bound hinge, turned toward his hips' (his
 // right, `right`) by CAPE_HIPS[k], keeping its sense; and the first one's back (R.capeB)
 function capeAxis(R, k, right) {
   const X = R.M.capeAx[k]
   capeR.setFromRotationMatrix(capeM.extractRotation(R.cape[k].parent.matrixWorld))
-  const L = R.capeL[k].copy(X.L).applyQuaternion(capeR), w = CAPE_HIPS[k] ?? 0, sense = L.dot(right) < 0 ? -1 : 1
+  const L = R.capeL[k].copy(X.L).applyQuaternion(capeR), w = Math.max(CAPE_HIPS[k] ?? 0, CAPE_RUN_HIPS * (R.capeRun || 0)), sense = L.dot(right) < 0 ? -1 : 1
+  // (the middle bone's twist about the vertical from his hips', which his chest's counter-turn gives it: taken out at speed)
+  if (k === 1) R.capeTw = Math.atan2((right.z * L.x - right.x * L.z) * sense, (right.x * L.x + right.z * L.z) * sense)
   if (w) L.multiplyScalar(sense).lerp(right, w).normalize().multiplyScalar(sense)
   if (!k) R.capeB.copy(X.B).applyQuaternion(capeR)
   return L
@@ -17683,7 +17720,10 @@ function capePose(R, from, to = R.cape.length - 1) {
     const b = R.cape[k], X = R.M.capeAx[k]
     b.scale.x = R.capeG[k] / (k ? R.capeG[k - 1] : 1)
     capeR.setFromRotationMatrix(capeM.extractRotation(b.parent.matrixWorld)).invert()
-    b.quaternion.copy(R.capeRest[k]).premultiply(rigQ.setFromAxisAngle(capeX.copy(R.capeL[k]).applyQuaternion(capeR), -R.capeT[k]))
+    b.quaternion.copy(R.capeRest[k])
+    // at speed the lower cape hangs square to the way he faces: its twist from his twisting chest taken out about the vertical
+    if (k === 1 && R.capeRun && R.capeTw) b.quaternion.premultiply(rigQ.setFromAxisAngle(capeX.set(0, 1, 0).applyQuaternion(capeR), -R.capeTw * R.capeRun))
+    b.quaternion.premultiply(rigQ.setFromAxisAngle(capeX.copy(R.capeL[k]).applyQuaternion(capeR), -R.capeT[k]))
     if (!k) {
       if (R.capeSw) b.quaternion.premultiply(rigQ.setFromAxisAngle(X.B, R.capeSw))
       b.position.copy(R.capeAt).addScaledVector(X.B, R.capeOff / (R.capeS?.scale || 1))
@@ -17695,25 +17735,68 @@ function rigCape(a, R, dt) {
   if (!R.cape.length || !dt || !capePoints(R)) return
   const M = R.M, v = a.v || 0, h = Math.min(dt, 0.05), bend = M.capeBend || [1, 0.55, 0.75]
   // seated in a car he moves with it: the cape gets no wind (it would sweep up through the roof) and hangs down his back
-  const seated = a.hold === 'sit'
-  const lift = seated ? 0 : Math.min(a.chainState?.[0] >= 3 ? 0.35 : a.moveState ? 0.6 : M.capeMax, v * M.capeK), ripple = seated ? 0 : Math.min(1, v / 3)
+  const seated = a.hold === 'sit', dying = a.dying >= 0
+  const lift = seated || dying ? 0 : Math.min(a.chainState?.[0] >= 3 ? 0.35 : a.moveState ? 0.6 : M.capeMax, v * M.capeK)
+  // running: from 5 m/s to full at 9 (the ripple, and the cape's shape at speed); standing, walking and his 4.44 m/s move have none
+  const ease = (x0, x1) => { const t = Math.min(1, Math.max(0, (v - x0) / (x1 - x0))); return t * t * (3 - 2 * t) }
+  const run = seated || dying ? 0 : ease(5, 9), ripple = run
+  // (#72: the run sits between the walk and the sprint: its width blends toward the sprint's from 1.5 m/s, full at 8, so
+  // his 4.44 m/s move has 0.43 of it, and from 0.3 of it the arms gather the cape rather than lift it; its bend, ripple
+  // and centring are the sprint's, from 5 m/s: blending the centring in at the run swung its hem further)
+  const shape = seated || dying ? 0 : ease(1.5, 8)
+  R.capeRun = run
+  capeArmsOff = shape > 0.3      // (running, the arms pumping past its top corners gather it; they don't swing it out)
+  // each bone's contact: its lift held from below (R.capeLo, his body) and above (R.capeHi, the ground under him)
+  const lo = R.capeLo ||= R.cape.map(() => -Infinity), hi = R.capeHi ||= R.cape.map(() => Infinity), wants = R.capeWant ||= R.cape.map(() => 0)
+  R.capeTop ??= true
+  // dying, the cape stays with his back (trapped under him on his back, over it face down): its springs settle to the cape
+  // as bound to him, the ground its only collision; its contacts start afresh as he dies and as he is up again
+  if (dying !== !!R.capeDead) { lo.fill(-Infinity); hi.fill(Infinity) }
+  R.capeDead = dying
+  if (capeLying) {      // lying, the first bone rests with his back (he lies on it), back to it at CAPE_FOLD rad/s
+    lo[0] = -Infinity; hi[0] = Infinity
+    if (R.capeT[0] > 0) { R.capeT[0] = Math.max(0, R.capeT[0] - CAPE_FOLD * h); R.capeW[0] = Math.min(R.capeW[0], 0) }
+  }
   R.capeClock = (R.capeClock || 0) + h
+  R.capePh = (R.capePh || 0) + h * (7 + (CAPE_RUN_RATE - 7) * run)      // the ripple's phase (its rate rises with speed)
   a.mesh.updateMatrixWorld(true)
+  // dying or lying on the ground (not seated, nor in the air), his body rests on it: raised until its lowest capsule
+  // touches the ground, and lying, until the cloth of the cape's first bone (under his back, or over it) is off it: he
+  // lies on his cape (rigAnimate sets his height afresh each frame, so this is from this frame's pose alone; while he
+  // still stands it is nothing)
+  const ground0 = a.mesh.position.y - a.spec.h - a.spec.r, S0 = capeRig(R)
+  // (only dying: a crouch puts his hips as low; from his hips at 70 cm, before he lands on it, or his body would press the
+  // cloth into the road)
+  capeLying = !!S0 && !seated && !R.wasAir && a.dying >= 0 && capeP.setFromMatrixPosition(R.bones.get('pelvis').matrixWorld).y - ground0 < CAPE_LYING
+  capeGround = !!S0 && !seated && !R.wasAir && (capeLying || a.dying >= 0)
+  if (R.capeLay && !capeLying) { R.capeLo?.fill(-Infinity); R.capeHi?.fill(Infinity) }      // up again: its contacts start afresh
+  R.capeLay = capeLying
+  if (capeGround) {
+    capeCaps(S0)
+    let low = Infinity
+    for (let c = 0; c < S0.caps.length; c++) low = Math.min(low, S0.A[c * 6 + 1] - S0.r[c], S0.A[c * 6 + 4] - S0.r[c])
+    if (capeLying) { capeSkinPts(S0); for (const i of S0.of[0]) low = Math.min(low, S0.at[i * 3 + 1] - 0.01) }
+    if (low < ground0) { R.inst.position.y += ground0 - low; R.inst.updateMatrixWorld(true) }
+  }
   rigF.set(1, 0, 0).applyQuaternion(a.mesh.getWorldQuaternion(rigW))      // his right: his hips' hinge
   const S = R.lod < 2 ? capeRig(R) : null, solve = S && (R.lod < 1 || R.frame % 2 === 0)
   // the springs, top down: each bone's want is its share of the lift over the turn that would hang it plumb (the first,
   // most of it) about its hinge
   R.capeSwV += (-R.capeSw * 40 - R.capeSwV * 9) * h; R.capeSw += R.capeSwV * h
-  if (!S) R.capeOff = R.capeSw = R.capeSwV = 0
+  if (!S) { R.capeOff = R.capeSw = R.capeSwV = 0; lo.fill(-Infinity); hi.fill(Infinity) }
   R.cape.forEach((b, k) => {
-    R.capeG[k] = S ? Math.min(1, R.capeG[k] + 1.2 * h) : 1
+    if (!S) R.capeG[k] = 1
     b.scale.y = k === 0 && a.moveState === 1 ? 1 - 0.3 * (a.moveCharge || 0) : 1
     const L = capeAxis(R, k, rigF), D = capeY.copy(M.capeAx[k].D).applyQuaternion(capeR.setFromRotationMatrix(capeM.extractRotation(b.parent.matrixWorld)))
     // plumb across the hinge: straight down, less its part along the hinge; the turn about L from D to it
     rigU.set(L.x * L.y, L.y * L.y - 1, L.z * L.y).normalize()
     const plumb = -Math.atan2(rigV.crossVectors(D, rigU).dot(L), D.dot(rigU))
-    const want = lift * (bend[k] ?? 1) + Math.sin(R.capeClock * 7 - k * 1.1 + a.cid) * (0.04 + 0.03 * k) * ripple + plumb * (k ? 1 : 0.85)
+    const share = (bend[k] ?? 1) + ((CAPE_RUN_BEND[k] ?? 1) - (bend[k] ?? 1)) * run, amp = (0.04 + 0.03 * k) + ((CAPE_RUN_RIPPLE[k] ?? 0.1) - (0.04 + 0.03 * k)) * run
+    const want = dying ? 0 : lift * share + Math.sin(R.capePh - k * 1.1 + a.cid) * amp * ripple + plumb * (k ? 1 : 0.85)
+    wants[k] = want
     R.capeW[k] += ((want - R.capeT[k]) * 40 - R.capeW[k] * 9) * h; R.capeT[k] += R.capeW[k] * h
+    if (R.capeT[k] < lo[k]) { R.capeT[k] = lo[k]; R.capeW[k] = Math.max(R.capeW[k], 0) }
+    if (R.capeT[k] > hi[k]) { R.capeT[k] = hi[k]; R.capeW[k] = Math.min(R.capeW[k], 0) }
     if (seated && R.capeT[k] > CAPE_SEAT) { R.capeT[k] = CAPE_SEAT; R.capeW[k] = Math.min(R.capeW[k], 0) }
     capePose(R, k, k)
   })
@@ -17721,10 +17804,13 @@ function rigCape(a, R, dt) {
   // the ground under him while he stands, kneels or lies on it (not in the air); seated, the cushion under him (12 cm below
   // his hips), so the cloth gathers on the seat rather than hanging through it and the car's floor
   const skin = M.capeSkin ?? 0.025, floor = seated ? capeP.setFromMatrixPosition(R.bones.get('pelvis').matrixWorld).y - 0.12 : R.wasAir ? null : a.mesh.position.y - a.spec.h - a.spec.r
+  // lying on the ground, the ground comes first
+  const ground = capeLying && floor !== null
+  if (R.frame % 16 === 0) R.capeTop = true      // now and then, try the first bone's top rows in its contact again
   capeSkinPts(S); capeCaps(S)
   // then each bone, top down: gather its sides off his arms, ease the top back, and the least extra lift that brings
   // its points out, about its hinge
-  const H = capeHinge, at = S.at
+  const H = capeHinge, at = S.at, hs = R.lod < 1 ? h : 2 * h      // (the time since this cape was last solved)
   capeStuck = false
   // (a second pass, if the first moved anything, settles what one bone's move did to the next)
   for (let pass = 0, moved = true; pass < 2 && moved; pass++) {
@@ -17733,23 +17819,34 @@ function rigCape(a, R, dt) {
       // this bone's hinge as the bones above now lie, and the capsules it could reach
       const E = R.cape[k].matrixWorld.elements, hx = E[12], hy = E[13], hz = E[14], L = capeAxis(R, k, rigF)
       capeNear(S, R, k, skin)
+      if (capeLying) S.near[k].length = 0      // lying, he lies on it: only the ground
       // an arm pressing a side in: the width that clears it (a point x across moves by x times the change)
-      let gather = R.capeG[k]
-      if (!pass) for (const i of S.of[k]) {
-        const p = S.pts[i]
-        if (!p.side) continue
-        for (const c of S.near[k]) {
-          if (!S.caps[c].arm) continue
-          const d = capeGap(S, c, at[i * 3], at[i * 3 + 1], at[i * 3 + 2])
-          if (d >= skin) continue
-          const x = (at[i * 3] - hx) * L.x + (at[i * 3 + 1] - hy) * L.y + (at[i * 3 + 2] - hz) * L.z
-          const push = x * (capeN[0] * L.x + capeN[1] * L.y + capeN[2] * L.z) * p.share[k]
-          if (push < -0.3 * Math.abs(x) * p.share[k]) gather = Math.min(gather, R.capeG[k] * (1 + (skin - d) / push))
+      // (the width that just touches each arm near a side, so it settles there: in at once, out at 1.2 a second)
+      if (!pass && !capeLying) {
+        let gather = 1
+        for (const i of S.of[k]) {
+          const p = S.pts[i]
+          if (!p.side) continue
+          for (const c of S.near[k]) {
+            if (!S.caps[c].arm) continue
+            const d = capeGap(S, c, at[i * 3], at[i * 3 + 1], at[i * 3 + 2])
+            if (d >= skin + CAPE_BAND) continue
+            const x = (at[i * 3] - hx) * L.x + (at[i * 3 + 1] - hy) * L.y + (at[i * 3 + 2] - hz) * L.z
+            const push = x * (capeN[0] * L.x + capeN[1] * L.y + capeN[2] * L.z) * p.share[k]
+            if (push < -0.3 * Math.abs(x) * p.share[k]) gather = Math.min(gather, R.capeG[k] * (1 + (skin - d) / push))
+          }
         }
+        // (and at speed narrower than his shoulders, eased in and out: the arms' gather is at once)
+        const top = 1 + ((CAPE_RUN_WIDTH[k] ?? 1) - 1) * shape, wide = R.capeG[k] > top ? Math.max(top, R.capeG[k] - 1.5 * hs) : Math.min(top, R.capeG[k] + 1.2 * hs)
+        const g = Math.max(CAPE_GATHER, gather < R.capeG[k] ? Math.min(gather, wide) : Math.min(gather, wide))
+        if (Math.abs(g - R.capeG[k]) > 0.002) { R.capeG[k] = g; capePose(R, k); capeSkinPts(S); moved = true }
       }
-      if (gather < R.capeG[k]) { R.capeG[k] = Math.max(CAPE_GATHER, gather); capePose(R, k); capeSkinPts(S); moved = true }
       // the top rows off his shoulders: the least move back of the first bone that clears them; let down at 0.3 m/s
-      if (!k && !pass) {
+      if (!k && !pass && capeLying) {
+        const next = Math.max(0, R.capeOff - 0.3 * hs)
+        if (next !== R.capeOff) { R.capeOff = next; capePose(R, 0); capeSkinPts(S) }
+      } else if (!k && !pass) {
+        // (the offset that just touches, for every top point near his shoulders, so it settles there)
         const B = R.capeB
         let off = 0
         for (const i of S.of[0]) {
@@ -17757,19 +17854,31 @@ function rigCape(a, R, dt) {
           if (!p.top) continue
           for (const c of S.near[0]) {
             const d = capeGap(S, c, at[i * 3], at[i * 3 + 1], at[i * 3 + 2]), rate = p.share[0] * (capeN[0] * B.x + capeN[1] * B.y + capeN[2] * B.z)
-            if (d < skin && rate > 0.15) off = Math.max(off, R.capeOff + (skin - d) / rate)
+            if (d < skin + CAPE_BAND && rate > 0.15) off = Math.max(off, R.capeOff + (skin - d) / rate)
           }
         }
-        const was = R.capeOff
-        R.capeOff = Math.min(0.12 * S.scale, Math.max(off, R.capeOff - 0.3 * h))
-        if (R.capeOff !== was) { capePose(R, 0); capeSkinPts(S); moved ||= R.capeOff > was }
+        const was = R.capeOff, next = Math.min(0.12 * S.scale, Math.max(off, R.capeOff - 0.3 * hs))
+        if (Math.abs(next - was) > 0.0005) { R.capeOff = next; capePose(R, 0); capeSkinPts(S); moved ||= next > was }
       }
-      // the least lift (or let down, for the floor alone) of this bone that clears its points
+      // its contact: more than CAPE_IN in, the least lift (or let down, for the floor) that clears its points, held as a
+      // bound; clear by more than CAPE_OUT, a bound it rests on eases toward its spring's want, as far as stays clear
       H[0] = hx; H[1] = hy; H[2] = hz
-      const lift = capeLift(S, k, H, L, skin, floor, floor === null ? 0 : -R.capeT[k] - 1.2, (seated ? CAPE_SEAT : CAPE_MAX[k]) - R.capeT[k])
-      if (lift) {
-        R.capeT[k] += lift; R.capeW[k] = lift > 0 ? Math.max(R.capeW[k], 0) : Math.min(R.capeW[k], 0)
-        capePose(R, k); capeSkinPts(S); moved = true
+      if (!k && capeLying) continue      // (it rests with his back, held on the ground by his body above)
+      const T = R.capeT[k], down = floor === null ? 0 : -T - 1.2, up = (seated ? CAPE_SEAT : CAPE_MAX[k]) - T, top = !k && R.capeTop
+      const w = Math.min(capeWorst(S, k, H, 0, skin, floor, top, L), floor === null ? Infinity : capeFloor)
+      if (w < -CAPE_IN) {
+        // (dying or on the ground, it folds at CAPE_FOLD rad/s at most: falling, the road can come up a long way in a frame)
+        let lift = capeLift(R, S, k, H, L, skin, floor, down, up, ground, dying)
+        if (dying || ground) lift = Math.max(-CAPE_FOLD * hs, Math.min(CAPE_FOLD * hs, lift))
+        if (lift) {
+          R.capeT[k] += lift
+          if (lift > 0) { lo[k] = R.capeT[k]; hi[k] = Math.max(hi[k], lo[k]); R.capeW[k] = Math.max(R.capeW[k], 0) }
+          else { hi[k] = R.capeT[k]; lo[k] = Math.min(lo[k], hi[k]); R.capeW[k] = Math.min(R.capeW[k], 0) }
+          capePose(R, k); capeSkinPts(S); moved = true
+        }
+      } else if (w > CAPE_OUT) {      // (lying too: the fold the road forced as he fell lets out until the cloth lies on it)
+        if (T <= lo[k] + 1e-9 && wants[k] < T) { const e = capeEase(S, k, H, L, skin, floor, top, Math.max(down, wants[k] - T)); lo[k] = e === null ? -Infinity : T + e }
+        if (T >= hi[k] - 1e-9 && wants[k] > T) { const e = capeEase(S, k, H, L, skin, floor, top, Math.min(up, wants[k] - T)); hi[k] = e === null ? Infinity : T + e }
       }
     }
   }
@@ -17777,7 +17886,7 @@ function rigCape(a, R, dt) {
   // clears (0.15 rad at a time, either way, to CAPE_ASIDE), or else that leaves it least deep
   const E = R.cape[0].matrixWorld.elements
   H[0] = E[12]; H[1] = E[13]; H[2] = E[14]
-  const w0 = capeStuck ? capeWorst(S, -1, H, 0, skin, null, false, R.capeB) : 0
+  const w0 = capeStuck && !ground ? capeWorst(S, -1, H, 0, skin, null, false, R.capeB) : 0
   if (w0 < -CAPE_SLACK) {
     let best = 0, bw = w0
     for (let x = 0.15; x <= CAPE_ASIDE + 1e-6 && bw < 0; x += 0.15) for (const t of [x, -x]) {
@@ -17787,6 +17896,51 @@ function rigCape(a, R, dt) {
     }
     if (best) { R.capeSw -= best; R.capeSwV = 0; capePose(R, 0); capeSkinPts(S) }
   }
+}
+// The cape's shading (#72). The model's one material is a dark, rough dielectric everywhere, and the cape is two layers
+// of it (out, and the lining toward his back). Narrow and square behind him, the cape is often seen edge-on, where the
+// lights' grazing specular lifted the lining near white in a flash twice a stride, and turned the whole cape grey to black
+// and back across a run cycle seen from behind. At load each cape vertex is marked (capeMark: x its weight on the cape
+// bones, y the same on the lining), and the material's shader gives the cloth no grazing rise in its reflectance (F90 down
+// to F0), keeps a quarter of the cape's specular (the lining a tenth) and darkens the lining a quarter. The hook goes with the material's clones (each avatar dresses a
+// clone); Ink wraps it as it wraps any; Realistic draws him with its own material, which this leaves alone.
+const capeShaded = new WeakSet()
+function capeShadeMaterial(m) {
+  if (!m?.isMeshStandardMaterial || capeShaded.has(m)) return m
+  capeShaded.add(m)
+  const prev = m.onBeforeCompile, key = m.customProgramCacheKey()
+  m.onBeforeCompile = function (shader, r) {
+    prev.call(this, shader, r)
+    shader.vertexShader = 'attribute vec2 capeMark;\nvarying vec2 vCapeMark;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vCapeMark = capeMark;')
+    shader.fragmentShader = 'varying vec2 vCapeMark;\n' + shader.fragmentShader
+      .replace('#include <map_fragment>', '#include <map_fragment>\n  diffuseColor.rgb *= 1.0 - 0.25 * vCapeMark.y;')
+      .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n  material.specularF90 = mix(material.specularF90, material.specularColor.g, vCapeMark.x);')
+      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n  { float capeSpec = 1.0 - 0.75 * vCapeMark.x - 0.15 * vCapeMark.y;\n    reflectedLight.directSpecular *= capeSpec; reflectedLight.indirectSpecular *= capeSpec; }')
+  }
+  m.customProgramCacheKey = () => key + '|cape-shade-2'
+  m.clone = function () { return capeShadeMaterial(Object.getPrototypeOf(this).clone.call(this)) }
+  m.needsUpdate = true
+  return m
+}
+function capeShade(root, M) {
+  if (!M.cape?.length) return
+  root.traverse(o => {
+    if (!o.isSkinnedMesh || !o.skeleton || !o.geometry?.attributes.skinIndex || !o.geometry.attributes.normal) return
+    const g = o.geometry, J = new Set(M.cape.map(n => o.skeleton.bones.findIndex(b => b.name === n)).filter(i => i >= 0))
+    if (!J.size) return
+    if (!g.attributes.capeMark) {
+      const si = g.attributes.skinIndex, sw = g.attributes.skinWeight, P = g.attributes.position, N = g.attributes.normal, n = P.count, w = new Float32Array(n)
+      for (let i = 0; i < n; i++) for (let k = 0; k < 4; k++) if (J.has(si.getComponent(i, k))) w[i] += sw.getComponent(i, k)
+      // his back's outward direction in the mesh: from the body's centroid to the cape's, level
+      let bx = 0, bz = 0, nb = 0, cx = 0, cz = 0, nc = 0
+      for (let i = 0; i < n; i++) if (w[i] > 0.5) { cx += P.getX(i); cz += P.getZ(i); nc++ } else { bx += P.getX(i); bz += P.getZ(i); nb++ }
+      if (!nc || !nb) return
+      const ox = cx / nc - bx / nb, oz = cz / nc - bz / nb, mark = new Float32Array(n * 2)
+      for (let i = 0; i < n; i++) { const c = Math.min(1, w[i]); mark[i * 2] = c; mark[i * 2 + 1] = c && N.getX(i) * ox + N.getZ(i) * oz < 0 ? c : 0 }
+      g.setAttribute('capeMark', new THREE.BufferAttribute(mark, 2))
+    }
+    o.material = Array.isArray(o.material) ? o.material.map(capeShadeMaterial) : capeShadeMaterial(o.material)
+  })
 }
 // shown while alive; a rig also while its death clip plays (the respawn counts down from RESPAWN_S)
 function rigShown(id, dead) {
