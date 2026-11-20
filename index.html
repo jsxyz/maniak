@@ -748,6 +748,11 @@ const TEXT = {
   enforcersOffHud: 'Enforcers off',                                                       // HUD line for the host while /enforcers is off
   giveSquad: '§7A squad car §f5 m ahead',                                                 // reply, /give squad
   giveSquadNo: '§cNo room for a squad car here.',                                         // reply, /give squad
+  stillOn: '§f{name} §7stands 5 m ahead until it is hit or §f/despawn§7.',                // reply, /spawn <name> still
+  stillWalk: '§f{name} §7paces 5 m ahead until it is hit or §f/despawn§7.',               // reply, /spawn <name> walk
+  stillNone: '§cNo enemy named §f{name}§c.',                                              // reply, /spawn <name> still with a name that is no enemy
+  stillOff: '§f{name} §7is not out this season.',                                         // reply, /spawn <name> still on an event enemy that is off
+  stillDown: '§cNot while you are down.',                                                 // reply, /spawn <name> still while down (or with no body of your own)
   enforcersNoWanted: "§7Faust's enforcers are off (§f/enforcers on§7).",                  // reply, /wanted while they are off           // chat, you reach one star
   disguisePill: 'IN DISGUISE',                                   // HUD pill while disguised
   safePill: 'SAFE {s}s',                                         // HUD pill while spawn-protected
@@ -8910,9 +8915,25 @@ function driveThink(b, o, tgt, dt, all) {
 // card #42: a bot hops at random only farther than HOP_CLEAR m from its target and HOP_ROOM m from anyone: a hop at a run
 // carries about 7 m, and nearer it came down on a head
 const HOP_CLEAR = 9, HOP_ROOM = 3
+// /spawn <name> still|walk: the test enemy stands (still) or paces side to side across the host's view (walk) at its spot, its yaw held, no target
+// and no fire, until it takes a hit (hp below what it started with) or dies
+function stillInput(b) {
+  const S = b.still
+  let yaw = S.yaw, f = 0
+  if (S.mode === 'walk') {
+    const s = (b.x - S.x) * S.right[0] + (b.z - S.z) * S.right[1]
+    if (s > 2.5) S.dir = -1; else if (s < -2.5) S.dir = 1
+    yaw = Math.atan2(-S.right[0] * S.dir, -S.right[1] * S.dir)
+    f = clamp(1.7 / (b.bot.speed || 6.4), 0.1, 1)         // about 1 m/s, a walk
+  }
+  b.ai.yaw = yaw; b.ai.tgt = -1
+  return { f, r: 0, j: false, descend: false, fire: false, yaw, pitch: 0 }
+}
 function botThink(b, all, dt) {
   const ai = b.ai, spec = b.bot
   ai.t += dt
+  if (b.still && (b.dead > 0 || b.hp < b.still.hp)) b.still = undefined
+  if (b.still) return stillInput(b)
   if (b.dead > 0) {
     ai.tgt = -1
     return { f: 0, r: 0, j: false, descend: false, fire: false, yaw: b.yaw, pitch: 0 }
@@ -29846,6 +29867,26 @@ function setMatchMinutes(n) {
 }
 // the match's limits and its restart, as chat, settings and a level change set them
 GAME.match = { frags: setFragLimit, minutes: setMatchMinutes, restart: () => { hostEvent(); resetMatch() }, event: k => pickEvent(k), get fragLimit() { return fragLimit }, get timeLimit() { return timeLimit }, bots: spawnBots, get resultsLeft() { return resultsLeft }, get fragSteps() { return FRAG_STEPS }, get minuteSteps() { return MINUTE_STEPS } }
+// /spawn <name> still|walk: one enemy (any BOTS row, by the name it shows or its internal one, or its CHARS number) 5 m ahead of the host,
+// facing him, for QA and the visual review to check its look or pose; botThink holds it (b.still) until it is hit or /despawn runs
+function spawnStill(name, mode) {
+  const want = name.trim().toLowerCase(), me = selfChar()
+  if (!me || me.dead > 0) return sysMsg(gameText('stillDown'))
+  const i = BOTS.findIndex(B => [B.name, enemyName(B.name)].some(n => n.toLowerCase() === want) || /^\d+$/.test(want) && B.cid === +want)
+  if (i < 0) return sysMsg(gameText('stillNone', { name }))
+  const id = BOT_ID0 + i, shown = enemyName(BOTS[i].name)
+  if (!players.has(id)) { if (!addBot(i)) return sysMsg(gameText('stillOff', { name: shown })); if (conns.size) pushRoster() }
+  const c = players.get(id)
+  if (c.dead > 0) respawn(c)
+  const yaw = input.yaw, x = me.x - Math.sin(yaw) * 5, z = me.z - Math.cos(yaw) * 5, hit = []
+  staticRay(x, me.y + 1, z, 0, -1, 0, 8, hit)
+  const gy = hit.length && hit[4] > 0.5 ? hit[1] : me.y - me.h - me.r
+  setCharPos(c, x, gy + c.h + c.r + 0.05, z)
+  c.prot = 0; c.knT = 0; c.knUp = 0
+  c.yaw = c.ai.yaw = yaw + Math.PI
+  c.still = { mode, hp: c.hp, x, z, yaw: c.yaw, dir: 1, right: [Math.cos(yaw), -Math.sin(yaw)] }
+  sysMsg(gameText(mode === 'walk' ? 'stillWalk' : 'stillOn', { name: shown }))
+}
 // the commands this game adds to the page's own
 GAME.commands = {
   event:  { args: '<name|auto|off>', help: 'host only, the seasonal event', run: a => {
@@ -29853,8 +29894,10 @@ GAME.commands = {
               const w = String(a || '').trim().toLowerCase(), k = eventPicks().find(p => p.toLowerCase() === w)
               if (!k) return sysMsg('§7Event: §f' + eventLabel(settings.event || 'auto') + ' §7(' + eventPicks().map(eventLabel).join(', ') + ')')
               pickEvent(k) } },
-  spawn:  { args: '<name|all>', help: 'host only, bring enemies in now', run: a => {
+  spawn:  { args: '<name|all> [still|walk]', help: 'host only, bring enemies in now; with still or walk, one enemy 5 m ahead that stands or paces until it is hit (to check its look)', run: a => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
+              const test = /^(.*\S)\s+(still|walk)$/i.exec(String(a || '').trim())
+              if (test) return spawnStill(test[1], test[2].toLowerCase())
               const want = String(a || '').trim().toLowerCase()
               const on = fieldedTeams(), rows = BOTS.map((b, i) => i).filter(i => !on.has(BOTS[i].team) && !BOTS[i].enforcer).filter(i => want === 'all' ||
                 [BOTS[i].name, enemyName(BOTS[i].name)].some(n => n.toLowerCase() === want))
