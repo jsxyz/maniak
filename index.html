@@ -27309,11 +27309,11 @@ GAME.air = {
 // opaque materials and one for its glass, instanced, the near ones at full detail and the rest at their LOD; the decks,
 // stairs, bridges and railings, which match the colliders exactly, as plain merged geometry by region. Until the models
 // arrive (or if they fail) boxes stand in for them.
-const RAIL_FILES = { track: 'monorail_track.a2f7242b.glb', cars: 'monorail_cars.bedc11fc.glb', station: null }
+const RAIL_FILES = { track: 'monorail_track.a2f7242b.glb', cars: 'monorail_cars.bedc11fc.glb', station: 'monorail_station.b26c63ac.glb' }
 // tiers [full detail, LOD, a plain box] out to these distances (m) from the camera; past the last, not drawn. plain: the decks,
 // bridges and canopies; fine: the stairs and railings
-const RAIL_VIEW = { tiers: { beam: [300, 300, 2600], pylon: [140, 500, 2000], kit: [140, 500, 900], car: [240, 900, 2600], door: [120, 0, 0],
-  tower: [170, 1200, 3000], fixture: [120, 400, 0] }, plain: 1600, fine: 380,
+const RAIL_VIEW = { tiers: { beam: [300, 300, 2600], pylon: [140, 500, 2000], kit: [80, 400, 900], car: [150, 900, 2600], door: [100, 0, 0],
+  tower: [90, 400, 3000], fixture: [60, 300, 0] }, plain: 1600, fine: 250,
   region: 768, glow: 2.2, metal: 0.6, refresh: 24, glass: { color: 0x1b2632, opacity: 0.36 },
   colors: { deck: 0x2c2a2a, edge: 0xb08d57, stone: 0x4a4744, chrome: 0xb9c0c6, enamel: 0x1d1215, livery: 0x8e1a16, concrete: 0x3a3d42, sign: 0x15100f } }
 
@@ -27457,8 +27457,8 @@ function railBuild() {
   if (!S || !worldGroup || renderHeadless) return
   if (S.view) railDispose(S)
   const group = new THREE.Group(); group.name = 'monorail'; worldGroup.add(group)
-  const mat = railMaterial(), glass = railGlassMaterial()
-  S.view = { group, mat, glass, parts: {}, sets: [], trains: {}, regions: [], fallback: { track: [], station: [] }, at: null, ready: { track: false, cars: false, station: false }, owned: [mat, glass] }
+  const mat = railMaterial(), glass = railGlassMaterial(), both = railMaterial(); both.side = THREE.DoubleSide
+  S.view = { group, mat, both, glass, parts: {}, sets: [], trains: {}, regions: [], fallback: { track: [], station: [] }, at: null, ready: { track: false, cars: false, station: false }, owned: [mat, both, glass] }
   background.run('monorail', function* () {
     yield* railBuildPlain(S)
     for (const which of ['track', 'cars', 'station']) { yield* railLoad(S, which); yield 'frame' }
@@ -27545,7 +27545,7 @@ function railSigns(S) {
     for (const s of [-1, 1]) {
       // under the canopy, facing the track; and the same seen from the street side
       const ax = t.dir === 'z' ? -s : 0, az = t.dir === 'x' ? -s : 0
-      for (const a of [-9, 9]) { const [x, z] = W2(t.p + a, s * 6.9); panel(x, d + 2.5, z, ax, az, 3.4, 0.6, row); panel(x - ax * 0.02, d + 2.5, z - az * 0.02, -ax, -az, 3.4, 0.6, row) }
+      for (const a of [-9, 9]) { const [x, z] = W2(t.p + a, s * 6.875), [x1, z1] = W2(t.p + a, s * 7.0); panel(x, d + 2.6, z, ax, az, 3.1, 0.6, row); panel(x1, d + 2.6, z1, -ax, -az, 3.1, 0.6, row) }
       // on the pavilion's face to the avenue, above the bridge
       const [x, z] = W2(t.p, s * (RAIL.pav.tower[0] - 0.08)); panel(x, 15.5, z, ax, az, 12, 1.5, row)
     }
@@ -27629,6 +27629,13 @@ function railStaticSets(S, which) {
     railSet(S, 'beam_end', ends, T.kit); railSet(S, 'switch_box', switches, T.kit)
   } else if (which === 'station') {
     const towers = [], canopies = [], benches = [], lamps = [], signs = [], railings = [], newels = []
+    if (S.view.parts.tower) {
+      const g = railGeo(), C = RAIL_VIEW.colors
+      g.set(C.enamel, 0, 0.8); g.box(0, 12, 0, 10, 12, 7); g.box(0, 27, 0, 7, 3, 5); g.box(0, 32.5, 0, 4.5, 2.5, 3.2); g.box(0, 40, 0, 0.5, 6, 0.5)
+      g.set(0xff5a2a, 0, 0.5, 1.2); g.box(0, 19, -7.05, 4, 0.9, 0.05); g.box(-10.05, 19, 0, 0.05, 0.9, 3)
+      g.set(0xffe3b4, 0, 0.5, 1.4); g.box(0, 7, -7.05, 2.4, 5, 0.05); g.box(0, 36.5, 0, 1.2, 1.2, 1.2)
+      S.view.parts.tower_box = { opaque: g.geometry(), glass: null }
+    }
     for (const t of rail.stations) {
       const d = t.level + K.car.floor
       const W2 = (along, across) => t.dir === 'z' ? [t.c + across, along] : [along, t.c + across]
@@ -27648,7 +27655,9 @@ function railStaticSets(S, which) {
       }
     }
     const T = V.tiers
-    railSet(S, 'tower', towers, T.tower); railSet(S, 'canopy', canopies, T.kit); railSet(S, 'bench', benches, T.fixture, false)
+    const tower = railSet(S, 'tower', towers, T.tower)
+    if (tower) for (const pair of tower.meshes) if (pair[0]) pair[0].material = S.view.both
+    railSet(S, 'canopy', canopies, T.kit); railSet(S, 'bench', benches, T.fixture, false)
     railSet(S, 'lamp', lamps, T.kit); railSet(S, 'sign', signs, T.fixture, false); railSet(S, 'railing', railings, T.fixture, false)
     railSet(S, 'newel', newels, T.fixture, false)
   }
