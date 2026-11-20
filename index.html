@@ -28695,6 +28695,23 @@ const testTools = (() => {
     O.seen = performance.now(); inStoreyBodies(O, 0, true)
     return true
   }
+  function windowsNear(c, broken) {
+      const out = [], add = (B, w, isBroken) => {
+        const n = [[0, 1], [0, -1], [1, 0], [-1, 0]][w.face], a = (w.a0 + w.a1) / 2, x = w.face < 2 ? a : w.plane, z = w.face < 2 ? w.plane : a
+        out.push({ x, z, y0: 0, what: (isBroken ? 'broken' : 'intact') + ' window' + (w.k ? ', storey ' + w.k + ', ' + Math.round((w.y0 + w.y1) / 2) + ' m up' : '') + ', of a ' + B.style + ' building',
+          spot: { x: x + n[0] * 2, z: z + n[1] * 2, face: [-n[0], -n[1]] } }) }
+      const addG = (B, w) => {      // card #77: an intact ground window, with the spot a punch reaches its glass from (none does: not offered)
+        const n = [[0, 1], [0, -1], [1, 0], [-1, 0]][w.face], a = typeof dsPunchSpot === 'function' && faustState && dsCheck() ? dsPunchSpot(w, n) : (w.a0 + w.a1) / 2
+        if (a === null) return
+        const mid = (w.a0 + w.a1) / 2, x = w.face < 2 ? mid : w.plane, z = w.face < 2 ? w.plane : mid
+        out.push({ x, z, y0: 0, what: 'intact window of a ' + B.style + ' building (a punch at pitch 0 reaches its glass from the spot)',
+          spot: { x: (w.face < 2 ? a : w.plane) + n[0] * 1.6, z: (w.face < 2 ? w.plane : a) + n[1] * 1.6, face: [-n[0], -n[1]] } }) }
+      if (broken) { if (faustState && faustIn.broken.size) for (const id of faustIn.broken.keys()) { const B = inBuilding(id); for (const w of inBrokenWindows(B)) add(B, w, true) }
+        return out }
+      for (const t of lotsAround(c, () => true).sort((p, q) => Math.hypot(p.x - c.x, p.z - c.z) - Math.hypot(q.x - c.x, q.z - c.z)).slice(0, 8)) {
+        const B = inBuilding(t.id); const gone = faustIn.broken.get(B.id); for (const w of inWindowsOf(B, 0)) if (!gone?.has(w.key)) addG(B, w) }
+      return out
+  }
   const NEAR = {
     car: cars(() => true), parked: cars(o => o.parked && !o.traffic), traffic: cars(o => o.traffic), object: () => objs.filter(o => !o.V).map(o => ({ x: o.x, z: o.z, y0: 0, what: o.K.name || 'object' })),
     station: c => (railState?.rail.stations || []).map(t => {                  // #60: street level beside the platform, facing its pavilion
@@ -28716,22 +28733,7 @@ const testTools = (() => {
       q.x = lx0 + K.lift - 0.9; q.z = C.z1 - K.part - 0.7
       q.what = 'express lift (UP panel) of a ' + B.style + ' tower, ' + B.storeys.length + ' storeys'
       q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B } } })),
-    window: c => {                                                              // #46's breaches, else the nearest shopfront panes
-      const out = [], add = (B, w, broken) => {
-        const n = [[0, 1], [0, -1], [1, 0], [-1, 0]][w.face], a = (w.a0 + w.a1) / 2, x = w.face < 2 ? a : w.plane, z = w.face < 2 ? w.plane : a
-        out.push({ x, z, y0: 0, what: (broken ? 'broken' : 'intact') + ' window' + (w.k ? ', storey ' + w.k + ', ' + Math.round((w.y0 + w.y1) / 2) + ' m up' : '') + ', of a ' + B.style + ' building',
-          spot: { x: x + n[0] * 2, z: z + n[1] * 2, face: [-n[0], -n[1]] } }) }
-      const addG = (B, w) => {      // card #77: an intact ground window, with the spot a punch reaches its glass from (none does: not offered)
-        const n = [[0, 1], [0, -1], [1, 0], [-1, 0]][w.face], a = typeof dsPunchSpot === 'function' && faustState && dsCheck() ? dsPunchSpot(w, n) : (w.a0 + w.a1) / 2
-        if (a === null) return
-        const mid = (w.a0 + w.a1) / 2, x = w.face < 2 ? mid : w.plane, z = w.face < 2 ? w.plane : mid
-        out.push({ x, z, y0: 0, what: 'intact window of a ' + B.style + ' building (a punch at pitch 0 reaches its glass from the spot)',
-          spot: { x: (w.face < 2 ? a : w.plane) + n[0] * 1.6, z: (w.face < 2 ? w.plane : a) + n[1] * 1.6, face: [-n[0], -n[1]] } }) }
-      if (faustState && faustIn.broken.size) for (const id of faustIn.broken.keys()) { const B = inBuilding(id); for (const w of inBrokenWindows(B)) add(B, w, true) }
-      if (out.length) return out
-      for (const t of lotsAround(c, () => true).sort((p, q) => Math.hypot(p.x - c.x, p.z - c.z) - Math.hypot(q.x - c.x, q.z - c.z)).slice(0, 8)) {
-        const B = inBuilding(t.id); for (const w of inWindowsOf(B, 0)) addG(B, w) }
-      return out },
+    window: c => windowsNear(c, false), brokenwindow: c => windowsNear(c, true),             // intact panes a punch reaches (#77); #46's breaches
     performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk), enforcer: bots(b => b.enforcer),
     squad: () => objs.filter(o => squadIds.has(o.id) && o.squadKind !== 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'squad car (' + (o.V ? o.squadState || 'driving' : 'wrecked') + ')' })),
     roadblock: () => objs.filter(o => squadIds.has(o.id) && o.squadKind === 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'roadblock car' })),
@@ -28748,7 +28750,7 @@ const testTools = (() => {
       return [] },
   }
   const ALIAS = { stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
-  const things = () => Object.keys(NEAR).join(', ')
+  const things = () => Object.keys(NEAR).filter(k => k !== 'brokenwindow').join(', ') + ', window broken'
   const tp = a => {
     const c = me(true); if (!c) return
     const n = String(a || '').replace(/,/g, ' ').trim().split(/\s+/).map(Number)
@@ -28758,21 +28760,24 @@ const testTools = (() => {
   }
   const near = a => {
     const c = me(true); if (!c) return
-    const w = String(a || '').trim().toLowerCase().split(/\s+/).filter(Boolean), key = ALIAS[w[0]] || w[0]
+    const w = String(a || '').trim().toLowerCase().split(/\s+/).filter(Boolean)
+    if (ALIAS[w[0]] === 'window' || w[0] === 'window') if (w[1] === 'broken') w.splice(0, 2, 'brokenwindow')
+    const key = ALIAS[w[0]] || w[0]
     if (!Object.hasOwn(NEAR, key)) return sysMsg('§cUsage: §f/near <thing> [go] §7(' + things() + ')')
     let list = []
     try { list = NEAR[key](c) } catch (e) { console.warn('/near ' + key, e) }
     let t = null
     for (const q of list) { q.d = Math.hypot(q.x - c.x, q.z - c.z); if (!t || q.d < t.d) t = q }
-    if (!t) return sysMsg('§7' + key + ': §fnone yet')
+    if (!t) return sysMsg('§7' + key + ': §fnone yet' + (key === 'window' ? ' §7(none a punch reaches within range; /near window broken lists the breaches)' : ''))
+    const within = key === 'window' ? list.filter(q => q.d < 60).length : 0, extra = key === 'window' ? ' §7· §f' + within + ' §7intact within 60 m' : ''
     if (t.resolve) { try { t.resolve(t); t.d = Math.hypot(t.x - c.x, t.z - c.z) } catch (e) { console.warn('/near ' + key, e); return sysMsg('§7' + key + ': §fnone yet') } }
     if (w[1] === 'go') {
       let s = t.spot
       if (s?.enter && !openIn(s.enter)) s = { x: s.enter.door.out[0], z: s.enter.door.out[2], face: [0, -1] }          // shut: at its door
       const [x, , z] = s ? tpTo(c, s.x, s.z, t.y0, s.face, s.up) : beside(c, t)
-      return sysMsg('§7Beside §f' + t.what + ' §7at x §f' + Math.round(x) + ' §7z §f' + Math.round(z))
+      return sysMsg('§7Beside §f' + t.what + ' §7at x §f' + Math.round(x) + ' §7z §f' + Math.round(z) + extra)
     }
-    sysMsg('§7Nearest §f' + t.what + '§7: x §f' + Math.round(t.x) + ' §7z §f' + Math.round(t.z) + ' §7· §f' + Math.round(t.d) + ' m §7· §f' + rose(bearing(t.x - c.x, t.z - c.z)) + ' §7· §f/near ' + key + ' go')
+    sysMsg('§7Nearest §f' + t.what + '§7: x §f' + Math.round(t.x) + ' §7z §f' + Math.round(t.z) + ' §7· §f' + Math.round(t.d) + ' m §7· §f' + rose(bearing(t.x - c.x, t.z - c.z)) + ' §7· §f/near ' + key + ' go' + extra)
   }
   const where = () => {
     const c = me(false); if (!c) return
