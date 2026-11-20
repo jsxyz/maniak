@@ -10971,9 +10971,25 @@ function heldFade(r, me, o) {
   const near = clamp((Math.hypot(r.x - o.x, r.y - o.y, r.z - o.z) - 0.6 * R) / (0.4 * R), 0.15, 1)
   return Math.min(near, hides(me.x, me.y + me.h * 0.55, me.z) || hides(...r.aim) ? 0.3 : 1)
 }
-function camRay(me, yaw, pitch, R = heldR(me)) {
-  const [dx, dy, dz] = aimDir(yaw, pitch)
+// the charged leap's camera terms, from sim state: move (the charge and the leap's pull-out) and landing (the smash view)
+function leapCamTerms(me) {
   const settle = clamp((me.smashCam || 0) / 0.5, 0, 1), landing = settle * settle * (3 - 2 * settle), move = GAME.participantOf(me)?.leapSmash ? me.leap ? 1 : me.smashCam > 0 ? landing : Math.min(0.3, Math.max(0, (me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP) * 0.3) : 0
+  return [move, landing]
+}
+// the drawn camera's leap terms: eased toward the sim's (a critically damped spring, w rad/s, in frame time), so the view
+// pulls out and back in over about 0.35 s rather than in one frame
+const LEAP_CAM = { w: 12 }, leapCam = { m: 0, mv: 0, l: 0, lv: 0, t: NaN }
+function leapCamEase(me, tf = frameT || now()) {
+  const [m, l] = leapCamTerms(me), C = leapCam, dt = C.t === C.t ? clamp((tf - C.t) / 1000, 0, 0.25) : -1
+  C.t = tf
+  if (dt < 0) { C.m = m; C.l = l; C.mv = C.lv = 0; return C }
+  const w = LEAP_CAM.w, k = Math.exp(-w * dt), ease = (x, v, to) => { const e = x - to, g = v + w * e; return [to + (e + g * dt) * k, (v - w * g * dt) * k] }
+  ;[C.m, C.mv] = ease(C.m, C.mv, m); [C.l, C.lv] = ease(C.l, C.lv, l)
+  return C
+}
+function camRay(me, yaw, pitch, R = heldR(me), eased = null) {
+  const [dx, dy, dz] = aimDir(yaw, pitch)
+  const raw = eased ? null : leapCamTerms(me), move = eased ? eased.m : raw[0], landing = eased ? eased.l : raw[1]
   const back = CAM.back + 3.2 * move + 3.5 * landing, up = CAM.up + 2.1 * move + 2.4 * landing, aim = CAM.aim - 22 * move - 14 * landing
   const eyeY = eyeOf(me)
   // pivot >= 1 m over the feet; bodies under 0.9 m get the camera closer
@@ -11142,7 +11158,7 @@ function updateCamera(me, inp, cam, firstPerson) {
   const R = heldR(me), e = camHold
   if (R !== e.to) Object.assign(e, { from: e.r, to: R, at: now() })
   e.r = e.from + (e.to - e.from) * Math.min(1, (now() - e.at) / 150)
-  const r = camRay(me, inp.yaw, inp.pitch, e.r)
+  const r = camRay(me, inp.yaw, inp.pitch, e.r, leapCamEase(me))
   cam.position.set(r.x, r.y, r.z)
   cam.lookAt(...r.aim)
   const fade = THREE.MathUtils.smoothstep(r.t, CAM.fadeNear, CAM.fadeFar)
@@ -18776,7 +18792,8 @@ function rigAnimate(a, want, dt, t) {
   if (M.dances && name === K.idle && !(a.dying >= 0)) { name = perfDance(a); fade = 0.35 }
   // landing from a charged jump or a dive: the two-arm smash over everything
   if (airborne && !R.wasAir) R.airAt = t
-  if (R.wasAir && !airborne && t - (R.charged ?? -Infinity) < 4000 && want !== 'crouch') { R.charged = -Infinity; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
+  if (R.wasAir && !airborne && t - (R.charged ?? -Infinity) < 4000 && want !== 'crouch') { R.charged = -Infinity; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true }
+    if (a === avatars.get(myId)) kick(clamp(0.06 * (t - (R.airAt ?? t)) / 405, 0.03, 0.14), a.mesh.position.x, a.mesh.position.y, a.mesh.position.z, 1e4, 220, now(), 'land') }    // his own smash landing: the heavy dip
   // card #50: a hop or a fall of a quarter second or more lands heavily: the land clip's absorb over everything (lighter and
   // quicker if he lands moving), your camera thumps, and dust and a stomp at his feet. A kerb's step down is shorter
   else if (K.hopLand && R.wasAir && !airborne && t - (R.airAt ?? t) > 250 && want !== 'crouch' && a.dying < 0) {
@@ -18885,7 +18902,7 @@ function rigAnimate(a, want, dt, t) {
 function rigHopLand(a, R, air = 405) {     // air: ms off the ground
   if (!a.mesh.visible) return
   const mine = a === avatars.get(myId), p = a.mesh.position, floor = p.y - a.spec.h - a.spec.r
-  if (mine) kick(clamp(0.06 * air / 405, 0.03, 0.14), p.x, floor, p.z, 9, 220, now(), 'land')      // a thump: one dip, deeper the longer he fell
+  if (mine) kick(clamp(0.06 * air / 405, 0.03, 0.14), p.x, floor, p.z, 1e4, 220, now(), 'land')      // a thump: one dip, deeper the longer he fell
   if (R.lod < 2) for (const side of ['l', 'r']) { const b = R.bones.get('ball_' + side); if (b) { b.getWorldPosition(rigV); burst('dust', rigV.x, floor + 0.06, rigV.z, 0, 1.1, 0, 0xc9c0ae, 0.5) } }
   moveSound('stomp', mine ? { id: myId } : { x: p.x, y: floor, z: p.z }, 0.9)
 }
