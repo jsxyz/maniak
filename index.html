@@ -14723,18 +14723,29 @@ function pageResumed() {
 // three's async compiler polls currentProgram in its mutable GL cache. Loss or
 // disposal can erase that entry while a poll is pending, leaving its Promise
 // unresolved. Capture this context's programs and finish cancelled warmups cleanly.
+// a compile's wait for its programs' ready signal, at most; and whether this context's signal has ever been seen
+const COMPILE_WAIT_MS = 2000, compileSignal = { epoch: -1, seen: false, broken: false, cuts: 0 }
 function compileForContext(root, cam, target) {
   const epoch = graphics.lost, gl = renderer.getContext()
+  if (compileSignal.epoch !== epoch) Object.assign(compileSignal, { epoch, seen: false, broken: false })
   if (gl.isContextLost()) return Promise.resolve(root)
   return new Promise((resolve, reject) => {
     let pending
     try { pending = [...renderer.compile(root, cam, target)].flatMap(m => [...(renderer.properties.get(m).programs?.values() || [])].map(p => [m, p])) }
     catch (e) { if (gl.isContextLost()) resolve(root); else reject(e); return }
+    const until = performance.now() + COMPILE_WAIT_MS, count = pending.length
     const poll = () => {
       if (epoch !== graphics.lost || gl.isContextLost()) { resolve(root); return }
       try {
         pending = pending.filter(([m, program]) => program && renderer.properties.get(m).programs?.get(program.cacheKey) === program && !program.isReady())
-        if (pending.length) setTimeout(poll, 10); else resolve(root)
+        if (pending.length < count) compileSignal.seen = true
+        if (!pending.length) resolve(root)
+        // a signal not yet seen in this context gets 6 s more before it is called broken (a slow first compile)
+        else if (compileSignal.broken || performance.now() > until + (compileSignal.seen ? 0 : 6000)) {
+          // the draw links what is left; a browser whose signal never came is not waited on again
+          compileSignal.cuts += pending.length; if (!compileSignal.seen) compileSignal.broken = true
+          resolve(root)
+        } else setTimeout(poll, 10)
       } catch (e) { reject(e) }
     }
     // Defer even without parallel shader compilation, as the original does.
@@ -19916,6 +19927,7 @@ function drawDebug(me, fps) {
     (rescues.n ? row('rescue', v(rescues.n) + '  last ' + esc(rescues.last.who + ' at ' + [rescues.last.x, rescues.last.y, rescues.last.z].map(Math.round).join(' ') +
         ' vy ' + Math.round(rescues.last.vy) + (rescues.last.cell ? '  cell ' + rescues.last.cell : '') + ' (' + rescues.last.cause + ')')) : '') +
     row('bg', 'max step ' + v(Math.round(background.stats.maxStepMs)) + ' ms  jobs ' + v(background.pending.length) +
+        (compileSignal.cuts ? '  compile waits cut ' + v(compileSignal.cuts) + (compileSignal.broken ? ' (no ready signal)' : '') : '') +
         (background.stats.long.length ? '  long ' + esc(background.stats.long.join(', ')) : '') + (background.stats.late.length ? '  late programs ' + esc(background.stats.late.join(', ')) : '')) +
     row('js', (jit.off ? '<span class="w">optimizer off</span>' : jit.off === null ? 'checking' : 'optimizer on') + (jit.cold > 0 && jit.best > 0 ? '  x' + f(jit.cold / jit.best, 1, 1) : '')) +
     (isHost ? '' : row('predict', 'pending ' + v(p(pending.length, 2)) +
