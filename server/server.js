@@ -392,7 +392,9 @@ function actionApi(page, seeds) {
   // its first answer, asked for until it comes
   ;(async () => { while (!answered && !stopping) { await act('room').catch(() => {}); if (!answered) await sleep(1000) } })()
   const ROUTES = {
-    'GET /health': async () => [(await act('room')).open ? 200 : 503, {}],
+    // healthy while the room is open as the server last saw it, at most 15 s ago (its loop reads it every 2 s): the check
+    // never waits on a page that is busy for a moment, and a page that stops answering is unhealthy 15 s on
+    'GET /health': async () => [roomSeen.r?.open && Date.now() - roomSeen.at < 15000 ? 200 : 503, {}],
     'GET /status': async () => { const r = await act('room'), seed = seeds ? await act('seed') : undefined
       return [200, { code: r.code, link: CFG.joinUrl ? CFG.joinUrl + '#' + r.code : '', level: r.level, mode: r.mode, fragLimit: r.fragLimit, minutes: r.minutes,
         match: r.match, players: r.players, enemies: r.enemies, uptime: r.uptime, signaling: r.signaling, hookFailures: r.hookFailures,
@@ -436,7 +438,7 @@ function actionApi(page, seeds) {
 }
 
 // ---- run
-let browser = null, stopping = false
+let browser = null, stopping = false, roomSeen = { r: null, at: 0 }        // the room as the server's loop last read it
 async function stop(code) {
   if (stopping) return
   stopping = true
@@ -514,9 +516,11 @@ let page = null
   say(`Room ${r.code}  ${r.level}` + (seed === undefined || seed === null ? '' : `  seed ${seed}`) + (CFG.joinUrl ? `  join: ${CFG.joinUrl}#${r.code}` : '  (set JOIN_URL to print a join link)'))
   await page.evaluate(() => serverPing('start'))
   if (CFG.broadcast) await page.evaluate(u => gameHooks.broadcast(u), CFG.broadcast)
+  roomSeen = { r, at: Date.now() }
   actionApi(page, seeds)
   for (let was = r.signaling; !stopping; await sleep(2000)) {
     r = await page.evaluate(() => gameHooks.room()).catch(e => { if (!stopping) throw e })
+    if (r) roomSeen = { r, at: Date.now() }
     if (stopping) return
     if (!r.serving) return stop(0)
     if (r.signaling !== was) { was = r.signaling; say('signaling: ' + was) }
