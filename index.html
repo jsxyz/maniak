@@ -12279,7 +12279,7 @@ function buildScenery(boxes, unit = ARENA / 72) {
 }
 
 // Preparation never changes the live look until its resources and programs are ready.
-let lookPending = null, lookPreparedKey = '', lookSerial = 0, warmDepth = null
+let lookPending = null, lookPreparedKey = '', lookSerial = 0, warmDepth = null, inkWarmNormal = null, inkWarmTarget = null
 const lookKey = name => [name, settings.quality, settings.shadows, innerWidth, innerHeight, devicePixelRatio, graphics.lost].join('/')
 function gpuState(target, fn) {
   const old = renderer.getRenderTarget(), face = renderer.getActiveCubeFace(), mip = renderer.getActiveMipmapLevel()
@@ -12339,7 +12339,7 @@ function warmSetup(name, target, R, normal = false) {
     const oldTarget = renderer.getRenderTarget()
     renderer.setRenderTarget(target)
     put(inkUniforms.inkEnabled, 'value', name === 'ink')
-    if (normal) put(o, 'material', o.userData.normalMaterial || inkPost.normalMaterial)
+    if (normal) put(o, 'material', o.userData.normalMaterial || inkPost?.normalMaterial || (inkWarmNormal ||= new THREE.MeshNormalMaterial({ toneMapped: false })))
     else if (name === 'realistic' && R?.env) {
       const orig = o.material
       if (orig && !Array.isArray(orig)) {
@@ -12368,7 +12368,10 @@ function* warmSceneSteps(name, roots = null) {
     yield* uploadTextures(root)
     const sky = root === faustState?.skyScene, cam = sky ? faustState.skyCamera : camera, targetScene = sky ? root : scene
     yield* compileObjects(root, cam, targetScene, warmSetup(name, target, R))
-    if (name === 'ink' && inkPost?.separateNormals) yield* compileObjects(root, cam, targetScene, warmSetup(name, inkPost.normalTarget, R, true))
+    // Ink's separate normals pass (High, a pointer) depends on the device-pixel size, which the ResizeObserver can revise a
+    // frame after the switch: warm its programs whenever it can run, into any render target (they are the same programs).
+    if (name === 'ink' && settings.quality === 'high' && !IS_TOUCH)
+      yield* compileObjects(root, cam, targetScene, warmSetup(name, inkPost?.separateNormals ? inkPost.normalTarget : (inkWarmTarget ||= new THREE.WebGLRenderTarget(1, 1, { depthBuffer: true })), R, true))
     if (renderer.shadowMap.enabled) {
       const shadows = []; root.traverse(o => { if (o.isMesh && o.castShadow) shadows.push(o) })
       const depth = warmDepth ||= new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.BackSide })
@@ -12423,11 +12426,15 @@ function requestLook(name) {
         yield* compileObjects(R.dome, camera, faustState?.skyScene || scene, warmSetup(name, T.hdr, R))
       } else if (name === 'ink') {
         const outlines = settings.quality !== 'low', field = outlines && (IS_TOUCH || settings.quality === 'medium')
-        const dw = outlines ? Math.round(innerWidth * (devicePixelRatio || 1)) : w, dh = outlines ? Math.round(innerHeight * (devicePixelRatio || 1)) : h
+        const D = outlines ? inkDisplaySize(renderer.getSize(new THREE.Vector2())) : null, dw = outlines ? D.x : w, dh = outlines ? D.y : h          // as inkRender takes it
         const separate = outlines && !IS_TOUCH && settings.quality === 'high' && (w !== dw || h !== dh)
         const P = inkTarget(w, h, outlines, dw, dh, separate, field)
         for (const t of new Set([P.target, P.aaTarget, P.normalTarget, P.lineTarget].filter(Boolean))) { renderer.initRenderTarget(t); yield 'frame' }
-        for (const root of [P.scene, P.aaScene, P.composeScene].filter(Boolean)) yield* compileObjects(root, P.camera, root)
+        // each pass into the target it draws into: a render target's programs differ from the screen's (tone mapping, colour space)
+        const into = t => () => { const old = renderer.getRenderTarget(); renderer.setRenderTarget(t); return () => renderer.setRenderTarget(old) }
+        yield* compileObjects(P.aaScene, P.camera, P.aaScene, into(P.outlines ? P.aaTarget : null))
+        if (P.outlines) yield* compileObjects(P.scene, P.camera, P.scene, into(P.field ? P.lineTarget : null))
+        if (P.composeScene) yield* compileObjects(P.composeScene, P.camera, P.composeScene, into(null))
       }
       yield* warmSceneSteps(name)
       if (lookPending !== pending || lookKey(name) !== key) return
