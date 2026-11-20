@@ -310,12 +310,15 @@ function worldTick() {
 // awaited, and one line says how it went
 async function worldSaveNow() {
   if (!WORLD_DIR && !R2) { say('world: /saveworld: nothing is kept (neither WORLD_DIR nor R2 is set)'); return 'nothing is kept: neither WORLD_DIR nor R2 is set' }
-  const before = { ...worldStatus }
-  let ok = false
-  try { ok = !!await page.evaluate(() => gameHooks.saveWorld?.()) } catch (e) {}
-  await Promise.all([...r2Chains.values()])
+  const before = { ...worldStatus }, t0 = Date.now(), within = (p, ms) => Promise.race([p, sleep(Math.max(0, ms))])
+  say('world: /saveworld: the page saves now')
+  let ok = false, late = ''
+  try { ok = await within(page.evaluate(() => gameHooks.saveWorld?.()).then(v => !!v), 10000) } catch (e) {}
+  if (ok === undefined) { ok = false; late = '; the page\'s save didn\'t finish in 10 s' }
+  say('world: /saveworld: ' + (worldStatus.saves - before.saves) + ' written' + (R2 && r2Chains.size ? ', R2 PUTs sent: ' + (worldStatus.r2Puts - before.r2Puts + r2Latest.size) : ''))
+  if (R2 && await within(Promise.all([...r2Chains.values()]).then(() => true), 10000 - (Date.now() - t0)) !== true) late += '; R2 hadn\'t answered every PUT in 10 s'
   const s = worldStatus, wrote = s.saves - before.saves
-  const line = (ok ? 'saved' : 'not saved') + ': ' + wrote + ' written' + (WORLD_DIR ? ' (to WORLD_DIR)' : '') +
+  const line = (ok ? 'saved' : 'not saved') + late + ': ' + wrote + ' written' + (WORLD_DIR ? ' (to WORLD_DIR)' : '') +
     (R2 ? '; R2 took ' + (s.r2Puts - before.r2Puts) + (s.r2Last ? ', its last answer ' + s.r2Last : '') + (r2Latest.size ? ', ' + r2Latest.size + ' waiting for it' : '') : '')
   say('world: /saveworld: ' + line)
   return line
@@ -374,7 +377,20 @@ function actionApi(page, seeds) {
   if (!CFG.api.port) return say('action API: off')
   const want = CFG.api.token && crypto.createHash('sha256').update(CFG.api.token).digest()
   const hosts = new Set(['127.0.0.1', 'localhost', '[::1]'].map(h => h + ':' + CFG.api.port))
-  const act = (name, ...args) => page.evaluate(([n, a]) => gameHooks[n](...a), [name, args])
+  // the page answers when its main thread is free. Until it has answered once (it is still starting: building the city,
+  // compiling), only the room's state is asked of it, and everything else is answered at once; after that, a call that
+  // doesn't come back in 10 s is answered for it. Either way: 503, { ok: false, error }
+  let answered = false
+  const busy = msg => Object.assign(new Error(msg), { busy: true })
+  const act = (name, ...args) => {
+    if (!answered && name !== 'room') return Promise.reject(busy('the game page is still starting'))
+    let timer
+    return Promise.race([page.evaluate(([n, a]) => gameHooks[n](...a), [name, args]).then(v => { answered = true; return v }),
+      new Promise((ok, no) => { timer = setTimeout(() => no(busy(answered ? 'the game page did not answer in 10 s' : 'the game page is still starting')), 10000) })])
+      .finally(() => clearTimeout(timer))
+  }
+  // its first answer, asked for until it comes
+  ;(async () => { while (!answered && !stopping) { await act('room').catch(() => {}); if (!answered) await sleep(1000) } })()
   const ROUTES = {
     'GET /health': async () => [(await act('room')).open ? 200 : 503, {}],
     'GET /status': async () => { const r = await act('room'), seed = seeds ? await act('seed') : undefined
@@ -411,7 +427,8 @@ function actionApi(page, seeds) {
       let body = {}
       if (raw.trim()) try { body = JSON.parse(raw) } catch (e) { return send(400, { error: 'the body is not JSON' }) }
       if (!body || typeof body !== 'object' || Array.isArray(body)) return send(400, { error: 'the body must be a JSON object' })
-      try { const [code, o] = await route(body); send(code, o) } catch (e) { send(500, { error: String(e.message || e).slice(0, 200) }) }
+      try { const [code, o] = await route(body); send(code, o) }
+      catch (e) { if (e?.busy) send(503, { ok: false, error: e.message }); else send(500, { error: String(e.message || e).slice(0, 200) }) }
     })
   })
   api.on('error', e => die('the action API cannot listen on ' + CFG.api.host + ':' + CFG.api.port + ': ' + e.code, 1))
