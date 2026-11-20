@@ -4973,6 +4973,15 @@ function addObject(k, at, id, yaw = 0) {
   return o
 }
 function dropObject(o) {
+  // A predicted vehicle can disappear before its separate seat update arrives.
+  // Release its capsule before destroying the car; no seat may retain that body.
+  if (!isHost && predicted?.seat?.[0] === o) {
+    clearSeat(predicted)
+    if (predicted.body && !A.getPointer(predicted.body.getBroadphaseHandle())) {
+      predicted.body.clearForces(); world.addRigidBody(predicted.body, ...COLLIDE.capsule)
+    }
+    predLost = true
+  }
   inWorld(o)
   if (o.car) dropCar(o)
   dropBody({ body: o.body, ms: o.body.getMotionState(), shape: o.shape })
@@ -4992,7 +5001,7 @@ function putObject(o, s) {
 // driven by another player: not predicted, by its passengers either
 const ridden = id => (p => p !== undefined && p !== myId)(objSeats.get(id * 8))
 const rideOf = c => (r => r && { ...r, V: vehicleOf(r.K), R: objR(r.K), at0: hullAt(r.K), low: Math.min(...carPts(r.K, vehicleOf(r.K).wheels, hullAt(r.K)).map(p => p[1])),
-  vs: (w => w ? Math.hypot(w[7], w[9]) : 0)(objVel?.get(r.id)) })(c.ride && objectsAt(renderT).find(o => o.id === c.ride[0]))
+  vs: (w => w ? Math.hypot(w[7], w[9]) : 0)(objVel?.get(r.id)) })(c.ride && objectsAt(renderT).find(o => o.id === c.ride[0] && vehicleOf(o.K)))
 function predictObjects(c, lead = 0) {
   // seated per the host (mine: me; else: another)
   const seats = new Set([...objSeats].map(([s, p]) => 2 * (s >> 3) + (p === myId))), seated = (id, mine) => seats.has(2 * id + mine)
@@ -5024,7 +5033,7 @@ function predictObjects(c, lead = 0) {
     if (o && d) { o.off = [d.x - o.x, d.y - o.y, d.z - o.z]; o.offQ = qmulTo([0, 0, 0, 1], d.q, [-o.q[0], -o.q[1], -o.q[2], o.q[3]]); keepPose(o, o.q) }
   }
   // riding a vehicle another drives: out of the world, in its seat as drawn
-  const s = [...objSeats].find(([s, p]) => p === myId && ridden(s >> 3)), was = c.ride, inWorld = c.body && A.getPointer(c.body.getBroadphaseHandle())
+  const s = [...objSeats].find(([s, p]) => p === myId && ridden(s >> 3) && OBJECTS[objTracks.get(s >> 3)?.at(-1)?.p[0]]?.drive), was = c.ride, inWorld = c.body && A.getPointer(c.body.getBroadphaseHandle())
   c.ride = s ? [s[0] >> 3, s[0] & 7] : null
   if (c.ride && inWorld) world.removeRigidBody(c.body)
   if (was && !c.ride) { if (c.body && !seatOf(c) && !inWorld) world.addRigidBody(c.body, ...COLLIDE.capsule); predLost = true }
@@ -5709,7 +5718,13 @@ function trafficRows() {
 function trafficTake(rows) {
   if (rows === undefined || !Array.isArray(rows) || rows.length > OBJ_MAX || !rows.every(r => Array.isArray(r) && (r.length === 2 || r.length === 7) && r.every(Number.isFinite) && Number.isInteger(r[0]) && r[0] >= 0 && r[0] < OBJ_MAX && (r[1] === 0 || r[1] === 1) && (r.length === 2 || r[2] >= 0 && Math.abs(r[3]) <= ARENA + 16 && Math.abs(r[4]) <= ARENA + 16 && Math.hypot(r[5],r[6]) <= 1.1)) || new Set(rows.map(r=>r[0])).size !== rows.length) return
   const ids = new Set(rows.map(r => r[0]))
-  for (const id of trafficRemote.keys()) if (!ids.has(id)) { const o=objs.find(o=>o.id===id); if(o) {dropObject(o);objs.splice(objs.indexOf(o),1)}; objTracks.delete(id); objVel?.delete(id); settledAt.delete(id); wheelState.delete(id); objFirst.delete(id) }
+  for (const id of trafficRemote.keys()) if (!ids.has(id)) {
+    // Retirement also ends the seats; a lost seat packet must not keep the car UI.
+    for (let seat = 0; seat < 8; seat++) objSeats.delete(id * 8 + seat)
+    const o = objs.find(o => o.id === id)
+    if (o) { dropObject(o); objs.splice(objs.indexOf(o), 1) }
+    objTracks.delete(id); objVel?.delete(id); settledAt.delete(id); wheelState.delete(id); objFirst.delete(id)
+  }
   trafficRemote.clear(); for (const r of rows) trafficRemote.set(r[0], r)
 }
 // Two instanced draws for the nearby signal poles and their active lamps, in either look.
@@ -12121,13 +12136,27 @@ function releasePointer() {
   expectUnlock = true
   try { document.exitPointerLock() } catch (e) {}
 }
-function letGo() {
+// A suspended page may never receive the matching key-up or finger-up. Clear both
+// the sampled actions and the touch owners, while keeping the direction of view.
+let resetTouch = () => {}
+function resetInput() {
   for (const k in keys) keys[k] = false
-  input.fire = false
-  releasePointer()
+  const { yaw, pitch } = input
+  Object.assign(input, INPUT_SCHEMA.empty(), { yaw, pitch, alt: false, view: null, aimed: null, aimAt: 0 })
+  shiftHeld = swapHeld = wheelSwap = useHeld = tapUse = sprintHeld = false
+  tapSwap = tapShift = descendHeld = sprintOn = tabOpen = false
+  document.body.classList.remove('sprinting')
+  resetTouch()
 }
+function letGo() { resetInput(); releasePointer() }
 
 function initInput() {
+  addEventListener('blur', resetInput)
+  addEventListener('pagehide', resetInput)
+  addEventListener('pageshow', resetInput)
+  document.addEventListener('freeze', resetInput)
+  document.addEventListener('resume', resetInput)
+  document.addEventListener('visibilitychange', () => { if (document.hidden) resetInput() })
   addEventListener('keydown', e => {
     if (dbgOpen && e.code === 'KeyC' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); faustCopySeed(); return }
     if (e.code === 'F3') { e.preventDefault(); toggleDebug(); return }
@@ -12210,6 +12239,30 @@ function initTouch() {
   const R = 62
   let moveId = null, moveOx = 0, moveOy = 0
   let lookId = null, lookX = 0, lookY = 0
+  const heldTouches = []
+  resetTouch = () => {
+    moveId = lookId = null
+    stick.style.display = 'none'
+    knob.style.transform = 'translate(0,0)'
+    for (const h of heldTouches) { h.ids.clear(); h.off() }
+  }
+  // The browser can lose an end/cancel when a tab or an on-screen control goes
+  // away. The next event's live touches are authoritative; discard absent owners.
+  const syncTouches = e => {
+    const live = new Set(Array.from(e.touches, t => t.identifier))
+    if (moveId !== null && !live.has(moveId)) {
+      moveId = null; INPUT_SCHEMA.stopStick(); stick.style.display = 'none'
+      knob.style.transform = 'translate(0,0)'
+    }
+    if (lookId !== null && !live.has(lookId)) lookId = null
+    for (const h of heldTouches) {
+      const was = h.ids.size
+      for (const id of h.ids) if (!live.has(id)) h.ids.delete(id)
+      if (was && !h.ids.size) h.off()
+    }
+  }
+  for (const type of ['touchstart', 'touchend', 'touchcancel'])
+    addEventListener(type, syncTouches, { capture: true, passive: true })
 
   // every overlay must be listed, or a tap on it is a look-drag
   const isUI = t => !!(t && t.closest && t.closest(
@@ -12275,11 +12328,17 @@ function initTouch() {
 
   // look: the event reaches the window handler, so the same finger aims
   const hold = (id, on, off, look) => {
-    const b = el('#' + id)
-    const go = f => e => { e.preventDefault(); if (!look) e.stopPropagation(); f() }
-    b.addEventListener('touchstart', go(on), { passive: false })
-    b.addEventListener('touchend', go(off), { passive: false })
-    b.addEventListener('touchcancel', go(off), { passive: false })
+    const b = el('#' + id), ids = new Set()
+    heldTouches.push({ ids, off })
+    const go = down => e => {
+      e.preventDefault(); if (!look) e.stopPropagation()
+      for (const t of e.changedTouches) down ? ids.add(t.identifier) : ids.delete(t.identifier)
+      if (down && !menuUp() && !chatOpen) on()
+      else if (!ids.size) off()
+    }
+    b.addEventListener('touchstart', go(true), { passive: false })
+    b.addEventListener('touchend', go(false), { passive: false })
+    b.addEventListener('touchcancel', go(false), { passive: false })
   }
   INPUT_SCHEMA.touchHolds(hold)
 
@@ -14097,6 +14156,9 @@ function takeObjects(o, t) {
   for (let i = 0; i < o.length; i += 9) {
     const [k, id, x, y, z, ...q] = o.slice(i, i + 9), n = Math.hypot(...q)
     if (!OBJECTS[k] || !Number.isInteger(id) || id < 0 || id >= OBJ_MAX) continue
+    // The wreck row itself ends its seats, even if every repeated seat-release
+    // packet was lost while a guest was suspended or the channel was congested.
+    if (!OBJECTS[k].drive) for (let seat = 0; seat < 8; seat++) objSeats.delete(id * 8 + seat)
     const was = objTracks.get(id)?.at(-1).p[0], V = was !== k && vehicleOf(OBJECTS[was])
     if (was === undefined && objSeeds[id] === undefined) objFirst.set(id, Math.round(2 * x) + ' ' + Math.round(2 * z))
     if (was === undefined && objFirst.has(id) && !parked.has(objFirst.get(id))) planSpots(x, z)
