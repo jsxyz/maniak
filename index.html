@@ -3281,14 +3281,32 @@ const inCm = v => Math.round(v * 100) / 100
 const inBox = (cx, cy, cz, ex, ey, ez, more) => ({ cx: inCm(cx), cy: inCm(cy), cz: inCm(cz), ex: inCm(ex), ey: inCm(ey), ez: inCm(ez), ...more })
 const inRect = (x0, x1, z0, z1, more) => ({ x0: inCm(x0), x1: inCm(x1), z0: inCm(z0), z1: inCm(z1), ...more })
 const inHash = o => { const json = JSON.stringify(o); let h = 2166136261; for (let i = 0; i < json.length; i++) h = Math.imul(h ^ json.charCodeAt(i), 16777619); return (h >>> 0).toString(16).padStart(8, '0') }
-// the window bays #25 draws on a face of half width hw (realFacade): the boundaries along it, from -hw to hw
-function inBays(hw, deco, base) {
+// the window bays #25 draws on a face of half width hw (realFacade): the boundaries along it, from -hw to hw. The one JS copy
+// of the facade's layout (with inFace; #46's dsFace is inFace); the shaders' realFacade and dsWindow hold the same
+function inBayCuts(hw, deco, base) {
   const out = []
   if (deco && base) { const a = 0.6, b = 0.86 * hw - 0.6, n = Math.max(1, Math.round((b - a) / 2.9)), bw = (b - a) / n
     for (let j = n; j >= 0; j--) out.push(-(a + j * bw)); for (let j = 0; j <= n; j++) out.push(a + j * bw) }
   else if (deco) { const b = 0.7 * hw - 0.55, n = Math.max(1, Math.round(2 * b / 2.9)), bw = 2 * b / n; for (let j = 0; j <= n; j++) out.push(-b + j * bw) }
   else { const n = Math.floor((2 * hw - 1.6) / 3); for (let j = 0; j <= n; j++) out.push(-n * 1.5 + j * 3) }
-  return out.map(inCm)
+  return out
+}
+// to the centimetre, as the interiors lay rooms out
+function inBays(hw, deco, base) { return inBayCuts(hw, deco, base).map(inCm) }
+// face (0 +z, 1 -z, 2 +x, 3 -x) of box b ({ cx, cy, cz, ex, ey, ez }) as realFacade lays it out: its plane, the axis it runs
+// along (0 x, 1 z), its centre on that axis and half width, the box's storey limits and style, its bays from the centre along
+// +x or +z, windows only (a Deco base's middle pier is no bay: its halves are 0..n-1 and n..2n-1; none where they'd have no
+// width), and the pane's share of a bay (wx) and of a storey (wy). round: the bay ends to the centimetre (the interiors')
+function inFace(b, face, round = false) {
+  const axis = face < 2 ? 0 : 1, side = face % 2 ? -1 : 1, district = inDistrict(b.cx, b.cz), y0 = b.cy - b.ey, y1 = b.cy + b.ey
+  const deco = district < 2 || y1 > 300, base = y0 < 3.5, hw = axis ? b.ez : b.ex, bays = []
+  let cuts = inBayCuts(hw, deco, base)
+  if (cuts.length > 1 && cuts[1] > cuts[0]) {
+    if (round) cuts = cuts.map(inCm)
+    for (let j = 0; j + 1 < cuts.length; j++) if (!(deco && base && cuts[j] < 0 && cuts[j + 1] > 0)) bays.push([cuts[j], cuts[j + 1]])
+  }
+  return { face, axis, side, plane: axis ? b.cx + side * b.ex : b.cz + side * b.ez, c: axis ? b.cz : b.cx, hw, y0, y1, deco, base, bays,
+    wx: deco ? [0.12, 0.88] : district === 3 ? [0.1, 0.9] : [0.24, 0.76], wy: deco ? [0.14, 0.86] : district === 3 ? [0.3, 0.85] : [0.24, 0.78] }
 }
 // a lot's slot, the cell quadrant its centre is in (#46's window keys name a lot by it): lots never share one; a lot across both
 // halves of a cell is centred on the midline and takes the lower. Centres are 24, 48 or 72 m into a cell, and #46's shaders
@@ -3388,20 +3406,15 @@ function inWindows(B, k) {
     shop(2, x1, B.z, (z1 - z0) / 2 - t); shop(3, x0, B.z, (z1 - z0) / 2 - t)
     return out
   }
-  const m = B.masses[s.mass], y0 = s.y, cx = (m.x0 + m.x1) / 2, cz = (m.z0 + m.z1) / 2
-  // realFacade: floors on the 4 m grid, a whole one on the box; its district by the box's cell, Deco bays in the core and civic
-  // quarter and on anything over 300 m, a base's bays on a box from the ground (the first mass, drawn from 3 m, card #38)
+  const m = B.masses[s.mass], y0 = s.y
+  // realFacade (inFace): floors on the 4 m grid, a whole one on the box; its district by the box's cell, Deco bays in the core and
+  // civic quarter and on anything over 300 m, a base's bays on a box from the ground (the first mass, drawn from 3 m, card #38)
   if (y0 < m.y0 - 0.1 || y0 + 4 > m.y1 - 0.45) return out
-  const district = inDistrict(cx, cz), deco = district < 2 || m.y1 > 300, base = m.y0 < 3.5
-  const wx = deco ? [0.12, 0.88] : district === 3 ? [0.1, 0.9] : [0.24, 0.76], wy = deco ? [0.14, 0.86] : district === 3 ? [0.3, 0.85] : [0.24, 0.78]
-  for (const [face, axis, side] of [[0, 0, 1], [1, 0, -1], [2, 1, 1], [3, 1, -1]]) {
-    const hw = axis ? (m.z1 - m.z0) / 2 : (m.x1 - m.x0) / 2, c = axis ? cz : cx, plane = axis ? (side > 0 ? m.x1 : m.x0) : (side > 0 ? m.z1 : m.z0)
-    const cuts = inBays(hw, deco, base).map(u => c + u)
-    for (let j = 0; j + 1 < cuts.length; j++) {
-      const a = cuts[j], b = cuts[j + 1]
-      if (deco && base && a < c && b > c) continue        // the base's middle pier: no bay
-      push(face, plane, a + (b - a) * wx[0], a + (b - a) * wx[1], y0 + 4 * wy[0], y0 + 4 * wy[1])
-    }
+  const box = { cx: (m.x0 + m.x1) / 2, cz: (m.z0 + m.z1) / 2, ex: (m.x1 - m.x0) / 2, ez: (m.z1 - m.z0) / 2, cy: (m.y0 + m.y1) / 2, ey: (m.y1 - m.y0) / 2 }
+  for (let face = 0; face < 4; face++) {
+    const f = inFace(box, face, true)
+    for (const [u0, u1] of f.bays) { const a = f.c + u0, b = f.c + u1
+      push(face, f.plane, a + (b - a) * f.wx[0], a + (b - a) * f.wx[1], y0 + 4 * f.wy[0], y0 + 4 * f.wy[1]) }
   }
   return out
 }
@@ -3685,8 +3698,9 @@ function faustStorey(B, k) {
       // split at the bays into rooms of 1-3 bays (a pool or a hall: the whole side)
       // (on the ground storey, at the mullions of its own windows, realShop's shopfront bays on that face: k 0's keys)
       const face0 = Z.along ? (Z.face > 0 ? 2 : 3) : (Z.face > 0 ? 0 : 1)
+      const facadeDeco = inDistrict(mx, mz) < 2 || mass.y1 > 300       // the facade's bays (inFace), not the style's: rooms meet its piers
       const bays = (k === 0 ? wins.filter(q => q.face === face0).flatMap(q => { const m = (q.a1 - q.a0) / 0.86 * 0.07; return [q.a0 - m, q.a1 + m] })
-        : Z.along ? inBays((mass.z1 - mass.z0) / 2, deco, base).map(u => mz + u) : inBays((mass.x1 - mass.x0) / 2, deco, base).map(u => mx + u))
+        : Z.along ? inBays((mass.z1 - mass.z0) / 2, facadeDeco, base).map(u => mz + u) : inBays((mass.x1 - mass.x0) / 2, facadeDeco, base).map(u => mx + u))
         .filter((v, i, a) => v > len0 + 2.4 && v < len1 - 2.4 && a.indexOf(v) === i).sort((p, q) => p - q)
       const kind0 = pick(roomKinds[type] || roomKinds.office)
       if (kind0 === 'pool' && len1 - len0 > 9) spans.push([len0, len1, 'pool'])
@@ -26923,26 +26937,11 @@ const dsHash = n => cityHash((n ^ 0x2f6b3c1d) >>> 0)
 
 // ---- panes: where #25 draws glass on a facade box (realFacade), the windows #38 lists (inWindows)
 // a box's district by its cell, as the shaders read it (the plan's own differs in its rare hashed core cells)
-function dsDistrict(cx, cz) {
-  const gx = Math.floor(cx / 96), gz = Math.floor(cz / 96), ax = gx * 96 + 48, az = gz * 96 + 48, d2 = ax * ax + az * az
-  return d2 < 230400 ? 0 : gx < -2 && gz < 4 && d2 < 1e6 ? 1 : d2 > 1102500 || gz < -7 ? 3 : 2
-}
+function dsDistrict(cx, cz) { return inDistrict(cx, cz) }       // #38's, the same test
 // face (0 +z, 1 -z, 2 +x, 3 -x) of box b: its plane, the axis it runs along (0 x, 1 z), its centre on that axis and half
 // width, the box's storey limits and style, its bays from the centre along +x or +z, windows only (a Deco base's middle
 // pier is no bay: its halves are 0..n-1 and n..2n-1), and the pane's share of a bay (wx) and of a storey (wy)
-function dsFace(b, face) {
-  const axis = face < 2 ? 0 : 1, side = face % 2 ? -1 : 1, district = dsDistrict(b.cx, b.cz), y0 = b.cy - b.ey, y1 = b.cy + b.ey
-  const deco = district < 2 || y1 > 300, base = y0 < 3.5, hw = axis ? b.ez : b.ex, bays = []
-  if (deco && base) {
-    const a = 0.6, e = 0.86 * hw - 0.6, n = Math.max(1, Math.round((e - a) / 2.9)), bw = (e - a) / n
-    if (bw > 0) { for (let j = n - 1; j >= 0; j--) bays.push([-(a + (j + 1) * bw), -(a + j * bw)]); for (let j = 0; j < n; j++) bays.push([a + j * bw, a + (j + 1) * bw]) }
-  } else if (deco) {
-    const e = 0.7 * hw - 0.55, n = Math.max(1, Math.round(2 * e / 2.9)), bw = 2 * e / n
-    if (bw > 0) for (let j = 0; j < n; j++) bays.push([-e + j * bw, -e + (j + 1) * bw])
-  } else { const n = Math.floor((2 * hw - 1.6) / 3); for (let j = 0; j < n; j++) bays.push([-n * 1.5 + j * 3, -n * 1.5 + (j + 1) * 3]) }
-  return { face, axis, side, plane: axis ? b.cx + side * b.ex : b.cz + side * b.ez, c: axis ? b.cz : b.cx, hw, y0, y1, deco, base, bays,
-    wx: deco ? [0.12, 0.88] : district === 3 ? [0.1, 0.9] : [0.24, 0.76], wy: deco ? [0.14, 0.86] : district === 3 ? [0.3, 0.85] : [0.24, 0.78] }
-}
+function dsFace(b, face) { return inFace(b, face) }        // #38's inFace: the one JS copy of realFacade's layout
 // a whole storey k fits on the face's box (realFacade's test)
 const dsStorey = (f, k) => k >= 1 && 4 * k >= f.y0 - 0.1 && 4 * k + 4 <= f.y1 - 0.45
 // pane j of face f on storey k: { a0, a1 } along the face's axis and { y0, y1 }, in metres; null where there is none
