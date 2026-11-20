@@ -15443,7 +15443,8 @@ GAME.look = { table: LOOKS, stats: lookStats, set(name) { if (!Object.hasOwn(LOO
 // tex = texture size; scale = render scale (LOOKS'
 // scale hook). Low has no AO, reflections, shafts or composite: the HDR frame goes straight to bloom and the grade.
 const REAL_TIERS = {
-  high:   { msaa: 4, ao: 12, ssr: 28, shafts: 6, bloom: 6, bloomFrom: 1, lamps: 8, tex: 1024, scale: 1 },
+  // card #80: no MSAA at any tier (FXAA). With MSAA the desktop High frame climbed to white/yellow frame after frame.
+  high:   { msaa: 0, ao: 12, ssr: 28, shafts: 6, bloom: 6, bloomFrom: 1, lamps: 8, tex: 1024, scale: 1 },
   medium: { msaa: 0, ao: 6,  ssr: 14, shafts: 3, bloom: 5, bloomFrom: 1, lamps: 4, tex: 1024, scale: 1 },
   low:    { msaa: 0, ao: 0,  ssr: 0,  shafts: 0, bloom: 3, bloomFrom: 2, lamps: 2, tex: 512,  scale: 0.75 },
 }
@@ -16126,6 +16127,9 @@ vec3 realNormalAt(vec2 uv, vec3 p) {
   return normalize(cross(dx, dy));
 }
 float realIGN(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+// card #80: radiance the post chain can trust. A NaN, an infinity or a negative becomes 0, and nothing is brighter
+// than 64 (the city's brightest light is about 50), so one bad pixel can't flood the bloom or the grade
+vec3 realSafe(vec3 c) { return any(isnan(c)) || any(isinf(c)) ? vec3(0.0) : clamp(c, 0.0, 64.0); }
 `
 const REAL_PASSES = {
   // ambient occlusion: a normal-oriented hemisphere of samples, half resolution, faded out by 260 m
@@ -16199,13 +16203,13 @@ void main() {
   }
   vec3 col = vec3(0.0); float w = 0.0;
   if (hit.x >= 0.0) {
-    col = texture2D(tColor, hit).rgb; vec2 e = smoothstep(0.0, 0.12, hit) * smoothstep(1.0, 0.88, hit);
+    col = realSafe(texture2D(tColor, hit).rgb); vec2 e = smoothstep(0.0, 0.12, hit) * smoothstep(1.0, 0.88, hit);
     w = e.x * e.y * (1.0 - smoothstep(0.25, 0.55, length(hit - vUv))) * smoothstep(0.35, -0.1, r.z) * smoothstep(1.5, 4.0, -realView(hit, realD(hit)).z)
       * (1.0 - smoothstep(0.75, 1.0, th / reach));
   }
   else if (r.y > -0.2) {
     vec4 c = uProj * vec4(r, 0.0); vec2 u = c.xy / c.w * 0.5 + 0.5;
-    if (c.w > 0.0 && u.x > 0.0 && u.x < 1.0 && u.y > 0.0 && u.y < 1.0 && realD(u) >= 1.0) { col = texture2D(tColor, u).rgb; vec2 e = smoothstep(0.0, 0.07, u) * smoothstep(1.0, 0.93, u); w = e.x * e.y; }
+    if (c.w > 0.0 && u.x > 0.0 && u.x < 1.0 && u.y > 0.0 && u.y < 1.0 && realD(u) >= 1.0) { col = realSafe(texture2D(tColor, u).rgb); vec2 e = smoothstep(0.0, 0.07, u) * smoothstep(1.0, 0.93, u); w = e.x * e.y; }
   }
   gl_FragColor = vec4(min(col, vec3(60.0)) * w, w);
 }`,
@@ -16269,20 +16273,20 @@ void main() {
   // the HDR frame with AO, reflections and shafts
   composite: `uniform sampler2D tColor, tAO, tSSR, tShaft; uniform float uAO, uSSR, uShaft; uniform mat4 uView;
 void main() {
-  vec4 c = texture2D(tColor, vUv); vec3 col = c.rgb;
+  vec4 c = texture2D(tColor, vUv); vec3 col = realSafe(c.rgb);
   float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
   if (uAO > 0.0) col *= mix(1.0, texture2D(tAO, vUv).r, uAO * (1.0 - smoothstep(0.8, 4.0, l)));
   if (uSSR > 0.0 && c.a < 0.97) {
     float d = realD(vUv); vec3 v = normalize(realView(vUv, d)), up = normalize(mat3(uView) * vec3(0.0, 1.0, 0.0));
     float F = 0.03 + 0.97 * pow(1.0 - clamp(dot(-v, up), 0.0, 1.0), 5.0);
-    col += texture2D(tSSR, vUv).rgb * (1.0 - c.a) * mix(F, 1.0, 0.25) * uSSR;
+    col += realSafe(texture2D(tSSR, vUv).rgb) * clamp(1.0 - c.a, 0.0, 1.0) * mix(F, 1.0, 0.25) * uSSR;
   }
-  if (uShaft > 0.0) col += texture2D(tShaft, vUv).rgb * uShaft;
+  if (uShaft > 0.0) col += realSafe(texture2D(tShaft, vUv).rgb) * uShaft;
   gl_FragColor = vec4(col, 1.0);
 }`,
   // bloom (Jimenez 2014): a 13-tap downsample (the first with a soft threshold and Karis average) and a tent upsample
   down: `uniform sampler2D tSrc; uniform vec2 uSrcTexel; uniform float uFirst, uThreshold;
-vec3 s(vec2 o) { return texture2D(tSrc, vUv + o * uSrcTexel).rgb; }
+vec3 s(vec2 o) { return realSafe(texture2D(tSrc, vUv + o * uSrcTexel).rgb); }
 vec3 karis(vec3 a, vec3 b, vec3 c, vec3 d) { vec4 w = 1.0 / (1.0 + vec4(dot(a, vec3(0.2126, 0.7152, 0.0722)), dot(b, vec3(0.2126, 0.7152, 0.0722)), dot(c, vec3(0.2126, 0.7152, 0.0722)), dot(d, vec3(0.2126, 0.7152, 0.0722)))); return (a * w.x + b * w.y + c * w.z + d * w.w) / (w.x + w.y + w.z + w.w); }
 void main() {
   vec3 a = s(vec2(-2, 2)), b = s(vec2(0, 2)), c = s(vec2(2, 2)), d = s(vec2(-2, 0)), e = s(vec2(0)), f = s(vec2(2, 0));
@@ -16317,7 +16321,7 @@ vec3 agx(vec3 c) {
 }
 float h12(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 void main() {
-  vec3 c = (texture2D(tColor, vUv).rgb + texture2D(tBloom, vUv).rgb * uBloom / uBloomN) * uExposure;
+  vec3 c = (realSafe(texture2D(tColor, vUv).rgb) + realSafe(texture2D(tBloom, vUv).rgb) * uBloom / uBloomN) * uExposure;
   c = agx(c);
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
   c = mix(vec3(l), c, uSat) * mix(uShadows, uHighlights, smoothstep(0.0, 0.45, l));
@@ -24289,11 +24293,11 @@ function motionFrame() {
     }
     for (const tr of tracked.values()) J.tracks.get(tr.key).rows.at(-1)[12] = by.get(tr.key) || null
   }
-  // street life: drawn where the game draws it (the wall clock on the host), sim where the tick clock puts it
+  // street life: drawn at the clock slFrame draws at (drawNow(): the interpolated tick time on the host), sim where the tick clock puts it (slNow())
   const SL = GAME.streetLife
   if (SL?.around) {
     const sim = new Map(); for (const a of SL.around(me.x, me.z, J.radius, slNow())) sim.set(a.id, a)
-    for (const a of SL.around(me.x, me.z, J.radius, now())) { const s = sim.get(a.id); put('street ' + a.id, a.kind || 'street life', a.kind || 'street life', [a.x, a.y ?? 0, a.z], s ? [s.x, s.y ?? 0, s.z] : null, null, 0) }
+    for (const a of SL.around(me.x, me.z, J.radius, drawNow())) { const s = sim.get(a.id); put('street ' + a.id, a.kind || 'street life', a.kind || 'street life', [a.x, a.y ?? 0, a.z], s ? [s.x, s.y ?? 0, s.z] : null, null, 0) }
   }
 }
 // the flagged frames, and the series: no aggregates
@@ -31354,6 +31358,7 @@ const blackbox = (() => {
     }
     if (o) B.objects(row, cam)
     B.last = row; B.rows.push(row); if (B.rows.length > 300) B.rows.shift()
+    if (row.flag.length) console.warn('blackbox-row ' + JSON.stringify(row))
     if (row.flag.length) { B.flags++; if (t - B.said > 400) { B.said = t; sysMsg('§e[blackbox] §7steer §f' + row.steer + ' §7speed §f' + row.speed + ' §7' + row.flag.join(', ').slice(0, 260)) } }
   }
   B.run = a => {
@@ -33561,6 +33566,8 @@ const mmss = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart
 
 // drawn facing: the run on the ground; the aim when still, attacking or in a state of its own; in the air the turn it had
 const FACE_MS = 400, FACE_RATE = 14
+// a bot squaring up to strike turns at FACE_RATE x attack, slowing over the last ease rad (the slowest at floor of that)
+const FACE_TURN = { attack: 0.7, ease: 0.52, floor: 0.12 }
 // ticks: this frame's sim ticks (the last is c), else one step of dt
 function faceYaw(id, c, anim, own, t, dt, firing, ticks) {
   const a = avatars.get(id)
@@ -33573,7 +33580,9 @@ function faceYaw(id, c, anim, own, t, dt, firing, ticks) {
     const attack = a.chainState?.[0] === 1 || (s === c ? firing : s.fire) || at - a.shotAt < Math.max(FACE_MS, G?.punchMs ?? G?.rate * 1000) || at - a.chargeAt < (C?.windup ?? 0) * 1000
     const flyWant = an === 5 && Math.hypot(s.vx, s.vz) > FLY_V * 0.6 ? Math.atan2(-s.vx, -s.vz) : null
     const want = tied ? Math.atan2(s.x - a.chainState[4], s.z - a.chainState[6]) : attack ? s.yaw : mine && flyWant === null ? s.yaw : flyWant ?? (an === 0 ? s.yaw : an === 1 && Math.hypot(s.vx, s.vz) > 0.8 ? Math.atan2(-s.vx, -s.vz) : y), k = (ticks ? TICK : dt) * FACE_RATE * (mine ? 4 : attack ? 2 : 1)
-    a.face = y + clamp(Math.atan2(Math.sin(want - y), Math.cos(want - y)), -k, k)
+    const err = Math.atan2(Math.sin(want - y), Math.cos(want - y))
+    const kk = attack && !mine ? (ticks ? TICK : dt) * FACE_RATE * FACE_TURN.attack * Math.max(FACE_TURN.floor, Math.min(1, Math.abs(err) / FACE_TURN.ease)) : k
+    a.face = y + clamp(err, -kk, kk)
   }
   // host: stepped a tick at a time; drawn between its last two ticks, as the body is
   return ticks && a.face0 !== undefined && a.face !== undefined ? a.face0 + wrapPi(a.face - a.face0) * drawAlpha : a.face ?? c.yaw
