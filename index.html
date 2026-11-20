@@ -2234,6 +2234,8 @@ const DROPS = GUNS.map((G, i) => i).filter(i => i > 0 && GUNS[i].drop !== false)
 const gunNamed = n => Math.max(0, GUNS.findIndex(G => G.name === n))
 const gunless = R => (R?.guns ?? SIDES[R?.side]?.guns) === false, handsOf = R => gunless(R) ? gunNamed([].concat(R.atk ?? [])[0]) : 0
 const vehicleOf = K => K && K.drive ? K.vehicle ??= VEHICLES.find(V => V.name === K.drive) : undefined
+// card #14: the ids of the squad's cars (the host's, sent as `sq`)
+const squadIds = new Set()
 const variantAt = (V, seed, id) => V?.variants?.length ? (Math.imul((seed || id + 1) ^ 0x2545f491, 2654435761) >>> 0) % V.variants.length : 0
 const variantRows = new WeakMap()
 // the row a vehicle drives with: its variant's multipliers on the row's own speed, engine, slip and turn
@@ -10096,7 +10098,7 @@ const wallAt = staticRay
 
 function strikeObject(c, o, G, ux, uy, uz, px = o.x, py = o.y, pz = o.z) {
   inWorld(o)
-  if (o.V && isHost) { o.hp -= G.dmg * profDmg(c, G.name); o.by = c.id; if (!c.bot && !o.riders.includes(c.id)) heatCrime(c, 'property', o.x, o.z) }
+  if (o.V && isHost) { o.hp -= G.dmg * profDmg(c, G.name); o.by = c.id; if (!c.bot && !o.riders.includes(c.id)) heatCrime(c, squadIds.has(o.id) ? 'hurt' : 'property', o.x, o.z, 1, squadIds.has(o.id)) }
   const m = G.knock * o.K.hit
   impVec.setValue(ux * m, uy * m, uz * m); relVec.setValue(px - o.x, py - o.y, pz - o.z)
   o.body.activate(); o.body.applyImpulse(impVec, relVec)
@@ -27095,12 +27097,13 @@ function heatTick(dt, all) {
 function enforcerDown(c) { enforcerDrop(c); if (conns.size) pushRoster() }
 {
   const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems, ms = L.matchStart, left = L.left, ap = HOST_PHASES.afterPhysics
-  L.snapshot = () => ({ ...snap(), ...isHost && { he: [...heat].filter(([, H]) => H.stars).map(([id, H]) => [id, H.stars, H.state, Math.round(H.left)]) } })
+  L.snapshot = () => ({ ...snap(), ...isHost && { he: [...heat].filter(([, H]) => H.stars).map(([id, H]) => [id, H.stars, H.state, Math.round(H.left)]), sq: [...squadIds] } })
   L.takeItems = function (d) {
     take.call(this, d)
     // absent = none, versioned by packet time (the channel is unordered)
     if (isHost || !Number.isFinite(d.t) || d.t <= heatAt) return
     heatAt = d.t
+    squadIds.clear(); if (Array.isArray(d.sq) && d.sq.length <= 16) for (const i of d.sq) if (Number.isInteger(i) && i >= 0 && i < OBJ_MAX) squadIds.add(i)
     const m = Array.isArray(d.he) && d.he.length <= 32 && d.he.find(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] === myId)
     heatMine = m ? { stars: clamp(m[1] | 0, 0, 5), state: clamp(m[2] | 0, 0, 2), left: clamp(m[3], 0, 99) } : { stars: 0, state: 0, left: 0 }
   }
@@ -27124,6 +27127,144 @@ GAME.heat = {
   get mine() { return isHost ? { ...heat.get(myId) } : heatMine },
 }
 GAME.heat.fn = { witnessed: heatWitnessed, spot: enforcerSpot, mind: enforcerMind }
+// ---- squad cars and roadblocks (card #14, stage 2)
+// From star 2 a squad car comes for him: it joins the traffic out of sight 150-270 m off and chases him on #34's urgent pursuit
+// (GAME.traffic.pursue), and when it's up to him (or stuck near) it stops and its crew gets out and goes for him on foot. From
+// star 3, while he's driving, a roadblock is put across the road ahead of him: two squad cars angled across the lane, an armed pair
+// of enforcers behind them. The cars are the host's objects like any car (they take part in the traffic's wire, #57's damage
+// and the explosion); putting one out of action is a crime like hurting an enforcer.
+// cars: squad cars on him per star. crew: enforcers a car puts out. spawn: m from him. unload: m from him it stops. stuck: s
+// under 1.2 m/s, near him, before it stops. gap: s between cars. block: from this star, m ahead along his way, m/s he must be
+// doing, s between roadblocks, m from him at which a block stands down (he's gone round, or is far)
+const PATROL = { cars: [0, 0, 1, 2, 2, 3], crew: 2, spawn: { near: 150, far: 270 }, unload: 26, stuck: 7, gap: 7, speed: 14,
+  block: { from: 3, ahead: 210, speed: 9, gap: 40, gone: 330 }, keep: 90 }
+const squadCarsOf = id => objs.filter(o => o.squadOf === id && o.squadKind !== 'block')
+const squadK = () => OBJECTS.findIndex(K => K.name === 'Car')      // a squad car is a Car, by its id (squadIds), in its own paint (variant 'Squad')
+const squadId = T => { let id = OBJ_MAX - 1; while (id >= 16 && (objs.some(o => o.id === id) || T.departures.some(v => v.id === id && v.until > trafficClock()))) id--; return id >= 16 ? id : -1 }
+const squadPeople = () => [...players.values()].filter(c => !c.bot && c.owner === undefined && c.body)
+// one car off the field: as the traffic retires its own
+function squadRemove(o) {
+  const T = trafficState
+  trafficDetach(o, false)
+  dropObject(o); objs.splice(objs.indexOf(o), 1)
+  squadIds.delete(o.id)
+  if (T) { T.cars.delete(o.id); T.departures.push({ id: o.id, until: trafficClock() + 12 }) }
+  for (const sent of objSent.values()) sent.delete(o.id)
+}
+// a car on the road, out of his sight, at a point of an edge `lo`-`hi` m from (x, z) that suits it
+function squadSpot(x, z, lo, hi, V, people) {
+  trafficNear(x, z, Math.ceil(hi / 96))
+  const T = trafficState
+  const edges = T.edges.filter(e => { const q = trafficPoint(e, e.length / 2), d = Math.hypot(q.x - x, q.z - z); return d > lo && d < hi && trafficFits(e, V) && Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96 })
+  for (let trial = 0; edges.length && trial < 12; trial++) {
+    const e = edges[Math.random() * edges.length | 0], margin = n => (n.x % 96 === 0 && n.z % 96 === 0 ? TRAFFIC.stop : trafficStop(e, n)) + V.l / 2 + 1
+    const start = margin(e.from), end = e.length - margin(e.to)
+    if (end < start) continue
+    const q = trafficPoint(e, start + Math.random() * (end - start))
+    if (objs.some(o => Math.hypot(o.x - q.x, o.z - q.z) < 14) || people && !trafficHidden(q.x, q.z, people)) continue
+    return { e, q }
+  }
+  return null
+}
+function squadPut(spot, yaw, p, kind) {
+  const T = trafficState, k = squadK(), id = squadId(T)
+  if (k < 0 || id < 0 || objs.length >= OBJ_MAX - 8) return null
+  faustEnsure([[spot.x, spot.z]])
+  squadIds.add(id)
+  const o = addObject(k, [spot.x, 1, spot.z], id, yaw)
+  if (!o) { squadIds.delete(id); return null }
+  o.at = [spot.x, -o.low + 0.02, spot.z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body)
+  o.squadOf = p.id; o.squadKind = kind; o.squadAt = tickAt || now()
+  return o
+}
+function squadSpawn(p) {
+  const T = trafficState; if (!T) return false
+  const V = vehicleOf(OBJECTS[squadK()]), spot = squadSpot(p.x, p.z, PATROL.spawn.near, PATROL.spawn.far, V, squadPeople())
+  if (!spot) return false
+  const { e, q } = spot, o = squadPut(q, Math.atan2(-e.dx, -e.dz), p, 'chase')
+  if (!o) return false
+  trafficAttach(o, e)
+  o.squadState = 'drive'
+  GAME.traffic.pursue(o, p, { urgent: true, speed: PATROL.speed })
+  return true
+}
+// the crew gets out at the car's doors
+function squadUnload(o, p, H) {
+  o.squadState = 'parked'
+  GAME.traffic.cancel(o.id)
+  o.trafficAmbient = true
+  for (let i = 0; i < PATROL.crew; i++) {
+    const at = seatAt(o, o.V.exit[i % 2])
+    enforcerAdd(p, H.stars >= 3 || i === 1, { x: at[0], y: at[1] + 1.4, z: at[2], yaw: Math.atan2(-(p.x - at[0]), -(p.z - at[2])) }, true)
+  }
+}
+// a roadblock across the lane ahead of his way: two angled cars, an armed pair behind
+function squadBlock(p, H, T) {
+  const o = seatOf(p)?.[0], v = o?.body.getLinearVelocity(), vx = o ? v.x() : p.vx, vz = o ? v.z() : p.vz, sp = Math.hypot(vx, vz)
+  if (!o || sp < PATROL.block.speed) return false
+  const dx = vx / sp, dz = vz / sp, V = vehicleOf(OBJECTS[squadK()]), ax = p.x + dx * PATROL.block.ahead, az = p.z + dz * PATROL.block.ahead
+  trafficNear(ax, az, 1)
+  const T0 = trafficState
+  const edges = T0.edges.filter(e => trafficFits(e, V) && e.dx * dx + e.dz * dz > 0.6 && Math.hypot(trafficPoint(e, e.length / 2).x - ax, trafficPoint(e, e.length / 2).z - az) < 90)
+  edges.sort((a, b) => Math.hypot(trafficPoint(a, a.length / 2).x - ax, trafficPoint(a, a.length / 2).z - az) - Math.hypot(trafficPoint(b, b.length / 2).x - ax, trafficPoint(b, b.length / 2).z - az))
+  for (const e of edges.slice(0, 4)) {
+    const s = clamp((ax - e.from.x) * e.dx + (az - e.from.z) * e.dz, V.l, e.length - V.l), q = trafficPoint(e, s)
+    if (Math.hypot(q.x - p.x, q.z - p.z) < 120 || objs.some(o => Math.hypot(o.x - q.x, o.z - q.z) < 9)) continue
+    const nx = -e.dz, nz = e.dx, yaw = Math.atan2(-e.dx, -e.dz), cars = []
+    for (const side of [-1, 1]) {
+      const c = squadPut({ x: q.x + nx * side * 1.7 + e.dx * side * 0.9, z: q.z + nz * side * 1.7 + e.dz * side * 0.9 }, yaw + side * 0.75, p, 'block')
+      if (!c) { cars.forEach(squadRemove); return false }
+      c.V.wheels.at.forEach((w, k) => { c.car.applyEngineForce(0, k); c.car.setBrake(6, k) }); c.trafficAmbient = false; cars.push(c)
+    }
+    // behind them, away from him: an armed pair
+    for (const side of [-1, 1]) enforcerAdd(p, true, { x: q.x + e.dx * 4.5 + nx * side * 1.4, y: 3, z: q.z + e.dz * 4.5 + nz * side * 1.4, yaw: Math.atan2(dx, dz) + Math.PI }, true)
+    H.block = { at: { x: q.x, z: q.z }, cars: cars.map(c => c.id) }
+    return true
+  }
+  return false
+}
+// the cars and blocks of one hunted player, once a heat tick
+function heatCars(p, H, T, dt) {
+  if (!trafficState) return
+  const cars = squadCarsOf(p.id), want = PATROL.cars[H.stars] ?? 0
+  for (const o of cars) {
+    if (!o.V) { squadFell(o); continue }
+    if (o.squadState === 'drive') {
+      if (o.riders.some(r => r !== undefined)) { o.squadState = 'parked'; continue }
+      const d = Math.hypot(o.x - p.x, o.z - p.z)
+      o.slowT = speedOf(o) < 1.2 ? (o.slowT || 0) + dt : 0
+      if (d < PATROL.unload || o.slowT > PATROL.stuck && d < 90) squadUnload(o, p, H)
+      else if (!o.traffic) GAME.traffic.pursue(o, p, { urgent: true, speed: PATROL.speed })
+    }
+  }
+  if (cars.filter(o => o.squadState === 'drive').length < want && T - (H.carAt || 0) >= PATROL.gap * 1000) { H.carAt = T; squadSpawn(p) }
+  // a block stands while he's ahead of it; when he's gone round or far, it stands down with the cars
+  if (H.block) {
+    const b = H.block.at, d = Math.hypot(b.x - p.x, b.z - p.z)
+    if (d > PATROL.block.gone || !H.block.cars.some(id => objs.some(o => o.id === id))) { H.blockEnd = T; H.block = null }
+  }
+  if (!H.block && H.stars >= PATROL.block.from && T - Math.max(H.blockEnd || 0, H.blockAt || 0) >= PATROL.block.gap * 1000) { H.blockAt = T; squadBlock(p, H, T) }
+}
+// a car put out of action is an enforcer put down
+function squadFell(o) {
+  if (o.squadDead) return
+  o.squadDead = true
+  const by = players.get(o.by)
+  if (by && !by.bot) heatCrime(by, 'kill', o.x, o.z, 1, true)
+}
+// cars with nobody to chase, or far from him and unseen, or long parked, leave
+function squadDismiss(T) {
+  const people = squadPeople()
+  for (const o of [...objs]) {
+    if (o.squadOf === undefined) continue
+    const owner = players.get(o.squadOf), H = heat.get(o.squadOf), lost = !owner || !H?.stars, far = owner && Math.hypot(o.x - owner.x, o.z - owner.z) > PATROL.block.gone
+    if (!o.V) { squadFell(o); if (lost || far) { o.squadGone ??= T; if (T - o.squadGone > 20000 && trafficHidden(o.x, o.z, people)) squadRemove(o) } continue }
+    if (!lost && !far && !(o.squadState === 'parked' && T - o.squadAt > 150000)) { o.squadGone = undefined; continue }
+    o.squadGone ??= T
+    if (o.riders.some(r => r !== undefined)) continue
+    if (trafficHidden(o.x, o.z, people) && T - o.squadGone > 3000 || T - o.squadGone > 90000) squadRemove(o)
+  }
+}
 GUN_PROFILES.Revolver = GUN_PROFILES.Pistol
 
 function rollRare(c) {
