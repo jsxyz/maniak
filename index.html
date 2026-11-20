@@ -24134,7 +24134,7 @@ function captureMotion(o = {}) {
   if (!isHost || serving || !selfChar()) return Promise.resolve({ ok: false, error: 'host only, in the game' })
   const num = (v, d, lo, hi) => clamp(Number.isFinite(+v) && v !== null && v !== undefined ? +v : d, lo, hi)
   const J = { ms: num(o.ms, 5000, 100, 60000), radius: num(o.radius, 40, 2, 400), jump: num(o.jump, 0.3, 0.02, 5), vib: num(o.vib, 0.004, 0.0005, 0.5), rest: num(o.rest, 0.2, 0, 3), flip: num(o.flip, 0.5, 0.05, 10),
-    t0: now(), last: null, n: 0, frames: [], tracks: new Map(), ticks0: pageLife.hostAttempts }
+    t0: now(), last: null, n: 0, frames: [], tracks: new Map(), yaws: new Map(), ticks0: pageLife.hostAttempts }
   return new Promise(resolve => {
     J.done = err => { if (motionJob === J) motionJob = null; clearTimeout(J.timer); const r = motionResult(J, err); captureMotion.last = r; resolve(r) }
     J.timer = setTimeout(() => J.done('no frames for ' + Math.round(J.ms / 1000 + 20) + ' s: tab hidden?'), J.ms + 20000)
@@ -24165,6 +24165,18 @@ function motionFrame() {
     put('object ' + ob.id, ob.V ? (ob.traffic ? 'traffic car' : ob.parked ? 'parked car' : 'car') : 'prop', ob.K?.name || 'object',
       drawnPose(ob) || [ob.x, ob.y, ob.z], [ob.x, ob.y, ob.z], v, (ob.body.isActive() ? 0 : 1) | (ob.heldBy !== undefined ? 2 : 0))
   }
+  // #63: each chain block drawn (the mesh's position) against its raw tick position (the pack the sim reads); flag 8: they differ (interpolated)
+  for (const [id, v] of chainViews) {
+    const p = players.get(id); if (!v.root.visible || !p || !near(p.x, p.z)) continue
+    const g = chainRead(id === myId && isHost ? chainPack(p) : p.chainNet); if (!g) continue
+    const raw = g[62] ? g.slice(63, 66) : g.slice(4, 7), d = v.block.position
+    put('chain block ' + id, 'chain block', 'cinderblock of ' + (p.bot?.name || roster.get(id)?.name || 'player ' + id), [d.x, d.y, d.z], raw, null, Math.hypot(d.x - raw[0], d.y - raw[1], d.z - raw[2]) > 1e-4 ? 8 : 0)
+  }
+  // #63: the nearest bot's yaw, drawn (its avatar mesh) against the raw tick yaw (c.yaw); rows [i, t, drawn, raw, ticks]
+  { let best = null, bd = Infinity
+    for (const [id, p] of players) if (p.bot && !(p.dead > 0) && p.body) { const d = Math.hypot(p.x - me.x, p.z - me.z); if (d <= J.radius && d < bd) { bd = d; best = [id, p] } }
+    const a = best && avatars.get(best[0])
+    if (a?.mesh) { const key = 'yaw bot ' + best[0]; let Y = J.yaws.get(key); if (!Y) J.yaws.set(key, Y = { key, name: best[1].bot.name, rows: [] }); Y.rows.push([i, t - J.t0, a.mesh.rotation.y, best[1].yaw, J.frames.at(-1)[3]]) } }
   // street life: drawn where the game draws it (the wall clock on the host), sim where the tick clock puts it
   const SL = GAME.streetLife
   if (SL?.around) {
@@ -24193,18 +24205,34 @@ function motionResult(J, err) {
         if (step && len >= 0.005 && step.len >= 0.005 && sx * step.x + sy * step.y + sz * step.z < 0) add(r, 'reverse', 'drawn step turned back: ' + r3(len) + ' m after ' + r3(step.len) + ' m the other way', { step: r3(len), before: r3(step.len) })
         if ((r[11] & 3) && len >= 0.001) add(r, 'asleep-motion', 'drawn moved ' + r3(len) + ' m while ' + (r[11] & 2 ? 'held' : 'asleep'), { step: r3(len) })
         if (!held && (has ? speed < J.rest : len / dts < J.rest) && len >= J.vib) add(r, 'rest-motion', 'drawn moved ' + r3(len) + ' m at ' + (has ? 'speed ' + r3(speed) + ' m/s' : 'rest'), { step: r3(len), speed: has ? r3(speed) : null })
+        if (!held && !has && r[5] === r[5] && len < 1e-6 && (T.hist ||= []).length > 2 && Math.hypot(r[5] - T.hist.at(-3)[0], r[6] - T.hist.at(-3)[1], r[7] - T.hist.at(-3)[2]) > 0.02) add(r, 'drawn-held', 'drawn did not move this frame while its sim position moved ' + r3(Math.hypot(r[5] - T.hist.at(-3)[0], r[6] - T.hist.at(-3)[1], r[7] - T.hist.at(-3)[2])) + ' m over the last 3 frames', {})
         if (!held && has && speed > 1 && len < 0.001) add(r, 'drawn-still', 'speed ' + r3(speed) + ' m/s but the drawn position did not move', { speed: r3(speed) })
         if (r[5] === r[5]) { const g = Math.hypot(r[2] - r[5], r[3] - r[6], r[4] - r[7]); if (g > 0.3) add(r, 'gap', 'drawn ' + r3(g) + ' m from its sim position', { gap: r3(g) }) }
         if (r[11] !== prev[11]) add(r, 'state', 'flags ' + prev[11] + ' to ' + r[11] + ' (1 asleep, 2 held, 4 seated)', { from: prev[11], to: r[11] })
         step = { x: sx, y: sy, z: sz, len }
       } else { step = null; vprev = null }
+      if (r[5] === r[5]) (T.hist ||= []).push([r[5], r[6], r[7]])
       prev = r
     }
     watched.push({ key: T.key, kind: T.kind, name: T.name, frames: [R[0][0], R.at(-1)[0], R.length] })
     if (ev.length) objects.push({ key: T.key, kind: T.kind, name: T.name, flagged: ev, ...more ? { more } : {} })
     if (room > 0) { const rows = R.slice(0, room); room -= rows.length; series[T.key] = rows.map(r => r.map((v, k) => k < 1 || k === 11 ? v : v === v ? r3(v) : null)) }
   }
-  return { ok: !err, ...err ? { error: err } : {}, ms: Math.round(J.frames.at(-1)?.[1] || 0), radius: J.radius, count: J.n,
+  const yawSeries = {}, wrap = a => Math.atan2(Math.sin(a), Math.cos(a))
+  for (const Y of J.yaws.values()) {
+    const R = Y.rows, ev = []; let prev = null
+    for (let k = 0; k < R.length; k++) { const r = R[k]; prev = R[k - 1]
+      if (prev && r[0] === prev[0] + 1) {
+        const dd = wrap(r[2] - prev[2]), dr = wrap(r[3] - prev[3]), back = R[k - 3] && R[k - 3][0] === r[0] - 3 ? Math.abs(wrap(r[3] - R[k - 3][3])) : 0
+        const e = (type, what, extra) => ev.length < 150 && ev.push({ i: r[0], t: r3(r[1]), type, what: 't ' + r3(r[1] / 1000) + ' s frame ' + r[0] + ' bot ' + Y.name + ' (' + Y.key + '): ' + what, ...extra })
+        if (Math.abs(dd) > 0.3) e('yaw-jump', 'drawn yaw turned ' + r3(dd) + ' rad in one frame (raw tick yaw turned ' + r3(dr) + ' rad)', { drawn: r3(dd), raw: r3(dr) })
+        if (Math.abs(dd) < 1e-6 && back > 0.05) e('yaw-held', 'drawn yaw did not turn this frame while the raw yaw turned ' + r3(back) + ' rad over the last 3 frames (' + r[4] + ' physics ticks this frame)', { raw3: r3(back), ticks: r[4] })
+      } }
+    if (ev.length) objects.push({ key: Y.key, kind: 'bot yaw', name: Y.name, flagged: ev })
+    watched.push({ key: Y.key, kind: 'bot yaw', name: Y.name, frames: [R[0][0], R.at(-1)[0], R.length] })
+    yawSeries[Y.key] = R.map(r => [r[0], r3(r[1]), r3(r[2]), r3(r[3]), r[4]])
+  }
+  return { ok: !err, ...err ? { error: err } : {}, yawSeries, yawCols: ['i', 't', 'drawnYaw', 'rawYaw', 'ticks'], ms: Math.round(J.frames.at(-1)?.[1] || 0), radius: J.radius, count: J.n,
     frames: { cols: ['i', 't', 'dt', 'ticks', 'alpha', 'drawnT', 'tickAt', 'camx', 'camy', 'camz'], rows: J.frames },
     flagged: objects.flatMap(o => o.flagged).sort((a, b) => a.i - b.i), objects, watched, series, seriesCols: ['i', 't', 'dx', 'dy', 'dz', 'px', 'py', 'pz', 'vx', 'vy', 'vz', 'flags'] }
 }
