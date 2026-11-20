@@ -6426,8 +6426,64 @@ function faustDecoMarquee(g, lot) {
   g.box(faustBox(x, 3.62, f + out, hw + 0.1, 0.5, 0.05), 0x252d37)
   for (const side of [-1, 1]) g.box(faustBox(x + side * (hw - 0.3), 3.9, f + 1.1, 0.04, 0.4, 0.04), 0x252d37)
 }
+// card #69 / #82: the tenement kit of a lot (0 the original, 1 door hood and cornice, 2 mansard, 3 gabled with oriels), and its fire escapes
+const faustTenementKit = lot => (lot.seed >>> 11) % 4
+const faustTenementEscapes = lot => [[1], [-1], [], [1, -1]][faustTenementKit(lot)]
+// a quad of four points as two triangles facing away from the interior point c
+function faustSlab(g, p, c, tint) {
+  const u = [p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]], v = [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]]
+  const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+  const m = [(p[0][0] + p[2][0]) / 2 - c[0], (p[0][1] + p[2][1]) / 2 - c[1], (p[0][2] + p[2][2]) / 2 - c[2]]
+  if (n[0] * m[0] + n[1] * m[1] + n[2] * m[2] >= 0) { g.tri(p[0], p[1], p[2], tint); g.tri(p[0], p[2], p[3], tint) } else { g.tri(p[0], p[2], p[1], tint); g.tri(p[0], p[3], p[2], tint) }
+}
+function faustTenementKitDraw(g, lot, kit) {
+  const { x, z, w, d, height: H, seed } = lot, f = z + d + 0.25, T = 0xa1a8ae, SL = 0x515963, L = 0xd6d0b2, G = 0x1b222b, D = FAUST_DECO
+  const lamps = () => { for (const sd of [-1, 1]) g.box(faustBox(x + sd * 1.8, 3.3, f + 0.1, 0.12, 0.2, 0.1), D.brass, 1) }
+  if (kit === 1) {
+    g.box(faustBox(x, 3.5, f + 0.5, 1.7, 0.1, 0.5), T)                                       // a stone door hood on two brackets, all over 2.2 m
+    for (const sd of [-1, 1]) g.box(faustBox(x + sd * 1.4, 3.1, f + 0.2, 0.1, 0.3, 0.2), T)
+    g.box(faustBox(x, 0.06, f + 0.12, 1.4, 0.06, 0.12), T)                                    // one flush step (a tenement's body is 0.5 m deep at the front)
+    lamps()
+    for (let i = 0, n = Math.floor(w * 2 / 0.9); i < n; i++) g.box(faustBox(x - w + 0.45 + i * 0.9 + (w * 2 - n * 0.9) / 2, H - 0.75, f + 0.05, 0.2, 0.18, 0.12), T)
+    g.box(faustBox(x, 6.2, f + 0.07, w, 0.12, 0.07), 0xadb0b1)
+  } else if (kit === 2) {
+    // the mansard: a steep ring of slate from the parapet's top up and in, with dormers on the front slope
+    const y0 = H + 0.38, y1 = y0 + 2.8, ox = w + 0.45, oz = d + 0.45, ix = w - 1.6, iz = d - 1.6, c = [x, y0 + 1, z]
+    faustSlab(g, [[x - ox, y0, z + oz], [x + ox, y0, z + oz], [x + ix, y1, z + iz], [x - ix, y1, z + iz]], c, SL)
+    faustSlab(g, [[x + ox, y0, z - oz], [x - ox, y0, z - oz], [x - ix, y1, z - iz], [x + ix, y1, z - iz]], c, SL)
+    faustSlab(g, [[x + ox, y0, z + oz], [x + ox, y0, z - oz], [x + ix, y1, z - iz], [x + ix, y1, z + iz]], c, SL)
+    faustSlab(g, [[x - ox, y0, z - oz], [x - ox, y0, z + oz], [x - ix, y1, z + iz], [x - ix, y1, z - iz]], c, SL)
+    g.box(faustBox(x, y1 + 0.05, z + iz, ix, 0.08, 0.1), 0x8b939b); g.box(faustBox(x, y1 + 0.05, z - iz, ix, 0.08, 0.1), 0x8b939b)
+    g.box(faustBox(x + ix, y1 + 0.05, z, 0.1, 0.08, iz), 0x8b939b); g.box(faustBox(x - ix, y1 + 0.05, z, 0.1, 0.08, iz), 0x8b939b)
+    const nd = Math.max(2, Math.floor(2 * ix / 3.6)), ym = y0 + 1.2, zm = z + oz - 0.75
+    for (let i = 0; i < nd; i++) {
+      const cx = x - ix + (i + 0.5) * (2 * ix / nd), lit = faustMix(seed >>> 0, i, 0x6d61) % 3 === 0
+      g.box(faustBox(cx, ym + 0.35, zm + 0.3, 0.55, 0.6, 0.45), T)
+      faustPyramid(g, cx, ym + 0.95, zm + 0.3, 0.7, 0.55, 0.7, SL)
+      g.box(faustBox(cx, ym + 0.35, zm + 0.77, 0.35, 0.4, 0.02), lit ? D.brass : G, lit ? 0.4 : 0)
+    }
+    g.box(faustBox(x, 3.6, f + 0.1, 2.0, 0.28, 0.06), D.brass, 0.5)
+  } else if (kit === 3) {
+    // a gabled roof, the gable end to the street, a lit attic window; two oriel bays up the front; two chimneys
+    const y0 = H + 0.38, ox = w + 0.3, oz = d + 0.3, rise = Math.min(5.5, ox * 0.55)
+    faustGable(g, x, y0, z - oz, z + oz, ox, rise, SL)
+    g.box(faustBox(x, y0 + rise + 0.1, z, 0.15, 0.1, oz), 0x8b939b)
+    g.box(faustBox(x, y0 + rise * 0.35, z + oz + 0.03, 0.5, 0.5, 0.02), D.brass, 0.4)
+    for (const [k, sx] of [[0, -1], [1, 1]]) {
+      const cx = x + sx * w * 0.55, lit = faustMix(seed >>> 0, k, 0x6f72) % 2 === 0
+      g.box(faustBox(cx, 6.75, z + d + 0.6, 1.1, 1.75, 0.5), T)
+      faustPyramid(g, cx, 8.5, z + d + 0.6, 1.2, 0.6, 1.0, SL)
+      g.box(faustBox(cx, 6.8, z + d + 1.12, 0.8, 1.1, 0.02), lit ? D.brass : G, lit ? 0.35 : 0)
+      const ch = x + sx * w * 0.5, cz = z - d * 0.45, base = y0 + rise * 0.5
+      g.box(faustBox(ch, base + 1.5, cz, 0.55, 1.6, 0.55), 0x8d949c); g.box(faustBox(ch, base + 3.2, cz, 0.7, 0.12, 0.7), T)
+    }
+    lamps()
+  }
+}
 function faustDecoTenement(g, lot) {
   const { x, z, w, d, height: H } = lot, f = z + d + 0.25
+  const kit = faustTenementKit(lot)
+  if (kit) return faustTenementKitDraw(g, lot, kit)
   g.box(faustBox(x, 3.1, f + 0.75, 2.2, 0.06, 0.75), 0x6a7480)
   g.box(faustBox(x, 3.17, f + 0.75, 2.2, 0.02, 0.75), 0x8b939b)
   g.box(faustBox(x, 2.95, f + 1.5, 2.2, 0.12, 0.03), 0x8b939b)
@@ -6744,11 +6800,12 @@ function* faustVisualSteps(c) {
       faustGap(ornament, faustBox(x, 2, z + d + 0.15, 2, 2, 0.15), 0x080f1a, B.door)
       faustDecoTenement(ornament, lot)
       // Fire escapes: iron landings, rails and alternating diagonal ladders.
-      for (let y = 5; y < H; y += 5) {
-        ornament.box(faustBox(x + w + 1.1, y, z, 1.1, 0.12, 3), 0x283342)
-        for (const side of [-1, 1]) ornament.box(faustBox(x + w + 2.1, y + 0.65, z + side * 2.6, 0.07, 0.65, 0.07), 0x8b939b)
-        ornament.box(faustBox(x + w + 2.1, y + 1.25, z, 0.08, 0.08, 2.8), 0x8b939b)
-        ornament.tri([x + w + 0.4, y, z - 2.6], [x + w + 1.6, y, z - 2.6], [x + w + 1.6, y + 5, z + 2.6], 0x6a7480)
+      for (const sg of faustTenementEscapes(lot)) for (let y = 5; y < H; y += 5) {      // card #82: on the +x side, the -x side, both or neither
+        ornament.box(faustBox(x + sg * (w + 1.1), y, z, 1.1, 0.12, 3), 0x283342)
+        for (const side of [-1, 1]) ornament.box(faustBox(x + sg * (w + 2.1), y + 0.65, z + side * 2.6, 0.07, 0.65, 0.07), 0x8b939b)
+        ornament.box(faustBox(x + sg * (w + 2.1), y + 1.25, z, 0.08, 0.08, 2.8), 0x8b939b)
+        const a = [x + sg * (w + 0.4), y, z - 2.6], b = [x + sg * (w + 1.6), y, z - 2.6], c = [x + sg * (w + 1.6), y + 5, z + 2.6]
+        if (sg > 0) ornament.tri(a, b, c, 0x6a7480); else ornament.tri(b, a, c, 0x6a7480)
       }
       yield; continue
     }
