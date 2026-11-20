@@ -156,7 +156,7 @@ if (CFG.api.port && !LOOPBACK.test(CFG.api.host) && !CFG.api.token)
 // page lets go is dropped from it once R2 has its last version. Neither set: nothing is kept. A save R2 didn't take is tried
 // again every 30 s and when the server stops, and (with WORLD_DIR) after a restart. Each request to R2 is signed (AWS
 // Signature Version 4), with no library; its secret is never printed, and neither are the paths.
-const WORLD_KEY = /^world-\d{1,10}-\d{1,2}(\/(manifest|t-(-?\d{1,4})-(-?\d{1,4})))?$/
+const WORLD_KEY = /^world-\d{1,10}-\d{1,2}(-p\d{1,3})?(\/(manifest|t-(-?\d{1,4})-(-?\d{1,4})))?$/      // -p: the plan's content version
 const WORLD_DIR = blank(env.WORLD_DIR) ? '' : path.resolve(env.WORLD_DIR)
 // made if missing, but only the last directory (a volume's mount gives the rest): a recursive mkdir can loop on a special
 // filesystem's parents

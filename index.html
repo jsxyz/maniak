@@ -26351,7 +26351,12 @@ function dsNotify() {
 // section this build doesn't know is kept as it came and written back; a save for another city is refused with a message.
 const DS_SAVE = { v: 1, debounceMs: 5000, db: 'maniak', store: 'worlds' }
 let dsPersist = { key: '', dirty: false, timer: 0, other: {}, saving: null, loads: 0, saves: 0, last: '' }
-const dsWorldKey = () => faustState ? 'world-' + faustState.seed + '-' + faustState.S : ''
+// the plan's content version is in the save's name and in it (card #70): a city planned differently keeps its changes apart
+// (they'd land on other windows, lamps and posts), and a changed city starts clean. The name before the versions held saves
+// made under plan 2
+const dsPlanVersion = () => { const F = faustState; if (!F) return 0; if (dsPlanVersion.city !== F) { dsPlanVersion.city = F; dsPlanVersion.v = faustPlan(F.seed, 0, 0, F.S)?.version | 0 } return dsPlanVersion.v }
+const DS_UNVERSIONED = 2, dsWorldKeyOld = () => faustState ? 'world-' + faustState.seed + '-' + faustState.S : ''
+const dsWorldKey = () => faustState ? dsWorldKeyOld() + '-p' + dsPlanVersion() : ''
 function dsVarints(nums) {
   const b = []
   for (let n of nums) { n = Math.max(0, Math.floor(n)); while (n >= 128) { b.push(n % 128 | 128); n = Math.floor(n / 128) } b.push(n) }
@@ -26380,7 +26385,7 @@ function dsSaveDoc() {
   }
   for (const [kind, chunks] of Object.entries(dsPersist.kept || {})) if (!kinds[kind]) kinds[kind] = chunks      // nobody's kind yet: as it came
   const cr = dsCratersSave()
-  return { maniak: 'world', v: DS_SAVE.v, seed: F.seed, size: F.S, saved: new Date().toISOString(), state: { ...dsPersist.other, destruction: { v: 1, kinds }, ...cr && { craters: cr } } }
+  return { maniak: 'world', v: DS_SAVE.v, seed: F.seed, size: F.S, plan: dsPlanVersion(), saved: new Date().toISOString(), state: { ...dsPersist.other, destruction: { v: 1, kinds }, ...cr && { craters: cr } } }
 }
 // a save, into this city (the host's): the number of things it brought, or a message why not
 function dsLoadDoc(doc) {
@@ -26389,6 +26394,7 @@ function dsLoadDoc(doc) {
   const F = faustState
   if (!F || !dsCheck()) return 'there is no city to load it into'
   if (doc.seed >>> 0 !== F.seed || doc.size !== F.S) return 'it is for city seed ' + (doc.seed >>> 0) + ' (size ' + doc.size + '), and this city is seed ' + F.seed + ' (size ' + F.S + ')'
+  if ((doc.plan ?? DS_UNVERSIONED) !== dsPlanVersion()) return 'it is for this city as it was planned before (plan ' + (doc.plan ?? DS_UNVERSIONED) + '; it is plan ' + dsPlanVersion() + ' now)'
   const { destruction, craters: cr, ...other } = doc.state && typeof doc.state === 'object' ? doc.state : {}
   dsPersist.other = other
   // craters: through the game's own path; kept as they came where this level has none
@@ -26461,12 +26467,20 @@ function dsPersistStart() {
   const key = dsWorldKey()
   if (!isHost || !key || dsPersist.key === key) return
   dsPersist = { ...dsPersist, key, dirty: false, other: {}, kept: {}, reading: true, cv: typeof craterV === 'undefined' ? 0 : craterV }
-  const read = dsStoreGet(key)
+  // none under this name: the save from before the versions, if the plan is still the one it was made under (then written
+  // again under this name); a changed city starts clean, and says once that the old one isn't read
+  const read = dsStoreGet(key).then(doc => doc || dsStoreGet(dsWorldKeyOld()).then(old => {
+    if (!old) return null
+    if (dsPlanVersion() === DS_UNVERSIONED) { dsPersist.fromOld = true; return old }
+    console.error('destruction: this city\'s save from before plan versions is not read: the city is planned differently now (plan ' + dsPlanVersion() + ')')
+    return null
+  }))
   read.then(() => {}, () => {}).then(() => { if (dsPersist.key === key) { dsPersist.reading = false; if (dsPersist.dirty) dsPersistLater() } })
   read.then(doc => {
     if (!doc || dsPersist.key !== key || dsWorldKey() !== key || !isHost) return
     const n = dsLoadDoc(doc)
     dsPersist.loads++; dsPersist.last = typeof n === 'number' ? 'loaded ' + n : n
+    if (dsPersist.fromOld) { dsPersist.fromOld = false; if (typeof n === 'number') dsPersistLater() }      // under its new name
     if (typeof n === 'number' && n > 0) try { sysMsg('§7This city\'s broken glass and lamps from last time: §f' + n + '§7.') } catch (e) {}
   })
 }

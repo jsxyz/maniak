@@ -82,7 +82,8 @@ docker run -d --name maniak --network host -v maniak-world:/world -e WORLD_DIR=/
 
 The world is kept in tiles of 960 m. The page reads a tile in as players come near it and lets it go a minute after the
 last of them has left, so only the parts in play are held, however big the world grows. A city's tiles are files in a
-directory of its own (`world-<seed>-<size>/t-<x>-<z>.json`, beside a small `manifest.json`).
+directory of its own (`world-<seed>-<size>-p<version>/t-<x>-<z>.json`, beside a small `manifest.json`). The version is
+the city plan's: a game whose city is planned differently keeps its changes apart, and a changed city starts clean.
 
 Set the four R2 variables as well, or instead, to keep them in a bucket, as objects under `R2_PREFIX` named the same way:
 then a server on another machine, or a fresh container without the volume, finds them there. With R2 set, `WORLD_DIR` holds
