@@ -4398,6 +4398,44 @@ function faustDecoTenement(g, lot) {
   }
   for (let i = 0; i < 3; i++) g.box(faustBox(x, y + 0.3 + i * 0.6, z + d + 0.3, 3.2 - i * 1.0, 0.3, 0.3), T)
 }
+// card #69: an industrial shed's roofline. A low parapet ring round the roof with a stepped gable on the street front, rows of
+// sawtooth skylights (the glass faces lit a little) over the back of the roof and away from the stair house, and a stepped cap
+// with a lit ring on the chimney. All of it on the roof or the stack, far over the walking paths.
+function faustPrism(g, x0, x1, prof, tint) {
+  // a prism along x of a profile polygon in (z, y), its faces outward
+  const cz = prof.reduce((a, p) => a + p[0], 0) / prof.length, cy = prof.reduce((a, p) => a + p[1], 0) / prof.length, mx = (x0 + x1) / 2
+  const face = (a, b, c, t) => {
+    const n = [(b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]), (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]), (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])]
+    const out = n[0] * (a[0] - mx) + n[1] * (a[1] - cy) + n[2] * (a[2] - cz) >= 0
+    out ? g.tri(a, b, c, t) : g.tri(a, c, b, t)
+  }
+  for (let i = 0; i < prof.length; i++) {
+    const p = prof[i], q = prof[(i + 1) % prof.length]
+    face([x0, p[1], p[0]], [x1, p[1], p[0]], [x1, q[1], q[0]], tint); face([x0, p[1], p[0]], [x1, q[1], q[0]], [x0, q[1], q[0]], tint)
+  }
+  for (const x of [x0, x1]) for (let i = 1; i + 1 < prof.length; i++) {
+    const a = [x, prof[0][1], prof[0][0]], b = [x, prof[i][1], prof[i][0]], c = [x, prof[i + 1][1], prof[i + 1][0]]
+    face(a, b, c, tint)
+  }
+}
+function faustDecoShed(g, lot) {
+  const { x, z, w, d, height: H, seed } = lot, T = 0x969b9e, y = H
+  faustRing(g, faustBox(x, y + 0.4, z, w + 0.1, 0.4, d + 0.1), T, 0.45, null)
+  for (let i = 0; i < 3; i++) g.box(faustBox(x, y + 1.0 + i * 0.5, z + d - 0.1, 4 - i * 1.3, 0.25, 0.25), T)
+  // sawtooth rows: 3 m a row, a 1.6 m rise, over the back of the roof, clear of the stair house (x + 0.4w) and the chimney
+  const rows = Math.max(1, Math.floor(d * 1.1 / 3)), x0 = x - w * 0.85, x1 = x - w * 0.15
+  for (let i = 0; i < rows; i++) {
+    const z0 = z - d * 0.3 + i * 3
+    if (z0 + 3 > z + d - 1) break
+    faustPrism(g, x0, x1, [[z0, y], [z0 + 3, y], [z0 + 3, y + 1.6]], 0x6a7480)
+    g.box(faustBox((x0 + x1) / 2, y + 0.8, z0 + 3.03, (x1 - x0) / 2 - 0.2, 0.65, 0.02), 0xe1d2a9, 0.35)
+  }
+  // the chimney's cap: two steps and a lit ring, and four ribs up its corners
+  const sx = x - w * 0.6, sz = z - d * 0.6
+  g.box(faustBox(sx, y + 36.5, sz, 2.15, 0.4, 2.15), T); g.box(faustBox(sx, y + 37.3, sz, 1.85, 0.4, 1.85), T)
+  g.box(faustBox(sx, y + 36.0, sz, 2.2, 0.1, 2.2), 0xe1d2a9, 0.7)
+  for (const a of [-1, 1]) for (const b of [-1, 1]) g.box(faustBox(sx + a * 1.65, y + 20, sz + b * 1.65, 0.12, 15, 0.12), 0x8b939b)
+}
 function* faustVisualSteps(c) {
   const facade = faustBatch(3072), ornament = faustBatch(26624), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
@@ -4441,6 +4479,7 @@ function* faustVisualSteps(c) {
     faustShopfronts(ornament, lot)
     if (district === 'industrial') {
       for (const y of [H + 9, H + 24, H + 35]) ornament.box(faustBox(x - w * 0.6, y, z - d * 0.6, 1.75, 0.5, 1.75), 0x969b9e)
+      faustDecoShed(ornament, lot)
       for (const q of [-0.6, 0.3]) faustGap(ornament, faustBox(x + q * w, 2.2, z + d + 0.15, 3, 2.2, 0.15), 0x111a26, q < 0 ? B.door : null)
       yield; continue
     }
@@ -26958,7 +26997,7 @@ GAME.heat.fn = { witnessed: heatWitnessed, spot: enforcerSpot, mind: enforcerMin
 GUN_PROFILES.Revolver = GUN_PROFILES.Pistol
 
 function rollRare(c) {
-  if (!isHost) return
+  if (!isHost || !BOT_COUNT) return          // Freaks 0: no visitors either (card #59 fix)
   BOTS.forEach((B, i) => {
     if (!B.visits || players.has(BOT_ID0 + i) || Math.floor(Math.random() * (B.visits === true ? RARE_ONE_IN : B.visits))) return
     addBot(i)
@@ -27079,6 +27118,114 @@ GAME.commands = {
               spawnBots(n)
               sysMsg('§7Enemies: §f' + BOT_COUNT) } },
 }
+// card #71, test commands for live QA: /tp <x> <z>, /near <thing> [go], /where. /tp and /near are the host's own character only.
+// Each thing's position is its own system's: the rail's stations, the airships and their stops, the cars (traffic, parked), objects,
+// street life, bots (freaks, enforcers, the performer), interiors' doors. A system not in this build, or with none out: "none yet".
+const testTools = (() => {
+  const R2D = 180 / Math.PI, refuse = m => { sysMsg('§c' + m); return null }
+  const me = hostOnly => {
+    if (hostOnly && !isHost) return refuse('Only the host can use test commands.')
+    const c = selfChar()
+    if (!c || serving) return refuse('No character to move here.')
+    return hostOnly && c.dead > 0 ? refuse('Not while you are down.') : c
+  }
+  const bearing = (dx, dz) => ((Math.round(Math.atan2(dx, -dz) * R2D) % 360) + 360) % 360       // compass: 0 north (-z), 90 east (+x)
+  const rose = d => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(d / 45) % 8] + ' ' + d + '°'
+  const feet = c => c.y - c.h - c.r
+  // the street (or the surface y0) under x, z: the city grown there first, a ray down for the floor, else 3 m above y0 to fall
+  function tpTo(c, x, z, y0, face) {
+    const lim = WORLD - 8
+    x = clamp(x, -lim, lim); z = clamp(z, -lim, lim)
+    const s = seatOf(c); if (s) leave(c, s[0], s[1])
+    if (LV.grow) growNear([[x, z]], true)
+    const hit = []
+    staticRay(x, y0 + 4, z, 0, -1, 0, 12, hit)
+    const y = hit.length && hit[4] > 0.5 ? hit[1] + c.h + c.r + 0.05 : y0 + 3
+    setCharPos(c, x, y, z)
+    c.vx = c.vy = c.vz = 0; c.carryV = null
+    if (face) { const yaw = Math.atan2(-face[0], -face[1]); c.yaw = yaw; input.yaw = yaw; input.pitch = 0 }
+    return [x, y, z]
+  }
+  // about 3 m from the thing on the first side with a clear way (toward the player first), facing it
+  function beside(c, t) {
+    if (LV.grow) growNear([[t.x, t.z]], true)
+    const a0 = Math.atan2(c.x - t.x, c.z - t.z)
+    let u = null
+    for (const k of [0, 45, -45, 90, -90, 135, -135, 180]) {
+      const a = a0 + k / R2D, ux = Math.sin(a), uz = Math.cos(a)
+      if (staticRay(t.x, t.y0 + 1, t.z, ux, 0, uz, 3.4) >= 3.4) { u = [ux, uz]; break }
+    }
+    u ||= [Math.sin(a0), Math.cos(a0)]
+    return tpTo(c, t.x + u[0] * 3, t.z + u[1] * 3, t.y0, [-u[0], -u[1]])
+  }
+  const bots = ok => () => [...players.values()].filter(o => o.bot && !(o.dead > 0) && o.body && ok(o.bot)).map(o => ({ x: o.x, z: o.z, y0: feet(o), what: o.bot.name }))
+  const cars = ok => () => objs.filter(o => o.V && ok(o)).map(o => ({ x: o.x, z: o.z, y0: 0, what: (o.traffic ? 'traffic ' : o.parked ? 'parked ' : 'loose ') + (o.K.name || 'car') }))
+  const street = kind => c => { for (const r of [120, 400, 900]) {
+    const got = (GAME.streetLife?.around(c.x, c.z, r) || []).filter(a => a.kind === kind)
+    if (got.length) return got.map(a => ({ x: a.x, z: a.z, y0: 0, what: kind })) }
+    return [] }
+  const NEAR = {
+    car: cars(() => true), parked: cars(o => o.parked && !o.traffic), traffic: cars(o => o.traffic), object: () => objs.filter(o => !o.V).map(o => ({ x: o.x, z: o.z, y0: 0, what: o.K.name || 'object' })),
+    station: c => (railState?.rail.stations || []).map(t => {                  // #60: street level beside the platform, facing its pavilion
+      const at = a => t.dir === 'z' ? [t.c + a, t.p] : [t.p, t.c + a], [px, pz] = at(0)
+      const side = t.pavilions.reduce((b, q) => Math.hypot(q.x - c.x, q.z - c.z) < Math.hypot(b.x - c.x, b.z - c.z) ? q : b).side, [sx, sz] = at(side * 11)
+      return { x: px, z: pz, y0: 0, what: 'station ' + (t.name || t.id) + ' (line ' + t.line + ', platform ' + t.level + ' m)', spot: { x: sx, z: sz, face: t.dir === 'z' ? [side, 0] : [0, side] } } }),
+    zeppelin: () => (GAME.air?.fleet || []).map(id => { const p = GAME.air.pose(id); return p && { x: p.x, z: p.z, y0: 0, what: id.replace('air:', '') + ' at ' + Math.round(p.y) + ' m' + (p.at ? ', docked' : '') } }).filter(Boolean),
+    stop: () => { const seen = new Map()                                       // #5: the platform on the tower's roof, by its mast
+      for (const l of GAME.air?.lines || []) for (const s of l.stops) seen.set(s.id, { x: s.x, z: s.z, y0: s.y, what: 'stop ' + s.id + ', roof ' + Math.round(s.y) + ' m (' + l.name + ')' })
+      return [...seen.values()] },
+    performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk), enforcer: bots(b => b.enforcer),
+    pram: street('pram'), cyclist: street('cyclist'), ped: street('ped'),
+    door: c => { if (!LV.faust || !LV.grow || !faustState) return []           // #38: the front door of a lot's building, on the step out
+      const S = LV.grow.S, ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96)
+      for (let r = 1; r <= 3; r++) {
+        const out = []
+        for (let i = Math.max(0, ci - r); i <= Math.min(S - 1, ci + r); i++) for (let j = Math.max(0, cj - r); j <= Math.min(S - 1, cj + r); j++)
+          for (const l of faustGet(i, j).plan.lots) { const x = l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, z = l.z + l.d
+            out.push({ x, z, y0: 0, what: 'door of a ' + (l.district || '') + ' lot', spot: { x, z: z + 3, face: [0, -1] } }) }
+        if (out.length) return out
+      }
+      return [] },
+  }
+  const ALIAS = { interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
+  const things = () => Object.keys(NEAR).join(', ')
+  const tp = a => {
+    const c = me(true); if (!c) return
+    const n = String(a || '').replace(/,/g, ' ').trim().split(/\s+/).map(Number)
+    if (n.length !== 2 || !n.every(Number.isFinite)) return sysMsg('§cUsage: §f/tp <x> <z>')
+    const [x, y, z] = tpTo(c, n[0], n[1], 0, null)
+    sysMsg('§7Teleported to x §f' + Math.round(x) + ' §7z §f' + Math.round(z) + ' §7y §f' + y.toFixed(1))
+  }
+  const near = a => {
+    const c = me(true); if (!c) return
+    const w = String(a || '').trim().toLowerCase().split(/\s+/).filter(Boolean), key = ALIAS[w[0]] || w[0]
+    if (!Object.hasOwn(NEAR, key)) return sysMsg('§cUsage: §f/near <thing> [go] §7(' + things() + ')')
+    let list = []
+    try { list = NEAR[key](c) } catch (e) { console.warn('/near ' + key, e) }
+    let t = null
+    for (const q of list) { q.d = Math.hypot(q.x - c.x, q.z - c.z); if (!t || q.d < t.d) t = q }
+    if (!t) return sysMsg('§7' + key + ': §fnone yet')
+    if (w[1] === 'go') {
+      const [x, , z] = t.spot ? tpTo(c, t.spot.x, t.spot.z, t.y0, t.spot.face) : beside(c, t)
+      return sysMsg('§7Beside §f' + t.what + ' §7at x §f' + Math.round(x) + ' §7z §f' + Math.round(z))
+    }
+    sysMsg('§7Nearest §f' + t.what + '§7: x §f' + Math.round(t.x) + ' §7z §f' + Math.round(t.z) + ' §7· §f' + Math.round(t.d) + ' m §7· §f' + rose(bearing(t.x - c.x, t.z - c.z)) + ' §7· §f/near ' + key + ' go')
+  }
+  const where = () => {
+    const c = me(false); if (!c) return
+    const G = LV.grow, ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96)
+    let block = ''
+    if (LV.faust && G) { try { block = ' §7block §f' + (ci - G.S / 2) + ' ' + (cj - G.S / 2) + ' §7(' + faustCell(G.seed, ci - G.S / 2, cj - G.S / 2).district + ')' } catch (e) { block = '' } }
+    const car = seatOf(c) || rideOf(c), yaw = car && chase.yaw === chase.yaw ? chase.yaw + chase.look : input.yaw
+    sysMsg('§7At x §f' + c.x.toFixed(1) + ' §7z §f' + c.z.toFixed(1) + ' §7y §f' + feet(c).toFixed(1) + ' §7heading §f' + rose(((Math.round(-yaw * R2D) % 360) + 360) % 360) + ' §7cell §f' + ci + ' ' + cj + block)
+  }
+  return { tp, near, where, things }
+})()
+Object.assign(GAME.commands, {
+  tp:    { args: '<x> <z>', help: 'host only, test: teleport to the street under a point', run: testTools.tp },
+  near:  { args: '<thing> [go]', help: 'host only, test: find the nearest (' + testTools.things() + '), go to teleport beside it', run: testTools.near },
+  where: { args: '', help: 'test: your x, z, heading and city cell', run: testTools.where },
+})
 // a joining player's row: the one it asked for, unless this room cannot take it (told why), and its team fielded once it stands
 GAME.rows = {
   visitors: () => botPairs(visitors()),
