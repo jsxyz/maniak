@@ -5896,7 +5896,7 @@ const GAME = { faustland: FAUSTLAND_API, interiors: FAUSTLAND_API.interiors }
 // Work runs after paint, shares one 4 ms budget, and never holds scene state over a yield.
 const background = (() => {
   const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [] }
-  let scheduled = false, order = 0
+  let scheduled = false, order = 0, current = null
   const alive = j => !j.valid || j.valid()
   function finish(j, value, error) {
     if (jobs.get(j.key) !== j) return
@@ -5931,7 +5931,7 @@ const background = (() => {
         if (!j.waiting && !deferred.has(j) && !(j.gpu && (graphics.state === 'lost' || renderer?.getContext().isContextLost()))) { next = j; break }
       }
       if (!next) break
-      const j = next, t = performance.now()
+      const j = next, t = performance.now(); current = j
       try {
         j.gen ||= typeof j.steps === 'function' ? j.steps() : j.steps
         const r = j.error ? j.gen.throw(j.error) : j.gen.next(j.value)
@@ -5942,8 +5942,8 @@ const background = (() => {
           Promise.resolve(r.value).then(v => { j.value = v; j.waiting = false; schedule() }, e => { j.error = e; j.waiting = false; schedule() })
         } else if (r.value === 'frame' || r.value === 'wait') deferred.add(j)
       } catch (e) { finish(j, false, e) }
-      const stepMs = performance.now() - t
-      if (stepMs >= 50) { stats.long.push(j.key + ' ' + Math.round(stepMs)); if (stats.long.length > 12) stats.long.shift() }
+      const stepMs = performance.now() - t; current = null
+      if (stepMs >= 50) { stats.long.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs)); if (stats.long.length > 12) stats.long.shift() }
       stats.last = j.key; stats.maxStepMs = Math.max(stats.maxStepMs, stepMs); stats.steps++; steps++
       if (navigator.scheduling?.isInputPending?.()) break
     }
@@ -5960,6 +5960,8 @@ const background = (() => {
       jobs.set(key, j); schedule(); return j.promise
     },
     cancel(key) { const j = jobs.get(key); if (j) finish(j, false) },
+    // inside a step: name what the running job does now (F3's bg row shows a long step as key/phase)
+    mark(text) { if (current) current.phase = text },
     wake: schedule,
   }
 })()
@@ -8625,19 +8627,22 @@ function* loadLevelSteps(id, gen) {
   levelId = clamp(id | 0, 0, LEVELS.length - 1)
   const L = LEVELS[levelId], g = L.gen && { ...L.gen, ...['city', 'faustland'].includes(L.gen.kind) && CITY_SIZES[settings.city] && { size: CITY_SIZES[settings.city] }, ...gen }
   levelGen = g && { seed: g.seed >>> 0, size: clamp(g.size | 0, 1, 32) }
+  background.mark('level compile')
   LV = compileLevel(g ? { ...L, gen: { ...g, ...levelGen } } : L); ARENA = LV.A; WORLD = LV.W || LV.A; lsLeft = 8
   LV.hash = LV.boxes.reduce((h, b) => [b.cx, b.cy, b.cz, b.ex, b.ey, b.ez].reduce((h, v) => Math.imul(h ^ Math.round(v * 1000), 16777619), h), (2166136261 ^ (LV.faust ? levelGen.seed : 0))) >>> 0
   BOXES = LV.boxes; SPAWNS = LV.spawns
   JUMPS = jumpsFrom(BOXES)
   craterClear()
   yield
-  if (world) loadStatics()
+  background.mark('level statics'); if (world) loadStatics()
   yield
+  background.mark('level objects')
   grown = new Set(LV.grow ? LV.grow.ring.map(c => c.join(' ')) : []); parked.clear()
   craterEnsure()
   yield* spawnObjectsSteps()
   yield
   GAME.level.loaded()
+  background.mark('level world')
   yield* rebuildWorldSteps()
   return levelId
 }
@@ -12477,8 +12482,11 @@ function* warmSceneSteps(name, roots = null) {
   const all = roots || [scene, faustState?.skyScene, fxWarmed].filter(Boolean), R = realState
   const target = name === 'realistic' ? R?.t?.hdr || null : name === 'ink' ? inkPost?.target || null : null
   for (const root of all) {
+    const part = 'warm ' + name + ' ' + (root === scene ? 'scene' : root === faustState?.skyScene ? 'sky' : root.name || 'part')
+    background.mark(part + ' upload')
     inkPrepare(root)
     yield* uploadTextures(root)
+    background.mark(part + ' compile')
     const sky = root === faustState?.skyScene, cam = sky ? faustState.skyCamera : camera, targetScene = sky ? root : scene
     yield* compileObjects(root, cam, targetScene, warmSetup(name, target, R))
     // Ink's separate normals pass (High, a pointer) depends on the device-pixel size, which the ResizeObserver can revise a
@@ -12486,6 +12494,7 @@ function* warmSceneSteps(name, roots = null) {
     if (name === 'ink' && settings.quality === 'high' && !IS_TOUCH)
       yield* compileObjects(root, cam, targetScene, warmSetup(name, inkPost?.separateNormals ? inkPost.normalTarget : (inkWarmTarget ||= new THREE.WebGLRenderTarget(1, 1, { depthBuffer: true })), R, true))
     if (renderer.shadowMap.enabled) {
+      background.mark(part + ' shadows')
       const shadows = []; root.traverse(o => { if (o.isMesh && o.castShadow) shadows.push(o) })
       const depth = warmDepth ||= new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.BackSide })
       const seen = new Set(), lights = sceneLights(scene)
@@ -12510,6 +12519,7 @@ function requestLook(name) {
   if (lookPending?.key === key) return lookPending.promise
   background.cancel('look')
   const pending = lookPending = { key, name, serial: ++lookSerial }
+  if (phase === 'playing' && activeLook && activeLook !== name) sysMsg('§7Preparing the ' + LOOKS[name].label + ' look…')
   pending.promise = background.run('look', function* () {
     let success = false
     try {
@@ -19592,7 +19602,7 @@ function applySettings() {
 }
 const onOff = v => v ? 'on' : 'off', nextOf = (list, v) => list[(list.indexOf(v) + 1) % list.length]
 const SET_BUTTONS = {
-  'set-look': [() => 'Look: ' + LOOKS[settings.look].label, () => { settings.look = nextOf(Object.keys(LOOKS), settings.look) }],
+  'set-look': [() => 'Look: ' + LOOKS[settings.look].label + (activeLook && activeLook !== settings.look ? ' (preparing…)' : ''), () => { settings.look = nextOf(Object.keys(LOOKS), settings.look) }],
   'set-view': [() => 'View: ' + (firstPerson ? 'first' : 'third'), () => setView(!firstPerson)],
   'set-quality': [() => 'Quality: ' + settings.quality,
     () => { settings.quality = nextOf(QNAMES, settings.quality); settings.qualityChosen = true; qualityAuto = '' }],
@@ -21411,17 +21421,17 @@ function startHost() {
     if (!ready) yield* loadLevelSteps(0, { seed: citySeed })
     else yield* spawnObjectsSteps()
     markStart('level')
-    GAME.lifecycle.matchStart()
+    background.mark('match'); GAME.lifecycle.matchStart()
     loadingText('Bringing the streets to life…')
     for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && c.owner === undefined) { dropBot(c); yield }
-    for (const i of foesWanted()) { addBot(i); yield }
+    background.mark('bots'); for (const i of foesWanted()) { addBot(i); yield }
     markStart('bots')
-    if (!serving) { hostIn(); yield; draw(0, now()); yield }
+    if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('draw0'); draw(0, now()); yield }
     loadingText('Preparing the view…')
-    warmEffects()
+    background.mark('effects'); warmEffects()
     yield* warmSceneSteps('plain')
     worldPreparing = false
-    if (!serving) { yield requestLook(settings.look); yield* warmSceneSteps(activeLook || 'plain'); yield 'frame' }
+    if (!serving) { background.mark('look'); yield requestLook(settings.look); yield* warmSceneSteps(activeLook || 'plain'); background.mark('open'); yield 'frame' }
     if (startLog) startLog.warmProgs = renderer?.info.programs.length
     el('#stage-menu').style.display = 'none'; el('#stage-host').style.display = ''
     setStatus('Waiting for players…'); openHostPeer(0)
