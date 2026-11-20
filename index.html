@@ -6413,7 +6413,7 @@ function* compileObjects(root, cam = camera, target = scene, setup = null, lit =
     const visit = o.traverse, undo = setup?.(o) || (() => {})
     try {
       const rt = renderer.getRenderTarget(), mats = Array.isArray(o.material) ? o.material : [o.material]
-      const state = [mats.map(m => m?.uuid + ':' + m?.version).join(','), kind, rt ? rt.texture.type + ':' + rt.texture.colorSpace + ':' + rt.samples : 'screen',
+      const state = [mats.map(m => [m?.uuid, m?.version, m?.side, !!m?.map, !!m?.alphaMap, m?.alphaTest > 0, !!m?.displacementMap].join(':')).join(','), kind, rt ? rt.texture.type + ':' + rt.texture.colorSpace + ':' + rt.samples : 'screen',
         inkUniforms.inkEnabled.value, renderer.toneMapping, !!target.fog, target.environment?.uuid, lights.length, renderer.shadowMap.enabled, graphics.lost].join('|')
       if (!warmedPrograms.has(state)) {
         warmedPrograms.add(state)
@@ -12830,7 +12830,17 @@ function buildScenery(boxes, unit = ARENA / 72) {
 }
 
 // Preparation never changes the live look until its resources and programs are ready.
-let lookPending = null, lookPreparedKey = '', lookSerial = 0, warmDepth = null, inkWarmNormal = null, inkWarmTarget = null
+let lookPending = null, lookPreparedKey = '', lookSerial = 0, warmDepth = null, inkWarmNormal = null, inkWarmTarget = null, warmShadowTarget = null, interiorProbe = null
+// three's shadow pass: a material's shadow side (WebGLShadowMap's shadowSide table)
+const DEPTH_SIDE = { [THREE.FrontSide]: THREE.BackSide, [THREE.BackSide]: THREE.FrontSide, [THREE.DoubleSide]: THREE.DoubleSide }
+// the interiors' materials (#38) on a stand-in mesh with their attributes, warmed with the scene so a storey drawn later compiles nothing
+function interiorWarmProbe() {
+  if (interiorProbe || !LV?.faust || typeof inMaterials !== 'function') return interiorProbe
+  const g = new THREE.BufferGeometry(); interiorProbe = new THREE.Group(); interiorProbe.name = 'interiors'
+  for (const [k, n] of [['position', 3], ['normal', 3], ['color', 3], ['inLight', 3], ['uv', 2]]) g.setAttribute(k, new THREE.Float32BufferAttribute(new Float32Array(3 * n), n))
+  for (const m of inMaterials()) interiorProbe.add(new THREE.Mesh(g, m))
+  return interiorProbe
+}
 const lookKey = name => [name, settings.quality, settings.shadows, innerWidth, innerHeight, devicePixelRatio, graphics.lost].join('/')
 function gpuState(target, fn) {
   const old = renderer.getRenderTarget(), face = renderer.getActiveCubeFace(), mip = renderer.getActiveMipmapLevel()
@@ -12884,7 +12894,7 @@ function* environmentSteps(env) {
     complete = true; return target
   } finally { pm.dispose(); backdrop.geometry.dispose(); backdrop.material.dispose(); if (!complete) target.dispose() }
 }
-function warmSetup(name, target, R, normal = false) {
+function warmSetup(name, target, R, normal = false, sky = false) {
   return o => {
     const undo = [], put = (object, key, value) => { undo.push([object, key, object[key]]); object[key] = value }
     const oldTarget = renderer.getRenderTarget()
@@ -12899,6 +12909,8 @@ function warmSetup(name, target, R, normal = false) {
         if (m && m !== 'beam') {
           if (m === R.mats.facade || m === R.mats.ornament) realBoxes(o.geometry)
           put(o, 'material', m)
+          // the draw Ink-patches the swapped material too (scene.onBeforeRender, after realSwap): compile that program
+          if (!sky) inkPrepare({ traverse: fn => fn(o) })
         }
       }
       put(scene, 'fog', R.fog); put(scene, 'environment', R.env.texture)
@@ -12946,7 +12958,7 @@ function* lookWatchSteps() {
 }
 function* warmSceneSteps(name, roots = null) {
   if (renderHeadless || !renderer || !camera || !scene.fog) return
-  const all = roots || [scene, faustState?.skyScene, fxWarmed].filter(Boolean), R = realState
+  const all = roots || [scene, faustState?.skyScene, fxWarmed, interiorWarmProbe()].filter(Boolean), R = realState
   const target = name === 'realistic' ? R?.t?.hdr || null : name === 'ink' ? inkPost?.target || null : null
   for (const root of all) {
     const part = 'warm ' + name + ' ' + (root === scene ? 'scene' : root === faustState?.skyScene ? 'sky' : root.name || 'part')
@@ -12955,7 +12967,7 @@ function* warmSceneSteps(name, roots = null) {
     yield* uploadTextures(root)
     background.mark(part + ' compile')
     const sky = root === faustState?.skyScene, cam = sky ? faustState.skyCamera : camera, targetScene = sky ? root : scene
-    yield* compileObjects(root, cam, targetScene, warmSetup(name, target, R))
+    yield* compileObjects(root, cam, targetScene, warmSetup(name, target, R, false, sky))
     // Ink's separate normals pass (High, a pointer) depends on the device-pixel size, which the ResizeObserver can revise a
     // frame after the switch: warm its programs whenever it can run, into any render target (they are the same programs).
     if (name === 'ink' && settings.quality === 'high' && !IS_TOUCH)
@@ -12966,13 +12978,22 @@ function* warmSceneSteps(name, roots = null) {
       const depth = warmDepth ||= new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.BackSide })
       const seen = new Set(), lights = sceneLights(scene)
       let t0 = performance.now()
+      // as WebGLShadowMap draws it: into its render target, the object's side, map, alpha test and displacement on the
+      // depth material (a custom one too)
+      const shadowTarget = sunLight?.shadow?.map || (warmShadowTarget ||= new THREE.WebGLRenderTarget(1, 1))
       for (const o of shadows) {
-        const mat = o.customDepthMaterial || depth, key = mat.uuid + '/' + o.type
+        const m = Array.isArray(o.material) ? o.material[0] : o.material
+        if (!m) continue
+        const mat = o.customDepthMaterial || depth, side = m.shadowSide ?? DEPTH_SIDE[m.side]
+        const key = [mat.uuid, o.type, side, !!m.map, !!m.alphaMap, m.alphaTest > 0, !!(m.displacementMap && m.displacementScale !== 0)].join('/')
         if (seen.has(key)) continue
         seen.add(key)
         yield* compileObjects(o, camera, scene, () => {
-          const previous = o.material; o.material = mat
-          return () => { o.material = previous }
+          const undo = [[o, 'material', o.material]], old = renderer.getRenderTarget()
+          for (const k of ['side', 'alphaMap', 'alphaTest', 'map', 'displacementMap', 'displacementScale', 'displacementBias']) undo.push([mat, k, mat[k]])
+          Object.assign(mat, { side, alphaMap: m.alphaMap, alphaTest: m.alphaTest, map: m.map, displacementMap: m.displacementMap, displacementScale: m.displacementScale, displacementBias: m.displacementBias })
+          o.material = mat; renderer.setRenderTarget(shadowTarget)
+          return () => { for (let i = undo.length; i--;) { const [x, k, v] = undo[i]; x[k] = v } renderer.setRenderTarget(old) }
         }, lights)
         if (performance.now() - t0 > 2) { yield; t0 = performance.now() }
       }
@@ -29764,6 +29785,9 @@ function railBuild() {
   const mat = railMaterial(), glass = railGlassMaterial(), both = railMaterial(); both.side = THREE.DoubleSide
   S.view = { group, mat, both, glass, parts: {}, sets: [], trains: {}, regions: [], fallback: { track: [], station: [] }, at: null, ready: { track: false, cars: false, station: false }, owned: [mat, both, glass] }
   background.run('monorail', function* () {
+    { const probe = new THREE.Group(), box = new THREE.BoxGeometry()
+      for (const m of [mat, both, glass]) { const o = new THREE.Mesh(box, m); o.castShadow = o.receiveShadow = true; probe.add(o) }
+      background.mark('warm'); yield* warmSceneSteps(activeLook || 'plain', [probe]); box.dispose() }
     yield* railBuildPlain(S)
     for (const which of ['track', 'cars', 'station']) { yield* railLoad(S, which); yield 'frame' }
   }, { valid: () => railState === S && S.view?.group.parent === worldGroup }).catch(e => console.warn('monorail:', e?.message || e))
