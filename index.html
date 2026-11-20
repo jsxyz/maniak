@@ -14528,6 +14528,7 @@ function buildWorld() {
       if (graphics.rebuild && s === scene) rebuildGraphics()
       const programsBefore = renderer.info.programs.length
       lookRender(render, s, cam)
+      if (capJobs.length && s === scene) try { capAfterDraw() } catch (e) { for (const j of [...capJobs]) j.done('capture failed: ' + (e?.message || e)) }       // card #75: the canvas is only valid in this task
       if (phase === 'playing' && renderer.info.programs.length > programsBefore) for (const p of renderer.info.programs.slice(programsBefore)) {
         const k = String(p.cacheKey).split(','), hook = k[k.length - 1]
         background.stats.lateCount++
@@ -27920,14 +27921,14 @@ const testTools = (() => {
     // #38: the lots round the player (nearest ring with any), a building planned only once one is picked (resolve)
     stairs: c => lotsAround(c, () => true).map(t => ({ ...t, what: 'stairs', resolve(q) {
       const B = inBuilding(q.id), C = B.core, K = FAUST_IN
-      q.x = C.stairX + K.stair.width + K.stair.well / 2; q.z = C.z1 - K.part - 0.6
+      q.x = C.stairX + K.stair.width / 2; q.z = C.z1 - K.part - 0.6
       q.what = 'stairs of a ' + B.style + ' building, ' + B.storeys.length + ' storeys'
       q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B } } })),
     lift: c => lotsAround(c, l => l.height >= 48 && (l.district === 'core' || l.district === 'civic')).map(t => ({ ...t, what: 'lift', resolve(q) {
       const B = inBuilding(q.id), C = B.core, K = FAUST_IN, lx0 = C.stairX + 2 * K.stair.width + K.stair.well + K.part
       q.x = lx0 + K.lift - 0.9; q.z = C.z1 - K.part - 0.7
       q.what = 'express lift (UP panel) of a ' + B.style + ' tower, ' + B.storeys.length + ' storeys'
-      q.spot = { x: q.x, z: q.z, face: [0, 1], up: 2.5, enter: B } } })),
+      q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B } } })),
     window: c => {                                                              // #46's breaches, else the nearest shopfront panes
       const out = [], add = (B, w, broken) => {
         const n = [[0, 1], [0, -1], [1, 0], [-1, 0]][w.face], a = (w.a0 + w.a1) / 2, x = w.face < 2 ? a : w.plane, z = w.face < 2 ? w.plane : a
@@ -27990,6 +27991,25 @@ const testTools = (() => {
   }
   return { tp, near, where, things }
 })()
+// card #71: /give [kind]: a loose object 3 m ahead of the host, on the ground (QA's grab, punt and throw tests). A kind is an OBJECTS
+// name, or: crate, block (cinderblock), ball, car, van, truck, bus, sports, door (a car's front-left door), wreck.
+const GIVE = { block: 'Cinderblock', sports: 'Sports car', wreck: 'Wreck', door: 'Car door fl', maniak: 'Maniak car' }
+function testGive(a) {
+  if (!isHost || serving) return sysMsg('§cOnly the host can use test commands.')
+  const me = selfChar()
+  if (!me || me.dead > 0) return sysMsg('§cNot while you are down.')
+  const want = String(a || 'crate').trim().toLowerCase(), name = GIVE[want] || want
+  const k = OBJECTS.findIndex(K => K.name.toLowerCase() === name.toLowerCase())
+  if (k < 0 || OBJECTS[k].plane) return sysMsg('§cUsage: §f/give [kind] §7(' + [...Object.keys(GIVE), ...OBJECTS.filter(K => !K.model && !K.plane).map(K => K.name.toLowerCase())].join(', ') + ')')
+  if (objs.length >= OBJ_MAX - 8) return sysMsg('§cToo many objects here.')
+  const K = OBJECTS[k], yaw = input.yaw, d = K.shape === 'hull' ? 5 : 3, x = me.x - Math.sin(yaw) * d, z = me.z - Math.cos(yaw) * d, hit = []
+  staticRay(x, me.y + 1, z, 0, -1, 0, 8, hit)
+  const gy = hit.length && hit[4] > 0.5 ? hit[1] : me.y - me.h - me.r
+  objSeeds[objs.length] = (Math.random() * 1e9) | 0
+  placeObject(k, [x, K.shape === 'hull' ? gy : gy + (K.half ? K.half[1] : K.r || 0.5) + 0.05, z], yaw)
+  sysMsg('§7A §f' + K.name.toLowerCase() + ' §7' + d + ' m ahead')
+}
+Object.assign(GAME.commands, { give: { args: '[kind]', help: 'host only, test: a loose object ahead (crate, block, ball, van, truck, bus, door, car)', run: testGive } })
 Object.assign(GAME.commands, {
   tp:    { args: '<x> <z>', help: 'host only, test: teleport to the street under a point', run: testTools.tp },
   near:  { args: '<thing> [go]', help: 'host only, test: find the nearest (' + testTools.things() + '), go to teleport beside it', run: testTools.near },
@@ -29610,7 +29630,6 @@ function frameBody() {
   msSim = msSim * 0.9 + (now() - _s0) * 0.1
   drawT0 = now()
   try { if (!startingGame && !worldPreparing) draw(dt, t) } catch (e) { frameFailed('draw', e) }
-  if (capJobs.length) try { capAfterDraw() } catch (e) { for (const j of [...capJobs]) j.done('capture failed: ' + (e?.message || e)) }
   if (startLog && phase === 'playing' && startLog.frames.length < 30) {
     if (!startLog.frames.length) markStart('frame 1')
     startLog.frames.push(t - (startLog.last ?? t)); startLog.last = t
