@@ -692,7 +692,10 @@ const FAUST_HEAD = { variant: 'stone', software: false }
 // The freaks are the bots' rows (BOTS), hidden: no player plays them; on pedestrian bodies (MODELS.freak, .brute) until card #7's
 const CHARS = [
   { name: 'The Maniak', side: 'maniak', primary: 'Haymaker', r: 0.48, h: 0.50, model: 'maniak', speed: 7.4, jump: 8.6, hp: 150, color: 0xe8e2d4,
-    role: 'Billionaire vigilante · fists, and a haymaker',
+    role: 'Billionaire vigilante · fists, haymaker, leap-smash and chain',
+    spring: { full: 1.15, k: 3.4 }, leapSmash: true, smash: { speed: 18, r: 2.4, depth: 0.35 },
+    swing: { range: 60, pace: 24 }, hurl: { speed: 20, dmg: 0, reach: 1.5 },
+    chain: { full: 1.1, speed: 20, boost: 38, range: 16, extra: 44, reel: 12 },
     shape: { torso: [1.34, 1, 1.24], arm: [1.36, 1, 1.3], hand: [1.24, 1, 1.2], leg: [1.16, 1, 1.12], boot: [1.1, 1, 1.06] },
     skin: { head: 0x141416, torso: 0x1c1c20, arm: 0x1c1c20, hand: 0x2b2a2e, leg: 0x232327, boot: 0x5a5960 } },
   { name: 'Freak', side: 'freaks', hidden: true, atk: 'Shiv', model: 'freak', r: 0.36, h: 0.5, speed: 7.6, jump: 8.6, hp: 70, color: 0xa59d7c,
@@ -752,6 +755,7 @@ const PARTICLES = {
   flare: { n: 1, life: [0.1, 0.14], speed: [0, 0], size: [0.9, 1.1], cone: 0, grow: 1.8, add: true, cell: 3, hot: 0.3 },
   spark: { n: 12, life: [0.18, 0.4], speed: [5, 12], size: [0.1, 0.16], cone: 1, fall: 12, grow: 0.4, add: true, cell: 0, stretch: 0.07, hot: 0.55 },
   puff: { n: 4, life: [0.35, 0.7], speed: [0.3, 1.2], size: [0.18, 0.3], cone: 1.4, fall: -0.6, grow: 3, cell: 0, color: 0x8a8378 },
+  chip: { n: 16, life: [0.35,0.75], speed: [2,6], size: [0.04,0.09], cone: 1.2, fall: 14, grow: 0.8, cell: 0, color: 0x9a9488 },
   dust: { n: 6, life: [0.45, 0.85], speed: [0.6, 1.8], size: [0.22, 0.36], cone: 1.2, fall: -0.4, grow: 2.6, cell: 0, color: 0xc9c0ae },
   claw: { n: 9, life: [0.12, 0.26], speed: [6, 11], size: [0.06, 0.1], cone: 0.35, fall: 6, grow: 0.3, add: true, cell: 0, stretch: 0.12, hot: 0.4 },
 }
@@ -768,11 +772,16 @@ const GUNS = [
 
   // his heavy hit, on the right button
   { name:'Haymaker', rate:1.30, dmg:45, range: 2.9, knock:24.0, color:0xf2ece0,
-    special:true, melee:true, held:false, punch:'rise', punchMs:420 },
+    special:true, melee:true, held:false, kind:'arc', hayWind:0.42, punch:'rise', punchMs:760 },
   // the freaks'
   { name:'Shiv',     rate:0.60, dmg: 8, spread:0.25, pellets:2, range: 2.3, knock: 2.0, color:0xb9b2a0,
     melee:true, held:false, punch:'jab', punchMs:200 },
   { name:'Sledge',   rate:1.60, dmg:26, spread:0.45, pellets:3, range: 3.2, knock:14.0, color:0x9a948a, melee:true },
+  { name:'Leap-smash', rate:0.8, dmg:24, range:4.2, knock:14, color:0xe8e2d4,
+    special:true, melee:true, held:false, kind:'radius', punch:'slam', punchMs:650,
+    dive:{ speed:22, pull:16, ref:12, cap:2.6 } },
+  { name:'Cinderblock', special:true, held:false, rate:0.8, dmg:45, knock:24, refSpeed:58, minScale:0.15, range:60, color:0xc9c0ae,
+    scarLife:45, scarMax:32, scarArea:16, scarAreaMax:4 },
 ].map(G => ({ ...GUN_ROW, ...G }))
 // POWERS: dur s, then scales of move jump rate give take fuel jet reach lift (jet 0 grounds; reach 0 spares melee)
 // drop:false: by `apply` only. look: an EFFECT_LOOKS overlay
@@ -1254,9 +1263,15 @@ const SOUNDS = {
   Needler: { say: 'a tiny, sharp, high needle-gun tick', seed: 0 },
   Railer: { say: 'a crack and a long descending electric zing, with a low hum left behind', seed: 0 },
   Haymaker: { say: 'a huge wound-up haymaker: a deep whoosh and a bone-rattling crack', seed: 0 },
+  'Leap-smash': { say: 'two huge fists hit concrete: a deep impact, scattering rubble and dust', seed: 0 },
+  'Chain whirl': { say: 'a fast overhead metal chain whirl: rushing air and accelerating steel rattles', seed: 0 },
+  'Chain throw': { say: 'a heavy concrete block thrown hard: a strong rush of air and chain clatter', seed: 0 },
+  'Chain catch': { say: 'concrete catches masonry and a steel chain snaps taut with a metallic clack', seed: 0 },
+  'Haymaker charge': { say: 'a short breath of effort and a rising heavy swing', seed: 0 },
   Shiv: { say: 'a fast, thin blade slash: a hiss of air and a scrape', seed: 0 },
   Sledge: { say: 'a sledgehammer swung through the air into a dull iron thud', seed: 0 },
 
+  Cinderblock: { say: 'a heavy concrete block thuds into flesh or cracks masonry with a cascade of chips', seed: 0 },
   // ---- you, never placed
   hit: { say: 'the hit confirmation: a short, bright tick above the gunfire, the same every time, since players learn it', seed: 0 },
   kill: { say: 'a kill confirmation: the hit tick and a bright note after it', seed: 0 },
@@ -1656,6 +1671,14 @@ function faustPlan(seed, ci, cj, S = 20) {
     const skyMass = h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, w * 0.73, (H - h0) / 2, d * 0.73)] : mass.slice(0, 2)
     const lot = { x, z, w, d, height: H, gothic, district: style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + i, gz) }
     lots.push(lot); boxes.push(...mass)
+    // The strong façade piers also stop the block and chain, including in a server with no rendered city.
+    if (style !== 'industrial' && style !== 'tenement') {
+      for (const side of [-1,1]) for (const k of [-0.86,0,0.86]) {
+        boxes.push(faustBox(x+w*k,H*0.32,z+side*(d+0.18),0.6,H*0.32,0.95), faustBox(x+side*(w+0.18),H*0.32,z+d*k,0.95,H*0.32,0.6))
+      }
+      for(const b of mass.slice(1))for(const side of [-1,1])for(const k of [-0.7,0.7])
+        boxes.push(faustBox(b.cx+b.ex*k,b.cy,b.cz+side*(b.ez+0.4),0.55,b.ey,0.8),faustBox(b.cx+side*(b.ex+0.4),b.cy,b.cz+b.ez*k,0.8,b.ey,0.55))
+    }
     // Cornices, pinnacles and lamp posts are real grapple targets, shared by all simulations.
     for (const b of mass.slice(0, style === 'industrial' ? 1 : 2)) boxes.push(faustBox(b.cx, b.cy + b.ey, b.cz, b.ex + 1.1, 0.45, b.ez + 1.1))
     if (gothic) for (const a of [-1, 1]) for (const b of [-1, 1]) boxes.push(faustBox(x + a * (w - 0.4), H * 0.24, z + b * (d - 0.4), 1.2, H * 0.24, 1.2, { slim: true }))
@@ -2282,6 +2305,7 @@ function faustAtmosphere() {
   g.fillStyle = glow; g.fillRect(0, 0, 128, 128)
   const map = new THREE.CanvasTexture(cv); map.userData.faustOwned = true
   const poolMaterial = new THREE.MeshBasicMaterial({ map, color: 0xe5a34f, transparent: true, opacity: 0.42, depthWrite: false, blending: THREE.AdditiveBlending })
+  poolMaterial.userData.inkGroundLight = true
   F.poolMaterial = poolMaterial
   F.localLights = [0, 1].map(() => { const light = new THREE.PointLight(0xffb15c, 45, 22, 1.6); root.add(light); return light })
   const smogMaterial = new THREE.SpriteMaterial({ map, color: 0x778ca8, opacity: 0.12, transparent: true, depthWrite: false })
@@ -2307,6 +2331,7 @@ function faustFarLights() {
     shader.vertexShader = 'varying float faustRoadDistance;\n' + shader.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n faustRoadDistance = length(mvPosition.xyz);')
     shader.fragmentShader = 'varying float faustRoadDistance;\n' + shader.fragmentShader.replace('#include <alphamap_fragment>', '#include <alphamap_fragment>\n diffuseColor.a *= smoothstep(170.0, 350.0, faustRoadDistance);')
   }
+  material.userData.inkGroundLight = true
   material.customProgramCacheKey = () => 'faust-road-light-1'
   const mm = x => Math.round(x * 1000) / 1000
   for (let ci = 0; ci < F.S; ci++) for (let cj = 0; cj < F.S; cj++) {
@@ -2672,6 +2697,7 @@ function attachBody(c) {
 }
 
 function detachBody(c) {
+  moveReset(c)
   if (!c.body) return
   untie(c)
   dropBody(c)
@@ -2736,7 +2762,7 @@ function teleportBody(body, x, y, z, q, v, w) {
 }
 
 function setCharPos(c, x, y, z) {
-  untie(c)
+  moveReset(c)
   c.x = x; c.y = y; c.z = z
   c.warp = (c.warp || 0) + 1
   c.zip = null
@@ -2901,19 +2927,301 @@ function runOver(c, inp, spd) {
 
 // Column 28: a web's anchor as one integer, x z y at 1/8 m, snapped alike by host and guest. Within 1024 m of the centre
 // it is 1..2^39 (14-bit x and z); farther out, to 2048 m, it is 2^39 plus the same with 15-bit x and z.
-const WEB_FAR = 2 ** 39
+const WEB_FAR = 2 ** 39, WEB_CITY = 2 ** 42, WEB_GRID = 262144
 const webPack = (x, y, z) => { const ix = Math.round((x + 1024) * 8), iz = Math.round((z + 1024) * 8), iy = Math.round((y + 64) * 8)
-  if (iy < 0 || iy >= 2048) return 0
+  if (Math.abs(x) > 16383 || Math.abs(z) > 16383 || y < -64 || y >= 1984) return 0
+  if (Math.abs(x) >= 2047 || Math.abs(z) >= 2047 || y >= 192) return WEB_CITY + 1 + Math.round((x + 16384) * 8) + WEB_GRID * (Math.round((z + 16384) * 8) + WEB_GRID * iy)
   if (ix >= 0 && ix < 16384 && iz >= 0 && iz < 16384) return 1 + ix + 16384 * (iz + 16384 * iy)
   const jx = ix + 8192, jz = iz + 8192
   return jx >= 0 && jx < 32768 && jz >= 0 && jz < 32768 ? WEB_FAR + 1 + jx + 32768 * (jz + 32768 * iy) : 0 }
 // a web off the wire: its point, or null (none, malformed, off the level)
 function webPoint(v) {
-  if (!Number.isInteger(v) || v < 1 || v > WEB_FAR * 5) return null
+  if (!Number.isSafeInteger(v) || v < 1) return null
+  if (v > WEB_CITY) { const n = v - WEB_CITY - 1, x = n % WEB_GRID / 8 - 16384, z = Math.floor(n / WEB_GRID) % WEB_GRID / 8 - 16384, y = Math.floor(n / WEB_GRID ** 2) / 8 - 64
+    return Math.abs(x) < 16384 && Math.abs(z) < 16384 && y >= -64 && y < 1984 ? [x, y, z] : null }
+  if (v > WEB_FAR * 5) return null
   const far = v > WEB_FAR, B = far ? 32768 : 16384, o = far ? 2048 : 1024, n = v - 1 - (far ? WEB_FAR : 0)
   const x = n % B / 8 - o, z = Math.floor(n / B) % B / 8 - o, y = Math.floor(n / (B * B)) / 8 - 64
   return Math.abs(x) <= ARENA + 8 && Math.abs(z) <= ARENA + 8 ? [x, y, z] : null
 }
+// The Maniak's move state is simulated by the host. The guest predicts his leap and the existing Bullet swing;
+// the swept block and the chain's constrained particles are carried in his snapshot, never accepted from a guest.
+const CHAIN_N = 17, CHAIN_RADIUS = 0.36, CHAIN_SKIN = 0.05
+const chainHit = [], chainViews = new Map(), chainMask = () => RAY_GROUP | G_OBJ
+const chainSpec = c => GAME.participantOf(c)?.chain
+const chainHand = c => [c.x + Math.cos(c.yaw) * 0.46, c.y + 0.5, c.z - Math.sin(c.yaw) * 0.46]
+const chainGap = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]))
+function chainClear(c) {
+  if (isHost && c.chain?.phase === 3) chainImpact(c,c.chain.surface,c.chain.normal,c.chain.impactSpeed,1,c.chain.lodgeId)
+  if (c.chain?.body) dropBody(c.chain)
+  c.chain = null; c.chainNet = null; untie(c)
+  const view = chainViews.get(c.id); if (view) view.root.visible = false
+}
+function moveReset(c) {
+  chainClear(c)
+  c.smashCam = c.springT = c.leap = c.leapAir = c.hayT = c.hayReady = c.hayAge = 0
+  c.chainLock = false; c.blockKills = []
+}
+function leapStart(c, inp, q) {
+  c.leap = q + 0.001; c.leapAir = false
+  const d = aimDir(inp.yaw, 0), speed = 5 + q * 17
+  c.leapVX = d[0] * speed; c.leapVZ = d[2] * speed
+}
+function chainLine(a, b, skin = CHAIN_SKIN) {
+  const d = b.map((v, i) => v - a[i]), n = Math.hypot(...d)
+  if (n < 0.001) return false
+  const t = staticRay(...a, ...d.map(v => v / n), n + skin, chainHit, chainMask())
+  return t < n + skin - 0.001
+}
+function chainBegin(c) {
+  const p = chainHand(c), g = makeBody(new A.btSphereShape(CHAIN_RADIUS), 0, ...p)
+  // A swept kinematic body. Its first character contact is resolved by the host through strike(), never by a guest.
+  world.addRigidBody(g.body, ...COLLIDE.hub)
+  Object.assign(g, { phase: 1, charge: 0, age: 0, len: 1.2, p, v: [0, 0, 0], nodes: [], prev: [], angle: 0, reeling: false })
+  c.chain = g
+}
+function chainPlace(g, p) {
+  g.p = p; teleportBody(g.body, ...p)
+}
+// The whole block is swept, including a cornice thinner than one tick's travel. Return the first body, fraction and normal.
+function chainSweep(g, from, to) {
+  const hit = sweepHits(g, ...from, ...to, chainMask()), fractions = hit.get_m_hitFractions(), bodies = hit.get_m_hitCollisionObjects()
+  let k = -1, f = 1
+  for (let i = 0; i < fractions.size(); i++) if (fractions.at(i) < f) { f = fractions.at(i); k = i }
+  if (k < 0) return null
+  const ptr = A.getPointer(bodies.at(k)), d = to.map((v, i) => v - from[i]), n = Math.hypot(...d) || 1
+  // A support offset keeps the block outside the surface even after snapshot quantisation.
+  return { p: from.map((v, i) => v + d[i] * Math.max(0, f - 0.025 / n)), ptr }
+}
+// Verlet slack with fixed endpoints, inextensible segments, gravity, and swept point collisions. If a corner cuts the
+// route, the catch releases; it never pulls the capsule or draws a taut chain through a building. It does not wrap corners.
+function chainSolve(c, g, dt) {
+  const a = chainHand(c), b = g.p, dist = chainGap(a, b), len = dist + (g.phase === 3 ? 0.035 : Math.min(0.45, dist * 0.04))
+  if (chainLine(a, b)) return false
+  if (g.nodes.length !== CHAIN_N || chainGap(g.nodes[0], a) > 2) {
+    g.nodes = Array.from({ length: CHAIN_N }, (_, j) => a.map((v, i) => v + (b[i] - v) * j / (CHAIN_N - 1)))
+    g.prev = g.nodes.map(p => p.slice())
+  }
+  const old = g.nodes.map(p => p.slice()), seg = len / (CHAIN_N - 1)
+  for (let j = 1; j < CHAIN_N - 1; j++) {
+    const p = g.nodes[j], was = g.prev[j]
+    g.nodes[j] = p.map((v, i) => v + (v - was[i]) * 0.90 + (i === 1 ? GRAV * dt * dt : 0))
+    g.prev[j] = p
+  }
+  for (let pass = 0; pass < 8; pass++) {
+    g.nodes[0] = a.slice(); g.nodes[CHAIN_N - 1] = b.slice()
+    for (let j = 0; j < CHAIN_N - 1; j++) {
+      const p = g.nodes[j], q = g.nodes[j + 1], d = q.map((v, i) => v - p[i]), n = Math.hypot(...d) || 1, k = (n - seg) / n
+      const fixedA = j === 0, fixedB = j === CHAIN_N - 2
+      for (let i = 0; i < 3; i++) { if (!fixedA) p[i] += d[i] * k * (fixedB ? 1 : 0.5); if (!fixedB) q[i] -= d[i] * k * (fixedA ? 1 : 0.5) }
+    }
+  }
+  g.nodes[0] = a; g.nodes[CHAIN_N - 1] = b.slice()
+  for (let j = 1; j < CHAIN_N - 1; j++) if (chainLine(old[j], g.nodes[j])) {
+    g.nodes[j] = chainHit.slice(0, 3).map((v, i) => v + chainHit[i + 3] * CHAIN_SKIN)
+    g.prev[j] = g.nodes[j].slice()
+  }
+  // A safe straight route is preferable to a slack particle cutting a thin ledge after constraint relaxation.
+  if (g.nodes.some((p, j) => j && chainLine(g.nodes[j - 1], p))) {
+    g.nodes = Array.from({ length: CHAIN_N }, (_, j) => a.map((v, i) => v + (b[i] - v) * j / (CHAIN_N - 1)))
+    g.prev = g.nodes.map(p => p.slice())
+  }
+  return true
+}
+function chainIntent(c, inp, dt) {
+  const S = chainSpec(c)
+  if (!S) return
+  if (c.dead > 0 || seatOf(c)) { chainClear(c); return }
+  if (!isHost) { // the guest predicts the existing swing and reel, using only the host's catch
+    if (c.tie) { c.tie.want = inp.descend ? 1.25 : c.tie.len; c.leap = 0; c.dove = false }
+    return
+  }
+  let g = c.chain
+  if (!g && inp.descend && !c.chainLock && !c.leap && !c.hayT && !objs.some(o => o.heldBy === c.id)) { chainBegin(c); g = c.chain }
+  if (!inp.descend) c.chainLock = false
+  if (!g) return
+  g.age += dt; g.reeling = false
+  if (g.phase === 1) {
+    if (inp.descend) {
+      g.charge = Math.min(1, g.charge + dt / S.full); g.angle += (9 + 29 * g.charge) * dt
+      const hand = chainHand(c), orbit = [c.x + Math.cos(g.angle) * 1.05, c.y + 1.2 + Math.sin(g.angle) * 0.12, c.z + Math.sin(g.angle) * 1.05]
+      const radial = chainSweep(g, hand, orbit), end = radial ? radial.p : orbit
+      const swept = chainSweep(g, g.p, end)
+      chainPlace(g, swept ? swept.p : end)
+    } else {
+      g.phase = 2; g.age = 0; g.start = g.p.slice(); g.range = S.range + S.extra * g.charge
+      const target=chainAimPoint(c,g.range),d=target.map((v,i)=>v-g.p[i]),length=Math.hypot(...d)||1
+      const speed=(hurlOf(c)?.speed ?? S.speed)+S.boost*g.charge
+      g.v=d.map(v=>v/length*speed);g.v[1]-=GRAV*0.12*length/speed*0.5;g.travel=0;g.nodes=[]
+    }
+  } else if (g.phase === 2) {
+    const from = g.p, to = from.map((v, i) => v + g.v[i] * dt)
+    g.v[1] += GRAV * 0.12 * dt
+    const hit = chainSweep(g, from, to)
+    g.travel += chainGap(from, hit ? hit.p : to)
+    const person=chainCharacterHit(c,g,from,to,hit)
+    if(person) chainStrike(c,g,person)
+    else if (hit) chainLodge(c,g,hit.p,hit.ptr)
+    else chainPlace(g,to)
+    if (g.travel >= g.range || g.age > 3 || inp.j) { chainClear(c); c.chainLock = !!inp.descend; return }
+  } else if (g.phase === 3) {
+    if (inp.j || !c.tie) { chainRelease(c); c.chainLock = !!inp.descend; return }
+    if (g.object !== undefined) {
+      const o = objs.find(o => o.id === g.object)
+      if (!o) { chainClear(c); return }
+      const p = rotq(o.q, g.local).map((v, i) => v + [o.x, o.y, o.z][i])
+      chainPlace(g, p)
+      g.surface=rotq(o.q,g.localSurface).map((v,i)=>v+[o.x,o.y,o.z][i]);g.normal=rotq(o.q,g.localNormal);g.incoming=rotq(o.q,g.localIncoming)
+      // Move the hub with its vehicle, retaining the swing's current radius and angular velocity.
+      teleportBody(c.tie.hub, ...p); c.tie.at = p; c.web = webPack(...p)
+    }
+    g.reeling = !!inp.descend
+    c.tie.want = g.reeling ? 1.25 : c.tie.len
+    g.len = c.tie.len
+    if(g.reeling && g.len<=1.45){chainRelease(c);c.chainLock=true;return}
+    // Pump the swing with the same movement input as running. Bullet still owns collision and the radial constraint.
+    const [fx, , fz] = aimDir(inp.yaw, 0)
+    forceVec.setValue((fx * inp.f - fz * inp.r) * 18, 0, (fz * inp.f + fx * inp.r) * 18)
+    c.body.applyCentralForce(forceVec)
+  } else if(g.phase===4||g.phase===5){g.reeling=!!inp.descend;chainLoose(c,g,inp,dt)}
+  if (c.chain && !chainSolve(c, g, dt)) { chainClear(c); c.chainLock = !!inp.descend }
+}
+function chainAfter(c) {
+  const g = c.chain
+  chainCorrect(c)
+  if (g && !chainSolve(c, g, 0)) { chainClear(c); c.chainLock = true }
+}
+function chainPack(c) {
+  const g = c.chain
+  return g ? [g.phase, r2(g.charge), r2(g.age), r2(g.len), ...g.p.map(r2), ...g.v.map(r2), +g.reeling, ...g.nodes.flat().map(r2), +(g.phase===3), ...(g.surface||[0,0,0]).map(r2), ...(g.normal||[0,1,0]).map(r4), ...(g.incoming||[0,0,-1]).map(r4), g.lodgeId||0, r2(g.impactSpeed||0), g.object??-1] : 0
+}
+function chainRead(v) {
+  return Array.isArray(v) && v.length === 24 + CHAIN_N * 3 && v.every(Number.isFinite) && [1, 2, 3, 4, 5].includes(v[0]) &&
+    [0,1].includes(v[62]) && (!v[62] || Math.hypot(...v.slice(66,69)) > 0.8 && Math.hypot(...v.slice(66,69)) < 1.2) && v[1] >= 0 && v[1] <= 1 && v[2] >= 0 && v[3] >= 0 && v[3] < 100 && v.slice(4, 10).every(n => Math.abs(n) < 40000) && v.slice(11, 62).every(n => Math.abs(n) < 40000) ? v : null
+}
+function chainBetween(q, p, k) {
+  p = chainRead(p); q = chainRead(q)
+  return !p ? null : !q || q[0] !== p[0] ? p : p.map((v, i) => [0,10,62,72,74].includes(i) ? v : q[i] + (v - q[i]) * k)
+}
+
+// A click starts the haymaker; its impact is 420 ms later even if released. Damage and the 1.3 s recovery remain unchanged.
+function haymakerCharge(c, dt, inp) {
+  const G = primaryOf(c)
+  if (!G?.hayWind) return chargeUp(c, 'altCharge', G, primaryId(c), c.dead <= 0 && !!inp.alt, dt)
+  if (c.dead > 0 || seatOf(c) || c.leap || c.springT > SPRING_TAP || c.chain?.phase === 1) { c.hayT = c.hayAge = 0; c.hayReady = false; return null }
+  c.hayAge = c.hayAge > 0 && c.hayAge < G.rate ? c.hayAge + dt : 0
+  if (c.hayT > 0) { c.hayT = Math.max(0, c.hayT - dt); if (!c.hayT) c.hayReady = true }
+  if (!inp.alt || c.hayT || c.hayReady || c.spCool > 0) return null
+  c.hayT = G.hayWind; c.spCool = G.rate; c.hayAge = 0.001
+  return [r2(c.x), r2(eyeOf(c)), r2(c.z), r2(c.x), r2(eyeOf(c)), r2(c.z), primaryId(c), 0]
+}
+
+// Charged block contact uses the same damage, knockback, protection and kill-credit path as the other attacks.
+let chainSerial = 0, chainMarks = [], chainMarksAt = -Infinity, chainMarksRemote = []
+const blockAttack = () => GUNS[gunNamed('Cinderblock')]
+const chainEligible = (c,v) => v !== c && v.dead <= 0 && !(v.prot > 0) && (gameMode !== 'waves' || sideOf(v) !== sideOf(c))
+// Aim from the whirling block to the actual reticle target, rather than to a point behind a nearby victim.
+function chainAimPoint(c,range) {
+  const [yaw,pitch]=aimAngles(c),dir=aimDir(yaw,pitch),eye=eyeAt(c)
+  let distance=staticRay(...eye,...dir,range,null,chainMask())
+  for(const v of players.values())if(chainEligible(c,v))distance=Math.min(distance,rayCapsule(...eye,...dir,v))
+  if(c.aimD>0){const r=camRay(c,c.yaw,c.pitch),d=clamp(c.aimD,r.near,r.near+range),p=[r.x+r.dx*d,r.y+r.dy*d,r.z+r.dz*d];distance=Math.min(distance,chainGap(eye,p))}
+  return eye.map((v,i)=>v+dir[i]*Math.max(1,distance))
+}
+function chainCharacterHit(c, g, from, to, wall) {
+  const d=to.map((v,i)=>v-from[i]),length=Math.hypot(...d);if(!length)return null
+  const dir=d.map(v=>v/length),sweep=sweepHits(g,...from,...to,G_CAPSULE),fractions=sweep.get_m_hitFractions(),bodies=sweep.get_m_hitCollisionObjects()
+  let best=wall?chainGap(from,wall.p)/length:1,hit=null
+  for(let i=0;i<fractions.size();i++){
+    const f=fractions.at(i),ptr=A.getPointer(bodies.at(i)),v=[...players.values()].find(v=>v.body&&A.getPointer(v.body)===ptr)
+    if(v&&chainEligible(c,v)&&f<=best){best=f;hit=v}
+  }
+  return hit&&{victim:hit,dir,p:from.map((v,i)=>v+d[i]*Math.max(0,best-.01))}
+}
+function chainStrike(c,g,hit) {
+  const speed = Math.hypot(...g.v), G = blockAttack(), scale = clamp(speed/G.refSpeed,G.minScale,1), P = {...G,dmg:G.dmg*scale,knock:G.knock*scale}
+  strike(c,hit.victim,P,...hit.dir)
+  if (downed(hit.victim)) c.blockKills = [...c.blockKills||[],hit.victim]
+  for (const f of impactFx(hit.victim,gunNamed('Cinderblock'),hit.victim.dead>0)) {f.push(c.id);tracers.push(f)}
+  chainImpact(c,hit.p,hit.dir.map(v=>-v),speed,2)
+  chainPlace(g,hit.p);g.phase=4;g.age=0;g.len=Math.max(1,chainGap(chainHand(c),g.p));g.v=hit.dir.map(v=>v*speed*0.08);g.nodes=[]
+}
+// A swept sphere stopped before the face. Cast from that safe centre to find the actual plane and outward normal.
+function chainSurface(p, incoming) {
+  const n = Math.hypot(...incoming)||1, dir = incoming.map(v=>v/n), h=[]
+  let best=Infinity, out=null
+  for(const d of [dir,[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
+    const distance=staticRay(...p,...d,CHAIN_RADIUS*2,h,chainMask())
+    if(h.length&&distance<best){best=distance;out={point:h.slice(0,3),normal:h.slice(3)}}
+  }
+  return out || {point:p.map((v,i)=>v+dir[i]*CHAIN_RADIUS),normal:dir.map(v=>-v)}
+}
+function chainImpact(c,p,n,speed,mode,id=0) {
+  tracers.push([...p.map(r2),...n.map(r2),gunNamed('Cinderblock'),10,c.id,0,r2(speed),id,mode])
+}
+function chainMark(g) {
+  const G=blockAttack(), id=++chainSerial, point=g.localSurface||g.surface, normal=g.localNormal||g.normal, incoming=g.localIncoming||g.incoming
+  const mark=[id,tickAt||now(),...point.map(r2),...normal.map(r4),...incoming.map(r4),r2(g.impactSpeed),g.object??-1]
+  const nearby=chainMarks.filter(m=>m[12]===mark[12]&&chainGap(m.slice(2,5),mark.slice(2,5))<G.scarArea)
+  const drop=new Set(nearby.slice(0,Math.max(0,nearby.length-G.scarAreaMax+1)).map(m=>m[0]))
+  chainMarks=chainMarks.filter(m=>!drop.has(m[0]));chainMarks.push(mark)
+  if(chainMarks.length>G.scarMax)chainMarks.splice(0,chainMarks.length-G.scarMax)
+  g.lodgeId=id
+}
+function chainLodge(c,g,safe,ptr) {
+  const hit=chainSurface(safe,g.v), speed=Math.hypot(...g.v), normal=hit.normal, point=hit.point
+  const anchor=point.map((v,i)=>v+normal[i]*0.18)
+  if(chainGap(chainHand(c),anchor)<0.9||chainLine(chainHand(c),anchor)){chainClear(c);return}
+  g.incoming=g.v.map(v=>v/(speed||1));g.normal=normal;g.surface=point;g.impactSpeed=speed
+  chainPlace(g,anchor);g.phase=3;g.age=0;g.v=[0,0,0];g.len=chainGap([c.x,c.y,c.z],anchor);g.nodes=[]
+  const o=objs.find(o=>A.getPointer(o.body)===ptr)
+  if(o){const inverse=o.q.map((v,i)=>i<3?-v:v),base=[o.x,o.y,o.z];g.object=o.id
+    g.local=rotq(inverse,anchor.map((v,i)=>v-base[i]));g.localSurface=rotq(inverse,point.map((v,i)=>v-base[i]));g.localNormal=rotq(inverse,normal);g.localIncoming=rotq(inverse,g.incoming)
+    const G=blockAttack(),k=clamp(speed/G.refSpeed,G.minScale,1);strikeObject(c,o,{...G,dmg:G.dmg*k,knock:G.knock*k},...g.incoming,...point)
+  }
+  chainMark(g);chainImpact(c,point,normal,speed,0,g.lodgeId)
+  tie(c,webPack(...anchor),anchor);if(c.tie)c.tie.want=c.tie.len
+  c.leap=0;c.dove=false;c.springT=0
+}
+function chainRelease(c) {
+  const g=c.chain;if(!g)return
+  if(g.phase===3)chainImpact(c,g.surface,g.normal,g.impactSpeed,1,g.lodgeId)
+  untie(c);g.phase=5;g.age=0;c.flung=true
+}
+function chainLoose(c,g,inp,dt) {
+  const hand=chainHand(c)
+  if(g.phase===4) {
+    if(inp.j){chainRelease(c);return}
+    if(inp.descend)g.len=Math.max(0.5,g.len-chainSpec(c).reel*dt)
+    g.v[1]+=GRAV*dt;let p=g.p.map((v,i)=>v+g.v[i]*dt),d=p.map((v,i)=>v-hand[i]),n=Math.hypot(...d)
+    if(n>g.len){d=d.map(v=>v/n);p=hand.map((v,i)=>v+d[i]*g.len);const along=g.v.reduce((s,v,i)=>s+v*d[i],0);g.v=g.v.map((v,i)=>(v-d[i]*along)*0.98)}
+    const hit=chainSweep(g,g.p,p);if(hit){chainPlace(g,hit.p);g.v=[0,0,0]}else chainPlace(g,p)
+    if(g.len<0.8){chainClear(c);return}
+  }else{
+    const n=chainGap(hand,g.p),direction=g.age<0.14&&g.normal?g.normal:hand.map((v,i)=>(v-g.p[i])/(n||1)),step=(g.age<0.14?3:32)*dt
+    const p=g.p.map((v,i)=>v+direction[i]*Math.min(n,step))
+    const hit=g.age>0.14&&chainSweep(g,g.p,p)
+    if(hit||n<0.7||g.age>3){chainClear(c);return}chainPlace(g,p)
+  }
+}
+function chainMarksTake(rows,t) {
+  if(!Number.isFinite(t)||t<=chainMarksAt||!Array.isArray(rows)||rows.length>32||!rows.every(m=>Array.isArray(m)&&m.length===13&&m.every(Number.isFinite)&&Number.isSafeInteger(m[0])&&m[0]>0&&m.slice(2,5).every(v=>Math.abs(v)<40000)&&Number.isInteger(m[12])&&m[12]>=-1&&m[12]<OBJ_MAX&&m[11]>=0&&m[11]<200&&Math.hypot(...m.slice(5,8))>0.8&&Math.hypot(...m.slice(5,8))<1.2))return
+  chainMarksAt=t;chainMarksRemote=rows
+}
+
+// Remove the small radial stretch allowed by Bullet's iterative point constraint, with a capsule sweep before correcting.
+// The guest runs the same correction for its predicted tether; tangential momentum remains untouched.
+function chainCorrect(c) {
+  if(!chainSpec(c)||!c.tie||!c.body)return
+  const a=c.tie.at,d=[c.x-a[0],c.y-a[1],c.z-a[2]],n=Math.hypot(...d),extra=n-c.tie.len
+  if(extra<=.10)return
+  const u=d.map(v=>v/n),to=[c.x,c.y,c.z].map((v,i)=>v-u[i]*(extra-.04)),hit=sweepHits(c,c.x,c.y,c.z,...to,chainMask()),fs=hit.get_m_hitFractions()
+  let k=1;for(let i=0;i<fs.size();i++)k=Math.min(k,fs.at(i))
+  if(k<.02)return
+  const p=[c.x,c.y,c.z].map((v,i)=>v+(to[i]-v)*k),v=c.body.getLinearVelocity(),vel=[v.x(),v.y(),v.z()],out=Math.max(0,vel.reduce((s,v,i)=>s+v*u[i],0))
+  teleportBody(c.body,...p,null,vel.map((v,i)=>v-u[i]*out));world.updateSingleAabb(c.body);syncFromBody(c)
+}
+
 // A capsule cannot turn: it hangs by a point-to-point constraint from a hub that turns but never moves (inertia keeps it stiff).
 let hubShape = null
 const SPRING_TAP = 0.15   // s: a spring row's jump held this long or less is its plain jump
@@ -2922,9 +3230,9 @@ const FLING_ACC = 25       // m/s² the stick steers it by after, until it lands
 const ZIP_SPEED = 30       // m/s a zip line pulls it along
 const zipLines = []        // the host's zips shot this tick: [id, fx row, ms], its line from the eye to where it ties (kind 9)
 const WEB_CLEAR = 3, WEB_REEL = 12      // m a swing's lowest point clears the ground by (over parked vehicles); m/s a web reels in at
-function tie(c, web) {
+function tie(c, web, point) {
   untie(c)
-  const at = webPoint(web)
+  const at = point || (web && chainSpec(c) && c.chainNet?.[0] === 3 ? c.chainNet.slice(4, 7) : webPoint(web))
   if (!at || !c.body) return
   hubShape ??= new A.btSphereShape(0.1)
   const { body: hub, ms } = makeBody(hubShape, 1, at[0], at[1], at[2], null, [4, 4, 4]), pa = new A.btVector3(c.x - at[0], c.y - at[1], c.z - at[2])
@@ -2947,7 +3255,7 @@ function reel(c, dt) {
   const t = c.tie
   if (!t || t.len <= t.want) return
   const a = t.at, d = Math.hypot(c.x - a[0], c.y - a[1], c.z - a[2]) || 1
-  t.len = Math.max(t.want, t.len - WEB_REEL * dt)
+  t.len = Math.max(t.want, t.len - (chainSpec(c)?.reel || WEB_REEL) * dt)
   // the pivot is in the hub's frame, which has turned with the swing
   const q = t.hub.getWorldTransform().getRotation(), [px, py, pz] = rotq([-q.x(), -q.y(), -q.z(), q.w()], [(c.x - a[0]) * t.len / d, (c.y - a[1]) * t.len / d, (c.z - a[2]) * t.len / d])
   posVec.setValue(px, py, pz); t.k.setPivotA(posVec)
@@ -3082,13 +3390,17 @@ function applyIntent(c, inp, dt) {
     if (c.wallRun) turnBody(c, false, c.yaw, c.x, c.y - c.h, c.z)
     const team = GAME.death.down(c, dt)
     c.dead -= dt
-    untie(c)
+    moveReset(c)
     c.body.setLinearVelocity(zeroVec); c.dove = false
     if (c.dead <= 0) GAME.death.up(c, team)
     return
   }
   groundCheck(c)
   c.air = !c.grounded
+  c.smashCam = Math.max(0, (c.smashCam || 0) - dt)
+  if (c.leap && c.air) c.leapAir = true
+  if (c.leap && c.leapAir && c.grounded) { c.slam = Math.max(1, -c.fallVy); c.slamGun = gunNamed('Leap-smash'); c.smashCam = 0.7; c.leap = 0; c.dove = false }
+  chainIntent(c, inp, dt)
   if (c.dove && c.grounded) c.slam = -c.fallVy, c.slamGun = c.dove, c.dove = false
   if (c.air) c.fallVy = c.vy
 
@@ -3099,13 +3411,13 @@ function applyIntent(c, inp, dt) {
   const m = Math.hypot(wx, wz)
   if (m > 1) { wx /= m; wz /= m }
 
-  if (c.dove && !c.bot && !(c.dove === primaryId(c) ? inp.alt : inp.fire && c.gun === c.dove)) c.dove = false
+  if (c.dove && !c.leap && !c.bot && !(c.dove === primaryId(c) ? inp.alt : inp.fire && c.gun === c.dove)) c.dove = false
   let vy = c.vy
   const tank = tankOf(c), J = tank > 0 && jetOf(c)
   const wasWall = c.wall
   c.wall = !J && GAME.participantOf(c)?.climb && m > 0.5 ? wallPush(c, wx, wz) : 0
   if (!c.wall && wasWall && !c.grounded && !inp.j && !c.bot) c.wall = wallPush(c, -c.wnx, -c.wnz)
-  if (c.grounded || c.wall) untie(c)
+  if ((c.grounded || c.wall) && !chainSpec(c)) untie(c)
   if (c.grounded || c.wall || c.tie) c.flung = false
   if (!c.ceil) { if (!J && !c.bot && GAME.participantOf(c)?.climb && !c.grounded && !inp.j && (c.wall > 0 || c.vy >= 0) && ceilAbove(c.x, c.y + c.h, c.z, c.r)) ceilTurn(c, true, inp.yaw) }
   else if (inp.j || !ceilAbove(c.x, c.y, c.z, c.r)) { if (inp.j) c.jLock = true; ceilTurn(c, false, c.yaw) }     // latched: no web
@@ -3144,13 +3456,15 @@ function applyIntent(c, inp, dt) {
   } else {
     if (c.flying) c.flying = false
     // one jump a take-off: latched until airborne, or grounded and not rising (a swinger: until let go)
-    const S = !seatOf(c) && GAME.participantOf(c)?.swing, held = S && inp.j && c.jLock && !c.grounded, fresh = inp.j && !c.jLock    // seated, jump is the handbrake
+    const S = !seatOf(c) && !chainSpec(c) && GAME.participantOf(c)?.swing, held = S && inp.j && c.jLock && !c.grounded, fresh = inp.j && !c.jLock    // seated, jump is the handbrake
     if (!c.grounded || vy <= 0) c.jLock = false
     const P = (!c.bot || c.ai?.doCharge) && !seatOf(c) && GAME.participantOf(c)?.spring        // a bot charges only when its AI holds one
     if (!c.grounded) c.springT = 0
     c.jAir = !!inp.j && (c.jAir || !c.grounded)     // held since the air: not a ground press
-    if (P && c.grounded && inp.j && (!c.jAir || c.ai?.doCharge)) { c.springT = (c.springT || 0) + dt; c.jLock = true }
-    else if (P && c.springT) { vy = (1 + (P.k - 1) * clamp((c.springT - SPRING_TAP) / (P.full - SPRING_TAP), 0, 1)) * stat(c, 'jump', c.jump); c.springT = 0; c.jLock = true }
+    if (P && !c.tie && c.grounded && inp.j && (!c.jAir || c.ai?.doCharge)) { c.springT = (c.springT || 0) + dt; c.jLock = true }
+    else if (P && c.springT) { const q = clamp((c.springT - SPRING_TAP) / (P.full - SPRING_TAP), 0, 1); vy = (1 + (P.k - 1) * q) * stat(c, 'jump', c.jump)
+      if (c.springT > SPRING_TAP && GAME.participantOf(c).leapSmash) leapStart(c, inp, q)
+      c.springT = 0; c.jLock = true }
     else if (!P && inp.j && c.grounded && !c.jLock) { vy = stat(c, 'jump', c.jump); c.jLock = true }
     else if (fresh && (c.wall || wasWall)) { vy = (GAME.participantOf(c).spring?.k || 1) * stat(c, 'jump', c.jump); c.jLock = true; if (m < 0.1) wx = c.wnx, wz = c.wnz }
     else if (cling) vy = up
@@ -3164,6 +3478,7 @@ function applyIntent(c, inp, dt) {
   if (padTouching(c.body)) { vy = Math.max(vy, JUMP_V); if (J) c.jLock = false }
   const D = [inp.alt && primaryOf(c), inp.fire && !objs.some(o => o.heldBy === c.id) && GUNS[c.gun]].find(G => G?.dive && !holdsFire(c, G))
   if (D && c.air && (vy < 0 || J)) c.dove = GUNS.indexOf(D)
+  if (c.leap && c.air && vy <= 0) c.dove = gunNamed('Leap-smash')
   if (c.dove) { const V = GUNS[c.dove].dive; vy = Math.min(vy, -V.speed) - (V.pull || 0) * dt }
 
   // a shove: decaying floor on speed along the throw; across it untouched
@@ -3189,6 +3504,10 @@ function applyIntent(c, inp, dt) {
   else if (c.flung) {
     const dx = mx - c.vx, dz = mz - c.vz, d = Math.hypot(dx, dz), k = d > FLING_ACC * dt ? FLING_ACC * dt / d : 1
     mx = c.vx + dx * k; mz = c.vz + dz * k
+  }
+  if (c.leap) {
+    if (m > 0.1) { const k = Math.min(1, dt * 1.5), pace = 5 + (c.leap - 0.001) * 17; c.leapVX += (wx * pace - c.leapVX) * k; c.leapVZ += (wz * pace - c.leapVZ) * k }
+    mx = c.leapVX; mz = c.leapVZ
   }
   if (c.ceil) [mx, vy, mz] = surfV(0, -1, 0, wx, wz, GAME.participantOf(c).climb)
   if (c.springT > 0 && c.grounded) { const k = stat(c, 'move', GAME.participantOf(c).run ?? c.speed * RUN) / 2; mx = wx * k; mz = wz * k }
@@ -4105,7 +4424,7 @@ function rayCapsule(ox, oy, oz, dx, dy, dz, c) {
 // ---------------------------------------------------------------- camera
 // m. Looks CAM.aim along the firing ray: screen centre = where the shot goes. far: furthest drawn.
 const CAM = { back: 4.3, up: 0.3, aim: 40, pad: 0.28, far: 320,
-              fadeNear: 1.0, fadeFar: 2.2 }
+              fadeNear: 1.9, fadeFar: 2.8 }
 // short of pi/2, where lookAt's forward and up go parallel
 const PITCH_MAX = 1.54
 
@@ -4125,13 +4444,15 @@ function heldFade(r, me, o) {
 }
 function camRay(me, yaw, pitch, R = heldR(me)) {
   const [dx, dy, dz] = aimDir(yaw, pitch)
+  const settle = clamp((me.smashCam || 0) / 0.5, 0, 1), landing = settle * settle * (3 - 2 * settle), move = GAME.participantOf(me)?.leapSmash ? me.leap ? 1 : me.smashCam > 0 ? landing : Math.min(0.3, (me.springT || 0) / 1.15 * 0.3) : 0
+  const back = CAM.back + 3.2 * move + 3.5 * landing, up = CAM.up + 2.1 * move + 2.4 * landing, aim = CAM.aim - 22 * move - 14 * landing
   const eyeY = eyeOf(me)
   // pivot >= 1 m over the feet; bodies under 0.9 m get the camera closer
   const px = me.x, py = Math.max(me.y + me.h * 1.25, me.y - me.h - me.r + 1), pz = me.z, k = clamp((me.h + me.r) / 0.45, 0.5, 1)
   const e = 1.6 * R, top = me.y + me.h + me.r
-  const ox = (-dx * CAM.back + Math.sin(yaw) * e) * k
-  const oy = Math.min((-dy * CAM.back + top + CAM.up - py) * k, R && pitch > 0 ? top - 0.3 - py : Infinity)
-  const oz = (-dz * CAM.back + Math.cos(yaw) * e) * k
+  const ox = (-dx * back + Math.sin(yaw) * e) * k
+  const oy = Math.min((-dy * back + top + up - py) * k, R && pitch > 0 ? top - 0.3 - py : Infinity)
+  const oz = (-dz * back + Math.cos(yaw) * e) * k
   const len = Math.hypot(ox, oy, oz) || 1
   const nx = ox / len, ny = oy / len, nz = oz / len
   const t = camBlock(px, py, pz, nx, ny, nz, len)
@@ -4139,10 +4460,10 @@ function camRay(me, yaw, pitch, R = heldR(me)) {
   let cy = py + ny * t
   if (cy < FLOOR_TOP + 0.35) cy = FLOOR_TOP + 0.35
   const x = px + nx * t, z = pz + nz * t
-  const ax = me.x + dx * CAM.aim - x, ay = eyeY + dy * CAM.aim - cy, az = me.z + dz * CAM.aim - z
+  const ax = me.x + dx * aim - x, ay = eyeY + dy * aim - cy, az = me.z + dz * aim - z
   const n = Math.hypot(ax, ay, az) || 1
   const fx = ax / n, fy = ay / n, fz = az / n
-  return { x, y: cy, z, dx: fx, dy: fy, dz: fz, t, aim: [me.x + dx * CAM.aim, eyeY + dy * CAM.aim, me.z + dz * CAM.aim],
+  return { x, y: cy, z, dx: fx, dy: fy, dz: fz, t, aim: [me.x + dx * aim, eyeY + dy * aim, me.z + dz * aim],
            near: Math.max(0, (me.x - x) * fx + (eyeY - cy) * fy + (me.z - z) * fz) }
 }
 
@@ -4249,7 +4570,7 @@ function updateCamera(me, inp, cam, firstPerson) {
   const r = camRay(me, inp.yaw, inp.pitch, e.r)
   cam.position.set(r.x, r.y, r.z)
   cam.lookAt(...r.aim)
-  const fade = clamp((r.t - CAM.fadeNear) / (CAM.fadeFar - CAM.fadeNear), 0.15, 1)
+  const fade = THREE.MathUtils.smoothstep(r.t, CAM.fadeNear, CAM.fadeFar)
   return { dist: r.t, hideSelf: false, fade, ray: r }
 }
 
@@ -5314,7 +5635,7 @@ function resolveShot(shooter, targets, onKill, viewT, G, gunId) {
 }
 
 function fireHitscan(shooter, targets, onKill, viewT) {
-  if (shooter.dead > 0 || shooter.cool > 0 || holdsFire(shooter)) return []
+  if (shooter.dead > 0 || shooter.cool > 0 || shooter.hayT > 0 || shooter.springT > SPRING_TAP || shooter.leap || shooter.chain?.phase === 1 || holdsFire(shooter)) return []
   const G = GUNS[shooter.gun]
   const gunId = shooter.gun
   if (shooter.ammo <= 0) { shooter.gun = 0; shooter.ammo = Infinity; return [] }
@@ -5346,7 +5667,7 @@ function chargeUp(c, k, G, gun, held, dt) {
   return [r2(ox), r2(oy), r2(oz), r2(ox), r2(oy), r2(oz), gun, 0]
 }
 const stepCharge = (c, dt, inp) => chargeUp(c, 'charge', GUNS[c.gun], c.gun, c.dead <= 0 && !!(inp && inp.fire), dt)
-const stepAltCharge = (c, dt, inp) => chargeUp(c, 'altCharge', primaryOf(c), primaryId(c), c.dead <= 0 && !!(inp && inp.alt), dt)
+const stepAltCharge = haymakerCharge
 function stepBurst(c, dt) {
   if (holdsFire(c)) c.burstLeft = 0
   if (!(c.burstLeft > 0)) return false
@@ -5420,8 +5741,9 @@ function gibFx(v, gunId) {
 
 function firePrimary(c, targets, onKill, viewT, v) {
   const R = primaryOf(c), P = R && dived(R, v)
-  if (!P || P.kind === 'dash' || c.dead > 0 || c.spCool > 0 || !(c.sp > 0) || holdsFire(c, P) || P.windup && !(c.altCharge >= P.windup)) return []
-  c.spCool = stat(c, 'rate', P.rate * profRate(c, P.name))
+  if (!P || P.kind === 'dash' || c.dead > 0 || (P.hayWind ? !c.hayReady : c.spCool > 0) || !(c.sp > 0) || holdsFire(c, P) || P.windup && !(c.altCharge >= P.windup)) return []
+  if (P.hayWind) c.hayReady = false
+  else c.spCool = stat(c, 'rate', P.rate * profRate(c, P.name))
   if (c.sp !== Infinity && !(Math.random() < profExtra(c, P.name, 'free'))) {
     c.sp--
     if (c.spLeft) c.spLeft[CHARS[c.cid].name] = c.sp
@@ -5445,6 +5767,20 @@ function deliver(c, P, gunId, aimed, onKill) {
 
   let hits = 0
   if (P.kind === 'radius') return blast(c, aimed, P, pRange, gunId, onKill)
+  if (P.kind === 'arc') {
+    for (const v of aimed) {
+      if (shut(v)) continue
+      const bx = v.x - c.x, by = v.y - c.y, bz = v.z - c.z, n = Math.hypot(bx, by, bz) || 1
+      if (n > pRange || Math.abs(by) > c.h + c.r + v.r || (bx * dx + bz * dz) / (Math.hypot(bx, bz) || 1) < 0.35) continue
+      if (wallAt(ox, oy, oz, bx / n, by / n, bz / n, n) < n - v.r) continue
+      down(v, bx / n, 0.35, bz / n); hits++
+    }
+    const a = aimAngles(c)[0], y = eyeOf(c)
+    for (let j = 0; j < 8; j++) { const u = a - 1.2 + j * 0.3, v = u + 0.3
+      fx.push([r2(c.x - Math.sin(u) * pRange), r2(y), r2(c.z - Math.cos(u) * pRange),
+        r2(c.x - Math.sin(v) * pRange), r2(y), r2(c.z - Math.cos(v) * pRange), gunId, +!!hits]) }
+    return fx
+  }
 
   let reach = wallAt(ox, oy, oz, dx, dy, dz, pRange), first = null, block = null
   for (const o of objs) { const t = rayObject(ox, oy, oz, dx, dy, dz, o); if (t < reach) { reach = t; block = [t, o] } }
@@ -7513,14 +7849,15 @@ function streetGround(street, walks = [], into) {
 }
 // uploads only the appended range; capacity doubles when full
 function groundAdd(m, o) {
-  const g = m.geometry, at = g.drawRange.count, n = o.p.length / 3, N = new Float32Array(n * 3), v = new THREE.Vector3(), w = new THREE.Vector3()
-  if (!g.attributes.position || at + n > g.attributes.position.count) for (const [k, s] of [['position', 3], ['normal', 3], ['uv', 2]]) {
+  const g = m.geometry, at = g.drawRange.count, n = o.p.length / 3, N = new Float32Array(n * 3), v = new THREE.Vector3(), w = new THREE.Vector3(), fields = [['position',3],['normal',3],['uv',2],...g.attributes.color ? [['color',3]] : []]
+  if (!g.attributes.position || at + n > g.attributes.position.count) for (const [k, s] of fields) {
     const a = new Float32Array(Math.ceil(Math.max(4096, (at + n) * (at ? 2 : 1.3)) / 3) * 3 * s)
     if (g.attributes[k]) a.set(g.attributes[k].array.subarray(0, at * s))
     g.setAttribute(k, dyn(a, s)) }
   for (let i = 0; i < n * 3; i += 9) { const a = new THREE.Vector3().fromArray(o.p, i)
     v.fromArray(o.p, i + 3).sub(a).cross(w.fromArray(o.p, i + 6).sub(a)).normalize(); for (let k = 0; k < 3; k++) v.toArray(N, i + k * 3) }
   for (const [k, s, src] of [['position', 3, o.p], ['normal', 3, N], ['uv', 2, o.uv]]) { const a = g.attributes[k]; a.array.set(src, at * s); a.addUpdateRange(at * s, n * s); a.needsUpdate = true }
+  if(g.attributes.color){const a=g.attributes.color;a.array.set(o.color||new Float32Array(n*3).fill(1),at*3);a.addUpdateRange(at*3,n*3);a.needsUpdate=true}
   g.setDrawRange(0, at + n)
 }
 let cityGround = null, groundStale = false      // the City's two ground meshes, which a grown chunk's sidewalks join
@@ -7640,7 +7977,7 @@ function inkPrepare(root) {
       inkPatched.add(m)
       const before = m.onBeforeCompile, key = m.customProgramCacheKey(), lit = !m.isMeshBasicMaterial && !m.isSpriteMaterial
       const facade = m === faustState?.materials?.facade || m === faustState?.materials?.far
-      const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe
+      const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe, groundLight = !!m.userData.inkGroundLight
       m.onBeforeCompile = function(shader, r) {
         before.call(this, shader, r)
         Object.assign(shader.uniforms, inkUniforms)
@@ -7733,7 +8070,7 @@ function inkPrepare(root) {
           float grey = inkLuma(outgoingLight);
           float red = step(outgoingLight.g * 2.0 + 0.08, outgoingLight.r);
           float warm = step(outgoingLight.b * 1.4 + 0.08, outgoingLight.r) * step(outgoingLight.b * 1.2, outgoingLight.g);
-          outgoingLight = mix(vec3(grey), outgoingLight, max(red, warm));
+          outgoingLight = ${groundLight ? 'vec3(grey)' : 'mix(vec3(grey), outgoingLight, max(red, warm))'};
         `
         if (lit) shader.fragmentShader = shader.fragmentShader
           .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n vec3 inkSurfaceNormal = normal;')
@@ -7756,7 +8093,7 @@ function inkPrepare(root) {
             gl_FragColor.rgb *= 1.0 - edgeFade;
           }`)
       }
-      m.customProgramCacheKey = () => key + '|ink-4|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade)
+      m.customProgramCacheKey = () => key + '|ink-4|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight)
       m.needsUpdate = true
     }
   })
@@ -8094,11 +8431,14 @@ function* drawSteps(list, city, clip = []) {
 function ghostMaterial(material) {
   const before = material.onBeforeCompile, key = material.customProgramCacheKey()
   material.userData.ghostDither = true
+  const nearFade = material.userData.nearFade ||= { value: false }
   material.onBeforeCompile = function(shader, renderer) {
     before.call(this, shader, renderer)
+    shader.uniforms.nearFade = nearFade
+    shader.fragmentShader = 'uniform bool nearFade;\n' + shader.fragmentShader
     // All ghost parts must discard the same pixels and write depth or far-side faces bleed through.
     shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
-      if (opacity < 1.0) {
+      if (opacity < 1.0 && !nearFade) {
         float gx = floor(gl_FragCoord.x), gy = floor(gl_FragCoord.y), level = 0.0;
         for (int i = 0; i < 3; i++) {
           level = 4.0 * level + mod(2.0 * mod(gx, 2.0) + 3.0 * mod(gy, 2.0), 4.0);
@@ -8107,20 +8447,22 @@ function ghostMaterial(material) {
         if (opacity <= (level + 0.5) / 64.0) discard;
       }`)
   }
-  material.customProgramCacheKey = () => key + '|ghost-dither-1'
+  material.customProgramCacheKey = () => key + '|ghost-dither-or-alpha-2'
   material.needsUpdate = true
 }
 const ghostOf = a => a.mesh.userData.ghostOp ?? 1          // ghost opacity, 1 = solid
-function ghost(obj, prot, fade) {
+function ghost(obj, prot, fade, cameraFade = false) {
   const op = Math.min(prot > 0 ? 0.4 : 1, fade === undefined ? 1 : fade)
-  if (obj.userData.ghostOp === op) return
-  obj.userData.ghostOp = op
+  const soft = cameraFade && fade < 1
+  if (obj.userData.ghostOp === op && obj.userData.ghostSoft === soft) return
+  obj.userData.ghostOp = op; obj.userData.ghostSoft = soft
   obj.traverse(n => {
     if (!n.material) return
     if (op < 1 && !n.material.userData.ghostDither) ghostMaterial(n.material)
-    n.material.transparent = false
+    if (n.material.userData.nearFade) n.material.userData.nearFade.value = soft
+    if (n.material.transparent !== soft) { n.material.transparent = soft; n.material.needsUpdate = true }
     n.material.opacity = op
-    n.material.depthWrite = true
+    n.material.depthWrite = !soft
   })
 }
 
@@ -9184,6 +9526,7 @@ function rigPose(R, clip, time, w, mask) {
 }
 function rigAnimate(a, want, dt, t) {
   const R = a.rig, M = R.M, K = M.clips, H = 2 * (a.spec.h + a.spec.r), hold = a.hold, v = a.v || 0
+  restoreMovePose(R)
   R.frame++
   if (camera) {      // outside the avatars' group (a body being prepared) it is LOD0
     const d = a.mesh.parent === avatarGroup ? a.mesh.position.distanceTo(camera.position) : 0, lod = d < M.lods[0] ? 0 : d < M.lods[1] ? 1 : 2
@@ -9191,9 +9534,14 @@ function rigAnimate(a, want, dt, t) {
   }
   // the legs' clip
   let name = K.idle, rate = 1, once = false, fade = 0.2
-  const airborne = want === 2 || want === 3
-  if (want === 'crouch') R.charged = t
+  const airborne = want === 2 || want === 3 || a.moveState === 2
+  if (want === 'crouch' || want === 'crouchRun' || a.moveState === 2) R.charged = t
   if (a.dying >= 0) { name = K.death; once = true; fade = 0.1 }
+  else if (a.chainState?.[0] === 1) { name = 'block_whirl'; rate = 0.8 + a.chainState[1] * 2.6; fade = 0.1 }
+  else if (a.chainState?.[0] === 2 && a.chainState[2] < 0.5) { name = 'block_throw'; once = true; fade = 0.05 }
+  else if (a.chainState?.[0] === 3) { name = a.chainState[10] ? 'chain_reel' : 'chain_hang'; fade = 0.1 }
+  else if (a.chainState?.[0] >= 4) { name = 'chain_reel'; fade = 0.1 }
+  else if (a.moveState === 2) name = K.leap
   else if (hold === 'sit') name = a.seat === 0 ? K.drive : K.sit
   else if (hold === 'swing' || hold === 'climb' || hold === 'ceiling' || want === 4) name = K.climb
   else if (hold === 'dive' || want === 6) name = K.dive
@@ -9229,11 +9577,15 @@ function rigAnimate(a, want, dt, t) {
   const upper = hold === 'lift' ? rigClip(M, K.lift) : a.held?.visible && !(a.dying >= 0) ? rigClip(M, K.aim) : null
   if (upper) rigPose(R, upper, (t / 1000) % upper.duration, 1, RIG_UPPER)
   // punches: the gun's punch kind, a combo for jabs (a gun without one: its shot); then hit reactions
+  const wind = GUNS[a.chargeGun]
+  if (wind?.hayWind && a.chargeAt !== R.windSeen && t - a.chargeAt < wind.hayWind * 1000) {
+    R.windSeen = a.chargeAt; const clip = rigClip(M, 'haymaker'); if (clip) R.over = { clip, t0: 0, at: a.chargeAt, speed: 1.4 }
+  }
   const G = GUNS[a.shotGun], list = G && (M.punches[G.punch] || G.melee && M.punches.melee)
   if (list && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 400) {
     R.shotSeen = a.shotAt
     const [clipName, t0] = list[(R.combo = (R.combo + 1) % list.length)], clip = rigClip(M, clipName)
-    if (clip) R.over = { clip, t0, at: t, full: G.punch === 'slam', speed: G.punch === 'jab' ? 1.5 : 1.15 }
+    if (clip && !(G.hayWind && R.over?.clip.name === 'haymaker')) R.over = { clip, t0, at: t, full: G.punch === 'slam', speed: G.punch === 'jab' ? 1.5 : 1.15 }
   } else if (G && !G.melee && a.held?.visible && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 200) {
     R.shotSeen = a.shotAt
     const clip = rigClip(M, K.shoot)
@@ -9244,8 +9596,11 @@ function rigAnimate(a, want, dt, t) {
     const clip = rigClip(M, K.hits[(R.hitN = (R.hitN || 0) + 1) % K.hits.length])
     if (clip) R.over = { clip, t0: 0, at: t, hit: true, w: 0.85, speed: 1.2 }
   }
+  if (R.over?.clock !== undefined && !(a.hayAge > 0 && a.hayAge * 1.4 < 1.3)) R.over = null
+  if (a.hayAge > 0 && a.hayAge * 1.4 < 1.3 && M.punches.rise) { const clip = rigClip(M, 'haymaker'); if (clip) R.over = { clip, t0: 0, at: t - 100, clock: a.hayAge * 1.4 } }
+  if (a.chainState?.[0] === 1) R.over = null
   if (R.over && a.dying < 0) {
-    const o = R.over, ct = o.t0 + (t - o.at) / 1000 * (o.speed || 1), d = o.clip.duration
+    const o = R.over, ct = o.clock ?? o.t0 + (t - o.at) / 1000 * (o.speed || 1), d = o.clip.duration
     if (ct >= d) R.over = null
     else rigPose(R, o.clip, ct, (o.w ?? 1) * Math.min(1, (t - o.at) / 60, (d - ct) / 0.15), o.full ? null : RIG_UPPER)
   } else if (a.dying >= 0) R.over = null
@@ -9254,23 +9609,102 @@ function rigAnimate(a, want, dt, t) {
     a.mesh.updateMatrixWorld(true); R.bones.get('pelvis').getWorldPosition(rigV)
     R.inst.position.y += a.mesh.position.y - SIT_HIP * (a.spec.h + a.spec.r) + 0.06 * H - rigV.y
   } else R.inst.position.y = R.inst.userData.y
+  rigMovePose(a, R, want, t)
   rigCape(a, R, dt)
 }
+// Readable silhouettes over the authored clips: the heavy wind-up leans back, charge deepens, and the leap locks both
+// fists high overhead. The two-bone solve works in character space, preserving the sculpted limb lengths.
+const MOVE_BONES = ['spine_01','spine_02','spine_03','upperarm_r','lowerarm_r','upperarm_l','lowerarm_l',
+  'thigh_l','thigh_r','calf_l','calf_r','foot_l','foot_r','cape_01','cape_02','cape_03']
+function restoreMovePose(R) {
+  if (!R.moveSaved?.active) return
+  for (const [b, q] of R.moveSaved.bones) b.quaternion.copy(q)
+  R.inst.position.y = R.moveSaved.y; R.inst.quaternion.copy(R.moveSaved.root); R.moveSaved.active = false
+}
+function rigMovePose(a, R, want, t) {
+  if (a.spec.model !== 'maniak' || a.dying >= 0) return
+  const charge = a.moveState === 1 ? clamp(a.moveCharge || 0, 0, 1) : -1, air = a.moveState === 2, age = a.hayAge || 0
+  if (charge < 0 && !air && !(age > 0 && age < 0.9)) {
+    if(R.name==='idle'){const l=R.bones.get('foot_l'),r=R.bones.get('foot_r');l?.getWorldPosition(rigV);r?.getWorldPosition(rigU);R.moveFoot=Math.min(rigV.y,rigU.y)-a.mesh.position.y}
+    return
+  }
+  const S = R.moveSaved ||= { bones: MOVE_BONES.map(n => R.bones.get(n)).filter(Boolean).map(b => [b, b.quaternion.clone()]),
+    v: Array.from({length: 12}, () => new THREE.Vector3()), q: Array.from({length: 5}, () => new THREE.Quaternion()) }
+  for (const [b,q] of S.bones) q.copy(b.quaternion)
+  S.y = R.inst.position.y; (S.root ||= new THREE.Quaternion()).copy(R.inst.quaternion); S.active = true
+  const [sh,el,hand,target,pole,dir,hinge,from,to,axis,leftFoot,rightFoot] = S.v, [rootQ,parentQ,delta,rotation,inverse] = S.q
+  a.mesh.updateMatrixWorld(true); R.inst.getWorldQuaternion(rootQ)
+  const turn = (name, xyz, angle) => {
+    const b = R.bones.get(name); if (!b || !angle) return
+    b.parent.getWorldQuaternion(parentQ)
+    axis.set(...xyz).applyQuaternion(rootQ).applyQuaternion(parentQ.invert())
+    b.quaternion.premultiply(delta.setFromAxisAngle(axis, angle))
+  }
+  const rotate = (b, u, v) => {
+    b.parent.getWorldQuaternion(parentQ)
+    delta.setFromUnitVectors(u.normalize(), v.normalize())
+    inverse.copy(parentQ).invert().multiply(delta).multiply(parentQ).multiply(b.quaternion)
+    b.quaternion.copy(inverse)
+  }
+  const arm = (side, goal, bend) => {
+    const upper = R.bones.get('upperarm_'+side), lower = R.bones.get('lowerarm_'+side), end = R.bones.get('hand_'+side)
+    if (!upper || !lower || !end) return
+    upper.getWorldPosition(sh); lower.getWorldPosition(el); end.getWorldPosition(hand)
+    target.set(...goal); R.inst.localToWorld(target); pole.set(...bend); R.inst.localToWorld(pole)
+    const u = sh.distanceTo(el), f = el.distanceTo(hand)
+    dir.subVectors(target,sh); const d = clamp(dir.length(),Math.abs(u-f)+0.001,u+f-0.005); dir.normalize()
+    target.copy(sh).addScaledVector(dir,d)
+    const along = (u*u-f*f+d*d)/(2*d)
+    hinge.subVectors(pole,sh);hinge.addScaledVector(dir,-hinge.dot(dir)).normalize()
+    hinge.multiplyScalar(Math.sqrt(Math.max(0,u*u-along*along))).addScaledVector(dir,along).add(sh)
+    rotate(upper,from.subVectors(el,sh),to.subVectors(hinge,sh))
+    lower.getWorldPosition(el);end.getWorldPosition(hand)
+    rotate(lower,from.subVectors(hand,el),to.subVectors(target,el))
+  }
+  const feet = () => {R.bones.get('foot_l')?.getWorldPosition(leftFoot);R.bones.get('foot_r')?.getWorldPosition(rightFoot);return Math.min(leftFoot.y,rightFoot.y)}
+  const planted = !air && want !== 2 && want !== 3 && want !== 6, floor = a.mesh.position.y + (R.moveFoot ?? -a.spec.h-a.spec.r+0.10)
+  if (charge >= 0) {
+    const idle = rigClip(R.M,'idle'); if (idle) rigPose(R,idle,0.4,0.75*(1-charge),null)
+    for(const side of ['l','r']) {turn('thigh_'+side,[1,0,0],-0.20*charge);turn('calf_'+side,[1,0,0],0.34*charge);turn('foot_'+side,[1,0,0],-0.14*charge)}
+    turn('spine_01',[1,0,0],0.12*charge)
+    turn('spine_02',[0,1,0],Math.sin(t*0.045)*0.025*charge)
+    turn('upperarm_r',[1,0,0],Math.sin(t*0.045)*0.035*charge)
+    turn('upperarm_l',[1,0,0],-Math.sin(t*0.045)*0.035*charge)
+
+  } else if (air) {
+    arm('r',[-0.22,2.55,0.08],[-1.2,1.9,-0.1]);arm('l',[0.22,2.55,0.08],[1.2,1.9,-0.1])
+  } else {
+    const wind = THREE.MathUtils.smoothstep(age,0,0.23)*(1-THREE.MathUtils.smoothstep(age,0.32,0.42))
+    const follow = THREE.MathUtils.smoothstep(age,0.32,0.44)*(1-THREE.MathUtils.smoothstep(age,0.57,0.9))
+    turn('spine_01',[1,0,0],-0.20*wind+0.08*follow)
+    turn('spine_02',[1,0,0],-0.20*wind+0.12*follow)
+    turn('spine_03',[1,0,0],-0.12*wind)
+    turn('spine_01',[0,1,0],-0.16*wind+0.20*follow)
+    turn('spine_02',[0,1,0],-0.16*wind+0.18*follow)
+    if (wind>0.05) arm('r',[-0.80,1.73,-0.68],[-1.25,1.22,-0.25])
+    else if(follow>0.1) arm('r',[0.35,1.40,1.12],[-0.9,1.35,0.65])
+
+    R.inst.rotateX(-0.25*wind)
+  }
+  if (planted) R.inst.position.y += floor-feet()
+}
+
 // the cape: one angle on a damped spring, pulled back by speed with a flutter, held near plumb when the torso pitches
 function rigCape(a, R, dt) {
   if (!R.cape.length || !dt) return
   const M = R.M, v = a.v || 0
-  const want = Math.min(M.capeMax, v * M.capeK) + Math.sin(R.frame / 9 + a.cid) * 0.04 * Math.min(1, v / 3)
+  const want = Math.min(a.chainState?.[0] >= 3 ? 0.35 : a.moveState ? 0.6 : M.capeMax, v * M.capeK) + Math.sin(R.frame / 9 + a.cid) * 0.04 * Math.min(1, v / 3)
   R.capeV += ((want - R.capeA) * 40 - R.capeV * 9) * Math.min(dt, 0.05); R.capeA += R.capeV * Math.min(dt, 0.05)
   a.mesh.updateMatrixWorld(true)
   rigV.set(1, 0, 0).applyQuaternion(a.mesh.getWorldQuaternion(rigW))
   rigF.set(0, 0, 1).applyQuaternion(rigW)
   R.cape.forEach((b, k) => {
+    b.scale.y = k === 0 && a.moveState === 1 ? 1 - 0.3 * (a.moveCharge || 0) : 1
     b.parent.getWorldQuaternion(rigW)
     rigU.set(0, 1, 0).applyQuaternion(rigW)
     const pitch = k ? 0 : Math.atan2(rigU.dot(rigF), rigU.y) * 0.85
     rigW.invert()
-    b.quaternion.copy(R.capeRest[k]).premultiply(rigQ.setFromAxisAngle(rigU.copy(rigV).applyQuaternion(rigW).normalize(), k ? R.capeA * (0.35 + 0.2 * k) : R.capeA + pitch))
+    b.quaternion.copy(R.capeRest[k]).premultiply(rigQ.setFromAxisAngle(rigU.copy(rigV).applyQuaternion(rigW).normalize(), k ? -R.capeA * (0.35 + 0.2 * k) : -R.capeA - pitch))
   })
 }
 // shown while alive; a rig also while its death clip plays (the respawn counts down from RESPAWN_S)
@@ -9670,12 +10104,12 @@ function craterWork(R, craters, done) {
   worldGroup.traverse(m => { const g = m.geometry, bs = g?.boundingSphere || g?.computeBoundingSphere() || g?.boundingSphere
     if (!m.isMesh || m.isInstancedMesh || m === scarMesh || m.userData.crater || g.index || !g.attributes.uv ||
       Math.max(a0 - bs.center.x, 0, bs.center.x - a1) ** 2 + Math.max(b0 - bs.center.z, 0, bs.center.z - b1) ** 2 > bs.radius ** 2) return
-    const P = g.attributes.position.array, U = g.attributes.uv.array, at = [], pos = [], uv = []
+    const P = g.attributes.position.array, U = g.attributes.uv.array, C = g.attributes.color, at = [], pos = [], uv = [], colors = []
     for (let i = 0; i < 3 * Math.min(g.attributes.position.count, g.drawRange.count); i += 9) {
       const x = [P[i], P[i + 3], P[i + 6]], y = [P[i + 1] - R.y, P[i + 4] - R.y, P[i + 7] - R.y], z = [P[i + 2], P[i + 5], P[i + 8]]
       if (Math.max(...x) > a0 && Math.min(...x) < a1 && Math.max(...z) > b0 && Math.min(...z) < b1 && y.every(v => v > -.01 && v < .05)) {
-        at.push(i / 9); pos.push(x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]); uv.push(...U.subarray(i / 1.5, i / 1.5 + 6)) } }
-    if (at.length) slots.push({ m, at, pos: Float32Array.from(pos), uv: Float32Array.from(uv) }) })
+        at.push(i / 9); pos.push(x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]); uv.push(...U.subarray(i / 1.5, i / 1.5 + 6));if(C)for(let j=i/3;j<i/3+3;j++)colors.push(C.getX(j),C.getY(j),C.getZ(j)) } }
+    if (at.length) slots.push({ m, at, paint: C && {p:pos,c:colors}, pos: Float32Array.from(pos), uv: Float32Array.from(uv) }) })
   const ask = { rect: R.rect, craters, under: slots.map(({ pos, uv }) => ({ pos, uv })), K: { ...CRATER_CUT, depth: craters[0].depth } }, lv = LV
   // no worker: this page cuts it (the bowl is physics)
   const here = () => (geoHere ||= (self.THREE = THREE, geoLoad(GEO_LIBS.filter(L => L.name === 'bvh' || L.name === 'csg')))).then(env => take(craterOp(ask, { THREE, ...env }).reply), e => take({ fail: String(e) }))
@@ -9683,12 +10117,12 @@ function craterWork(R, craters, done) {
   geoFail ? go() : geoEnsure(go)
   function take(data) {
       if (data.fail || LV !== lv) return done(null)
-      slots.forEach(({ m, at }, i) => { const g = m.geometry, gone = new Set(at), n = Math.min(g.attributes.position.count, g.drawRange.count) / 3, keep = n - gone.size
-        for (const [k, s] of [['position', 3], ['normal', 3], ['uv', 2]]) { const a = g.attributes[k].array, o = new Float32Array(keep * 3 * s); let w = 0
+      slots.forEach(({ m, at, paint }, i) => { const g = m.geometry, gone = new Set(at), n = Math.min(g.attributes.position.count, g.drawRange.count) / 3, keep = n - gone.size
+        for (const [k, s] of [['position', 3], ['normal', 3], ['uv', 2], ...g.attributes.color ? [['color',3]] : []]) { const a = g.attributes[k].array, o = new Float32Array(keep * 3 * s); let w = 0
           for (let t = 0; t < n; t++) if (!gone.has(t)) { o.set(a.subarray(t * 3 * s, (t + 1) * 3 * s), w); w += 3 * s }
           g.setAttribute(k, dyn(o, s)) }
         g.setDrawRange(0, keep * 3); m.userData.cut = true
-        groundAdd(m, { p: data.parts[i][0].map((v, k) => k % 3 === 1 ? v + R.y : v), uv: data.parts[i][1] }) })
+        groundAdd(m, { p: data.parts[i][0].map((v, k) => k % 3 === 1 ? v + R.y : v), uv: data.parts[i][1], color: paint && craterPaint(paint,data.parts[i][0]) }) })
       const S = data.surface, tris = [], mesh = new THREE.Mesh(new THREE.BufferGeometry(), craterMat ||= craterLook())
       for (let i = 0; i < S.length; i += 9) tris.push([0, 3, 6].map(k => [S[i + k], S[i + k + 1] + R.y, S[i + k + 2]]))
       mesh.geometry.setAttribute('position', new THREE.BufferAttribute(Float32Array.from([...data.bowl, ...data.rims]), 3))
@@ -9807,6 +10241,7 @@ function decalOp({ level, meshes: rows = [], jobs = [], clear, drop = [], hole }
 let scarAtlas, scarMesh, scarBusy = true, scarsLater = false
 const scarQueue = [], scarSurfaces = []
 function clearScars() {
+  clearChainCracks()
   geoLevelChanged()
   scarBusy = true
   scarQueue.length = scarSurfaces.length = 0; groundStale = false
@@ -9921,11 +10356,12 @@ function addTracers(list, t) {
         else if (f[7] === 7) kick(0.22, f[0], f[1], f[2], 14, 450, t)
       }
     } else slash = null
+    if(f[7]===10){chainImpactBurst(f,t);continue}
     const a = avatars.get(f[8])
     if (!a || f[7] === 4 || f[7] === 5 || f[7] === 6 || f[7] === 9) continue
     a.fightAt = f.firedAt ?? t
     if (f[9] === 1) {
-      if (G && G.charge === 'palms') { a.chargeAt = f.firedAt ?? t; a.chargeGun = f[6] }
+      if (G && (G.charge === 'palms' || G.hayWind)) { a.chargeAt = f.firedAt ?? t; a.chargeGun = f[6] }
       continue
     }
     a.shotAt = f.firedAt ?? t; a.shotGun = f[6]
@@ -9942,6 +10378,7 @@ const IMPACT_MS = 260
 const fxDir = new THREE.Vector3()
 
 const lifeOf = f => {
+  if (f[7] === 10) return 750
   if (f[7] === 9) return Number.isFinite(f[9]) ? Math.max(0, f[9]) : 0
   const G = GUNS[f[6]]
   if (f[9] === 1) return (G && G.windup ? G.windup : 0.5) * 1000
@@ -10759,11 +11196,301 @@ function drawTornado(t) {
   for (let i = count; i < tornadoViews.length; i++) tornadoViews[i].root.visible = false
 }
 
+// The existing prop GLB supplies the hollow block and alternating steel links. Two instanced draws per chain;
+// distant links use a coarse closed ring, while the close links retain the authored mesh and physical 0.047 m pitch.
+const CHAIN_SCALE = 1.5, CHAIN_PITCH = 0.047 * CHAIN_SCALE, CHAIN_LINK_MAX = 1000
+const chainMatrix = new THREE.Object3D(), chainDir = new THREE.Vector3(), chainUp = new THREE.Vector3(0, 1, 0)
+const chainTwist = new THREE.Quaternion().setFromAxisAngle(chainUp, Math.PI / 2)
+let chainArt = null, chainArtLoad = null, moveMeter = null
+function chainAssets() {
+  if (chainArt) return chainArt
+  const near = new THREE.TorusGeometry(0.018, 0.0038, 4, 10); near.scale(0.75, 1.5, 1)
+  const far = new THREE.TorusGeometry(0.018, 0.004, 4, 8); far.scale(0.75, 1.5, 1)
+  chainArt = { near, far, anchor: new THREE.Vector3(0, 0.095, 0), block: new THREE.BoxGeometry(0.39, 0.19, 0.19),
+    steel: new THREE.MeshStandardMaterial({ color: 0xa7a9a8, metalness: 0.7, roughness: 0.42 }),
+    concrete: new THREE.MeshStandardMaterial({ color: 0x97938a, roughness: 0.95 }) }
+  rigLoader()
+  chainArtLoad = rigFetch(RIG_FILES.props).then(g => {
+    g.scene.updateMatrixWorld(true)
+    for (const [name, key] of [['chain_link', 'near'], ['cinderblock', 'block']]) {
+      const root = g.scene.getObjectByName(name); let mesh
+      root?.traverse(n => { if (n.isMesh) mesh = n })
+      if (!mesh) continue
+      const geo = mesh.geometry.clone()
+      // gltfpack stores quantised integer vertices. Bake transforms only after widening them to floats, or a metre-sized
+      // prop truncates to zero when BufferAttribute writes back into its original Uint16Array.
+      for (const key of ['position','normal']) { const a = geo.getAttribute(key); if (!a) continue
+        const v = new Float32Array(a.count*3); for(let i=0;i<a.count;i++) {v[i*3]=a.getX(i);v[i*3+1]=a.getY(i);v[i*3+2]=a.getZ(i)}
+        geo.setAttribute(key,new THREE.BufferAttribute(v,3)) }
+      geo.applyMatrix4(mesh.matrixWorld)
+      geo.computeBoundingBox(); const mid = geo.boundingBox.getCenter(new THREE.Vector3()); geo.translate(-mid.x, -mid.y, -mid.z)
+      const previous = chainArt[key]; chainArt[key] = geo
+      if (key === 'block') { const socket = g.scene.getObjectByName('chain_anchor'); if (socket) socket.getWorldPosition(chainArt.anchor).sub(mid); chainArt.concrete = mesh.material; for (const v of chainViews.values()) v.block.material = mesh.material }
+      for (const v of chainViews.values()) v[key === 'block' ? 'block' : 'near'].geometry = geo
+      previous.dispose()
+    }
+  }).catch(e => console.warn('Chain props unavailable; using simple links:', e.message))
+  return chainArt
+}
+function chainView(id) {
+  let v = chainViews.get(id)
+  if (v) return v
+  const A = chainAssets(), root = new THREE.Group(), near = new THREE.InstancedMesh(A.near, A.steel, CHAIN_LINK_MAX),
+    far = new THREE.InstancedMesh(A.far, A.steel, CHAIN_LINK_MAX), block = new THREE.Mesh(A.block, A.concrete)
+  for (const m of [near, far]) { m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.frustumCulled = false; m.count = 0 }
+  block.scale.setScalar(CHAIN_SCALE); block.castShadow = true
+  root.add(near, far, block); tracerGroup.add(root)
+  v = { root, near, far, block, heardPhase: 0, heardAt: 0 }; chainViews.set(id, v)
+  return v
+}
+function drawChains(me, others, t) {
+  for (const v of chainViews.values()) v.root.visible = false
+  const live = new Set()
+  for (const p of [me, ...others]) {
+    const id = p === me ? myId : p.id, raw = p === me && isHost ? chainPack(p) : p.chainNet, g = chainRead(raw)
+    if (!g || p.dead > 0) continue
+    live.add(id)
+    const v = chainView(id), points = Array.from({ length: CHAIN_N }, (_, i) => g.slice(11 + i * 3, 14 + i * 3))
+    v.root.visible = true
+    // Broken strokes follow the whirl circle at high charge, so its acceleration reads even in a brief glance.
+    if (g[0] === 1 && g[1] > 0.45) {
+      fxKey = 'chain-whirl-' + id
+      const phase = g[2] * (9 + 14.5 * g[1]), opacity = (g[1] - 0.45) * 1.1
+      for (let k=0;k<3;k++) for(let j=0;j<7;j++) {
+        const a=phase+k*2.094+j*.11,b=a+.10,r=1.08+k*.055,y=p.y+1.2+(k-1)*.035
+        fxBox(p.x+Math.cos(a)*r,y,p.z+Math.sin(a)*r,p.x+Math.cos(b)*r,y,p.z+Math.sin(b)*r,.018,activeLook==='ink'?0x161618:0xe1ddd4,opacity)
+      }
+    }
+    if (v.root.parent !== tracerGroup) tracerGroup.add(v.root)
+    v.block.position.set(...g.slice(4, 7))
+    v.block.rotation.set(g[0] === 1 ? g[2] * (9 + 14.5 * g[1]) : g[0] === 2 ? g[2] * 18 : 0, p.yaw || 0, g[0] === 1 ? 0.4 : 0)
+    if(g[62]) {
+      const normal=new THREE.Vector3(...g.slice(66,69)).normalize(), x=new THREE.Vector3(...g.slice(69,72));x.addScaledVector(normal,-x.dot(normal))
+      if(x.lengthSq()<.001)x.set(Math.abs(normal.x)<.8?1:0,Math.abs(normal.x)<.8?0:1,0).addScaledVector(normal,-(Math.abs(normal.x)<.8?normal.x:normal.y))
+      x.normalize();const z=new THREE.Vector3().crossVectors(x,normal).normalize();x.crossVectors(normal,z)
+      v.block.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x,normal,z))
+      v.block.position.set(...g.slice(63,66)).addScaledVector(normal,.035)
+    }
+    points[CHAIN_N - 1] = chainArt.anchor.clone().multiplyScalar(CHAIN_SCALE).applyQuaternion(v.block.quaternion).add(v.block.position).toArray()
+    const a = avatars.get(id)
+    if (a) { a.mesh.updateMatrixWorld(true); handAt(a, webHand)
+      const hand = webHand.toArray()
+      // Keep the attachment in the fist, unless its animation reaches past a wall.
+      if (!chainLine(hand, points[1])) points[0] = hand
+    }
+    if (points.some((p, j) => j && chainLine(points[j - 1], p, 0.015))) { v.root.visible = false; continue }
+    const lens = [0]
+    for (let i = 1; i < points.length; i++) lens[i] = lens[i - 1] + chainGap(points[i - 1], points[i])
+    const total = lens.at(-1), count = Math.min(CHAIN_LINK_MAX, Math.max(1, Math.floor(total / CHAIN_PITCH))), pitch = total / count
+    let seg = 1, near = 0, far = 0
+    for (let i = 0; i < count; i++) {
+      const at = (i + 0.5) * pitch
+      while (seg < points.length - 1 && at > lens[seg]) seg++
+      const b = points[seg], a = points[seg - 1], k = (at - lens[seg - 1]) / Math.max(0.0001, lens[seg] - lens[seg - 1])
+      chainMatrix.position.set(...a.map((n, j) => n + (b[j] - n) * k))
+      chainDir.set(...b.map((n, j) => n - a[j])).normalize()
+      chainMatrix.quaternion.setFromUnitVectors(chainUp, chainDir)
+      if (i % 2) chainMatrix.quaternion.multiply(chainTwist)
+      chainMatrix.scale.setScalar(CHAIN_SCALE); chainMatrix.updateMatrix()
+      const close = chainMatrix.position.distanceToSquared(camera.position) < 100
+      if (close) v.near.setMatrixAt(near++, chainMatrix.matrix); else v.far.setMatrixAt(far++, chainMatrix.matrix)
+    }
+    v.near.count = near; v.far.count = far; v.near.instanceMatrix.needsUpdate = v.far.instanceMatrix.needsUpdate = true
+    if (sfxLive()) {
+      if (g[0] !== v.heardPhase) moveSound(g[0] === 2 ? 'throw' : g[0] === 3 ? 'catch' : 'whirl', p, 1, g[1])
+      if ((g[0] === 1 || g[10]) && t - v.heardAt > 210 - 120 * g[1]) { moveSound('whirl', p, 0.55, g[1]); v.heardAt = t }
+    }
+    v.heardPhase = g[0]
+  }
+  for (const [id, v] of chainViews) if (!live.has(id)) {
+    v.heardPhase = 0
+    if (!avatars.has(id)) { v.root.removeFromParent(); v.near.dispose(); v.far.dispose(); chainViews.delete(id) }
+  }
+  drawChainCracks(t,isHost?objs:objectsAt(renderT))
+  for (const p of [me, ...others]) {
+    const C = GAME.participant(p === me ? myId : p.id, p.cid), q = C.spring && clamp((p.springT || 0) / C.spring.full, 0, 1)
+    if (!q || p.dead > 0) continue
+    const floor = p.y - C.h - C.r, id = p === me ? myId : p.id
+    fxKey = 'leap-charge-' + id
+    for (let i=0;i<10;i++) { const age=(t/700+i/10)%1, a=i*Math.PI/5, r=0.65+age*0.55
+      fxOrb(p.x+Math.cos(a)*r,floor+0.04+age*0.22,p.z+Math.sin(a)*r,0.06+age*0.12,0xc9c0ae,0.55*q*(1-age),0.65) }
+    const view = avatars.get(id)
+    if (view && t-(view.strainHeard||0)>230) {moveSound('charge',p,0.2+q*0.3,q);view.strainHeard=t}
+  }
+  moveChargeMeter(me)
+}
+// When looking steeply up from below a tethered body, the cape can be much closer than the capsule pivot.
+// Use its posed joints for the near fade; the forward swing view keeps the ordinary solid silhouette.
+function moveCameraFade(me,cam) {
+  const phase=isHost?me.chain?.phase:me.chainNet?.[0],R=avatars.get(myId)?.rig
+  if(!(phase>=2)||!R?.cape?.length)return
+  const below=THREE.MathUtils.smoothstep(me.y-camera.position.y,.3,1)
+  if(!below)return
+  let nearest=Infinity
+  for(const b of R.cape){b.getWorldPosition(rigV);nearest=Math.min(nearest,rigV.distanceTo(camera.position))}
+  const fade=THREE.MathUtils.smoothstep(nearest-.45,CAM.fadeNear,CAM.fadeFar)
+  cam.fade=Math.min(cam.fade,1-below*(1-fade*fade));if(cam.fade<.01)cam.fade=0
+}
+function moveChargeMeter(me) {
+  if (!moveMeter) {
+    moveMeter = document.createElement('div'); moveMeter.id = 'move-charge'
+    moveMeter.style.cssText = 'position:fixed;left:50%;bottom:100px;transform:translateX(-50%);padding:7px 12px;background:#111d;border:1px solid #cfc8b6;color:#eee7d7;font:700 13px monospace;pointer-events:none;z-index:5;text-align:center;min-width:200px'
+    document.body.appendChild(moveMeter)
+  }
+  const g = isHost ? chainPack(me) : me.chainNet, spring = me.springT || 0, S = GAME.participantOf(me)?.spring
+  const q = g?.[0] === 1 ? g[1] : S && spring > 0 ? Math.min(1, spring / S.full) : -1
+  const text = q >= 0 ? (g?.[0] === 1 ? 'CHAIN' : 'LEAP-SMASH') + '  ' + Math.round(q * 100) + '%  ·  RELEASE' : g?.[0] === 3 ? 'HOLD Q TO REEL · SPACE TO LET GO' : ''
+  moveMeter.hidden = !text || me.dead > 0 || phase !== 'playing'
+  if (moveMeter.textContent !== text) moveMeter.textContent = text
+  if (q >= 0) moveMeter.style.background = 'linear-gradient(90deg,#605b48 ' + Math.round(q * 100) + '%,#111d 0%)'
+  else moveMeter.style.background = '#111d'
+}
+// Move sounds come only from the effects provider; with none loaded, the moves are silent.
+function moveSound(kind, p, level = 1, charge = 0) {
+  if (!sfxLive() || !sfxMake) return
+  sfxPlay((['whirl', 'throw', 'catch'].includes(kind) ? 'Chain ' : 'Move ') + kind, p?.id === myId ? null : p, 'world', level)
+}
+function moveFxSound(list, only) {
+  if (!sfxLive() || !Array.isArray(list)) return
+  const heard = new Set()
+  for (const f of list) {
+    const G = GUNS[f[6]], key = f[8] + ':' + f[6] + ':' + f[9]
+    if (!G || heard.has(key) || only === (f[8] === myId ? 2 : 1)) continue
+    heard.add(key)
+    if (!['Fists', 'Haymaker', 'Leap-smash', 'Cinderblock'].includes(G.name)) continue
+    moveSound(G.name === 'Cinderblock' ? f[12]===1?'whirl':'catch' : f[9] === 1 ? 'whirl' : G.name === 'Leap-smash' ? 'smash' : 'punch', { id: f[8], x: f[0], y: f[1], z: f[2] }, G.name === 'Fists' ? 0.7 : 1)
+  }
+}
+
+// Cracks are projected onto the struck surface with the existing pinned DecalGeometry library. The host keeps a bounded
+// 45 s history (four per 16 m area, 32 total) and sends it to late joiners; vehicle marks use the vehicle's local frame.
+let chainDecalLib = null, chainDecalClass = null
+const chainCrackViews = new Map(), chainCrackRay = new THREE.Raycaster(), chainCrackN = new THREE.Vector3(), chainCrackP = new THREE.Vector3()
+const chainCrackQ = new THREE.Quaternion(), chainCrackUp = new THREE.Vector3(0,0,1)
+function chainDecalEnsure() {
+  return chainDecalLib ||= (self.THREE=THREE,geoLoad(GEO_LIBS.filter(l=>l.name==='decal'))).then(e=>chainDecalClass=e.Decal.DecalGeometry).catch(e=>console.warn('Block decals unavailable:',e.message))
+}
+function crackTexture(seed) {
+  const canvas=document.createElement('canvas');canvas.width=canvas.height=256
+  const c=canvas.getContext('2d'),rand=genRng(seed),paths=[]
+  for(let i=0;i<9;i++){
+    const angle=i*Math.PI*2/9+(rand()-.5)*.35,points=[[128,128]];let radius=12
+    for(let j=0;j<5;j++){radius+=12+rand()*13;const a=angle+(rand()-.5)*.25;points.push([128+Math.cos(a)*radius,128+Math.sin(a)*radius])}paths.push(points)
+    if(i%2===0){const p=points[3],a=angle+.5;paths.push([p,[p[0]+Math.cos(a)*20,p[1]+Math.sin(a)*20],[p[0]+Math.cos(a+.2)*39,p[1]+Math.sin(a+.2)*39]])}
+  }
+  c.lineJoin='miter'
+  for(const [color,width]of[['#bcb5a7',5],['#11100e',2.5]]){c.strokeStyle=color;c.lineWidth=width;for(const points of paths){c.beginPath();c.moveTo(...points[0]);for(const p of points.slice(1))c.lineTo(...p);c.stroke()}}
+  c.fillStyle='#171612';c.beginPath();for(let i=0;i<14;i++){const a=i*Math.PI/7,r=18+rand()*9;c[i?'lineTo':'moveTo'](128+Math.cos(a)*r,128+Math.sin(a)*r)}c.closePath();c.fill()
+  const map=new THREE.CanvasTexture(canvas);map.colorSpace=THREE.SRGBColorSpace;return map
+}
+function chainMarkWorld(m,objects) {
+  if(m[12]<0)return{point:m.slice(2,5),normal:m.slice(5,8),incoming:m.slice(8,11)}
+  const o=objects.find(o=>o.id===m[12]);if(!o)return null
+  return{point:rotq(o.q,m.slice(2,5)).map((v,i)=>v+[o.x,o.y,o.z][i]),normal:rotq(o.q,m.slice(5,8)),incoming:rotq(o.q,m.slice(8,11))}
+}
+function clearChainCracks() {
+  smashDustReset()
+  chainMarks=[];chainMarksRemote=[];chainMarksAt=-Infinity
+  for(const v of chainCrackViews.values()){v.mesh.removeFromParent();v.mesh.geometry.dispose();v.mesh.material.map.dispose();v.mesh.material.dispose()}
+  chainCrackViews.clear()
+}
+function drawChainCracks(t,objects) {
+  const records=isHost?chainMarks:chainMarksRemote,clock=isHost?tickAt:renderT,live=new Set()
+  if(records.length&&!chainDecalClass)chainDecalEnsure()
+  for(const m of records){const age=Math.max(0,(clock-m[1])/1000),life=blockAttack().scarLife;if(age>=life)continue
+    live.add(m[0]);let v=chainCrackViews.get(m[0]);const pose=chainMarkWorld(m,objects)
+    if(!pose)continue
+    const owner=m[12]>=0?objPool.find(o=>o.visible&&o.userData.oid===m[12]):null
+    if(v&&m[12]>=0&&v.owner!==owner){v.mesh.removeFromParent();v.mesh.geometry.dispose();v.mesh.material.map.dispose();v.mesh.material.dispose();chainCrackViews.delete(m[0]);v=null}
+    if(!v&&chainDecalClass){
+      chainCrackN.set(...pose.normal).normalize();chainCrackP.set(...pose.point)
+      chainCrackRay.set(chainCrackP.clone().addScaledVector(chainCrackN,.5),chainCrackN.clone().negate());chainCrackRay.near=0;chainCrackRay.far=1.1
+      const targets=owner?[owner]:[...scarSurfaces.filter(o=>o.parent),...[...faustState?.chunks.values()||[]].map(c=>c.visual).filter(Boolean)],hit=chainCrackRay.intersectObjects(targets,true).find(h=>h.object.isMesh&&!h.object.userData.blockCrack)
+      if(!hit)continue
+      const radius=0.42+0.45*clamp(m[11]/blockAttack().refSpeed,0,1)
+      chainCrackQ.setFromUnitVectors(chainCrackUp,chainCrackN)
+      const geo=new chainDecalClass(hit.object,hit.point,new THREE.Euler().setFromQuaternion(chainCrackQ),new THREE.Vector3(radius*2,radius*2,.45))
+      const n=geo.attributes.normal,index=[]
+      for(let i=0;i<(n?.count||0);i+=3)if(n.getX(i)*chainCrackN.x+n.getY(i)*chainCrackN.y+n.getZ(i)*chainCrackN.z>.05)index.push(i,i+1,i+2)
+      if(!index.length){geo.dispose();continue}geo.setIndex(index)
+      const material=new THREE.MeshStandardMaterial({map:crackTexture(m[0]),transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-4,roughness:1,alphaTest:.02})
+      const mesh=new THREE.Mesh(geo,material);mesh.userData.blockCrack=true;mesh.renderOrder=2
+      if(owner){owner.updateWorldMatrix(true,false);geo.applyMatrix4(owner.matrixWorld.clone().invert());owner.add(mesh)}else worldGroup.add(mesh)
+      v={mesh,owner};chainCrackViews.set(m[0],v)
+    }
+    if(v)v.mesh.material.opacity=clamp((life-age)/10,0,1)
+  }
+  for(const[id,v]of chainCrackViews)if(!live.has(id)){v.mesh.removeFromParent();v.mesh.geometry.dispose();v.mesh.material.map.dispose();v.mesh.material.dispose();chainCrackViews.delete(id)}
+}
+function chainImpactBurst(f,t) {
+  const scale=f[12]===1?.45:.7+clamp(f[10]/58,0,1)*.6,n=f.slice(3,6)
+  burst('dust',...f.slice(0,3),...n,0xbdb6a7,scale);burst('chip',...f.slice(0,3),...n,0x969084,scale)
+  kick((f[12]===1?.025:.08+.08*scale),...f.slice(0,3),9,280,t)
+}
+function drawChainChips(f,age) {
+  if(age<0||age>.75)return
+  const seed=(f[11]||fxSeed(f))|0,rand=genRng(seed),n=f.slice(3,6),p=f.slice(0,3),small=f[12]===1
+  let u=[n[2],0,-n[0]],len=Math.hypot(...u);if(len<.01)u=[1,0,0];else u=u.map(v=>v/len)
+  const v=[n[1]*u[2]-n[2]*u[1],n[2]*u[0]-n[0]*u[2],n[0]*u[1]-n[1]*u[0]]
+  for(let i=0;i<(small?6:14);i++){const a=rand()*Math.PI*2,side=(1+rand()*3)*(small?.45:1),out=1+rand()*3,vel=n.map((x,j)=>x*out+(u[j]*Math.cos(a)+v[j]*Math.sin(a))*side),size=.025+rand()*.045
+    const q=p.map((x,j)=>x+n[j]*.035+vel[j]*age-(j===1?7*age*age:0));fxBox(...q,...q.map((x,j)=>x+vel[j]*.015),size,i%2?0x8b857b:0xc4bbae,Math.min(1,(.75-age)*3))}
+  if(!fxQ&&age<.5)fxOrb(...p,.16+age*.6,0xbcb5a7,(.5-age)*.7,.85)
+}
+
+// Ink impact dust has a clear centre and stays out of the camera's near range. Its lobed silhouettes and pen strokes
+// use the same white/grey vocabulary as the sky clouds; the ordinary tan dust recipe remains available in Plain.
+const smashPuffs = []
+let smashCloudMap = null
+function smashCloud() {
+  if(smashCloudMap)return smashCloudMap
+  const canvas=document.createElement('canvas');canvas.width=canvas.height=256;const c=canvas.getContext('2d'),points=[]
+  for(let i=0;i<48;i++){const a=i*Math.PI/24,r=77+13*Math.sin(a*6+.5)+5*Math.sin(a*9);points.push([128+Math.cos(a)*r,128+Math.sin(a)*r*.75])}
+  c.beginPath();for(let i=0;i<points.length;i++){const p=points[i],next=points[(i+1)%points.length];if(!i)c.moveTo((points.at(-1)[0]+p[0])/2,(points.at(-1)[1]+p[1])/2);c.quadraticCurveTo(...p,(p[0]+next[0])/2,(p[1]+next[1])/2)}c.closePath();c.fillStyle='#eeeeea';c.fill();c.strokeStyle='#111112';c.lineWidth=7;c.stroke()
+  c.fillStyle='#b9bab8';c.beginPath();c.moveTo(70,142);c.quadraticCurveTo(92,172,126,150);c.quadraticCurveTo(156,177,191,138);c.quadraticCurveTo(177,194,126,192);c.quadraticCurveTo(78,190,70,142);c.fill()
+  c.strokeStyle='#29292a';c.lineWidth=3;for(const[x,y]of[[68,112],[135,89],[164,134]]){c.beginPath();c.moveTo(x,y+15);c.quadraticCurveTo(x+7,y-8,x+25,y);c.stroke()}
+  smashCloudMap=new THREE.CanvasTexture(canvas);smashCloudMap.colorSpace=THREE.SRGBColorSpace;return smashCloudMap
+}
+function smashDustReset(){for(const m of smashPuffs)m.visible=false}
+function drawSmashDust(f,s) {
+  if(activeLook!=='ink'||s<0||s>.85)return
+  const cx=camera.position.x-f[0],cz=camera.position.z-f[2],n=Math.hypot(cx,cz)||1,alpha=Math.min(.95,Math.max(0,(.85-s)*1.8))
+  for(let i=0;i<12;i++){
+    const a=i*Math.PI/6+(f[4]%17)*.01,dx=Math.cos(a),dz=Math.sin(a)
+    if((dx*cx+dz*cz)/n>.15)continue // far side and flanks: leave the crouched hero visible
+    const radius=Math.min(f[3],1.3+s*7),x=f[0]+dx*radius,y=f[1]+.35+s*.35,z=f[2]+dz*radius
+    if(Math.hypot(x-camera.position.x,y-camera.position.y,z-camera.position.z)<3.5)continue
+    let m=smashPuffs.find(m=>!m.visible)
+    if(!m&&smashPuffs.length<32){m=new THREE.Sprite(new THREE.SpriteMaterial({map:smashCloud(),transparent:true,depthWrite:false,color:0xffffff}));smashPuffs.push(m);tracerGroup.add(m)}
+    if(!m)break
+    if(m.parent!==tracerGroup)tracerGroup.add(m);m.visible=true;m.position.set(x,y,z);const size=.6+s*.65;m.scale.set(size*2,size*1.4,1);m.material.opacity=alpha
+    if(s<.4){const r=.9+s*3;fxBox(f[0]+dx*r,f[1]+.08,f[2]+dz*r,f[0]+dx*(r+.9),f[1]+.08,f[2]+dz*(r+.9),.025,0x171719,1-s*2)}
+  }
+}
+function smashDustVisible(p,f,e) {
+  const radius=Math.hypot(p[1]-f[0],p[3]-f[2]),cx=e.x-f[0],cz=e.z-f[2],n=Math.hypot(cx,cz)||1
+  return radius>1.25&&((p[1]-f[0])*cx+(p[3]-f[2])*cz)/Math.max(1,radius*n)<.2&&Math.hypot(p[1]-e.x,p[2]-e.y,p[3]-e.z)-p[4]>3.5
+}
+// The retained crater cutter originally rebuilt only positions/normals/UVs. Faustland's batches also have colours:
+// preserve them when removing triangles, and interpolate the old face colours onto the newly clipped ground.
+function craterPaint(paint,positions) {
+  const out=new Float32Array(positions.length),P=paint.p,C=paint.c
+  for(let i=0;i<positions.length;i+=3){const x=positions[i],y=positions[i+1],z=positions[i+2];let best=Infinity,color=[1,1,1]
+    for(let j=0;j<P.length;j+=9){const ax=P[j],az=P[j+2],bx=P[j+3],bz=P[j+5],cx=P[j+6],cz=P[j+8],d=(bz-cz)*(ax-cx)+(cx-bx)*(az-cz);if(Math.abs(d)<1e-10)continue
+      const u=((bz-cz)*(x-cx)+(cx-bx)*(z-cz))/d,v=((cz-az)*(x-cx)+(ax-cx)*(z-cz))/d,w=1-u-v,dy=Math.abs(y-(u*P[j+1]+v*P[j+4]+w*P[j+7]))
+      if(u<-.001||v<-.001||w<-.001||dy>=best)continue
+      best=dy;color=[0,1,2].map(k=>u*C[j+k]+v*C[j+3+k]+w*C[j+6+k])
+    }
+    out.set(color,i)
+  }
+  return out
+}
+
 const fxPools = [...effectSources, effectPool, slashPool, whipPool, ringPool]
 const webHand = new THREE.Vector3()
 function drawWebs(me, others) {
   fxKey = 'web'
   for (const p of [me, ...others]) {
+    if (GAME.participant(p === me ? myId : p.id, p.cid)?.chain) continue
     const at = !(p.dead > 0) && webPoint(p.web), a = at && avatars.get(p === me ? myId : p.id)
     if (!at) continue
     if (a) handAt(a, webHand)
@@ -10772,6 +11499,7 @@ function drawWebs(me, others) {
   }
 }
 function drawTracers(t, me, others, viewId) {
+  smashDustReset()
   if (camera) camera.updateMatrixWorld()
   if (fxQ) { fxQ.R.update(fxQ.t === null ? 0 : Math.min(0.1, Math.max(0, t - fxQ.t) / 1000)); fxQ.t = t }
   else if (renderer && !renderHeadless && typeof self !== 'undefined') fxQLoad ||= (self.THREE = THREE, geoLoad(FX_LIBS)).then(env => { fxQ = particlesOf(env.Q); renderer.compileAsync(fxQ.R, camera, scene).catch(() => {}) }, () => {})
@@ -10788,9 +11516,12 @@ function drawTracers(t, me, others, viewId) {
     fxKey = o.fxKey || (o.fxKey = o.born + ':' + f[8] + ':' + f[6] + ':' + (f[9] || 0))
     const age = (t - o.born) / lifeOf(f)
     const hex = G ? G.color : 0xffffff
+    if (f[7] === 7) { const age = clamp((t - o.born) / 650, 0, 1), radius = f[3] * (0.15 + 0.85 * (1 - (1-age)**2)); for (let i=0;i<40;i++) { const a=i*Math.PI/20,b=(i+1)*Math.PI/20; fxBox(f[0]+Math.cos(a)*radius,f[1]+0.045,f[2]+Math.sin(a)*radius,f[0]+Math.cos(b)*radius,f[1]+0.045,f[2]+Math.sin(b)*radius,0.07,0xe8dfc6,0.8*(1-age)) } }
     if (f[7] === 6 || f[7] === 7) { const e = camera ? camera.position : { x: 1e9, y: 0, z: 0 }
-      for (const p of (f[7] === 6 ? boomParts : slamParts)(f, t - o.born)) { const k = kitNear(p, e); if (!k) continue
+      if(f[7]===7)drawSmashDust(f,(t-o.born)/1000)
+      for (const p of (f[7] === 6 ? boomParts : slamParts)(f, t - o.born)) { if(f[7]===7&&p[0]){if(activeLook==='ink'||!smashDustVisible(p,f,e))continue;p[6]*=.5} const k = kitNear(p, e); if (!k) continue
         p[0] ? fxOrb(p[1], p[2], p[3], p[4], p[5], p[6] * k, p[7]) : fxBox(p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9] * k) } continue }
+    if(f[7]===10){drawChainChips(f,(t-o.born)/1000);continue}
     if (f[7] === 9) {
       const a = avatars.get(f[8])
       if (a && ((f[8] === viewId ? me?.dead > 0 : !a.mesh.visible) || Math.hypot(a.mesh.position.x - f[3], a.mesh.position.y - f[4], a.mesh.position.z - f[5]) < 1)) {
@@ -10828,6 +11559,7 @@ function drawTracers(t, me, others, viewId) {
     const x = palms ? palms.x : f[0], y = palms ? palms.y : f[1], z = palms ? palms.z : f[2]
 
     if (f[9] === 1) {
+      if (G?.hayWind) continue
       fxGlow(x, y, z, 4 * (0.06 + 0.26 * age), hex, 0.35 + 0.5 * age)
       continue
     }
@@ -10869,7 +11601,7 @@ function drawTracers(t, me, others, viewId) {
       fxOrb(f[3], f[4], f[5], 0.07 + 0.22 * (1 - ba), hex, ba * 0.85)
     }
   }
-  if (me) drawWebs(me, others)
+  if (me) { drawWebs(me, others); drawChains(me, others, t) }
   batchEffects()
   fxKey = null
 }
@@ -10989,7 +11721,7 @@ const INPUT_SCHEMA = {
   lookTouch: t => !!(t && t.closest && t.closest('#btn-fire')),
   sample() {
     if (chatOpen || menuUp()) {
-      input.f = 0; input.r = 0; input.j = false; input.fire = false; input.alt = false; return
+      input.f = 0; input.r = 0; input.j = false; input.fire = false; input.alt = false; input.descend = false; return
     }
     if (keys[INPUT_SCHEMA.key.sprint] && !sprintHeld) sprintToggle()
     sprintHeld = !!keys[INPUT_SCHEMA.key.sprint]
@@ -11758,6 +12490,7 @@ function sfxRoom(cat, gain, t) {
 const sfxSpot = { x: 0, y: 0, z: 0 }
 let sfxFaults = 0
 function sfxFx(list, only) {
+  if (!sfxMake) moveFxSound(list, only)
   if (!sfxLive() || !Array.isArray(list)) return
   try {
     const me = myId
@@ -13762,6 +14495,9 @@ function clearSession() {
   for (const [, c] of conns) { try { c.close() } catch (e) {} }
   conns.clear(); inputs.clear(); inputSeq.clear(); lastChatSeq.clear(); lastChatAt.clear()
   inQ.clear(); inAck.clear()
+  for (const c of players.values()) moveReset(c)
+  if (predicted) moveReset(predicted)
+  if (moveMeter) moveMeter.hidden = true
   players.clear(); roster.clear()
   try { if (peer) peer.destroy() } catch (e) {}
   peer = null
@@ -13848,7 +14584,7 @@ function remoteAt(t) {
     out.push({ id, x: s.x + tr.ox, y: s.y + tr.oy, z: s.z + tr.oz,
                yaw: q[F.yaw] + dy * k, vx: p[F.vx], vz: p[F.vz], hp: p[F.hp], dead: p[F.dead], cid: p[F.cid], kills: p[F.kills] | 0,
                prot: p[F.prot] || 0, anim: p[F.anim] >= 0 && p[F.anim] < 7 ? p[F.anim] | 0 : 0, pow: p[F.pow] || 0, markT: p[F.markT] || 0, web: p[F.web] || 0, jl: p[F.jLock] || 0,
-               cap: p[F.cap] || 0, gun: p[F.gun] | 0,
+               cap: p[F.cap] || 0, gun: p[F.gun] | 0, move: p[F.move] || 0, springT: p[F.leapCharge] || 0, hayAge: p[F.hay] >= q[F.hay] ? lerp(q[F.hay] || 0, p[F.hay] || 0, k) : p[F.hay] || 0, chainNet: chainBetween(q[F.chain], p[F.chain], k),
                prof: p[F.prof] | 0, sprof: p[F.sprof] | 0, vy: p[F.vy], mark: effId(p[F.mark]) })
   }
   // a rider: in its seat of the vehicle as drawn, not its own rows
@@ -14207,6 +14943,7 @@ function objectStrikes(o, c, credit) {
 // inputs), and what one phase hands the next
 const HOST_PHASES = {
   beforeTick: t => { const { dt } = t
+  chainMarks=chainMarks.filter(m=>(tickAt||now())-m[1]<blockAttack().scarLife*1000)
   if (resultsLeft > 0) {
     if ((resultsLeft -= dt) <= 0) {
       hostEvent()
@@ -14221,7 +14958,7 @@ const HOST_PHASES = {
   for (const [id, c] of players) {
     const inp = cur.get(id) || IDLE_INPUT
     if (id !== 0) c.pitch = inp.pitch || 0
-    if (inp.fire || inp.alt) c.aimD = inp.d || 0   // kept for the burst
+    if (inp.fire || inp.alt || inp.descend) c.aimD = inp.d || 0   // kept for the burst
     c.cool = Math.max(0, c.cool - dt)
     for (const cm of [stepCharge(c, dt, inp), stepAltCharge(c, dt, inp)]) if (cm) { cm.push(id, 1); tracers.push(cm); GAME.audio.fx([cm]) }
     if (c.powT > 0 && (c.powT -= dt) <= 0) { c.powT = 0; c.pow = 0 }
@@ -14261,6 +14998,7 @@ const HOST_PHASES = {
     if (id === 0 && fx.some(marksHit)) sawHit()
   }
   for (const [id, f, ms] of zipLines.splice(0)) { emit(id, [f]); f.push(ms) }     // [.., -1, 9, shooter, ms]
+  for(const [id,c] of players)for(const v of c.blockKills?.splice(0)||[])credit(id,c)(v,blockAttack())
   windLaps(all, c => cur.get(c.id) || IDLE_INPUT)
   stepTornado(dt, all, (v, byId) => {
     const by = players.get(byId)
@@ -14284,14 +15022,14 @@ const HOST_PHASES = {
     c.slam = 0
     if (slam && c.slamGun !== primaryId(c)) {
       const G = dived(GUNS[c.slamGun], slam)
-      if (!seatOf(c) && !(c.dead > 0) && !(c.cool > 0) && !holdsFire(c, G)) {
+      if (!seatOf(c) && !(c.dead > 0) && (G.name === 'Leap-smash' || !(c.cool > 0)) && !holdsFire(c, G)) {
         c.cool = stat(c, 'rate', G.rate * profRate(c, G.name))
         emit(id, volley(id, () => resolveShot(c, all, credit(id, c), undefined, G, c.slamGun)))
         smashCheck(c, slam)
       }
       continue
     }
-    if (!(slam || inp.alt && !(c.air && primaryOf(c)?.dive)) || !seatShot(c, primaryOf(c) || {})) continue
+    if (!(slam || c.hayReady || inp.alt && !(c.air && primaryOf(c)?.dive)) || !seatShot(c, primaryOf(c) || {})) continue
     const viewT = slam || id === 0 || c.bot ? undefined : inp.rt
     const fx = volley(id, () => seatedShot(c, viewT, () => firePrimary(c, all, credit(id, c), viewT, slam)))
     if (slam && fx.length) smashCheck(c, slam)
@@ -14312,6 +15050,7 @@ const HOST_PHASES = {
   t.credit = credit
   },
   afterPhysics: t => { const { dt, all, credit } = t
+  for (const c of all) chainAfter(c)
   dashStrikes(all, credit)
   const touch = touchOf(all)
   strikeObjects(all, dt, touch, credit)
@@ -14320,7 +15059,7 @@ const HOST_PHASES = {
 }
 GAME.host = HOST_PHASES
 // a guest's own prediction, after its step: its dash launches what it passes
-GAME.guest = { afterPhysics: list => dashStrikes(list) }
+GAME.guest = { afterPhysics: list => { dashStrikes(list); for(const c of list)chainCorrect(c) } }
 // a bot's input for this tick, from what it sees
 GAME.think = botThink
 
@@ -14353,7 +15092,11 @@ const PLAYER_STATE = stateSchema([
   ['prof', c => profBits(c, GUNS[c.gun]?.name), (c, v) => { c.prof = v | 0 }],
   ['sprof', c => primaryOf(c) ? profBits(c, primaryOf(c).name) : 0, (c, v) => { c.sprof = v | 0 }],
   ['mark', c => c.mark | 0, (c, v) => { c.mark = effId(v) }],
-  ['web', c => c.web || 0]
+  ['web', c => c.web || 0],
+  ['move', c => c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0],
+  ['chain', c => chainPack(c), (c, v) => { c.chainNet = chainRead(v) }],
+  ['hay', c => r2(c.hayAge || 0), (c, v) => { c.hayAge = Number.isFinite(v) ? clamp(v, 0, 2) : 0 }],
+  ['leapCharge', c => r2(c.springT || 0)],
 ])
 GAME.schema = PLAYER_STATE
 
@@ -14383,6 +15126,7 @@ GAME.lifecycle = {
     tw: tornadoNow()?.map(r2), ...eventOn && { ev: eventOn.name },
   }),
   takeItems(d) {
+    if (d.cb !== undefined) chainMarksTake(d.cb,d.t)
     // pk absent = unchanged, not none; unordered, so versioned by packet time
     if (Array.isArray(d.pk) && d.t > pkAt) { snapPk = d.pk; pkAt = d.t }
     // whole triples within the host's max, else dropped entire; absent = none, so versioned by packet time too
@@ -14764,18 +15508,18 @@ const OWN_PREDICTION = (F => {
   const S = GAME.schema.step, fuelEps = S.fuel + S.fuel / 10
   if (REWIND_EPS < Math.hypot(S.x, S.y, S.z)) throw Error('REWIND_EPS is under the wire step')
   return {
-    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.sp = c.springT || 0; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
+    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0]; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
       const bh = c.body?.getBroadphaseHandle(); e.dsh = [!!c.dashOn, c.dashRun || 0, c.dashHit && [...c.dashHit], bh && A.getPointer(bh) ? bh.get_m_collisionFilterMask() : null]; return e },
     err: (e, a) => Math.hypot(e.x - a[F.x], e.y - a[F.y], e.z - a[F.z]),
     agrees: (e, a, web) => (e.web || 0) === web && Math.abs(e.fuel - a[F.fuel]) <= fuelEps && e.jl === !!a[F.jLock],
-    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.springT = e.sp; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
+    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.springT = e.sp; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove] = e.leap; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
       c.dashOn = e.dsh[0]; c.dashRun = e.dsh[1]; c.dashMask = e.dsh[3]; c.dashHit = e.dsh[2] && new Set(e.dsh[2]) },
     // re-tying the web its own prediction had, it keeps that prediction's reel target (off the wire); the length is the restored distance
     restore: (c, a, web) => { const [x, y, z, vx, vy, vz] = ownExact || [a[F.x], a[F.y], a[F.z], a[F.vx], a[F.vy], a[F.vz]]; restoreChar(c, x, y, z, vx, vy, vz, a[F.fuel])
       // a carried mask that differs re-adds the body where it now is: Bullet keeps a pair made under another mask, or at the old place
       const bh = c.body?.getBroadphaseHandle(), m = c.dashMask; c.dashMask = null
       if (m != null && bh && A.getPointer(bh) && bh.get_m_collisionFilterMask() !== m) { const g = bh.get_m_collisionFilterGroup(); world.removeRigidBody(c.body); world.addRigidBody(c.body, g, m) }
-      tie(c, web); if (c.tie && c.rope?.[0] === web) c.tie.want = Math.min(c.tie.len, c.rope[1]); c.rope = null; c.jLock = !!a[F.jLock] },
+      tie(c, web); if(c.tie && c.chainNet?.[0]===3){c.tie.want=Math.min(c.tie.len,c.chainNet[3]);reel(c,1)}; if (c.tie && c.rope?.[0] === web) c.tie.want = Math.min(c.tie.len, c.rope[1]); c.rope = null; c.jLock = !!a[F.jLock] },
   }
 })(GAME.schema.col)
 // the engine's input and own predicted component join the game's parts; a game message never reuses an engine kind
@@ -15018,7 +15762,7 @@ function sendSnapshot(s) {
     const pv = me?.tie || me?.flung ? ',"pv":' + JSON.stringify([me.x, me.y, me.z, me.vx, me.vy, me.vz].map(v => +v.toPrecision(9))) : ''
     const vh = sat ? Math.round(Math.max(0, sat.hp)) : null
     const vhs = vh === null ? '' : repeatField(sent, 'vh', vh)
-    const ot = repeatField(sent, 'or', tuned)
+    const ot = repeatField(sent, 'or', tuned) + repeatField(sent, 'cb', JSON.stringify(chainMarks))
     const withPk = pkSent.get(gid) !== pk, end = (ob.length ? ',"o":[' + ob + ']' : '') + oh + ot + ov + pv + vhs
     const msg = head + out.join(',') + (end ? tail(withPk).slice(0, -1) + end + '}' : tail(withPk))
     try { c.send(msg); bytesUp += msg.length; if (withPk) pkSent.set(gid, pk) } catch (e) {}
@@ -15077,7 +15821,7 @@ function draw(dt, t) {
     if (!me) { frameFailed('draw', new Error('the host has no player 0')); return }
     others = [...players].filter(([id]) => id !== 0)
       .map(([id, c]) => ({ id, ...(P => P ? { x: P[0], y: P[1], z: P[2], sim: c } : { x: c.x, y: c.y, z: c.z })(drawnPose(c)), yaw: c.yaw, wy: c.wy, vx: c.vx, vz: c.vz, dead: c.dead,
-                           cid: c.cid, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web,
+                           cid: c.cid, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: chainPack(c), hayAge: c.hayAge || 0, springT: c.springT || 0,
                            gun: c.gun, pitch: c.pitch, hp: c.hp, kills: c.kills | 0, mark: c.mark, markT: c.markT, vy: c.vy, jl: c.jLock }))
     pkl = GAME.view.pickups()
   } else {
@@ -15106,6 +15850,8 @@ function draw(dt, t) {
   const meP = drawnPose(me), meD = meP ? { ...me, x: meP[0], y: meP[1], z: meP[2] } : me
   meMesh.position.set(meD.x, meD.y, meD.z)
   const myHold = holdOf(myId, me) || me.ceil && 'ceiling'
+  avatars.get(myId).moveState = me.leap ? 2 : me.springT > SPRING_TAP ? 1 : 0; avatars.get(myId).moveCharge = clamp((me.springT || 0) / 1.15, 0, 1)
+  avatars.get(myId).chainState = isHost ? chainPack(me) : me.chainNet; avatars.get(myId).hayAge = me.hayAge || 0
   const myTicks = tickSamples.get(myId) || []
   meMesh.rotation.y = GAME.view.faceYaw(myId, me, animOf(me), myHold || firstPerson || carries.has(myId), t, dt, input.fire || input.alt, myTicks)
   if (!drawSeat(meMesh, me, sits.get(myId), obl) && !drawCeiling(meMesh, meD, myHold === 'ceiling', dt, myTicks)) drawTurned(meMesh, meD, animOf(me) === 4 && GAME.participantOf(me)?.wallRun, dt, myTicks)
@@ -15125,6 +15871,7 @@ function draw(dt, t) {
     const C = GAME.participant(o.id, o.cid)
     o.ceil = o.anim === 4 && C.climb && !C.wallRun && ceilAbove(o.x, o.y, o.z, C.r, 0.1)
     const hold = holdOf(o.id, o) || o.ceil && 'ceiling'
+    avatars.get(o.id).moveState = o.move; avatars.get(o.id).moveCharge = clamp((o.springT || 0) / 1.15, 0, 1); avatars.get(o.id).chainState = o.chainNet; avatars.get(o.id).hayAge = o.hayAge || 0
     const ticks = isHost ? tickSamples.get(o.id) || [] : undefined
     m.rotation.y = GAME.view.faceYaw(o.id, o, o.anim || 0, hold || carries.has(o.id), t, dt, false, ticks)
     if (o.anim === 4 && C.wallRun && o.wy === undefined) o.wy = wallYawAt(o.x, o.y, o.z, C.h + C.r + 0.4)
@@ -15167,8 +15914,9 @@ function draw(dt, t) {
     shotSkip = null
     input.view = { at: [meD.x, meD.y, meD.z], d, cam: !!cam.ray, moved: meD !== me, P: cam.seatRay && [view.x + view.dx * d, view.y + view.dy * d, view.z + view.dz * d] }
   }
-  meMesh.visible = meMesh.visible && !cam.hideSelf
-  ghost(meMesh, me.prot || 0, cam.fade)
+  moveCameraFade(me, cam)
+  meMesh.visible = meMesh.visible && !cam.hideSelf && cam.fade > 0.001
+  ghost(meMesh, me.prot || 0, cam.fade, true)
   drawAura(myId, animOf(me), dt)
   drawEffect(myId, me.markT > 0 ? me.mark : 0)
   drawStruck(myId, t)
@@ -15390,7 +16138,7 @@ function drawHud(me, others, t) {
   hud('flying', document.body, '.flying', !!FC.jet && !FC.jet.flier)
   hud('flier', document.body, '.flier', !!FC.jet?.flier)
   hud('zipper', document.body, '.zipper', !!FC.swing)
-  hud('descendL', el('#btn-descend'), 'textContent', FC.swing ? 'ZIP' : 'DOWN')
+  hud('descendL', el('#btn-descend'), 'textContent', FC.chain ? 'CHAIN' : FC.swing ? 'ZIP' : 'DOWN')
   const cycles = !!FC.manyGuns || !gunsOf(me) && [].concat(FC.atk ?? []).length > 1
   hud('many', document.body, '.manyguns', cycles)
   teamSeen = teamNow(me, others)
@@ -15410,7 +16158,7 @@ function drawHud(me, others, t) {
   const use = liftOf(me) > 0 ? 'lift' : objs.some(p => takeable(me, p)) ? 'use' : ''
   hud('hud', el('#hud'), 'textContent', IS_TOUCH
     ? nm + '  ·  FIRE ' + G.name + dives(G) + (cycles ? '  ·  WPN next' : '') + (P ? '  ·  ATK ' + P.name + dives(P) : '') + (use ? '  ·  USE ' + use : '') + clock
-    : nm + '  ·  WASD move  ·  Shift sprint  ·  Space ' + (FC.jet?.flier ? 'fly/rise  ·  Q down' : 'jump' + (FC.swing ? '  ·  Q zip' : '')) + '  ·  click ' + G.name +
+    : nm + '  ·  WASD move  ·  Shift sprint  ·  Space ' + (FC.jet?.flier ? 'fly/rise  ·  Q down' : FC.chain ? 'hold/release leap-smash  ·  Q hold/release chain · hold Q reel · Space let go' : 'jump' + (FC.swing ? '  ·  Q zip' : '')) + '  ·  click ' + G.name +
       dives(G) +
       (cycles ? '  ·  R next' : '') +
       (P ? '  ·  right-click ' + P.name : '') +
