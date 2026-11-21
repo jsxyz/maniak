@@ -15212,6 +15212,8 @@ const CRATER_MAX = 64
 // only scales up, so the ground it cut stays under the new bowl. A 96 m cell's scars cost at most CRATER_CELL single bowls
 // (one: 2,289 vertices; one in a region with others about 1.65 as many): about 20,000 vertices, 8 bowls apart or 5 touching.
 // Past that a smash grows the oldest scar it touches there, or makes none. No scar heals: its cut city mesh can't be put back.
+// A scar grows once, straight to its cap (or halfway, if only that fits): every re-cut splits the ground round its old hole again,
+// and six 0.2 m steps cost a longer frame each (QA #62: 35 -> 118 ms).
 const CRATER_CELL = 8.7, CRATER_GROW = 1.5
 const craterCell = (x, z) => Math.floor((x + ARENA) / 96) + ' ' + Math.floor((z + ARENA) / 96)
 const craterShare = (p, q) => Math.max(0, Math.min(p.a1, q.a1) - Math.max(p.a0, q.a0)) * Math.max(0, Math.min(p.b1, q.b1) - Math.max(p.b0, q.b0)) / ((q.a1 - q.a0) * (q.b1 - q.b0))
@@ -15226,7 +15228,7 @@ function craterInto(list, e, maxR) {
   if (i < 0) i = list.findIndex(c => craterCell(c[0], c[1]) === cell && over(sq(c), q))
   if (i < 0) return { i }
   const c = list[i]
-  return { i, r: Math.max(c[2], Math.min(maxR, Math.round(Math.max(c[2] + 0.1 * e[2], Math.hypot(e[0] - c[0], e[1] - c[1]) + e[2]) * 10) / 10)) }
+  return { i, r: Math.max(c[2], maxR) }
 }
 let craters = [], craterV = 0, geoToken = 0, craterBehind = false, craterRegions = new Map(), craterReplaced = new Set()
 // Ground cuts belong to source boxes, not their changing indices in the streamed BOXES list.
@@ -15315,8 +15317,9 @@ function addCrater(x, z, r, y) {
     craterV++; lsLeft = 8; buildCrater(craters.length - 1)
     return true
   }
-  if (!c || !(to.r > c[2]) || !craterFits(c[0], c[1], to.r, c[4])) return false      // in a scar that can't grow: no new bowl
-  craters[to.i] = [c[0], c[1], to.r, c[3], c[4]]
+  const grown = c && [to.r, Math.round((c[2] + to.r) * 5) / 10].find(g => g > c[2] && craterFits(c[0], c[1], g, c[4]))
+  if (!grown) return false      // in a scar that can't grow: no new bowl
+  craters[to.i] = [c[0], c[1], grown, c[3], c[4]]
   craterV++; lsLeft = 8; buildCrater(to.i)
   return true
 }
