@@ -958,7 +958,7 @@ const CHARS = [
     // (7.6 at most), far short of a car (59). Walking, 4.44; whirling the chain, he walks
     sprintSpd: 11.5,
     // card #50: a tap of jump is a plain hop at 6.6 m/s, about 1 m up and 0.6 s in the air; held past SPRING_TAP, the leap-smash
-    spring: { full: 1.15, k: 3.4, hop: 6.6 }, leapSmash: true, smash: { speed: 18, r: 2.4, depth: 0.35 },
+    spring: { full: 1.15, k: 3.4, hop: 6.6 }, leapSmash: true, mantle: true, smash: { speed: 18, r: 2.4, depth: 0.35 },
     poise: { at: 12, armour: 2, push: 6, stagger: 0.35, fade: 0.6, window: 2, chain: 3, immune: 1.5 },
     swing: { range: 60, pace: 24 }, hurl: { speed: 20, dmg: 0, reach: 1.5 },
     // card #55: he lifts anything up to a car's mass, and his hands take part in the interaction system (PARTS)
@@ -12494,6 +12494,84 @@ function runUpWall(c, inp, spd, wx, wz, dt) {
   turnBody(c, false, inp.yaw, c.x, c.y - c.h, c.z); knockChar(c, ax, 0, az, RUN_OFF)
   return [0, Math.min(c.vy, RUN_OFF), 0]
 }
+// #63's mantle: he mounts or vaults a waist-high obstacle of the static level (its top MANTLE.low to .high m above his feet;
+// no vehicle or loose object; never into a window (MANTLE.clear m free over the top), over a higher wall or off a drop of
+// more than MANTLE.drop) when he runs or walks into it (MANTLE.auto; false: Space only) or presses Space within MANTLE.tap m
+// of it. No jump: his middle rises as he closes on the face (eased out, rise[0] + rise[1] s a metre) to the top + MANTLE.lift
+// just as he reaches it, crosses at his own speed (at least MANTLE.slow m/s), then lets go: a vault falls on beyond it, a
+// mount stands on the top. It starts the tick he needs it. Host and guest run it alike (c.mantle is in the replay state); on
+// the wire it is move 4, and each machine's rig finds the top itself (mantleHands).
+// c.mantle: [t s, rise s, across s, x0, y0, z0, fx, fz, gap m, speed m/s, rise m, mount 0/1, top y]
+const MANTLE = { auto: true, tap: 0.6, low: 0.4, high: 1.3, clear: 2.05, drop: 3, lift: 0.08, slow: 3.5, rise: [0.08, 0.09], aim: 0.8, slip: 0.3 }
+// the rig's pose for it (rigMovePose): hip m over the top; lean: spine_01-03 forward, head back up (rad); lead, trail: a foot's
+// [forward of its hip m, most below it m, least over the top m]; armsIn: ms the arms and lean ease in over, tuckIn: the knees
+// tuck from-to ms after (no pop from his stride); mount: a step-up (hips higher, half the lean, the lead foot onto the top, one
+// hand, up into his run within let ms on the top); shrug: the shoulders down, roll: the chest over to his right (the jump clip holds that shoulder back) (rad), while the hands hold; let: his shoulders this far past his hands, they let go over
+// letArms ms, and his feet untuck over letLegs ms
+const MANTLE_POSE = { hip: 0.33, lean: [0.48, 0.38, 0.24, 0.85], lead: [0.4, 0.5, 0.22], trail: [0.2, 0.45, 0.26], shrug: 0.55, roll: 0.35, let: 0.15, letArms: 180, letLegs: 240,
+  armsIn: 120, tuckIn: [60, 200], mount: { hip: 0.7, lean: 0.5, lead: [0.28, 0.6, 0.08], let: 120 } }
+const mantleHit = []
+// the obstacle ahead of c along (fx, fz) within reach of his middle: [s (his middle to its face), top y, depth m (0: it goes
+// on, a mount)], else null
+function mantleProbe(c, fx, fz, reach) {
+  const K = MANTLE, feet = c.y - c.h - c.r, H = 2 * (c.h + c.r), ray = (x, y, z, dx, dy, dz, r) => staticRay(x, y, z, dx, dy, dz, r, mantleHit, RAY_GROUP)
+  const s = ray(c.x, feet + 0.25, c.z, fx, 0, fz, reach)
+  if (s >= reach || Math.abs(mantleHit[4]) > 0.3 || -(mantleHit[3] * fx + mantleHit[5] * fz) < K.aim * Math.hypot(mantleHit[3], mantleHit[5])) return null      // a face, met head-on
+  const at = (u, y, r) => ray(c.x + fx * (s + u), y, c.z + fz * (s + u), 0, -1, 0, r)
+  const span = K.high + 0.3, d = at(0.05, feet + span, span), top = feet + span - d
+  if (d >= span || mantleHit[4] < 0.7 || top - feet < K.low || top - feet > K.high) return null
+  if (ray(c.x + fx * (s + 0.05), top + 0.02, c.z + fz * (s + 0.05), 0, 1, 0, K.clear) < K.clear) return null      // a window's lintel, an overhang
+  let w = 0
+  for (const u of [0.3, 0.55, 0.85]) { const e = at(u, top + 0.3, 0.6), y = top + 0.3 - e
+    if (e < 0.6 && Math.abs(y - top) <= 0.15 && mantleHit[4] > 0.7) continue
+    if (y > top + 0.15) return null
+    w = u; break }
+  if (w) {      // it ends: its far face (a ray back from beyond it), then a floor to land on, no more than MANTLE.drop down
+    const b = ray(c.x + fx * (s + w + 0.3), top - 0.06, c.z + fz * (s + w + 0.3), -fx, 0, -fz, w + 0.3)
+    w = Math.max(0.05, b < w + 0.3 ? w + 0.3 - b : w)
+    const e = at(w + c.r + 0.15, top + 0.3, K.drop + 0.3)
+    if (e >= K.drop + 0.3 || mantleHit[4] < 0.7 || e < 0.15) return null
+  }
+  // room for him on his way: over the top and (a vault) past its far side
+  const y0 = top + K.lift, far = s + (w ? w + 2 * c.r + 0.1 : 2 * c.r + 0.15)
+  for (const y of [y0 + 0.15, y0 + H / 2, y0 + H - 0.1]) if (ray(c.x, y, c.z, fx, 0, fz, far) < far) return null
+  return [s, top, w]
+}
+// a mantle's start, or its end if something stops it: the tick he presses Space by an obstacle, or (MANTLE.auto) runs into one
+// when he must rise to clear it at his pace. Not seated, on a web or chain, leaping or diving, knocked, holding anything
+// (every grip takes both hands), winding a haymaker, in water; no bot yet
+function mantleTick(c, inp, wx, wz, m, CX, CZ) {
+  const K = MANTLE, busy = c.dead > 0 || seatOf(c) || c.tie || c.zip || c.leap || c.dove || c.knT > 0 || c.vehT > 0 || c.chain?.phase || c.punted || c.wall || c.ceil || c.wallRun || c.water || c.parts?.act || partsHeld(c)
+  if (c.mantleFall && (c.grounded || busy)) c.mantleFall = false
+  if (c.mantle) { if (busy) c.mantle = null; return }
+  if (busy || c.bot || !c.grounded || !GAME.participantOf(c)?.mantle || c.springT > 0 || c.hop || c.hayT > 0) return
+  const press = inp.j && !c.jAir && !c.jLock, push = K.auto && m > 0.5
+  if (!press && !push) return
+  const fx = m > 0.5 ? wx / m : -Math.sin(inp.yaw), fz = m > 0.5 ? wz / m : -Math.cos(inp.yaw), riseAt = dy => K.rise[0] + K.rise[1] * dy
+  const along = Math.max(0, ((c.vx || 0) - CX) * fx + ((c.vz || 0) - CZ) * fz)      // his speed toward it, in the frame he stands in
+  const P = mantleProbe(c, fx, fz, c.r + Math.max(press ? K.tap : 0, push ? along * riseAt(K.high + K.lift) + 0.1 : 0))
+  if (!P) return
+  const [s, top, w] = P, dy = top + K.lift - (c.y - c.h - c.r), gap = Math.max(0, s - c.r - 0.02), vh = Math.max(along, K.slow)
+  if (!press && gap > Math.max(0.05, along * riseAt(dy))) return      // not yet: it starts when he must rise to clear the top at his pace
+  // the rise fitted to the gap (he started up to a tick early), so he keeps his speed through it; a late start rises faster
+  const tr = press || along < 1 ? riseAt(dy) : Math.max(0.8 * riseAt(dy), Math.min(riseAt(dy), gap / along))
+  c.mantle = [0, tr, ((w ? s + w + c.r + 0.05 : s + c.r + 0.1) - gap) / vh, c.x, c.y, c.z, fx, fz, gap, vh, dy, w ? 0 : 1, top]
+}
+// a mantle's path: his middle u s into it (past its end, on at its speed, so its last tick is a whole one)
+function mantleAt(M, u) {
+  const [, tr, , x0, y0, z0, fx, fz, gap, vh, dy] = M, k = Math.min(u, tr) / tr, a = u < tr ? gap * k : gap + vh * (u - tr)
+  return [x0 + fx * a, y0 + dy * (1 - (1 - k) * (1 - k)), z0 + fz * a]
+}
+// this tick's velocity along it (moved with a carrier he rides, CV), else null: done, or held up MANTLE.slip m off it
+function mantleV(c, CV, dt) {
+  const M = c.mantle
+  if (CV) { M[3] += CV[0] * dt; M[5] += CV[2] * dt; if (c.carryOn) { M[4] += CV[1] * dt; M[12] += CV[1] * dt } }
+  const [x, y, z] = mantleAt(M, M[0])
+  if (Math.hypot(c.x - x, c.y - y, c.z - z) > MANTLE.slip) { c.mantle = null; return null }
+  const T = M[1] + M[2], u = M[0] += dt, [nx, ny, nz] = mantleAt(M, u)
+  if (u >= T) { c.mantleFall = !M[11]; c.mantle = null }      // a vault falls on as the mantle (move 4) till he lands
+  return [(nx - c.x) / dt, (ny - c.y) / dt, (nz - c.z) / dt]
+}
 // sprint vault over a lower face: vy, else null; m: OVER_CLEAR over its top, OVER_LOW stepped over
 const OVER_CLEAR = 0.2, OVER_LOW = 0.3, overHit = []
 function runOver(c, inp, spd) {
@@ -12555,7 +12633,7 @@ function chainClear(c) {
 function moveReset(c) {
   chainClear(c)
   c.smashCam = c.springT = c.leap = c.leapAir = c.hop = c.hopAir = c.hayT = c.hayReady = c.hayAge = c.water = 0
-  c.chainLock = false; c.blockKills = []
+  c.chainLock = false; c.blockKills = []; c.mantle = null; c.mantleFall = false
 }
 function leapStart(c, inp, q) {
   c.leap = q + 0.001; c.leapAir = false
@@ -12712,7 +12790,7 @@ function chainBetween(q, p, k) {
 function haymakerCharge(c, dt, inp) {
   const G = primaryOf(c)
   if (!G?.hayWind) return chargeUp(c, 'altCharge', G, primaryId(c), c.dead <= 0 && !!inp.alt, dt)
-  if (c.dead > 0 || seatOf(c) || c.leap || smashDiving(c) || c.springT > SPRING_TAP || c.chain?.phase === 1) { c.hayT = c.hayAge = 0; c.hayReady = false; return null }
+  if (c.dead > 0 || seatOf(c) || c.leap || smashDiving(c) || c.mantle || c.springT > SPRING_TAP || c.chain?.phase === 1) { c.hayT = c.hayAge = 0; c.hayReady = false; return null }
   c.hayAge = c.hayAge > 0 && c.hayAge < G.rate ? c.hayAge + dt : 0
   if (c.hayT > 0) { c.hayT = Math.max(0, c.hayT - dt); if (!c.hayT) c.hayReady = true }
   if (!inp.alt || c.hayT || c.hayReady || c.spCool > 0) return null
@@ -13113,6 +13191,8 @@ function applyIntent(c, inp, dt) {
   if (c.ceil) c.wall = 0
   const up = c.wall && !inp.j ? -GAME.participantOf(c).climb * (wx * c.wnx + wz * c.wnz) : 0
   const cling = !!c.wall && !inp.j && c.vy <= 1.25 * GAME.participantOf(c).climb
+  if (!SW && !J) mantleTick(c, inp, wx, wz, m, CX, CZ)      // #63's mantle: it starts (Space: instead of a jump) or stops
+  else if (c.mantle || c.mantleFall) { c.mantle = null; c.mantleFall = false }      // swimming or flying: no mantle
   if (SW) { vy = c.swVy; c.jLock = !!inp.j; c.zLock = !!inp.descend; c.grounded = false; c.air = false; c.flying = false }
   else if (J) {
     if (J.flier) {
@@ -13142,6 +13222,7 @@ function applyIntent(c, inp, dt) {
       if (vy < -J.fall && !c.dove) vy = -J.fall
       if (c.grounded && !thrusting) c.fuel = Math.min(tank, c.fuel + J.refuel * dt)
     }
+  } else if (c.mantle) { c.flying = false; c.springT = 0; c.jAir = c.jLock = !!inp.j      // mantling: no jump (a Space held through it jumps once let go)
   } else {
     if (c.flying) c.flying = false
     // one jump a take-off: latched until airborne, or grounded and not rising (a swinger: until let go)
@@ -13267,16 +13348,18 @@ function applyIntent(c, inp, dt) {
       else { mx = dx * k; vy = dy * k; mz = dz * k; c.flung = how === 'air' }
     }
   }
+  const ML = c.mantle ? mantleV(c, CV, dt) : null      // #63's mantle: its path, over all of the above (and the frame, stairs, sweeps)
+  if (ML) [mx, vy, mz] = ML
   const pf = partsFlightV(c, mx, vy, mz); if (pf) [mx, vy, mz] = pf          // card #55: punted or thrown, it flies
   // card #5: what he does, in the frame he stands in; on it, he rises and sinks with it
-  if (CV && !c.zip) { mx += CX; mz += CZ; if (c.carryOn) vy = vy === c.vy ? CV[1] : vy + CV[1] }
-  if (faustIn.ramps.length && !c.tie && !c.leap) vy = faustInStairs(c, mx, vy, mz)
-  if (faustIn.broken.size && c.grounded) vy = faustInVault(c, mx, vy, mz)
+  if (CV && !c.zip && !ML) { mx += CX; mz += CZ; if (c.carryOn) vy = vy === c.vy ? CV[1] : vy + CV[1] }
+  if (faustIn.ramps.length && !c.tie && !c.leap && !ML) vy = faustInStairs(c, mx, vy, mz)
+  if (faustIn.broken.size && c.grounded && !ML) vy = faustInVault(c, mx, vy, mz)
   // a hard landing lands on the ground: the fall swept, so the capsule doesn't sink into the floor for a tick and bounce out
-  if (vy < 0 && !c.zip && !c.tie && !c.flyTurn) { const fall = -vy * dt, feet = c.y - c.h - c.r, d = staticRay(c.x, feet + 0.1, c.z, 0, -1, 0, fall + 0.1, null, RAY_GROUP | G_OBJ) - 0.1
+  if (vy < 0 && !c.zip && !c.tie && !c.flyTurn && !ML) { const fall = -vy * dt, feet = c.y - c.h - c.r, d = staticRay(c.x, feet + 0.1, c.z, 0, -1, 0, fall + 0.1, null, RAY_GROUP | G_OBJ) - 0.1
     if (d >= 0 && d < fall) vy = -d / dt }
   // slanting into a wall, he slides (slideFrom: what he ran at it with, for the glass he breaks: dsBodiesBefore)
-  if (!c.tie && !c.zip && !c.bot && !(c.knT > 0) && !(c.vehT > 0) && c.body) { const wx = mx, wz = mz; [mx, mz] = wallSlide(c, mx, mz, dt); c.slideFrom = mx !== wx || mz !== wz ? [wx, wz] : null }
+  if (!c.tie && !c.zip && !c.bot && !(c.knT > 0) && !(c.vehT > 0) && c.body && !ML) { const wx = mx, wz = mz; [mx, mz] = wallSlide(c, mx, mz, dt); c.slideFrom = mx !== wx || mz !== wz ? [wx, wz] : null }
   else c.slideFrom = null
   if (!c.tie) {                // on a web, Bullet swings it
     velVec.setValue(mx, vy, mz)
@@ -13287,7 +13370,7 @@ function applyIntent(c, inp, dt) {
     forceVec.setValue(0, -GRAV * (J ? J.flier ? (c.flying ? 1 : 0) : 1 - J.grav : 1) * M, 0)
     c.body.applyCentralForce(forceVec)
   }
-  if (c.ceil || c.wallRun && !c.slide || SW) { forceVec.setValue(0, -GRAV * M, 0); c.body.applyCentralForce(forceVec) }      // none on a surface it runs or crawls
+  if (c.ceil || c.wallRun && !c.slide || SW || ML) { forceVec.setValue(0, -GRAV * M, 0); c.body.applyCentralForce(forceVec) }      // none on a surface it runs or crawls
   c.body.activate()
   c.yaw = inp.yaw
   // NaN fails it too
@@ -16803,7 +16886,7 @@ function resolveShot(shooter, targets, onKill, viewT, G, gunId) {
 }
 
 function fireHitscan(shooter, targets, onKill, viewT) {
-  if (shooter.dead > 0 || shooter.cool > 0 || shooter.hayT > 0 || shooter.springT > SPRING_TAP || shooter.leap || smashDiving(shooter) || shooter.chain?.phase === 1 || holdsFire(shooter)) return []
+  if (shooter.dead > 0 || shooter.cool > 0 || shooter.hayT > 0 || shooter.springT > SPRING_TAP || shooter.leap || smashDiving(shooter) || shooter.mantle || shooter.chain?.phase === 1 || holdsFire(shooter)) return []
   const G = GUNS[shooter.gun]
   const gunId = shooter.gun
   if (shooter.ammo <= 0) { shooter.gun = 0; shooter.ammo = Infinity; return [] }
@@ -17144,6 +17227,7 @@ const profOf = (id, cid) => GAME.looks.bot(id) ? BOT_PROFILES[id - BOT_ID0] : PR
 const crouchOf = (id, cid, anim, jl, hold) => !hold && anim < 2 && jl && GAME.participant(id, cid).spring ? anim ? 'crouchRun' : 'crouch' : anim
 function animOf(c) {
   if (c.dead > 0 || seatOf(c)) return 0
+  if (c.mantle || c.mantleFall) return 1      // #63's mantle: moving (rigAnimate runs his stride on under its pose)
   // own fall threshold while hovering, or the pose flickers
   const airborne = jetOf(c)
   if (c.wallRun) return 4
@@ -22988,6 +23072,7 @@ function rigAnimate(a, want, dt, t) {
   else if (a.chainState?.[0] >= 3 && (airborne || want === 4 || hold === 'swing')) { name = K.climb; fade = 0.15 }
   else if (a.chainState?.[0] >= 3 && !(want === 1 || v > 0.6)) { name = K.idle; fade = 0.15 }
   else if (a.moveState === 3) name = K.leap      // card #90: smash_air is the smash's; a leap flies in jump and fall
+  else if (a.moveState === 4) { name = K.run; rate = clamp(v / (M.pace.run * H), 0.8, 1.6); fade = 0.12 }      // #63's mantle: his stride runs on under its pose; after a vault his legs reach for the ground and run on
   else if (hold === 'held') name = K.fall          // card #55: dangling in someone's hands
   else if (hold === 'sit') name = a.seat === 0 ? K.drive : K.sit
   else if (hold === 'swing' || hold === 'climb' || hold === 'ceiling' || want === 4) name = K.climb
@@ -23141,6 +23226,18 @@ function rigFootfall(a, R, side) {
 // fists high overhead. The two-bone solve works in character space, preserving the sculpted limb lengths.
 const MOVE_BONES = ['pelvis','spine_01','spine_02','spine_03','neck_01','Head','clavicle_r','upperarm_r','lowerarm_r','hand_r','upperarm_l','lowerarm_l','hand_l',
   'thigh_l','thigh_r','calf_l','calf_r','foot_l','foot_r','cape_01','cape_02','cape_03']
+// #63's mantle, in the rig: where avatar a's hands go on the top ahead of him (along fx, fz; lx, lz his left): two points a
+// shoulder-width apart just behind its edge, a palm over it; null if no top is found (the clip's pose then stands)
+function mantleHands(a, t, fx, fz, lx, lz) {
+  const p = a.mesh.position, feet = p.y - a.spec.h - a.spec.r, ray = (x, y, z, dx, dy, dz, r) => staticRay(x, y, z, dx, dy, dz, r, mantleHit, RAY_GROUP)
+  let s = ray(p.x, feet + 0.25, p.z, fx, 0, fz, 3.6)
+  if (s >= 3.6 || Math.abs(mantleHit[4]) > 0.3) s = a.spec.r + 0.05      // already up to it (a late start): the top just ahead
+  const span = MANTLE.high + 0.4, d = ray(p.x + fx * (s + 0.05), feet + span, p.z + fz * (s + 0.05), 0, -1, 0, span + 0.2)
+  if (d >= span + 0.2) return null
+  const top = feet + span - d, x = p.x + fx * (s + 0.09), z = p.z + fz * (s + 0.09), y = top + 0.07
+  const e = ray(p.x + fx * (s + 0.9), top + 0.3, p.z + fz * (s + 0.9), 0, -1, 0, 0.6), mount = e < 0.6 && Math.abs(0.3 - e) <= 0.15      // the top goes on: a mount
+  return { at: t, f: [fx, fz], top, mount, mid: [x, y, z], hands: [[x + lx * 0.27, y, z + lz * 0.27], [x - lx * 0.27, y, z - lz * 0.27]] }
+}
 function restoreMovePose(R) {
   if (!R.moveSaved?.active) return
   for (const [b, q] of R.moveSaved.bones) b.quaternion.copy(q)
@@ -23152,7 +23249,7 @@ function rigMovePose(a, R, want, t) {
   const charge = a.moveState === 1 ? clamp(a.moveCharge || 0, 0, 1) : -1, air = a.moveState === 3, age = a.hayAge || 0
   const whirl = Array.isArray(a.chainState) && a.chainState[0] === 1 ? clamp(a.chainState[1] || 0, 0, 1) : -1
   const reel = Array.isArray(a.chainState) && a.chainState.length >= 24 + CHAIN_N * 3 && a.chainState[0] >= 3 ? (a.chainState[10] ? 1 : 0) : -1       // card #43: 1 reeling, 0 held
-  if (!(smk > 0) && !(chg >= 0 && chg < 1) && whirl < 0 && reel < 0 && charge < 0 && !air && !(age > 0 && age < 0.9)) {
+  if (!(smk > 0) && !(chg >= 0 && chg < 1) && whirl < 0 && reel < 0 && charge < 0 && !air && !(age > 0 && age < 0.9) && a.moveState !== 4 && !R.ml) {
     if(R.name==='idle'){const l=R.bones.get('foot_l'),r=R.bones.get('foot_r');l?.getWorldPosition(rigV);r?.getWorldPosition(rigU);R.moveFoot=Math.min(rigV.y,rigU.y)-a.mesh.position.y}
     return
   }
@@ -23162,6 +23259,12 @@ function rigMovePose(a, R, want, t) {
   S.y = R.inst.position.y; (S.root ||= new THREE.Quaternion()).copy(R.inst.quaternion); S.active = true
   const [sh,el,hand,target,pole,dir,hinge,from,to,axis,leftFoot,rightFoot] = S.v, [rootQ,parentQ,delta,rotation,inverse] = S.q
   a.mesh.updateMatrixWorld(true); R.inst.getWorldQuaternion(rootQ)
+  // #63's mantle (move 4): its hands' places on the top, found once from where he is (on every machine alike); kept 250 ms
+  // past its end while the pose eases out
+  if (a.moveState === 4 && !(R.ml && R.ml.end === undefined)) { axis.set(0, 0, 1).applyQuaternion(rootQ); dir.set(1, 0, 0).applyQuaternion(rootQ); R.ml = mantleHands(a, t, axis.x, axis.z, dir.x, dir.z) }
+  else if (a.moveState !== 4 && R.ml && R.ml.end === undefined) R.ml.end = t
+  if (R.ml?.end !== undefined && t - R.ml.end > 250) R.ml = null
+  const ml = R.ml
   const turn = (name, xyz, angle) => {
     const b = R.bones.get(name); if (!b || !angle) return
     b.parent.getWorldQuaternion(parentQ)
@@ -23174,8 +23277,8 @@ function rigMovePose(a, R, want, t) {
     inverse.copy(parentQ).invert().multiply(delta).multiply(parentQ).multiply(b.quaternion)
     b.quaternion.copy(inverse)
   }
-  const arm = (side, goal, bend) => {
-    const upper = R.bones.get('upperarm_'+side), lower = R.bones.get('lowerarm_'+side), end = R.bones.get('hand_'+side)
+  const arm = (side, goal, bend, U = 'upperarm_', L = 'lowerarm_', E = 'hand_') => {      // (#63's mantle: a leg too, thigh_ calf_ foot_)
+    const upper = R.bones.get(U+side), lower = R.bones.get(L+side), end = R.bones.get(E+side)
     if (!upper || !lower || !end) return
     upper.getWorldPosition(sh); lower.getWorldPosition(el); end.getWorldPosition(hand)
     target.set(...goal); R.inst.localToWorld(target); pole.set(...bend); R.inst.localToWorld(pole)
@@ -23190,8 +23293,37 @@ function rigMovePose(a, R, want, t) {
     rotate(lower,from.subVectors(hand,el),to.subVectors(target,el))
   }
   const feet = () => {R.bones.get('foot_l')?.getWorldPosition(leftFoot);R.bones.get('foot_r')?.getWorldPosition(rightFoot);return Math.min(leftFoot.y,rightFoot.y)}
-  const moving = want === 1 || (a.v || 0) > 0.6, planted = !air && want !== 2 && want !== 3 && want !== 6 && !(whirl >= 0 && moving) && !(reel >= 0 && (moving || want === 4 || R.name === R.M.clips.climb)), floor = a.mesh.position.y + (R.moveFoot ?? -a.spec.h-a.spec.r+0.10)
-  if (smk > 0) {
+  const moving = want === 1 || (a.v || 0) > 0.6, planted = !air && !ml && want !== 2 && want !== 3 && want !== 6 && !(whirl >= 0 && moving) && !(reel >= 0 && (moving || want === 4 || R.name === R.M.clips.climb)), floor = a.mesh.position.y + (R.moveFoot ?? -a.spec.h-a.spec.r+0.10)
+  if (ml) {
+    // #63's mantle. His capsule clears the top whole (its feet over it), so the body drawn in it sinks until his hips are
+    // MANTLE_POSE.hip over the top (never raised), held there while he crosses and eased back over ml's last 250 ms: a vault's
+    // fall meets it, a mount stands up onto the top. Both hands reach for the top and hold there (pinned in the world) till his
+    // shoulders pass them by P.let, then let go; he pitches over it, eyes ahead; his feet tuck up over the top (the right
+    // leading), never under it, the knees forward and out, and untuck once the hands go and his shoulders are well past them
+    const sm = THREE.MathUtils.smoothstep, P = MANTLE_POSE, mt = (t - ml.at) / 1000, [fx, fz] = ml.f, up = ml.end === undefined ? 1 : 1 - sm(t - ml.end, 0, ml.mount ? P.mount.let : 250)
+    const e = sm(mt * 1000, 0, P.armsIn) * up, kt = sm(mt * 1000, P.tuckIn[0], P.tuckIn[1]) * up, Q = ml.mount ? P.mount : null
+    R.bones.get('upperarm_l')?.getWorldPosition(sh); R.bones.get('upperarm_r')?.getWorldPosition(el)
+    const past = ((sh.x + el.x) / 2 - ml.mid[0]) * fx + ((sh.z + el.z) / 2 - ml.mid[2]) * fz
+    if (past > P.let && ml.let === undefined) ml.let = t
+    const gone = ml.let === undefined ? 0 : t - ml.let, off = 1 - sm(gone, 0, Q ? Q.let : P.letLegs) * (Q ? 1 : sm(past, 0.45, 0.85)), lean = e * off * (Q ? Q.lean : 1), tuck = kt * off, hold = e * (1 - sm(gone, 0, P.letArms))
+    R.bones.get('pelvis')?.getWorldPosition(hinge); R.inst.position.y += Math.min(0, ml.top + (Q ? Q.hip : P.hip) - hinge.y) * e * (Q ? off : 1); R.inst.updateMatrixWorld(true)
+    turn('spine_01', [1, 0, 0], P.lean[0] * lean); turn('spine_02', [1, 0, 0], P.lean[1] * lean); turn('spine_03', [1, 0, 0], P.lean[2] * lean); turn('Head', [1, 0, 0], -P.lean[3] * lean)
+    turn('spine_03', [0, 0, 1], P.roll * hold); turn('clavicle_r', [0, 0, 1], P.shrug * hold); turn('clavicle_l', [0, 0, 1], -P.shrug * hold)      // shoulders down to the top (the jump clip shrugs them)
+    R.inst.updateMatrixWorld(true)
+    const keep = ['upperarm_r', 'lowerarm_r', 'hand_r', 'upperarm_l', 'lowerarm_l', 'hand_l', 'thigh_r', 'calf_r', 'foot_r', 'thigh_l', 'calf_l', 'foot_l'].map(n => R.bones.get(n)), was = keep.map(b => b?.quaternion.clone())
+    for (const [side, k, s] of [['l', 0, 1], ['r', 1, -1]]) {
+      const sb = R.bones.get('upperarm_' + side), hb = R.bones.get('thigh_' + side); if (!sb || !hb) continue
+      target.set(...ml.hands[k]); R.inst.worldToLocal(target); const goal = target.toArray()
+      sb.getWorldPosition(pole); R.inst.worldToLocal(pole); pole.x += s * 0.55; pole.z -= 0.6      // elbows out and back
+      arm(side, goal, pole.toArray())
+      // the foot: forward of its hip (the lead more), up toward the top, never under top + its clearance nor within 0.12 m of the hip
+      const F = side === 'r' ? (Q ? Q.lead : P.lead) : P.trail
+      hb.getWorldPosition(hand); target.set(hand.x + fx * F[0], Math.min(hand.y - 0.12, Math.max(hand.y - F[1], ml.top + F[2])), hand.z + fz * F[0]); R.inst.worldToLocal(target); const foot = target.toArray()
+      hb.getWorldPosition(pole); pole.x += fx * 0.9; pole.z += fz * 0.9; pole.y += 0.35; R.inst.worldToLocal(pole); pole.x += s * 0.25      // knees forward, up and out
+      arm(side, foot, pole.toArray(), 'thigh_', 'calf_', 'foot_')
+    }
+    keep.forEach((b, i) => b && b.quaternion.copy(was[i].slerp(b.quaternion, i < 3 ? (Q ? 0 : hold) : i < 6 ? hold : tuck)))      // a mount: the left hand only
+  } else if (smk > 0) {
     // card #16, the pipe: the lighter's hand comes to the bowl, then the pipe to his lips for the draw (his head tipping back),
     // held there, then lowered as the smoke goes out (head up, chest opening). He stands: his legs keep the idle clip
     const P = S.p ||= Array.from({ length: 4 }, () => new THREE.Vector3()), sm = THREE.MathUtils.smoothstep
@@ -27996,7 +28128,7 @@ function openPause() {
 // the desktop keys, for the character played: the status line leaves them to the menu (#39)
 function keyHelp(c) {
   const C = c ? CHARS[c.cid] : CHARS[0]
-  const space = C.jet?.flier ? 'Space fly/rise · Q down' : C.chain ? 'Space tap: jump, hold and release: leap · Q hold and release: chain · hold Q: reel in · Space: let go'
+  const space = C.jet?.flier ? 'Space fly/rise · Q down' : C.chain ? 'Space tap: jump (by a low wall: vault), hold and release: leap · Q hold and release: chain · hold Q: reel in · Space: let go'
     : 'Space jump' + (C.swing ? ' · Q zip' : '')
   return 'WASD move · Shift sprint · ' + space + '<br>' +
     'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker, falling: smash' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
@@ -31205,7 +31337,7 @@ const PLAYER_STATE = stateSchema([
   ['sprof', c => primaryOf(c) ? profBits(c, primaryOf(c).name) : 0, (c, v) => { c.sprof = v | 0 }],
   ['mark', c => c.mark | 0, (c, v) => { c.mark = effId(v) }],
   ['web', c => c.web || 0],
-  ['move', c => smashDiving(c) ? 3 : c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0],      // card #90: 3, the smash dive
+  ['move', c => c.mantle || c.mantleFall ? 4 : smashDiving(c) ? 3 : c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0],      // card #90: 3, the smash dive; #63: 4, the mantle
   ['chain', c => chainPack(c), (c, v) => { c.chainNet = chainRead(v) }],
   ['hay', c => r2(c.hayAge || 0), (c, v) => { c.hayAge = Number.isFinite(v) ? clamp(v, 0, 2) : 0 }],
   ['leapCharge', c => r2(c.springT || 0)],
@@ -40571,11 +40703,11 @@ const OWN_PREDICTION = (F => {
   const S = GAME.schema.step, fuelEps = S.fuel + S.fuel / 10
   if (REWIND_EPS < Math.hypot(S.x, S.y, S.z)) throw Error('REWIND_EPS is under the wire step')
   return {
-    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.wt = c.water | 0; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
+    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.wt = c.water | 0; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ml = c.mantle ? [...c.mantle] : null; e.mf = !!c.mantleFall; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
       const bh = c.body?.getBroadphaseHandle(); e.dsh = [!!c.dashOn, c.dashRun || 0, c.dashHit && [...c.dashHit], bh && A.getPointer(bh) ? bh.get_m_collisionFilterMask() : null]; e.cv = c.carryV ? [...c.carryV] : null; e.cvId = c.carryId; return e },
     err: (e, a) => Math.hypot(e.x - a[F.x], e.y - a[F.y], e.z - a[F.z]),
     agrees: (e, a, web) => (e.web || 0) === web && Math.abs(e.fuel - a[F.fuel]) <= fuelEps && e.jl === !!a[F.jLock],
-    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.water = e.wt | 0; c.springT = e.sp; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace] = e.leap; [c.hop, c.hopAir] = e.hop; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
+    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.water = e.wt | 0; c.springT = e.sp; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace] = e.leap; [c.hop, c.hopAir] = e.hop; c.mantle = e.ml ? [...e.ml] : null; c.mantleFall = !!e.mf; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
       c.dashOn = e.dsh[0]; c.dashRun = e.dsh[1]; c.dashMask = e.dsh[3]; c.dashHit = e.dsh[2] && new Set(e.dsh[2]); c.carryV = e.cv ? [...e.cv] : null; c.carryId = e.cvId },
     // re-tying the web its own prediction had, it keeps that prediction's reel target (off the wire); the length is the restored distance
     restore: (c, a, web) => { const [x, y, z, vx, vy, vz] = ownExact || [a[F.x], a[F.y], a[F.z], a[F.vx], a[F.vy], a[F.vz]]; restoreChar(c, x, y, z, vx, vy, vz, a[F.fuel])
@@ -41347,7 +41479,7 @@ function draw(dt, t) {
     if (!me) { frameFailed('draw', new Error('the host has no player 0')); return }
     others = [...players].filter(([id]) => id !== 0)
       .map(([id, c]) => ({ id, ...(P => P ? { x: P[0], y: P[1], z: P[2], sim: c } : { x: c.x, y: c.y, z: c.z })(drawnPose(c)), yaw: c.yaw, wy: c.wy, vx: c.vx, vz: c.vz, dead: c.dead,
-                           cid: looksCid(c), disg: c.disguised ? 1 : 0, smk: c.smk || 0, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: smashDiving(c) ? 3 : c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: drawnChain(c, id), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
+                           cid: looksCid(c), disg: c.disguised ? 1 : 0, smk: c.smk || 0, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.mantle || c.mantleFall ? 4 : smashDiving(c) ? 3 : c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: drawnChain(c, id), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
                            gun: c.gun, pitch: c.pitch, hp: c.hp, kills: c.kills | 0, mark: c.mark, markT: c.markT, vy: c.vy, jl: c.jLock }))
     pkl = GAME.view.pickups()
   } else {
@@ -41381,7 +41513,7 @@ function draw(dt, t) {
   const meP = drawnPose(me), meD = carrierShift(me, meP ? { ...me, x: meP[0], y: meP[1], z: meP[2] } : me)
   meMesh.position.set(meD.x, meD.y, meD.z)
   const myHold = holdOf(myId, me) || me.ceil && 'ceiling'
-  avatars.get(myId).moveState = smashDiving(me) ? 3 : me.leap ? 2 : me.springT > SPRING_TAP ? 1 : 0; avatars.get(myId).moveCharge = clamp(((me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1)
+  avatars.get(myId).moveState = me.mantle || me.mantleFall ? 4 : smashDiving(me) ? 3 : me.leap ? 2 : me.springT > SPRING_TAP ? 1 : 0; avatars.get(myId).moveCharge = clamp(((me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1)
   avatars.get(myId).chainState = isHost ? chainPack(me) : me.chainNet; avatars.get(myId).hayAge = me.hayAge || 0
   const myTicks = tickSamples.get(myId) || []
   meMesh.rotation.y = GAME.view.faceYaw(myId, me, animOf(me), myHold || firstPerson || carries.has(myId), t, dt, input.fire || input.alt, myTicks)
