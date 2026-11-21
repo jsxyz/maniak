@@ -29650,7 +29650,7 @@ function slHostTick() {
         hit ||= Math.abs(px * fx + pz * fz) <= hl + 0.45 && Math.abs(px * -fz + pz * fx) <= hw + 0.35
       }
       if (!hit) return
-      const side = ac >= 0 ? 1 : -1
+      let side = ac >= 0 ? 1 : -1
       if (still) {
         if (p.v < 2.5) return
         const pf = hl - Math.abs(al), ps = hw - Math.abs(ac), sa = al >= 0 ? 1 : -1          // out by the shallower way: its end or its side
@@ -29659,7 +29659,22 @@ function slHostTick() {
       if (sp < 1.5) return slDodge(ag, p, fx + -fz * side * 0.6, fz + fx * side * 0.6, T)          // card #67: creeping contact, step clear
       // card #72: thrown clear of the car's path: sideways at least to its half-width and a body's margin past its centre line
       // (a 4 m/s car came to rest on top of him: 0.77 m, 0.40 m of it sideways, left him inside its width); the along part as before
-      const fl = slFling(sp), k = 1 / Math.hypot(1, 0.6), A = fl * k, Ls = Math.max(fl * 0.6 * k, hw + 0.15 - Math.abs(ac)), d = Math.hypot(A, Ls)
+      // ... to the side with room, as slRunTo will let it land (#72: against a wall on a pavement the throw stopped at the wall,
+      // inside the car's width): his side, else the other, else straight ahead past the car's next second of travel
+      const fl = slFling(sp), k = 1 / Math.hypot(1, 0.6)
+      let A = fl * k, Ls = Math.max(fl * 0.6 * k, hw + 0.15 - Math.abs(ac))
+      const clear = (s, a, l) => { const h = Math.hypot(a, l), [ex, ez] = slRunTo(p.x, p.z, (fx * a - fz * s * l) / h, (fz * a + fx * s * l) / h, h)
+        return Math.abs((ex - o.x) * -fz + (ez - o.z) * fx) >= hw - 0.05 || (ex - o.x) * fx + (ez - o.z) * fz >= hl + sp + 0.5 }
+      if (!clear(side, A, Ls)) {
+        const Lo = Math.max(fl * 0.6 * k, hw + 0.15 + Math.abs(ac))
+        if (clear(-side, A, Lo)) { side = -side; Ls = Lo } else { A = Math.max(A, hl - al + sp + 0.5); Ls = 0 }
+      }
+      const d = Math.hypot(A, Ls)
+      // d04a91af (card #67): a slow car's bump (a throw under 0.5 m: under about 3.2 m/s) staggers someone on foot, under no
+      // record, straight sideways out of its width instead, still up (patch5's stagger, step m); riders and the rest as above
+      // and holds them there until the car's rear has passed their line at its contact speed (#72: a car rolling on re-staggered
+      // them into its side every 0.7 s), then they rejoin their route
+      if (fl < 0.5 && Ls > 0 && Ls <= hw + 0.15 && ag.kind !== SL_K.cyclist && !p.rec) return slKnock(ag, p, -fz * side, fx * side, sp * 0.45, players.get(o.riders?.[0]), T, fl, Ls, Math.max(0, (al + hl + 0.3) / Math.max(sp - (Math.sin(p.yaw) * fx + Math.cos(p.yaw) * fz) * (p.v || 0), 0.5) - 0.35) * 1000)
       slKnock(ag, p, fx * A + -fz * side * Ls, fz * A + fx * side * Ls, sp * 0.45, players.get(o.riders?.[0]), T, d)
     })
   }
@@ -29952,7 +29967,7 @@ function slPushers(obl, dt, near, R) {
     let fx = vx / v, fz = vz / v
     if (!(v > 0.5)) { fx = -2 * (q[0] * q[2] + q[3] * q[1]); fz = -(1 - 2 * (q[0] * q[0] + q[1] * q[1])); const n = Math.hypot(fx, fz) || 1; fx /= n; fz /= n }      // parked: its own facing (-z)
     const [ex, ez] = slCarExtent(o.K), back = ez + 0.3, ahead = back + (v > 0.5 ? Math.min(v * N.look, N.lookMax) : 0), w = ex + 0.3 + N.clear
-    P.push({ car: true, x: o.x, z: o.z, fx, fz, back, ahead, w, r: Math.max(ahead, back) + w })
+    P.push({ car: true, x: o.x, z: o.z, fx, fz, back, ahead, w, r: Math.max(ahead, back) + w, still: !(v > 0.5) })
   }
   if (st.frame % 120 === 0) {
     for (const [id, s] of seen) if (st.frame - s.f > 60) seen.delete(id)
@@ -30036,9 +30051,14 @@ function slNudge(ag, p, pushers, cell, dt) {
       const B = c.r + N.hold
       if (dx > B || dx < -B || dz > B || dz < -B) continue
       const al = dx * c.fx + dz * c.fz, ac = dz * c.fx - dx * c.fz
-      if (al < -c.back - N.hold || al > c.ahead + N.hold || Math.abs(ac) > c.w + N.hold) continue
+      // a stopped car across someone's own way (#72: a car braked onto a crossing): round its nearer end, not back along their
+      // way; walking toward its side, they start 0.8 s of their speed early (up to 1.5 m), so they're round before they reach it
+      const vn = pvz * c.fx - pvx * c.fz, cross = c.still && Math.abs(pvx * c.fx + pvz * c.fz) < Math.abs(vn)
+      const wl = cross && ac * vn < 0 ? c.w + Math.min(1.5, Math.abs(vn) * 0.8) : c.w
+      if (al < -c.back - N.hold || al > c.ahead + N.hold || Math.abs(ac) > wl + N.hold) continue
       near = true; car = true
-      if (al < -c.back || al > c.ahead || Math.abs(ac) >= c.w) continue
+      if (al < -c.back || al > c.ahead || Math.abs(ac) >= wl) continue
+      if (cross) { const end = al >= 0 ? 1 : -1, needA = end * ((end > 0 ? c.ahead : c.back) + 0.8) - al; tx += c.fx * needA; tz += c.fz * needA; continue }
       const side = ac > 1e-3 ? 1 : ac < -1e-3 ? -1 : slRnd(ag.id, 64) < 0.5 ? -1 : 1, need = side * c.w - ac
       tx -= c.fz * need; tz += c.fx * need                  // across its heading, to the nearer side of its path
     }
