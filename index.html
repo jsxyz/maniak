@@ -11589,7 +11589,9 @@ function camRay(me, yaw, pitch, R = heldR(me), eased = null) {
   }
 
   let cy = py + uy * t
-  if (cy < FLOOR_TOP + 0.35) cy = FLOOR_TOP + 0.35
+  // at least 0.35 m over the floor: street level, or the ground he stands on when that is lower (a channel, a pit)
+  const floor = Math.min(FLOOR_TOP, me.y - me.h - me.r)
+  if (cy < floor + 0.35) cy = floor + 0.35
   const x = px + ux * t, z = pz + uz * t
   const ax = me.x + dx * aim - x, ay = eyeY + dy * aim - cy, az = me.z + dz * aim - z
   const n = Math.hypot(ax, ay, az) || 1
@@ -25831,6 +25833,29 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   auto: autoApi,
   // card #74: the /blackbox recorder's frame rows, for a test script: gameHooks.blackbox() returns { on, flags, rows } (the last 300 frames, each with its flags), gameHooks.blackbox('on' | 'off') switches it
   blackbox(cmd) { if (cmd === 'on' || cmd === 'off') blackbox.run(cmd); return { on: blackbox.on, flags: blackbox.flags, rows: blackbox.rows.slice() } },
+  // card #63, for live QA: street life's test calls (a test page reaches gameHooks only): around(x, z, r, T) people near a point
+  // and their poses; vehicles(x, z, r) the vehicles near it, nearest first, for ram; ram(vehicleId, agentId, speed, back) (host)
+  // a real vehicle rolled undriven at a person from back m behind; view([x, y, z], [tx, ty, tz]) a free camera, view(null) the game's
+  streetLife: Object.freeze({
+    around(x, z, r = 30, T) {
+      hookCheck([x, z, r].every(Number.isFinite) && r > 0 && r <= 250 && (T === undefined || Number.isFinite(T)), 'around(x, z, r <= 250, T?) needs numbers')
+      return GAME.streetLife.around(x, z, r, T)
+    },
+    vehicles(x, z, r = 60) {
+      hookCheck([x, z, r].every(Number.isFinite) && r > 0 && r <= 500, 'vehicles(x, z, r <= 500) needs numbers')
+      return objs.filter(o => o.V && Math.abs(o.x - x) < r && Math.abs(o.z - z) < r).map(o => ({ id: o.id, name: vehicleOf(o.K)?.name ?? '', x: +o.x.toFixed(2), z: +o.z.toFixed(2), d: +Math.hypot(o.x - x, o.z - z).toFixed(2) }))
+        .filter(v => v.d < r).sort((a, b) => a.d - b.d)
+    },
+    ram(vehicleId, agentId, speed = 13, back = 16) {
+      hookCheck([vehicleId, agentId, speed, back].every(Number.isFinite) && speed >= 0 && speed <= 40 && back >= 0 && back <= 60, 'ram(vehicleId, agentId, speed 0-40, back 0-60) needs numbers')
+      return GAME.streetLife.ram(vehicleId, agentId, speed, back)
+    },
+    view(p, t) {
+      const v3 = a => Array.isArray(a) && a.length === 3 && a.every(Number.isFinite)
+      hookCheck(p === null || v3(p) && v3(t), 'view([x, y, z], [tx, ty, tz]) or view(null)')
+      GAME.streetLife.view(p && [...p], p && [...t]); return true
+    },
+  }),
   // card #76: try a sound without a release. set('jump', 'my.mp3') plays that file (a name in assets/, or a url) in place of the SOUNDS key;
   // a voice line is 'Speaker/group' (every line) or 'Speaker/group:n'; clear(key) undoes it; play(key, n) plays one, returning what it
   // played from ('file', 'synth', '' for nothing); keys() lists the keys. Local to this page: nothing goes over the network or into a save
