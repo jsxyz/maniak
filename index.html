@@ -6333,15 +6333,16 @@ const faustWaterBodies = (seed, S) => {
 // the band's end; suburb: block pitch, street half width, frontage, house sizes; shanty: the chance a cell has a town, by
 // band start and end, shack pitch, cluster radius; caps: the most instances each pooled mesh draws; step: the camera's travel
 // (m) before the pool is refilled; part: cells a background step.
-const FAUST_RINGS = { version: 7, near: 700, close: 220, tree: 40, cell: 480, city: 14, jitter: 300, urban: 6000, suburb: 10000, edge: 15500, clear: 14,
+const FAUST_RINGS = { version: 8, near: 700, close: 220, tree: 40, cell: 480, city: 14, jitter: 300, urban: 6000, suburb: 10000, edge: 15500, clear: 14,
   block: 96, street: 7, inset: 3, gap: 2.5, high: [20, 48], low: [9, 16], storey: 3.5,
   sub: { pitch: 160, street: 5, front: 25, house: [4.5, 6], depth: [4, 5.5], storeys: [3, 5.8], roof: [2.2, 3.2] },
   shanty: { odds: [0.2, 0.07], radius: [16, 36], count: [26, 70], alley: 0.7, bulbs: 22 },
-  caps: { far: 14000, body: 50000, roof: 20000, flat: 40000, light: 8000, pane: 70000, lit: 12000, shed: 8000, pool: 4000, crown: 32000, picket: 8000, crownHi: 4000, crownTop: 1500, hedge: 8000 }, step: 240, part: 1,
+  caps: { far: 14000, body: 70000, roof: 20000, flat: 40000, light: 8000, pane: 90000, lit: 12000, shed: 8000, pool: 4000, crown: 32000, picket: 8000, crownHi: 4000, crownTop: 1500, hedge: 8000 }, step: 240, part: 1,
   tints: { street: 0x2b2d31, walk: 0x4a4c50, park: 0x26301f, lot: 0x34363a, dirt: 0x3a3127, pole: 0x30353c,
     urban: [0x8d97ab, 0x77849b, 0x9ea9b5, 0x7d8796, 0x968b81], house: [0x8f8a7e, 0x7b8086, 0x9a8f78, 0x6f7a73, 0x857466],
     roof: [0x3b2a26, 0x2f3338, 0x4a3328, 0x3a3f36], glass: 0x1a212b, door: [0x3b2b22, 0x2c3a40, 0x4a2622], trim: 0xb9b2a0, porch: 0x9c978d, porchEdge: 0x2b2824, plank: 0x8a7a5a,
     pave: 0x5c5e63, kerb: 0x7a7c80, path: 0x6a665e, picket: 0xc8c2b2, hedge: [0x1f2b1c, 0x25331f, 0x1b2619], garageDoor: [0x8e8a80, 0x7d6c5c, 0x6c767c], garageLine: 0x3a3833,
+    board: 0x4e4236, store: [0x7a6a58, 0x6a7470, 0x7d6250], awning: [0x6a2a24, 0x2a4a3a, 0x5a4a2a], sign: [0x8a2b22, 0x2a3a6a, 0x3a5a2a],
     crown: [0x23331f, 0x2c3b22, 0x1e2c1c, 0x34402a], trunk: 0x3a2e24, lawn: [0x26331f, 0x2b3822, 0x22301d, 0x303b25], earth: 0x2e2a22, cloth: [0xc9c4b8, 0x8a9aa8, 0xa87a6a, 0xb8b090],
     // shacks: the lower walls (block, brick, scrap board), the upper (plywood, tin, painted board), patches; tin roofs (rust, grey)
     shackLow: [0x4f4a45, 0x5a3a2e, 0x463c32], shackHigh: [0x6e5a3e, 0x6d6f6c, 0x3e5566, 0x7a6a4f, 0x5b4a3a], patch: [0x8a7a5a, 0x5d6a6e, 0x7a4632, 0x9a9488],
@@ -6399,7 +6400,7 @@ function faustSubBlock(seed, S, plan, bi, bj) {
   const U = FAUST_RINGS.sub, P = U.pitch, C = FAUST_RINGS.cell, cx = (bi + 0.5) * P, cz = (bj + 0.5) * P, e = P / 2 - U.street
   const i = Math.floor(cx / C), j = Math.floor(cz / C)
   if (faustRingBand(seed, S, i, j) !== 'suburb') return { exists: false }
-  const c = faustRingCell(seed, S, plan, i, j), inB = (x, z, m = 0) => Math.abs(x - cx) <= e + m && Math.abs(z - cz) <= e + m
+  const c = faustState?.seed === seed && faustState?.S === S ? faustRingPlan(faustState, plan, i, j) : faustRingCell(seed, S, plan, i, j), inB = (x, z, m = 0) => Math.abs(x - cx) <= e + m && Math.abs(z - cz) <= e + m
   return { exists: true, rect: [cx - e, cz - e, cx + e, cz + e], streets: faustRingStreets(seed, S, plan, i, j),
     pavements: c.pavements.filter(q => inB((q[0] + q[2]) / 2, (q[1] + q[3]) / 2, 8)), lots: c.lots.filter(l => inB(l.house.cx, l.house.cz)),
     fences: c.fences.filter(q => inB(q[0], q[1])), trees: c.trees.filter(q => inB(q[0], q[1])) }
@@ -6464,7 +6465,7 @@ function faustRingCell(seed, S, plan, i, j) {
   }
   if (band === 'suburb') {
     // blocks of gabled houses down their two long sides, facing the street; the streets between them, asphalt
-    const U = R.sub, P = U.pitch, r = Math.max(Math.abs(x0 + C / 2), Math.abs(z0 + C / 2)), thin = 0.12 + 0.4 * (r - R.urban) / (R.suburb - R.urban)
+    const U = R.sub, P = U.pitch, r = Math.max(Math.abs(x0 + C / 2), Math.abs(z0 + C / 2)), thin = 0.04 + 0.16 * (r - R.urban) / (R.suburb - R.urban)
     const streets = faustRingStreetsIn(x0, z0, x1, z1, segs)
     for (const st of streets) st.a[0] === st.b[0] ? flat(st.a[0] - st.half, z0, st.a[0] + st.half, z1, 0.05, T.street) : flat(x0, st.a[1] - st.half, x1, st.a[1] + st.half, 0.05, T.street)
     // (card #91) pavements either side of each street, 5-7 m off its centre line, with a kerb at the asphalt's edge, broken 7 m
@@ -6488,13 +6489,21 @@ function faustRingCell(seed, S, plan, i, j) {
       for (const sg of [-1, 1]) for (let n = 0; n * U.front < 2 * e - U.front / 2; n++) {
         const hh = H(0x5b0b, bi * 64 + n * 2 + (sg > 0), bj)
         if (faustFrac(hh) < thin) continue
-        const hx = U.house[0] + faustFrac(hh >>> 4 ^ hh << 7) * (U.house[1] - U.house[0]), hz = U.depth[0] + ((hh >>> 12) % 16) / 15 * (U.depth[1] - U.depth[0])
-        const x = cx - e + U.front / 2 + n * U.front, z = cz + sg * (e - 9 - hz), y = (hh >>> 17) % 3 ? U.storeys[0] : U.storeys[1]
+        // (card #91) the kit: classic 4 in 10, bungalow 3, two-storey frame 2, duplex 1; a corner store on about 1 in 5 corner lots
+        const hk = H(0x5b0d, bi * 64 + n * 2 + (sg > 0), bj), kit = hk % 10 < 4 ? 'classic' : hk % 10 < 7 ? 'bungalow' : hk % 10 < 9 ? 'frame' : 'duplex'
+        const store = (n === 0 || (n + 1) * U.front >= 2 * e - U.front / 2) && (hk >>> 8) % 100 < 20
+        let hx = U.house[0] + faustFrac(hh >>> 4 ^ hh << 7) * (U.house[1] - U.house[0]), hz = U.depth[0] + ((hh >>> 12) % 16) / 15 * (U.depth[1] - U.depth[0]), y = (hh >>> 17) % 3 ? U.storeys[0] : U.storeys[1]
+        if (store) { hx = 6; hz = 5; y = 3.9 }
+        else if (kit === 'bungalow') { hx = 6 + ((hk >>> 4) % 13) / 10; hz = 4.5 + ((hk >>> 12) % 11) / 10; y = U.storeys[0] }
+        else if (kit === 'frame') { hx = 5 + ((hk >>> 4) % 11) / 10; y = U.storeys[1] }
+        else if (kit === 'duplex') { hx = 7.5 + ((hk >>> 4) % 11) / 10; hz = 5; y = U.storeys[1] }
+        const x = cx - e + U.front / 2 + n * U.front, z = cz + sg * (e - 9 - hz)
         if (x + hx > cx + e - 2 || !faustRingClear(segs, x, z, hx, hz) || inCity(x, z, hx)) continue
         body(x, y / 2, z, hx, y / 2, hz, pick(T.house, hh >>> 20))
         out.buildings.push({ id: 'ring ' + i + ' ' + j + ' ' + out.buildings.length, kind: 'house', box: out.solid[out.solid.length - 1], storeys: y > 4 ? 2 : 1, seed: hh >>> 0,
-          door: { x: faustCm(x + ((hh >>> 29) & 1 ? -0.4 : 0.4) * hx), z: faustCm(z + sg * hz), face: [0, sg] } })
-        out.roof.push([faustCm(x), y, faustCm(z), faustCm(hx + 0.4), faustCm(U.roof[0] + ((hh >>> 23) % 8) / 7 * (U.roof[1] - U.roof[0])), faustCm(hz + 0.4), 0, pick(T.roof, hh >>> 26)])
+          door: { x: faustCm(x + ((hh >>> 29) & 1 ? -0.4 : 0.4) * hx), z: faustCm(z + sg * hz), face: [0, sg] }, kit: store ? 'store' : kit, ...(store ? { venue: 'conv' } : {}) })
+        if (store) part('body', hx + 0.15, 0.3, hz + 0.15, x, y + 0.3, z, 0, 0, pick(T.roof, hh >>> 26))      // a flat roof and its parapet
+        else out.roof.push([faustCm(x), y, faustCm(z), faustCm(hx + 0.4), faustCm((kit === 'bungalow' ? 0.7 : 1) * (U.roof[0] + ((hh >>> 23) % 8) / 7 * (U.roof[1] - U.roof[0]))), faustCm(hz + 0.4), 0, pick(T.roof, hh >>> 26)])
         // the street side: a door, a window either side of it (the far one lit in half the houses), and upstairs two more; a
         // window in each end wall and one at the back
         const sd = (hh >>> 29) & 1 ? -1 : 1, fy = sg > 0 ? 0 : 2 * HALF, fz = z + sg * (hz + 0.03), wy = 1.55, glass = T.glass
@@ -6510,6 +6519,22 @@ function faustRingCell(seed, S, plan, i, j) {
           for (const u of [-1.12, 1.12]) near('body', 0.06, 1.19, 0.06, dx + u, 1.37, out_(1.5), 0, 0, trim)
           near('light', 0.09, 0.12, 0.09, dx - sd * 0.92, 1.95, out_(0.1), 0, 0, 0xffffff)
           near('pool', 1.1, 1, 1.1, dx, 0.185, out_(0.8), 0, 0, T.porch) }
+        // (card #91) a duplex's second door, with its own frame, porch and light
+        if (kit === 'duplex' && !store) { const dx = x - sd * 0.15 * hx, out_ = d => z + sg * (hz + d), trim = T.trim
+          part('pane', 0.5, 1.05, 1, dx, 1.05, fz, fy, 0, pick(T.door, hk >>> 14))
+          near('body', 0.08, 1.14, 0.06, dx - 0.58, 1.14, out_(0.06), 0, 0, trim); near('body', 0.08, 1.14, 0.06, dx + 0.58, 1.14, out_(0.06), 0, 0, trim)
+          near('body', 0.66, 0.08, 0.06, dx, 2.22, out_(0.06), 0, 0, trim)
+          near('body', 1.2, 0.09, 0.8, dx, 0.09, out_(0.8), 0, 0, T.porch); near('body', 1.21, 0.09, 0.02, dx, 0.09, out_(1.6), 0, 0, T.porchEdge)
+          near('body', 1.3, 0.06, 0.85, dx, 2.62, out_(0.85), 0, 0, pick(T.roof, hh >>> 26))
+          for (const u of [-1.12, 1.12]) near('body', 0.06, 1.19, 0.06, dx + u, 1.37, out_(1.5), 0, 0, trim)
+          near('light', 0.09, 0.12, 0.09, dx + sd * 0.92, 1.95, out_(0.1), 0, 0, 0xffffff) }
+        // (card #91) a corner store's front: the walls in a shop's tint, a wide lit shopfront window under an awning, a lit sign band
+        if (store) { const wx = x - sd * 0.45 * hx
+          part('body', hx + 0.02, 0.5, hz + 0.02, x, y - 0.5, z, 0, 0, pick(T.store, hk >>> 16))
+          part('lit', 1.9, 0.95, 1, wx, 1.45, fz + sg * 0.01, fy, 0, glass)
+          near('shed', 2.3, 0.35, 0.75, wx, 2.55, fz + sg * 0.75, fy, 0, pick(T.awning, hk >>> 18))
+          part('pane', hx * 0.85, 0.4, 1, x, y - 0.75, fz + sg * 0.02, fy, 0, pick(T.sign, hk >>> 20))
+          part('lit', hx * 0.6, 0.16, 1, x, y - 0.75, fz + sg * 0.03, fy, 0, glass) }
         part((hh >>> 28) & 1 ? 'lit' : 'pane', 0.6, 0.6, 1, x - sd * 0.5 * hx, wy, fz, fy, 0, glass)
         part('pane', 0.5, 0.6, 1, x + sd * 0.85 * hx, wy, fz, fy, 0, glass)
         if (y > 4) for (const u of [-0.5, 0.5]) part((hh >>> 27) & 1 && u > 0 ? 'lit' : 'pane', 0.55, 0.55, 1, x + u * hx, 4.3, fz, fy, 0, glass)
@@ -6520,7 +6545,7 @@ function faustRingCell(seed, S, plan, i, j) {
         // path and the drive; a tree in the front yard, one out back; a shed and a washing line out back. The garage is a collider.
         { const hq = H(0x5b0c, bi * 64 + n * 2 + (sg > 0), bj), gs = -sd, gx = x + gs * (hx + 2.2), front = z + sg * hz, edge = cz + sg * e, fl = cz + sg * (e - 2.4)
           const lot = { id: out.buildings[out.buildings.length - 1].id, x0: faustCm(x - U.front / 2), x1: faustCm(x + U.front / 2), front: faustCm(edge), house: out.solid[out.solid.length - 1], door: out.buildings[out.buildings.length - 1].door }
-          if (faustFrac(hq) < 0.6) {
+          if (faustFrac(hq) < 0.6 && kit !== 'duplex' && !store) {
             const gzc = front - sg * 3, gt = pick(T.house, hh >>> 20)
             body(gx, 1.3, gzc, 1.6, 1.3, 3, gt)
             part('body', 1.75, 0.08, 3.15, gx, 2.68, gzc, 0, 0, pick(T.roof, hh >>> 26))
@@ -6542,7 +6567,7 @@ function faustRingCell(seed, S, plan, i, j) {
           const kind = (hq >>> 6) % 20 < 9 ? 'picket' : (hq >>> 6) % 20 < 16 ? 'hedge' : null
           lot.fence = []
           if (kind) {
-            const gaps = [[dx - 0.9, dx + 0.9], [gx - 1.7, gx + 1.7]].sort((a, b) => a[0] - b[0]), lx0 = x - U.front / 2 + 0.3, lx1 = x + U.front / 2 - 0.3
+            const gaps = [[dx - 0.9, dx + 0.9], [gx - 1.7, gx + 1.7]].sort((a, b) => a[0] - b[0]), lx0 = Math.max(x - U.front / 2 + 0.3, cx - e + 2.4), lx1 = Math.min(x + U.front / 2 - 0.3, cx + e - 2.4)      // (card #91) behind a side street's pavement at a corner
             let from = lx0
             for (const [g0, g1] of [...gaps, [lx1, lx1]]) {
               const a = from, b = Math.min(g0, lx1)
@@ -6577,6 +6602,12 @@ function faustRingCell(seed, S, plan, i, j) {
           // (#72) the ground: a lawn the lot's width from the block's edge to its middle, a darker patch behind the house
           flat(x - U.front / 2, Math.min(edge, cz), x + U.front / 2, Math.max(edge, cz), 0.03, pick(T.lawn, hq >>> 14))
           { const b0 = z - sg * hz, b1 = z - sg * (hz + 4); near('flat', hx + 1, 1, 2, x, 0.04, (b0 + b1) / 2, 0, 0, T.earth) }
+          // (card #91) board fences: the lot's left side from the front fence back to the block's middle, the last lot's right too, and
+          // along the middle behind the lot
+          { const fz0 = fl, fz1 = cz + sg * 0.05, mz = (fz0 + fz1) / 2, hzf = Math.abs(fz0 - fz1) / 2, bx0 = Math.max(x - U.front / 2, cx - e + 2.4), bx1 = Math.min(x + U.front / 2, cx + e - 2.4)
+            near('body', 0.04, 0.6, hzf, bx0, 0.6, mz, 0, 0, T.board)
+            if ((n + 1) * U.front >= 2 * e - U.front / 2) near('body', 0.04, 0.6, hzf, bx1, 0.6, mz, 0, 0, T.board)
+            near('body', (bx1 - bx0) / 2, 0.6, 0.04, (bx0 + bx1) / 2, 0.6, fz1, 0, 0, T.board) }      // (all 2.4 m inside the block's side edges, behind a side street's pavement)
           out.lots.push(lot) }
       }
     }
