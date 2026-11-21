@@ -3593,7 +3593,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 16, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
+  const content = { version: 17, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -4775,7 +4775,7 @@ function faustSolids() {
     for (const [x0, z0, x1, z1] of [[-W, -W, W, -a], [-W, a, W, W], [-W, -a, -a, a], [a, -a, W, a]])
       for (let x = x0; x < x1; x += T) for (let z = z0; z < z1; z += T) {
         const X = Math.min(x + T, x1), Z = Math.min(z + T, z1)
-        for (const q of subtractRects({ a0: x, a1: X, b0: z, b1: Z }, cuts)) quad(ground, [0, 1, 0], [q.a0, 0, q.b0], [q.a0, 0, q.b1], [q.a1, 0, q.b1], [q.a1, 0, q.b0])
+        for (const q of subtractRects({ a0: x, a1: X, b0: z, b1: Z }, [...cuts, ...faustWaterRectsIn(LV.grow.seed, LV.grow.S, x, z, X, Z)])) quad(ground, [0, 1, 0], [q.a0, 0, q.b0], [q.a0, 0, q.b1], [q.a1, 0, q.b1], [q.a1, 0, q.b0])
       }
     // nearest the city first: the bands' tiles sorted by their distance from the middle
     const tiles = []; for (let i = 0; i < ground.length; i += 18) tiles.push(ground.slice(i, i + 18))
@@ -4867,6 +4867,9 @@ function* faustRoadsPlanSteps(seed, S) {
   if (faustLen(ringXZ.at(-1)[0] - ringXZ[0][0], ringXZ.at(-1)[1] - ringXZ[0][1]) < 1) ringXZ.pop()     // closed: no doubled point
   const ringRoad = faustRoad('ring', 'ring', ringXZ, ringXZ.map(() => R.ringDeck), R.half, true)
   ringRoad.closed = true
+  // card #92: the ring spans a river without a pylon in it
+  for (const rv of faustChannels(seed, S).list) if (rv.kind === 'river') for (let i = 0; i < ringRoad.pts.length; i++) { const p = ringRoad.pts[i]
+    if (Math.abs((rv.axis ? p[0] : p[2]) - rv.c) < 70 && Math.abs(Math.abs(rv.axis ? p[2] : p[0]) - R.ring) < 60) ringRoad.noPylon.add(i) }
   roads.push(ringRoad)
   yield
   // ---- the radials: f forward (outward), o the avenue's offset across it, n across (+ to the right of f)
@@ -5080,8 +5083,8 @@ function faustRoadBuf() {
     const u = [t[1][0] - t[0][0], t[1][1] - t[0][1], t[1][2] - t[0][2]], v = [t[2][0] - t[0][0], t[2][1] - t[0][1], t[2][2] - t[0][2]]
     const dot = (u[1] * v[2] - u[2] * v[1]) * nrm[0] + (u[2] * v[0] - u[0] * v[2]) * nrm[1] + (u[0] * v[1] - u[1] * v[0]) * nrm[2]
     const o = dot < 0 ? [0, 2, 1] : [0, 1, 2], l = faustLen(faustLen(nrm[0], nrm[1]), nrm[2]) || 1, n = [nrm[0] / l, nrm[1] / l, nrm[2] / l]
-    col.setHex(tint)
-    for (const k of o) vert(t[k], n, col, Array.isArray(g) ? g[k] : g)
+    if (!Array.isArray(tint)) col.setHex(tint)
+    for (const k of o) { if (Array.isArray(tint)) col.setHex(tint[k]); vert(t[k], n, col, Array.isArray(g) ? g[k] : g) }
   }
   const face = (a, b, c, d, nrm, tint, g = 0) => { tri([a, b, c], nrm, tint, g); tri([a, c, d], nrm, tint, g) }
   const box = (B, tint, g = 0) => {
@@ -5206,10 +5209,26 @@ function faustRoadsMapLayer() {
 // rail's own pylons then stand on the bridges' decks (the avenues' medians).
 const FAUST_CHAN = { version: 1, depth: 8, top: 28, floor: 18, lip: 2, wall: 0.9, gutter: [1.2, 2.5, 0.25], water: 0.12, cut: 30, deck: 14.4, thick: 1.4,
   span: 33, foot: 2.6, ramp: { w: 7, land: 4 }, keep: 8, reach: 240, look: 900, ground: -0.02, part: 1000,
-  tint: { bank: 0x6c7078, floor: 0x45494f, gutter: 0x2b2f35, lip: 0x76797e, wall: 0x7a7872, cap: 0x97948b, joint: 0x1f2226, damp: 0x30353a, stainTop: 0x39413f, stainMid: 0x2b3534, stainToe: 0x1c2524, sheen: 0x5b7a88, deckTop: 0x242a33, walk: 0x737983,
+  tint: { bed: 0x4b4a43, bank: 0x6c7078, floor: 0x45494f, gutter: 0x2b2f35, lip: 0x76797e, wall: 0x7a7872, cap: 0x97948b, joint: 0x1f2226, damp: 0x30353a, stainTop: 0x39413f, stainMid: 0x2b3534, stainToe: 0x1c2524, sheen: 0x5b7a88, deckTop: 0x242a33, walk: 0x737983,
     under: 0x5c6168, fascia: 0x7c7f84, stone: 0x8d8a82, stoneDark: 0x6e6c66, pier: 0x827f78, flute: 0x5f5d57, water: 0x142b36, mark: 0xb4a77d, lamp: 0xffb35a, pole: 0x30353c,
     ramp: 0x838890, drain: 0x07090c, collar: 0x8a8f95, stain: 0x2c3a38, paint: [0xd23a5a, 0x36c2c9, 0xe6c43a, 0x8f4ad8, 0x56d36a, 0xeeeeee, 0xf0803c] },
+  sec: { foot: 18, h: 8, land: 4, kinds: ['floor', 'gutter', 'gutter'], inner: [[18, 0], [2.5, 0], [1.2, -0.25]] },      // the flood channel's section (the river's: FAUST_WATER.river.sec)
   glow: { bank: 0.3, floor: 0.17, wall: 0.25, under: 0.3, paint: 0.55, water: 0.2 } }
+// a channel's section: a flood channel's (FAUST_CHAN.sec) or a river's (FAUST_WATER.river.sec); the bed's height above the bank's foot at |u|;
+// the half width of the water at a height (dy below the ground) on the section
+const faustChanSec = ch => ch.kind === 'river' ? FAUST_WATER.river.sec : FAUST_CHAN.sec
+function faustChanBed(sec, u) {
+  const p = sec.inner
+  if (u >= sec.foot) return (u - sec.foot) * sec.h / (FAUST_CHAN.top - sec.foot)
+  for (let i = 0; i + 1 < p.length; i++) if (u <= p[i][0] && u >= p[i + 1][0]) return p[i][1] + (p[i + 1][1] - p[i][1]) * (p[i][0] - u) / (p[i][0] - p[i + 1][0])
+  return p[p.length - 1][1]
+}
+function faustChanWet(sec, dy) {
+  const h = sec.h, pts = [[FAUST_CHAN.top, 0], [sec.foot, -h], ...sec.inner.slice(1).map(([u, d]) => [u, -h + d])]
+  for (let i = 0; i + 1 < pts.length; i++) { const [u0, y0] = pts[i], [u1, y1] = pts[i + 1]
+    if (dy <= y0 && dy >= y1) return y0 === y1 ? u1 : u0 + (u1 - u0) * (y0 - dy) / (y0 - y1) }
+  return pts[pts.length - 1][0]
+}
 let faustChanMemo = null
 // the plan: { list: [channel], rects: [{a0, a1, b0, b1}] (the ground cut by each), cells: Map 'gx gz' -> channel, hash, version }
 // channel: { id, n, axis (0: runs along x, 1: along z), u (its row's or column's cell index), c (its middle's coordinate),
@@ -5238,20 +5257,29 @@ function faustChannels(seed, S) {
     return out })
   const first = rng() < 0.5 ? 0 : 1, axis = ok[first].length ? first : ok[1 - first].length ? 1 - first : -1, picks = []
   const r1 = rng(), r2 = rng(), r3 = rng()
+  // card #92: a river takes a row (or column) first, when the seed's water has one; the flood channels keep 4 cells off it
+  const riverU = faustWaterMix(seed, S).river && axis >= 0 ? ok[axis][faustMix(seed ^ 0x52495652, 92, 1) % ok[axis].length] : null
   if (axis >= 0) {
-    const pool = ok[axis], u1 = pool[Math.floor(r1 * pool.length)], more = pool.filter(u => Math.abs(u - u1) >= 4)
-    picks.push(u1)
-    if (r2 < 0.5 && more.length) picks.push(more[Math.floor(r3 * more.length)])
-    picks.sort((p, q) => p - q)
+    const pool = ok[axis].filter(u => riverU === null || Math.abs(u - riverU) >= 4)
+    if (pool.length) {
+      const u1 = pool[Math.floor(r1 * pool.length)], more = pool.filter(u => Math.abs(u - u1) >= 4)
+      picks.push(u1)
+      if (r2 < 0.5 && more.length) picks.push(more[Math.floor(r3 * more.length)])
+      picks.sort((p, q) => p - q)
+    }
   }
   // the fields it runs out into: short of the ring road (a deck on pylons 3 km out), the longer way downstream
   const room = Math.floor((R.ring - 60 - A) / 96), up = Math.max(3, Math.floor(room * 0.4)), down = Math.max(up + 2, room - 1)
   const list = [], cells = new Map(), rects = [], cm = v => Math.round(v * 100) / 100
-  for (const [n, u] of picks.entries()) {
-    const id = 'chan:' + n, c = u * 96 + 48, dir = rng() < 0.5 ? 1 : -1, tLo = dir > 0 ? up : down, tHi = dir > 0 ? down : up
-    const kLo = -H - tLo, kHi = H - 1 + tHi, lo = kLo * 96 - 48, hi = kHi * 96 + 48
+  const entries = [...riverU !== null ? [[riverU, 'river']] : [], ...picks.map(u => [u, 'chan'])]
+  for (const [n, [u, kind]] of entries.entries()) {
+    const river = kind === 'river', id = river ? 'river:0' : 'chan:' + (n - (riverU !== null ? 1 : 0)), c = u * 96 + 48
+    const dir = river ? (faustMix(seed ^ 0x52495652, 92, 2) & 1 ? 1 : -1) : rng() < 0.5 ? 1 : -1, tLo = dir > 0 ? up : down, tHi = dir > 0 ? down : up
+    // a river's reach is straight and runs through the ring road, to the first cell boundary past FAUST_WATER.river.reach; the meander takes it on
+    const reachK = Math.ceil(FAUST_WATER.river.reach / 96)
+    const kLo = river ? -reachK : -H - tLo, kHi = river ? reachK : H - 1 + tHi, lo = river ? -reachK * 96 : kLo * 96 - 48, hi = river ? reachK * 96 : kHi * 96 + 48
     const P2 = (s, w) => axis ? [c + w, s] : [s, c + w]
-    const chan = { id, n, axis, u, c, dir, lo, hi, kLo, kHi, src: dir > 0 ? lo : hi, dst: dir > 0 ? hi : lo, bridges: [], ramps: [], outfalls: [] }
+    const chan = { id, n, kind: river ? 'river' : 'flood', axis, u, c, dir, lo, hi, kLo, kHi, src: dir > 0 ? lo : hi, dst: dir > 0 ? hi : lo, bridges: [], ramps: [], outfalls: [] }
     // the avenues across it (the diagonal boulevard, on a diagonal), and a footbridge here and there
     for (let i = -H; i < H; i++) {
       const gx = axis ? u : i, gz = axis ? i : u, diag = gz - gx === 4, s = i * 96
@@ -5269,13 +5297,13 @@ function faustChannels(seed, S) {
       if ((h >>> 3) % 100 < 55 && !clash) chan.ramps.push({ id: id + ':r:' + k, side: rside, s: rs, w: K.ramp.w })
       // a storm sewer's mouth in a bank, 6.5 m down it
       const under = (side, s) => chan.bridges.some(b => b.kind === 'diag' ? Math.abs(s - (b.s + side * 16.6)) < 25 : Math.abs(s - b.s) < b.half + 3)
-      if (o % 100 < 40 && !under((o >>> 7) & 1 ? 1 : -1, k * 96 + ((o >>> 9) & 1 ? 38 : -38))) { const side = (o >>> 7) & 1 ? 1 : -1, s = k * 96 + ((o >>> 9) & 1 ? 38 : -38), uu = K.top - (K.top - K.floor) * 6.5 / K.depth
-        const nn = Math.hypot(K.depth, K.top - K.floor), nu = -side * K.depth / nn, ny = (K.top - K.floor) / nn, p = P2(s, side * uu)
-        chan.outfalls.push({ id: id + ':o:' + k, kind: 'wall', side, s, r: 0.9, x: cm(p[0]), y: cm(K.ground - 6.5), z: cm(p[1]), normal: axis ? [cm(nu), cm(ny), 0] : [0, cm(ny), cm(nu)] })
+      if (o % 100 < 40 && k * 96 + ((o >>> 9) & 1 ? 38 : -38) > lo + 2 && k * 96 + ((o >>> 9) & 1 ? 38 : -38) < hi - 2 && !under((o >>> 7) & 1 ? 1 : -1, k * 96 + ((o >>> 9) & 1 ? 38 : -38))) { const side = (o >>> 7) & 1 ? 1 : -1, s = k * 96 + ((o >>> 9) & 1 ? 38 : -38), bk = river ? FAUST_WATER.river.sec : FAUST_CHAN.sec, md = river ? 2.2 : 6.5, uu = K.top - (K.top - bk.foot) * md / bk.h
+        const nn = Math.hypot(bk.h, K.top - bk.foot), nu = -side * bk.h / nn, ny = (K.top - bk.foot) / nn, p = P2(s, side * uu)
+        chan.outfalls.push({ id: id + ':o:' + k, kind: 'wall', side, s, depth: md, r: river ? 0.7 : 0.9, x: cm(p[0]), y: cm(K.ground - md), z: cm(p[1]), normal: axis ? [cm(nu), cm(ny), 0] : [0, cm(ny), cm(nu)] })
       }
     }
     // the ends: an inlet headwall upstream, the outfall's headwall downstream, three culverts each
-    for (const [name, s, out] of [['in', chan.src, chan.src === lo ? -1 : 1], ['end', chan.dst, chan.dst === lo ? -1 : 1]]) {
+    if (!river) for (const [name, s, out] of [['in', chan.src, chan.src === lo ? -1 : 1], ['end', chan.dst, chan.dst === lo ? -1 : 1]]) {
       const p = P2(s, 0)
       chan.outfalls.push({ id: id + ':' + name, kind: name, s, out, r: 2.5, x: cm(p[0]), y: cm(FAUST_CHAN.ground - K.depth + 2.5), z: cm(p[1]), face: axis ? [0, -out] : [-out, 0] })
     }
@@ -5284,7 +5312,7 @@ function faustChannels(seed, S) {
   }
   let h = 2166136261
   for (const ch of list) for (const v of JSON.stringify({ ...ch, rect: 0 })) h = Math.imul(h ^ v.charCodeAt(0), 16777619)
-  return faustChanMemo = { seed, S, list, rects, cells, hash: (h >>> 0).toString(16).padStart(8, '0'), version: K.version }
+  return faustChanMemo = { seed, S, list, rects, cells, mix: faustWaterMix(seed, S), hash: (h >>> 0).toString(16).padStart(8, '0'), version: K.version }
 }
 // the channel whose row or column holds city cell (gx, gz), or null
 const faustChanCell = (seed, S, gx, gz) => faustChannels(seed, S).cells.get(gx + ' ' + gz) || null
@@ -5313,13 +5341,13 @@ function faustChanSegs(seed, S, x0, z0, x1, z1) {
 // a channel's piece k (96 m along, centred on the avenues): emit.face(a, b, c, d, normal, tint, solid, glow) and emit.tri(a, b, c, normal,
 // tint, solid, glow). look: false makes the colliders (a ground 2 cm lower, as the cells' floors), true the drawing (decals, markings, lamps)
 function* faustChanPiece(ch, k, emit, look) {
-  const K = FAUST_CHAN, T = K.tint, G = K.glow, c = ch.c, ax = ch.axis, D = K.depth, Y = look ? 0 : K.ground, fl = Y - D
+  const K = FAUST_CHAN, T = K.tint, G = K.glow, c = ch.c, ax = ch.axis, sec = faustChanSec(ch), river = ch.kind === 'river', D = sec.h, Y = look ? 0 : K.ground, fl = Y - D
   const s0 = Math.max(ch.lo, k * 96 - 48), s1 = Math.min(ch.hi, k * 96 + 48), dA = ax ? [0, 1] : [1, 0]
   if (s1 <= s0) return
   const P = (s, u, y) => ax ? [c + u, y, s] : [s, y, c + u]
   // a normal from (u, y) components
   const N = (nu, ny) => ax ? [nu, ny, 0] : [0, ny, nu]
-  const hs = Math.hypot(D, K.top - K.floor), bu = D / hs, by = (K.top - K.floor) / hs      // a bank's normal (toward the middle, up)
+  const hs = Math.hypot(D, K.top - sec.foot), bu = D / hs, by = (K.top - sec.foot) / hs      // a bank's normal (toward the middle, up)
   const f = (a, b, d, e, n, tint, solid, g) => emit.face(a, b, d, e, n, tint, solid, g)
   // an oriented box: centre (cx, cz), along direction d (hl half long), across (hw half wide), y0..y1; skip: bit 0 top, 1 bottom, 2 +l, 3 -l, 4 +w, 5 -w
   const ob = (cx, cz, d, hl, hw, y0, y1, tint, g, solid, skip = 0) => {
@@ -5332,20 +5360,22 @@ function* faustChanPiece(ch, k, emit, look) {
     if (!(skip & 32)) f(p(-hl, -hw, y0), p(hl, -hw, y0), p(hl, -hw, y1), p(-hl, -hw, y1), [-nx, 0, -nz], tint, solid, g)
   }
   // ---- the cross-section, as strips along the piece: u, y of each break, and what it is
-  const prof = [[-K.cut, Y, 'lip'], [-K.top, Y, 'bank'], [-K.floor, fl, 'floor'], [-K.gutter[1], fl, 'gutter'], [-K.gutter[0], fl - K.gutter[2], 'gutter'], [K.gutter[0], fl - K.gutter[2], 'gutter'],
-    [K.gutter[1], fl, 'floor'], [K.floor, fl, 'bank'], [K.top, Y, 'lip'], [K.cut, Y, '']]
+  const inner = sec.inner.map(([u, dy]) => [u, fl + dy]), prof = [[-K.cut, Y, 'lip'], [-K.top, Y, 'bank']]
+  for (let i = 0; i < inner.length; i++) prof.push([-inner[i][0], inner[i][1], sec.kinds[Math.min(i, sec.kinds.length - 1)]])
+  for (let i = inner.length - 1; i >= 0; i--) prof.push([inner[i][0], inner[i][1], i ? sec.kinds[Math.min(i - 1, sec.kinds.length - 1)] : 'bank'])
+  prof.push([K.top, Y, 'lip'], [K.cut, Y, ''])
   for (let i = 0; i + 1 < prof.length; i++) {
     const [u0, y0, kind] = prof[i], [u1, y1] = prof[i + 1]
     const du = u1 - u0, dy = y1 - y0, nl = Math.hypot(du, dy), n = N(-dy / nl, du / nl)
     if (kind === 'lip') f(P(s0, u0, y0), P(s1, u0, y0), P(s1, u1, y1), P(s0, u1, y1), [0, 1, 0], T.lip, true, G.wall)
     else if (kind === 'bank') f(P(s0, u0, y0), P(s1, u0, y0), P(s1, u1, y1), P(s0, u1, y1), n, T.bank, true, G.bank)
-    else f(P(s0, u0, y0), P(s1, u0, y0), P(s1, u1, y1), P(s0, u1, y1), n, kind === 'gutter' ? T.gutter : T.floor, true, G.floor)
+    else f(P(s0, u0, y0), P(s1, u0, y0), P(s1, u1, y1), P(s0, u1, y1), n, kind === 'gutter' ? T.gutter : kind === 'bed' ? T.bed : T.floor, true, G.floor)
   }
   // ---- ramps on this piece: a wedge laid on the bank, its top falling from the lip to the floor over 24 m
   for (const r of ch.ramps) if (r.s >= k * 96 - 48 && r.s < k * 96 + 48) {
-    const sg = r.side, a = r.s - r.w / 2, b = r.s + r.w / 2, u4 = K.ramp.land, hx = K.top - u4, nl = Math.hypot(hx, D)
+    const sg = r.side, a = r.s - r.w / 2, b = r.s + r.w / 2, u4 = sec.land, hx = K.top - u4, nl = Math.hypot(hx, D)
     f(P(a, sg * u4, fl), P(b, sg * u4, fl), P(b, sg * K.top, Y), P(a, sg * K.top, Y), N(-sg * D / nl, hx / nl), T.ramp, true, G.bank)
-    for (const [s, dir] of [[a, -1], [b, 1]]) emit.tri(P(s, sg * u4, fl), P(s, sg * K.floor, fl), P(s, sg * K.top, Y), ax ? [0, 0, dir] : [dir, 0, 0], T.ramp, true, G.bank)
+    for (const [s, dir] of [[a, -1], [b, 1]]) emit.tri(P(s, sg * u4, fl), P(s, sg * sec.foot, fl), P(s, sg * K.top, Y), ax ? [0, 0, dir] : [dir, 0, 0], T.ramp, true, G.bank)
     if (look) for (const e of [-1, 1]) {
       const sa = r.s + e * (r.w / 2 - 0.3), sb = r.s + e * (r.w / 2 - 0.55), ya = u => fl + (u - u4) * D / hx + 0.04
       f(P(sa, sg * (u4 + 0.4), ya(u4 + 0.4)), P(sa, sg * K.top, ya(K.top)), P(sb, sg * K.top, ya(K.top)), P(sb, sg * (u4 + 0.4), ya(u4 + 0.4)), N(-sg * D / nl, hx / nl), T.mark, false, G.wall)
@@ -5367,7 +5397,7 @@ function* faustChanPiece(ch, k, emit, look) {
     }
   }
   // ---- the bridges owned by this piece
-  for (const b of ch.bridges) if (Math.floor((b.s + 48) / 96) === k) faustChanBridge(ch, b, emit, look, ob, Y, fl)
+  for (const b of ch.bridges) if (Math.floor((b.s + 48) / 96) === k) faustChanBridge(ch, b, emit, look, ob, Y, fl, u => fl + faustChanBed(sec, Math.abs(u)))
   // ---- the ends: a headwall closing the trench with three culverts
   for (const o of ch.outfalls) if ((o.kind === 'in' || o.kind === 'end') && Math.floor((o.s + (o.out > 0 ? -1 : 1)) / 96 + 0.5) === k) {
     const s = o.s, out = o.out, thick = 2.5
@@ -5385,8 +5415,8 @@ function* faustChanPiece(ch, k, emit, look) {
   }
   if (!look) return
   // ---- the look's decals: mouths and drains in the banks, graffiti
-  const sl = (t, side) => [side * (K.top - t * (K.top - K.floor) / hs), Y - t * D / hs]       // the bank's point t m down its slope: [u, y]
-  const slope = side => N(-side * (K.top - K.floor) / hs, -D / hs)                            // the way down it (toward the middle)
+  const sl = (t, side) => [side * (K.top - t * (K.top - sec.foot) / hs), Y - t * D / hs]       // the bank's point t m down its slope: [u, y]
+  const slope = side => N(-side * (K.top - sec.foot) / hs, -D / hs)                            // the way down it (toward the middle)
   // a patch on a bank, w along by (t1 - t0) down the slope, lifted off it
   const patch = (side, s, t0, t1, w, tint, g, lift) => {
     const pn = N(-side * bu, by), q = (ss, t) => { const [u, y] = sl(t, side), p = P(ss, u, y); return [p[0] + pn[0] * lift, p[1] + pn[1] * lift, p[2] + pn[2] * lift] }
@@ -5400,36 +5430,36 @@ function* faustChanPiece(ch, k, emit, look) {
   }
   const tOf = depth => depth * hs / D           // the slope distance of a depth
   // expansion joints: dark lines across the floor and banks every 6 m, two along the floor
-  for (let q = Math.ceil(s0 / 6) * 6; q < s1; q += 6) {
+  if (!river) for (let q = Math.ceil(s0 / 6) * 6; q < s1; q += 6) {
     for (const side of [-1, 1]) {
-      f(P(q - 0.2, side * 2.5, fl + 0.012), P(q + 0.2, side * 2.5, fl + 0.012), P(q + 0.2, side * K.floor, fl + 0.012), P(q - 0.2, side * K.floor, fl + 0.012), [0, 1, 0], T.joint, false, 0)
+      f(P(q - 0.2, side * 2.5, fl + 0.012), P(q + 0.2, side * 2.5, fl + 0.012), P(q + 0.2, side * sec.foot, fl + 0.012), P(q - 0.2, side * sec.foot, fl + 0.012), [0, 1, 0], T.joint, false, 0)
       patch(side, q, 0, hs, 0.4, T.joint, 0, 0.012)
     }
   }
-  for (const side of [-1, 1]) f(P(s0, side * 9 - 0.2, fl + 0.012), P(s1, side * 9 - 0.2, fl + 0.012), P(s1, side * 9 + 0.2, fl + 0.012), P(s0, side * 9 + 0.2, fl + 0.012), [0, 1, 0], T.joint, false, 0)
-  for (const side of [-1, 1]) patch(side, (s0 + s1) / 2, tOf(6.6), hs, s1 - s0, T.damp, 0, 0.01)
+  if (!river) for (const side of [-1, 1]) f(P(s0, side * 9 - 0.2, fl + 0.012), P(s1, side * 9 - 0.2, fl + 0.012), P(s1, side * 9 + 0.2, fl + 0.012), P(s0, side * 9 + 0.2, fl + 0.012), [0, 1, 0], T.joint, false, 0)
+  for (const side of [-1, 1]) patch(side, (s0 + s1) / 2, tOf(D * 0.825), hs, s1 - s0, T.damp, 0, 0.01)
   for (let n = 0; n < 28; n++) {
-    const h = faustMix(0x73747261 ^ ch.n, k * 32 + n, ch.u), side = (h & 1) ? 1 : -1, s = k * 96 - 46 + ((h >>> 1) % 92), t0 = ((h >>> 9) % 3) * 0.3, t1 = tOf(5 + ((h >>> 12) % 4)), w = 0.6 + ((h >>> 16) % 4) * 0.2, t = t1 - t0
+    const h = faustMix(0x73747261 ^ ch.n, k * 32 + n, ch.u), side = (h & 1) ? 1 : -1, s = k * 96 - 46 + ((h >>> 1) % 92), t0 = ((h >>> 9) % 3) * 0.3, t1 = tOf((5 + ((h >>> 12) % 4)) * D / 8), w = 0.6 + ((h >>> 16) % 4) * 0.2, t = t1 - t0
     if (s < s0 + 1 || s > s1 - 1) continue
     patch(side, s, t0, t0 + t * 0.4, w * 0.7, T.stainTop, 0, 0.02); patch(side, s, t0 + t * 0.4, t0 + t * 0.75, w, T.stainMid, 0, 0.022); patch(side, s, t0 + t * 0.75, t1, w * 1.1, T.stainToe, 0, 0.024)
   }
   for (const o of ch.outfalls) if (o.kind === 'wall' && Math.floor((o.s + 48) / 96) === k) {
-    const t = tOf(6.5)
+    const t = tOf(o.depth || 6.5)
     disc(o.side, o.s, t, o.r * 1.35, T.collar, G.wall, 0.04); disc(o.side, o.s, t, o.r, T.drain, 0, 0.07)
-    patch(o.side, o.s, t + o.r, t + 6.5, 1.1, T.stain, 0.1, 0.05)
+    patch(o.side, o.s, t + o.r, Math.min(hs, t + 6.5 * D / 8), 1.1, T.stain, 0.1, 0.05)
   }
   for (let n = 0; n < 8; n++) {
     const h = faustMix(0x67726166 ^ ch.n, k * 16 + n, ch.u), side = (h & 1) ? 1 : -1, s = k * 96 - 44 + ((h >>> 1) % 88)
     if (s < s0 + 3 || s > s1 - 3 || ch.bridges.some(b => Math.abs(s - (b.kind === 'diag' ? b.s + side * 22 : b.s)) < (b.kind === 'diag' ? 26 : b.half + 4)) ||
       ch.ramps.some(r => r.side === side && Math.abs(r.s - s) < 7)) continue
-    if (n < 2) { patch(side, s, tOf(6.2), tOf(8), 1.7, T.drain, 0, 0.05); patch(side, s, tOf(5.7), tOf(6.2), 2.2, T.collar, G.wall, 0.045); continue }
-    const col = T.paint[(h >>> 8) % T.paint.length], col2 = T.paint[(h >>> 12) % T.paint.length], w = 2.5 + ((h >>> 16) % 5), t0 = tOf(1.5 + ((h >>> 20) % 3))
+    if (n < 2) { patch(side, s, tOf(D * 0.775), tOf(D), 1.7, T.drain, 0, 0.05); patch(side, s, tOf(D * 0.7125), tOf(D * 0.775), 2.2, T.collar, G.wall, 0.045); continue }
+    const col = T.paint[(h >>> 8) % T.paint.length], col2 = T.paint[(h >>> 12) % T.paint.length], w = 2.5 + ((h >>> 16) % 5), t0 = tOf((1.5 + ((h >>> 20) % 3)) * D / 8)
     patch(side, s, t0, t0 + 2.4, w, col, G.paint, 0.05); patch(side, s + w * 0.12, t0 + 0.6, t0 + 1.7, w * 0.7, col2, G.paint, 0.07); patch(side, s - w * 0.3, t0 + 2.4, t0 + 3.3, 0.35, col, G.paint, 0.06)
   }
 }
 // a bridge over a channel: the deck (a road's is the plan's box), its parapets and balusters, stepped stone newels with lamps at the
 // ends, lamp standards, fascias and piers on the floor. a, b: its ends on the lips' far sides, along its length; the deck's top is the ground.
-function faustChanBridge(ch, b, emit, look, ob, Y, fl) {
+function faustChanBridge(ch, b, emit, look, ob, Y, fl, bedY = () => fl) {
   const K = FAUST_CHAN, T = K.tint, G = K.glow, f = emit.face, L = Math.hypot(b.b[0] - b.a[0], b.b[1] - b.a[1]), d = [(b.b[0] - b.a[0]) / L, (b.b[1] - b.a[1]) / L], n = [-d[1], d[0]]
   const w = b.half, foot = b.kind === 'foot', own = b.kind !== 'road', th = foot ? 0.6 : K.thick, span = b.kind === 'diag' ? 48 : foot ? K.span - 2 : K.span, ratio = L / (2 * span)
   const at = (t, v) => [b.a[0] + d[0] * t + n[0] * v, b.a[1] + d[1] * t + n[1] * v]
@@ -5486,7 +5516,7 @@ function faustChanBridge(ch, b, emit, look, ob, Y, fl) {
   if (!foot) for (const u of b.kind === 'diag' ? [-12.5, 12.5] : [-9, 9]) {
     const t = (u + span) * ratio, p = at(t, 0), yc = Y - th - 0.5
     ob(p[0], p[1], d, 1.1, w - 0.7, yc - 0.5, yc + 0.5, T.under, G.under, false, 2)
-    for (const v of [-9, 0, 9]) { const q = at(t, v); ob(q[0], q[1], d, 1.6, 1.3, fl, fl + 0.9, T.stoneDark, G.wall, true); ob(q[0], q[1], d, 0.9, 0.7, fl + 0.9, yc - 0.5, T.pier, G.wall, true); ob(q[0], q[1], d, 1.4, 1.1, yc - 0.5, yc - 0.1, T.stone, G.wall, false, 2) }
+    for (const v of [-9, 0, 9]) { const q = at(t, v); const bz = bedY(ch.axis ? q[0] - ch.c : q[1] - ch.c) - 0.3; ob(q[0], q[1], d, 1.6, 1.3, bz, bz + 1.2, T.stoneDark, G.wall, true); ob(q[0], q[1], d, 0.9, 0.7, bz + 1.2, yc - 0.5, T.pier, G.wall, true); ob(q[0], q[1], d, 1.4, 1.1, yc - 0.5, yc - 0.1, T.stone, G.wall, false, 2) }
   }
 }
 // a cell's colliders, as one Float32Array of triangles; and its look, as a geometry in the stone material's layout
@@ -5517,13 +5547,14 @@ function* faustChanWater(ch, k) {
   return buf.geometry()
 }
 function faustChanWaterSet(F, level) {
-  const K = FAUST_CHAN, D = K.depth, g = K.gutter, hh = (K.top - K.floor) / D
-  // depth above the gutter's bottom -> the sheet's half width at that height
-  const half = level <= g[2] ? g[0] + (g[1] - g[0]) * level / g[2] : K.floor + (level - g[2]) * hh
-  const y = K.ground - D - g[2] + level
+  const K = FAUST_CHAN, list = faustChannels(F.seed, F.S).list
   for (const [key, v] of F.chanLooks || []) if (v.water) {
-    const ch = faustChannels(F.seed, F.S).list[+key.split(':')[0]]
-    v.water.visible = level > 0.005
+    const ch = list[+key.split(':')[0]], sec = faustChanSec(ch)
+    // a flood channel: the trickle's depth above the gutter's bottom; a river: its level plus the rain's rise on the channels' own scale
+    let y, half
+    if (ch.kind === 'river') { y = FAUST_WATER.river.level + (level - K.water) * 4; half = faustChanWet(sec, y - K.ground) }
+    else { const g = K.gutter; half = level <= g[2] ? g[0] + (g[1] - g[0]) * level / g[2] : K.floor + (level - g[2]) * (K.top - K.floor) / K.depth; y = K.ground - K.depth - g[2] + level }
+    v.water.visible = ch.kind === 'river' || level > 0.005
     v.water.position.set(ch.axis ? ch.c : 0, y, ch.axis ? 0 : ch.c)
     v.water.scale.set(ch.axis ? 2 * half : 1, 1, ch.axis ? 1 : 2 * half)
   }
@@ -5616,6 +5647,383 @@ function faustChanMapLayer() {
     }
   } })
 }
+// ---------------------------------------------------------------- card #92: water (rivers, lakes, a reservoir, a bay), and the API for what moves in it
+// The seed picks the world's mix (faustWaterMix): a river or not, a reservoir (a dam holds it, increment 2), a bay with docks, 0 to 3 lakes;
+// every world has at least one piece, and none needs another. Everything is pure in (seed, size): the same for every player.
+//   A river's straight reach runs through the city (a channel of kind 'river', #83's machinery: its avenues are bridges) and on out through the
+//   ring road to FAUST_WATER.river.reach; from there it winds on across the fields (water cells), to the reservoir's dam upstream (or a spring
+//   pond) and to the bay downstream (or a delta pond).
+//   WATER CELLS: a 96 m cell any body reaches is ground this code makes: a heightfield of the bed (6 m grid), a collider and a look, streamed
+//   like #83's pieces. A body is a list of capsules [ax, az, bx, bz, r] (a circle is one with a = b); its depth at a point comes from the
+//   distance d to the nearest capsule (a river's by its table, a lake's by a slope), so waterAt is analytic and answers from the plan alone.
+//   A cell the water doesn't reach is untouched. Wet where the bed lies under the body's level (below the ground, y 0).
+const FAUST_WATER = { version: 1, cell: 96, grid: 6, reach: 240, look: 1500, part: 1000,
+  // a river: depth by distance from its axis (banks 45 degrees, a 1 m shelf 8 m wide at level -3, a trough 7.5 m deep)
+  river: { reach: 3300, level: -3, flow: 1.2, tab: [[28, 0], [24, 4], [16, 4], [8, 7.5], [0, 7.5]],
+    sec: { foot: 24, h: 4, land: 16, kinds: ['bed', 'bed', 'bed'], inner: [[24, 0], [16, 0], [8, -3.5]] } },
+  kinds: { lake: { level: -0.7, dmax: 5, slope: 4 }, reservoir: { level: -1.2, dmax: 14, slope: 3.5 }, bay: { level: -0.8, dmax: 9, slope: 6 } },
+  // the waves the look draws and waveAt reads (one table: boats and the surface agree): sines [direction x, z, wavelength m, speed m/s, weight], amplitude m by kind
+  waves: { sines: [[0.8, 0.6, 22, 2.4, 1], [-0.5, 0.86, 9, 1.8, 0.6], [0.2, -0.98, 41, 3.1, 0.8]], amp: { river: 0.04, lake: 0.08, reservoir: 0.1, bay: 0.18, channel: 0 } },
+  tint: { mud: 0x4a4638, sand: 0x6a644f, deep: 0x1d292b, water: 0x14303b, fields: [0x2b3527, 0x3a3128, 0x464232, 0x30392a], dock: 0x5b4a39, pile: 0x3a3229, bollard: 0x2f343b, lamp: 0xffb35a, pole: 0x30353c } }
+// the seed's mix: { river, reservoir, bay, lakes }
+function faustWaterMix(seed, S) {
+  const h = i => faustMix(seed ^ 0x57415452, 92, 10 + i) % 100, m = { river: h(1) < 75, reservoir: h(2) < 55, bay: h(3) < 45, lakes: h(4) < 30 ? 0 : h(4) < 60 ? 1 : h(4) < 85 ? 2 : 3 }
+  if (!m.river && !m.reservoir && !m.bay && !m.lakes) m.lakes = 1 + h(5) % 2
+  return m
+}
+// depth of a river's table at distance d from its axis
+function faustWaterTab(tab, d) {
+  if (d >= tab[0][0]) return 0
+  for (let i = 0; i + 1 < tab.length; i++) if (d <= tab[i][0] && d >= tab[i + 1][0]) return tab[i][1] + (tab[i + 1][1] - tab[i][1]) * (tab[i][0] - d) / (tab[i][0] - tab[i + 1][0])
+  return tab[tab.length - 1][1]
+}
+const faustWaterKey = (i, j) => (i + 256) * 512 + j + 256
+let faustWaterMemo = null
+// the plan: { bodies: [{ id, kind, level, dmax, slope, tab?, caps, centre?, docks?, dam?, bounds }], cells: Map key -> [body, cap, body, cap, ...], mix, hash, version }
+function faustWater(seed, S) {
+  seed >>>= 0; S = Math.max(16, Math.min(32, S & ~1))
+  if (faustWaterMemo?.seed === seed && faustWaterMemo.S === S) return faustWaterMemo
+  const K = FAUST_WATER, A = S * 48, mix = faustWaterMix(seed, S), rng = genRng(faustMix(seed ^ 0x57415452, 92, 99)), R = FAUST_ROADS, cm = v => Math.round(v * 100) / 100
+  const river = faustChannels(seed, S).list.find(c => c.kind === 'river') || null
+  const bodies = [], taken = []      // taken: [x, z, r] discs the other bodies hold
+  const body = (id, kind, caps, extra = {}) => {
+    const k = K.kinds[kind] || {}, b = { id, kind, level: k.level ?? K.river.level, dmax: k.dmax ?? 7.5, slope: k.slope ?? 1, caps, ...extra }
+    bodies.push(b); return b
+  }
+  // ---- the river's winding reach: from each end of the straight reach outward, 160 m a step, its heading wandering and kept between the radials
+  let ends = null
+  const lateral = (c) => Math.abs(c) < R.avenue ? [-R.avenue + 100, R.avenue - 100] : c > 0 ? [R.avenue + 100, 2800] : [-2800, -R.avenue - 100]
+  if (river) {
+    const ax = river.axis, reachEnd = Math.abs(river.hi), lim = lateral(river.c), walk = (sgn, n, salt) => {
+      let s = sgn * reachEnd, w = river.c, th = 0; const pts = [[s, w]]
+      for (let i = 0; i < n; i++) {
+        th = th * 0.9 + (faustMix(seed ^ 0x4d45414e, salt, i) % 1000 / 1000 - 0.5) * 0.55; th = Math.max(-0.6, Math.min(0.6, th))
+        if (w < lim[0] + 60) th = Math.max(th, 0.25); if (w > lim[1] - 60) th = Math.min(th, -0.25)
+        s += sgn * Math.cos(th) * 160; w += Math.sin(th) * 160; w = Math.max(lim[0], Math.min(lim[1], w)); pts.push([s, w])
+      }
+      return pts
+    }
+    const nLo = 8 + faustMix(seed ^ 0x4d45414e, 1, 0) % 14, nHi = 8 + faustMix(seed ^ 0x4d45414e, 2, 0) % 14
+    const lo = walk(-1, nLo, 1), hi = walk(1, nHi, 2), W = (p) => ax ? [p[1], p[0]] : [p[0], p[1]]
+    // downstream order: from the upstream end, in toward the reach, through it, out to the downstream end
+    const up = river.dir > 0 ? lo : hi, dn = river.dir > 0 ? hi : lo, chain = [...up.slice().reverse(), ...dn]
+    const caps = []
+    for (let i = up.length - 1; i > 0; i--) { const a = W(up[i]), b = W(up[i - 1]); caps.push([a[0], a[1], b[0], b[1], 28]) }
+    for (let i = 0; i + 1 < dn.length; i++) { const a = W(dn[i]), b = W(dn[i + 1]); caps.push([a[0], a[1], b[0], b[1], 28]) }
+    const b = body('river:0', 'river', caps, { tab: K.river.tab, channel: river.id, centre: chain.map(p => W(p).map(cm)) })
+    ends = { up: W(up.at(-1)), dn: W(dn.at(-1)), upOut: ax ? [0, up.at(-1)[0] > 0 ? 1 : -1] : [up.at(-1)[0] > 0 ? 1 : -1, 0], dnOut: ax ? [0, dn.at(-1)[0] > 0 ? 1 : -1] : [dn.at(-1)[0] > 0 ? 1 : -1, 0] }
+    taken.push(...caps.map(c => [(c[0] + c[2]) / 2, (c[1] + c[3]) / 2, 120]))
+  }
+  // a blob: a main circle and 1-3 lobes round it
+  const blob = (cx, cz, r, n, salt) => { const caps = [[cx, cz, cx, cz, r]]
+    for (let i = 0; i < n; i++) { const a = faustMix(seed ^ 0x424c4f42, salt, i) % 628 / 100, d = r * (0.3 + faustMix(seed ^ 0x424c4f42, salt, 10 + i) % 30 / 100), q = r * (0.4 + faustMix(seed ^ 0x424c4f42, salt, 20 + i) % 25 / 100)
+      caps.push([cx + Math.cos(a) * d, cz + Math.sin(a) * d, cx + Math.cos(a) * d, cz + Math.sin(a) * d, q]) }
+    return caps }
+  const bounds = caps => { let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const c of caps) { x0 = Math.min(x0, c[0] - c[4], c[2] - c[4]); x1 = Math.max(x1, c[0] + c[4], c[2] + c[4]); z0 = Math.min(z0, c[1] - c[4], c[3] - c[4]); z1 = Math.max(z1, c[1] + c[4], c[3] + c[4]) } return [x0, z0, x1, z1].map(Math.round) }
+  // docks along a shore: d from the circle's centre, angles toward the city
+  const docks = (b, cx, cz, r, n, salt, toward) => {
+    const k = K.kinds[b.kind], out = []
+    const wetAt = (x, z) => b.caps.some(c => Math.min(b.dmax, Math.max(0, (c[4] - faustWaterSegDist(c, x, z)) / b.slope)) > -k.level + 0.05)
+    for (let i = 0; i < n; i++) {
+      const a = toward + ((n > 1 ? i / (n - 1) - 0.5 : 0) * 2 + (faustMix(seed ^ 0x444f434b, salt, i) % 1000 / 1000 - 0.5) * 0.3)
+      let d = r * 0.4; for (let t = r * 0.4; t < r * 1.6; t += 3) if (wetAt(cx + Math.cos(a) * t, cz + Math.sin(a) * t)) d = t
+      d += 7; const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d
+      out.push({ id: b.id + ':d:' + i, x: cm(x), z: cm(z), yaw: cm(Math.atan2(Math.cos(a), Math.sin(a))), len: 38 + faustMix(seed ^ 0x444f434b, salt, 9 + i) % 14, a })
+    }
+    return out }
+  // ---- the reservoir, upstream, and the bay, downstream: on the river's ends, or free in the fields when the seed has no river
+  const place = (kind, id, want, ends1) => {
+    let r = kind === 'bay' ? 900 + rng() * 300 : 520 + rng() * 260
+    let cx, cz, out
+    if (ends1) {
+      // on the river's end: no bigger than the room beside the radials (their lines at ±288 across it) leaves, lobes included
+      const across = ends1.out[0] ? ends1.p[1] : ends1.p[0], room = Math.min(...[-R.avenue, R.avenue].map(l => Math.abs(across - l))) - 140
+      r = Math.max(200, Math.min(r, room / 1.25)); out = ends1.out; cx = ends1.p[0] + out[0] * (r + 30); cz = ends1.p[1] + out[1] * (r + 30) }
+    else { for (let t = 0; t < 40; t++) { const ang = rng() * 6.283, dist = 4200 + rng() * 5200; cx = Math.cos(ang) * dist; cz = Math.sin(ang) * dist; if (faustWaterFree(cx, cz, r + 40, taken, A)) break }
+      out = [Math.cos(Math.atan2(cz, cx)), Math.sin(Math.atan2(cz, cx))] }
+    const caps = blob(cx, cz, r, 2, id.length * 7 + (kind === 'bay' ? 3 : 5)), b = body(id, kind, caps, { bounds: bounds(caps) })
+    taken.push([cx, cz, r * 1.35]); return { b, cx, cz, r, out }
+  }
+  let reservoir = null, bay = null
+  if (mix.reservoir) {
+    reservoir = place('reservoir', 'reservoir:0', 0, ends && { p: ends.up, out: ends.upOut })
+    // the dam closes the reservoir's shore beside the river's head (increment 2 builds it): its middle, across the river's line
+    reservoir.b.dam = { x: cm(ends ? ends.up[0] + ends.upOut[0] * 30 : reservoir.cx - reservoir.out[0] * reservoir.r), z: cm(ends ? ends.up[1] + ends.upOut[1] * 30 : reservoir.cz - reservoir.out[1] * reservoir.r), yaw: ends ? cm(Math.atan2(-ends.upOut[0], -ends.upOut[1])) : 0 }
+  } else if (ends) { const c = ends.up, caps = blob(c[0] + ends.upOut[0] * 120, c[1] + ends.upOut[1] * 120, 150, 1, 11); body('lake:spring', 'lake', caps, { bounds: bounds(caps) }); taken.push([c[0] + ends.upOut[0] * 120, c[1] + ends.upOut[1] * 120, 220]) }
+  if (mix.bay) {
+    bay = place('bay', 'bay:0', 0, ends && { p: ends.dn, out: ends.dnOut })
+    const toward = Math.atan2(-bay.out[1], -bay.out[0])
+    bay.b.docks = docks(bay.b, bay.cx, bay.cz, bay.r, 4, 5, toward)
+  } else if (ends) { const c = ends.dn, caps = blob(c[0] + ends.dnOut[0] * 200, c[1] + ends.dnOut[1] * 200, 260, 2, 13); body('lake:delta', 'lake', caps, { bounds: bounds(caps) }); taken.push([c[0] + ends.dnOut[0] * 200, c[1] + ends.dnOut[1] * 200, 360]) }
+  for (let n = 0; n < mix.lakes; n++) {
+    const r = 160 + rng() * 360
+    for (let t = 0; t < 60; t++) {
+      const ang = rng() * 6.283, dist = 3700 + rng() * 6000, cx = Math.cos(ang) * dist, cz = Math.sin(ang) * dist
+      if (!faustWaterFree(cx, cz, r + 40, taken, A)) continue
+      const caps = blob(cx, cz, r, 1 + (n & 1) + 1, 21 + n), b = body('lake:' + n, 'lake', caps, { bounds: bounds(caps) })
+      if (faustMix(seed ^ 0x4a455454, n, 1) % 100 < 60) b.docks = docks(b, cx, cz, r, 1 + faustMix(seed ^ 0x4a455454, n, 2) % 2, 30 + n, Math.atan2(-cz, -cx))
+      taken.push([cx, cz, r * 1.4]); break
+    }
+  }
+  for (const b of bodies) if (!b.bounds) b.bounds = bounds(b.caps)
+  // ---- the cells: every 96 m cell a capsule's reach touches
+  const cells = new Map(), C = K.cell
+  bodies.forEach((b, bi) => b.caps.forEach((c, ci) => {
+    const r = c[4] + 0.5, i0 = Math.floor((Math.min(c[0], c[2]) - r) / C), i1 = Math.floor((Math.max(c[0], c[2]) + r) / C), j0 = Math.floor((Math.min(c[1], c[3]) - r) / C), j1 = Math.floor((Math.max(c[1], c[3]) + r) / C)
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+      const x0 = i * C, z0 = j * C
+      if (faustWaterRectDist(c, x0, z0, x0 + C, z0 + C) < r) {
+        const k = faustWaterKey(i, j); let e = cells.get(k); if (!e) cells.set(k, e = []); e.push(bi, ci) }
+    }
+  }))
+  let hash = 2166136261
+  for (const b of bodies) for (const v of JSON.stringify({ ...b, caps: b.caps.map(c => c.map(cm)), docks: b.docks })) hash = Math.imul(hash ^ v.charCodeAt(0), 16777619)
+  return faustWaterMemo = { seed, S, mix, bodies, cells, hash: (hash >>> 0).toString(16).padStart(8, '0'), version: K.version, river }
+}
+// distance from (px, pz) to a capsule's axis
+function faustWaterSegDist(c, px, pz) {
+  const dx = c[2] - c[0], dz = c[3] - c[1], l = dx * dx + dz * dz, t = l ? Math.max(0, Math.min(1, ((px - c[0]) * dx + (pz - c[1]) * dz) / l)) : 0, ex = c[0] + dx * t - px, ez = c[1] + dz * t - pz
+  return Math.sqrt(ex * ex + ez * ez)
+}
+// distance from a capsule's axis to a rect (sampled along it: its axis is a segment 160 m or less)
+function faustWaterRectDist(c, x0, z0, x1, z1) {
+  let best = 1e9; const n = Math.max(1, Math.ceil(Math.hypot(c[2] - c[0], c[3] - c[1]) / 24))
+  for (let i = 0; i <= n; i++) { const x = c[0] + (c[2] - c[0]) * i / n, z = c[1] + (c[3] - c[1]) * i / n, dx = Math.max(x0 - x, 0, x - x1), dz = Math.max(z0 - z, 0, z - z1); best = Math.min(best, Math.hypot(dx, dz)) }
+  return best
+}
+// is a disc (x, z, r) clear of the highways (the radials' lines, the ring), the city, the world's edge and the discs taken?
+function faustWaterFree(x, z, r, taken, A) {
+  const R = FAUST_ROADS, m = Math.max(Math.abs(x), Math.abs(z))
+  if (m - r < 3100 || m + r > 15000) return false
+  if (Math.abs(m - R.ring) < r + 160) return false
+  for (const s of [-1, 1]) {
+    if (Math.abs(x) < 9000 + r && Math.abs(z - s * R.avenue) < r + 120 && Math.abs(x) > A - r) return false       // the east and west radials
+    if (Math.abs(z) < 9000 + r && Math.abs(x - s * R.avenue) < r + 120 && Math.abs(z) > A - r) return false       // the north and south radials
+  }
+  for (const [tx, tz, tr] of taken) if (Math.hypot(x - tx, z - tz) < r + tr + 80) return false
+  return true
+}
+// the deepest bed under a point from a cell's entries, and what holds it: fills out = { depth, body, cap, d } (depth 0 where dry)
+function faustWaterDepth(w, e, x, z, out) {
+  out.depth = 0; out.body = -1; out.cap = -1; out.d = 0
+  for (let k = 0; k < e.length; k += 2) {
+    const b = w.bodies[e[k]], c = b.caps[e[k + 1]], d = faustWaterSegDist(c, x, z)
+    const dep = b.tab ? faustWaterTab(b.tab, d) : Math.min(b.dmax, Math.max(0, (c[4] - d) / b.slope))
+    if (dep > out.depth) { out.depth = dep; out.body = e[k]; out.cap = e[k + 1]; out.d = d }
+  }
+  return out
+}
+const faustWaterScratch = { depth: 0, body: -1, cap: -1, d: 0 }
+// the water at (x, z): null on dry land, else { id, kind, y, level, floor, depth, flow: [fx, fz] } (out, if given, is filled and returned)
+function faustWaterAt(seed, S, x, z, out) {
+  const w = faustWater(seed, S), i = Math.floor(x / 96), j = Math.floor(z / 96), e = w.cells.get(faustWaterKey(i, j))
+  if (e) {
+    const q = faustWaterDepth(w, e, x, z, faustWaterScratch), b = q.body >= 0 ? w.bodies[q.body] : null
+    if (b && q.depth > -b.level + 0.02) {
+      const r = out || { flow: [0, 0] }, c = b.caps[q.cap]; r.id = b.id; r.kind = b.kind; r.level = r.y = b.level; r.floor = -q.depth; r.depth = q.depth + b.level
+      if (b.tab) { const dx = c[2] - c[0], dz = c[3] - c[1], l = Math.hypot(dx, dz) || 1, v = FAUST_WATER.river.flow * Math.min(1, 0.4 + q.depth / 7.5); r.flow = r.flow || [0, 0]; r.flow[0] = dx / l * v; r.flow[1] = dz / l * v } else { r.flow = r.flow || [0, 0]; r.flow[0] = r.flow[1] = 0 }
+      return r
+    }
+  }
+  const ch = faustChannels(seed, S), K = FAUST_CHAN
+  for (const c of ch.list) {
+    const r = c.rect
+    if (x > r.a0 && x < r.a1 && z > r.b0 && z < r.b1) {
+      const s = c.axis ? z : x, u = Math.abs((c.axis ? x : z) - c.c), sec = faustChanSec(c), river = c.kind === 'river'
+      const bed = K.ground - sec.h + faustChanBed(sec, u), lvl = river ? FAUST_WATER.river.level : K.ground - K.depth - K.gutter[2] + K.water
+      if (u < K.top && bed < lvl - 0.02) {
+        const o = out || { flow: [0, 0] }; o.id = c.id; o.kind = river ? 'river' : 'channel'; o.level = o.y = lvl; o.floor = bed; o.depth = lvl - bed
+        const v = (river ? FAUST_WATER.river.flow : 0.5) * c.dir; o.flow = o.flow || [0, 0]; o.flow[0] = c.axis ? 0 : v; o.flow[1] = c.axis ? v : 0
+        return o
+      }
+      return null
+    }
+  }
+  return null
+}
+// the nearest way out of the water within 12 m: { id, kind, y (the bank's top), x, z, nx, nz, bank: 'stairs' | 'ladder' | 'low' | 'high' }, or null
+function faustWaterExit(seed, S, x, z) {
+  const w = faustWater(seed, S), at = faustWaterAt(seed, S, x, z)
+  if (!at) return null
+  const i = Math.floor(x / 96), j = Math.floor(z / 96), e = w.cells.get(faustWaterKey(i, j))
+  if (e) {
+    const q = faustWaterDepth(w, e, x, z, { depth: 0 }), b = w.bodies[q.body], c = b.caps[q.cap]
+    // the cap's nearest axis point, out along the line from it through here to where the bed meets the level, and on a metre
+    const dx = c[2] - c[0], dz = c[3] - c[1], l = dx * dx + dz * dz, t = l ? Math.max(0, Math.min(1, ((x - c[0]) * dx + (z - c[1]) * dz) / l)) : 0, px = c[0] + dx * t, pz = c[1] + dz * t
+    let nx = x - px, nz = z - pz; const nl = Math.hypot(nx, nz); if (nl < 1e-6) { nx = 1; nz = 0 } else { nx /= nl; nz /= nl }
+    const shore = b.tab ? 25 : c[4] - (-b.level) * b.slope, ex = px + nx * (shore + 1.5), ez = pz + nz * (shore + 1.5), dd = Math.hypot(ex - x, ez - z)
+    if (dd > 12) return null
+    const dock = (b.docks || []).find(k => Math.hypot(k.x - ex, k.z - ez) < 14)
+    return { id: b.id, kind: b.kind, y: 0, x: ex, z: ez, nx, nz, bank: dock ? 'stairs' : b.tab ? 'high' : 'low' }
+  }
+  const ch = faustChannels(seed, S).list.find(c => c.id === at.id)
+  if (!ch) return null
+  const u = (ch.axis ? x : z) - ch.c, s = ch.axis ? z : x, side = u < 0 ? -1 : 1, top = FAUST_CHAN.top
+  let best = null
+  for (const r of ch.ramps) if (r.side === side && Math.abs(r.s - s) < 14) { const dist = Math.hypot(Math.abs(u) - 16, r.s - s); if (!best || dist < best[0]) best = [dist, r.s] }
+  const lip = best ? best[1] : s, ex = ch.axis ? ch.c + side * (top + 1.5) : lip, ez = ch.axis ? lip : ch.c + side * (top + 1.5)
+  if (Math.hypot(ex - x, ez - z) > 12 + (best ? 14 : 0) && Math.abs(Math.abs(u) - top) > 12) return null
+  return { id: ch.id, kind: ch.kind === 'river' ? 'river' : 'channel', y: 0, x: ex, z: ez, nx: ch.axis ? side : 0, nz: ch.axis ? 0 : side, bank: best ? 'stairs' : 'high' }
+}
+// the wave table's height at (x, z) at time t (s) for a body kind: the surface the look draws; zero for a channel. The water's `y` itself is time-free.
+function faustWaveAt(x, z, t, kind) {
+  const W = FAUST_WATER.waves, amp = W.amp[kind] || 0
+  if (!amp) return 0
+  let h = 0, wt = 0
+  for (const [dx, dz, L, v, wgt] of W.sines) { h += wgt * Math.sin(6.283185307 / L * ((dx * x + dz * z) - v * t)); wt += wgt }
+  return amp * h / wt
+}
+// the cells' rects (as the ground cuts take them) inside a box: [{ a0, a1, b0, b1 }]
+function faustWaterRectsIn(seed, S, x0, z0, x1, z1) {
+  const w = faustWater(seed, S), out = [], C = 96
+  if (!w.cells.size) return out
+  for (let i = Math.floor(x0 / C); i <= Math.floor(x1 / C); i++) for (let j = Math.floor(z0 / C); j <= Math.floor(z1 / C); j++) if (w.cells.has(faustWaterKey(i, j))) out.push({ a0: i * C, a1: i * C + C, b0: j * C, b1: j * C + C })
+  return out
+}
+// the segments the rings' planners keep their buildings off: a point segment per cell (its half diagonal and the margin)
+function faustWaterSegs(seed, S, x0, z0, x1, z1) {
+  return faustWaterRectsIn(seed, S, x0 - 90, z0 - 90, x1 + 90, z1 + 90).map(r => [(r.a0 + r.a1) / 2, (r.b0 + r.b1) / 2, (r.a0 + r.a1) / 2, (r.b0 + r.b1) / 2, 48 * 1.4142 + 22])
+}
+const faustWaterMix2 = (a, b, t) => { const k = Math.max(0, Math.min(1, t)); return (Math.round((a >> 16 & 255) + ((b >> 16 & 255) - (a >> 16 & 255)) * k) << 16) | (Math.round((a >> 8 & 255) + ((b >> 8 & 255) - (a >> 8 & 255)) * k) << 8) | Math.round((a & 255) + ((b & 255) - (a & 255)) * k) }
+// a water cell (96 m): the bed as a heightfield on a 6 m grid (the ground too, where it is dry: the cell is all this code's), the surface sheets, the docks.
+// emit.tri(a, b, c, normal, tint, solid, glow), emit.face(a, b, c, d, normal, tint, solid, glow). look: false makes the colliders, true the drawing.
+function* faustWaterCell(seed, S, i, j, emit, look) {
+  const K = FAUST_WATER, w = faustWater(seed, S), e = w.cells.get(faustWaterKey(i, j)), T = K.tint
+  if (!e) return
+  const g = K.grid, n = 96 / g, x0 = i * 96, z0 = j * 96, sc = { depth: 0, body: -1, cap: -1, d: 0 }, dp = new Float32Array((n + 1) * (n + 1))
+  for (let a = 0; a <= n; a++) for (let b = 0; b <= n; b++) dp[a * (n + 1) + b] = faustWaterDepth(w, e, x0 + a * g, z0 + b * g, sc).depth
+  // the bed: every 6 m quad, and where it holds a shore or a slope (some corner wet, not all deep) a 4 x 4 refinement of 1.5 m: the waterline and the
+  // banks follow the bed's own curve, not the grid; vertex colours blend field -> sand -> mud -> deep by depth, so no tint steps either
+  const fields = FAUST_FIELDS.tints, fieldTint = (x, z) => fields[faustMix(seed ^ 0x51ed, Math.floor(x / 160), Math.floor(z / 160)) % fields.length]
+  const colAt = (x, z, dep) => dep <= 0 ? fieldTint(x, z) : dep < 0.6 ? faustWaterMix2(fieldTint(x, z), T.sand, dep / 0.6) : dep < 2.5 ? faustWaterMix2(T.sand, T.mud, (dep - 0.6) / 1.9) : faustWaterMix2(T.mud, T.deep, (dep - 2.5) / 5)
+  const tri = (p, q, r, dps) => { const ux = q[0] - p[0], uy = q[1] - p[1], uz = q[2] - p[2], vx = r[0] - p[0], vy = r[1] - p[1], vz = r[2] - p[2]
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = Math.hypot(nx, ny, nz) || 1, s = ny < 0 ? -1 : 1
+    emit.tri(p, q, r, [s * nx / l, s * ny / l, s * nz / l], look ? [colAt(p[0], p[2], dps[0]), colAt(q[0], q[2], dps[1]), colAt(r[0], r[2], dps[2])] : 0, true, dps[0] + dps[1] + dps[2] > 0 ? 0.12 : 0) }
+  const quad = (xa, za, g1, dA, dB, dC, dD, flip) => {      // corners (xa, za), (xa + g1, za), (xa, za + g1), (xa + g1, za + g1) with depths dA, dB, dC, dD
+    const p00 = [xa, -dA, za], p10 = [xa + g1, -dB, za], p01 = [xa, -dC, za + g1], p11 = [xa + g1, -dD, za + g1]
+    if (flip) { tri(p00, p01, p11, [dA, dC, dD]); tri(p00, p11, p10, [dA, dD, dB]) } else { tri(p00, p01, p10, [dA, dC, dB]); tri(p10, p01, p11, [dB, dC, dD]) }
+  }
+  for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) {
+    const d00 = dp[a * (n + 1) + b], d10 = dp[(a + 1) * (n + 1) + b], d01 = dp[a * (n + 1) + b + 1], d11 = dp[(a + 1) * (n + 1) + b + 1], hi = Math.max(d00, d10, d01, d11), lo = Math.min(d00, d10, d01, d11)
+    const xa = x0 + a * g, za = z0 + b * g
+    const wl = -(w.bodies[e[0]].level)      // (the first body's waterline: a quad straddling it, or the ground's start, or a steep bank, is refined)
+    if (hi > 0 && (lo <= 0 || (lo < wl + 0.2 && hi > wl - 0.2) || hi - lo > 2.5)) {
+      const m = 3, gs = g / m, sd = []
+      for (let u = 0; u <= m; u++) { sd.push([]); for (let v = 0; v <= m; v++) sd[u].push(u === 0 && v === 0 ? d00 : u === m && v === 0 ? d10 : u === 0 && v === m ? d01 : u === m && v === m ? d11 : faustWaterDepth(w, e, xa + u * gs, za + v * gs, sc).depth) }
+      for (let u = 0; u < m; u++) for (let v = 0; v < m; v++) quad(xa + u * gs, za + v * gs, gs, sd[u][v], sd[u + 1][v], sd[u][v + 1], sd[u + 1][v + 1], (u + v + a + b) & 1)
+    } else quad(xa, za, g, d00, d10, d01, d11, (a + b) & 1)
+  }
+  if (look) {
+    const seen = new Set()
+    for (let k = 0; k < e.length; k += 2) { const b = w.bodies[e[k]]; if (seen.has(e[k])) continue; seen.add(e[k])
+      emit.face([x0, b.level, z0], [x0 + 96, b.level, z0], [x0 + 96, b.level, z0 + 96], [x0, b.level, z0 + 96], [0, 1, 0], T.water, false, 0.2) }
+  }
+  // docks whose land end lies in this cell: a deck, piles to the bed, bollards, a lamp at the end
+  const ob = (cx, cz, d, hl, hw, y0, y1, tint, glow, solid) => {
+    const [dx, dz] = d, nx = -dz, nz = dx, p = (l, v, y) => [cx + dx * l + nx * v, y, cz + dz * l + nz * v], f = (a, b, c, d2, nrm) => emit.face(a, b, c, d2, nrm, tint, solid, glow)
+    f(p(-hl, -hw, y1), p(hl, -hw, y1), p(hl, hw, y1), p(-hl, hw, y1), [0, 1, 0]); f(p(-hl, -hw, y0), p(hl, -hw, y0), p(hl, hw, y0), p(-hl, hw, y0), [0, -1, 0])
+    f(p(hl, -hw, y0), p(hl, hw, y0), p(hl, hw, y1), p(hl, -hw, y1), [dx, 0, dz]); f(p(-hl, -hw, y0), p(-hl, hw, y0), p(-hl, hw, y1), p(-hl, -hw, y1), [-dx, 0, -dz])
+    f(p(-hl, hw, y0), p(hl, hw, y0), p(hl, hw, y1), p(-hl, hw, y1), [nx, 0, nz]); f(p(-hl, -hw, y0), p(hl, -hw, y0), p(hl, -hw, y1), p(-hl, -hw, y1), [-nx, 0, -nz])
+  }
+  for (const b of w.bodies) for (const k of b.docks || []) {
+    if (Math.floor(k.x / 96) !== i || Math.floor(k.z / 96) !== j) continue
+    const d = [-Math.cos(k.a), -Math.sin(k.a)], hl = k.len / 2, mx = k.x + d[0] * hl, mz = k.z + d[1] * hl, top = 0.25, side = [-d[1], d[0]]
+    ob(mx, mz, d, hl, 2.6, top - 0.3, top, T.dock, 0, true)
+    for (let t = 1; t < k.len; t += 4) for (const s of [-2.2, 2.2]) {
+      const px = k.x + d[0] * t + side[0] * s, pz = k.z + d[1] * t + side[1] * s, dep = faustWaterDepth(w, w.cells.get(faustWaterKey(Math.floor(px / 96), Math.floor(pz / 96))) || e, px, pz, sc).depth
+      if (look) ob(px, pz, d, 0.18, 0.18, -dep - 0.2, top - 0.3, T.pile, 0, false)
+    }
+    for (let t = 6; t < k.len; t += 8) for (const s of [-2.4, 2.4]) ob(k.x + d[0] * t + side[0] * s, k.z + d[1] * t + side[1] * s, d, 0.15, 0.15, top, top + 0.55, T.bollard, 0, true)
+    const ex = k.x + d[0] * (k.len - 0.6)
+    ob(ex, k.z + d[1] * (k.len - 0.6), d, 0.12, 0.12, top, top + 3.6, T.pole, 0, true)
+    if (look) ob(ex, k.z + d[1] * (k.len - 0.6), d, 0.3, 0.3, top + 3.6, top + 4.1, T.lamp, -1, false)
+  }
+}
+function* faustWaterCellSolid(seed, S, i, j) {
+  const out = []
+  const tri = (a, b, c, nrm, tint, solid) => { if (solid) out.push(...a, ...b, ...c) }
+  yield* faustWaterCell(seed, S, i, j, { tri, face: (a, b, c, d, nrm, tint, solid) => { tri(a, b, c, nrm, tint, solid); tri(a, c, d, nrm, tint, solid) } }, false)
+  return new Float32Array(out)
+}
+function* faustWaterCellLook(seed, S, i, j) {
+  const buf = faustRoadBuf()
+  yield* faustWaterCell(seed, S, i, j, { face: (a, b, c, d, nrm, tint, solid, g) => buf.face(a, b, c, d, nrm, tint, g || 0), tri: (a, b, c, nrm, tint, solid, g) => buf.tri([a, b, c], nrm, tint, g || 0) }, true)
+  return buf.geometry()
+}
+// each sim tick: the water cells within FAUST_WATER.reach of any player or moving vehicle get colliders (two a tick, nearest first); 120 m farther lose them
+function faustWaterTick(points) {
+  const F = faustState
+  if (!F || !world || !LV.faust) return
+  const w = faustWater(F.seed, F.S), K = FAUST_WATER
+  if (!w.cells.size) return
+  const Wt = F.water ||= { cells: new Map(), sig: '', queue: [] }
+  const sig = points.map(p => Math.round(p[0] / 24) + ',' + Math.round(p[1] / 24)).join('|')
+  if (sig !== Wt.sig) {
+    Wt.sig = sig; Wt.queue = []
+    const near = (i, j, r) => points.some(([x, z]) => Math.hypot(Math.max(i * 96 - x, 0, x - i * 96 - 96), Math.max(j * 96 - z, 0, z - j * 96 - 96)) < r)
+    for (const [key, have] of [...Wt.cells]) if (!near(have.i, have.j, K.reach + 120)) { for (const c of have.chunks) try { dropChunk(c) } catch (e) { frameFailed('water', e) } Wt.cells.delete(key) }
+    for (const [x, z] of points) for (let i = Math.floor((x - K.reach) / 96); i <= Math.floor((x + K.reach) / 96); i++) for (let j = Math.floor((z - K.reach) / 96); j <= Math.floor((z + K.reach) / 96); j++) {
+      const key = faustWaterKey(i, j)
+      if (w.cells.has(key) && !Wt.cells.has(key) && near(i, j, K.reach) && !Wt.queue.some(q => q[2] === key)) Wt.queue.push([Math.hypot(i * 96 + 48 - x, j * 96 + 48 - z), i, key, j])
+    }
+    Wt.queue.sort((p, q) => p[0] - q[0])
+  }
+  for (let n = 0; n < 1 && Wt.queue.length; n++) {
+    const [, i, key, j] = Wt.queue.shift()
+    if (Wt.cells.has(key)) continue
+    const tris = drain(faustWaterCellSolid(F.seed, F.S, i, j)), per = K.part * 9, chunks = []
+    for (let k = 0; k < tris.length; k += per) chunks.push(addChunk([], 'water ' + i + ' ' + j + ' ' + k / per, tris.subarray(k, k + per), null, true))
+    Wt.cells.set(key, { i, j, chunks })
+  }
+}
+// each frame: the water cells within the view's reach of the camera get their look (in the background), and lose it 400 m beyond
+function faustWaterFrame() {
+  const F = faustState
+  if (!F?.materials || !camera || renderHeadless || !LV.faust) return
+  const w = faustWater(F.seed, F.S), K = FAUST_WATER
+  if (!w.cells.size) return
+  const V = F.waterLooks ||= new Map(), p = camera.position, reach = Math.min(viewEnd() + 100, K.look)
+  const stamp = Math.floor(p.x / 48) + ' ' + Math.floor(p.z / 48) + ' ' + Math.round(reach / 50)
+  if (F.waterStamp === stamp) return
+  F.waterStamp = stamp
+  const dist = (i, j) => Math.hypot(Math.max(i * 96 - p.x, 0, p.x - i * 96 - 96), Math.max(j * 96 - p.z, 0, p.z - j * 96 - 96)), want = []
+  for (const [key, v] of [...V]) if (dist(v.i, v.j) > reach + 400) { background.cancel('waterlook:' + key); if (v.mesh) { worldGroup.remove(v.mesh); v.mesh.geometry.dispose() } V.delete(key) }
+  for (let i = Math.floor((p.x - reach) / 96); i <= Math.floor((p.x + reach) / 96); i++) for (let j = Math.floor((p.z - reach) / 96); j <= Math.floor((p.z + reach) / 96); j++) {
+    const key = faustWaterKey(i, j), d = dist(i, j)
+    if (w.cells.has(key) && !V.has(key) && d < reach) want.push([d, i, j, key])
+  }
+  want.sort((a, b) => a[0] - b[0])
+  for (const [, i, j, key] of want) {
+    const v = { i, j, mesh: null }
+    V.set(key, v)
+    background.run('waterlook:' + key, function* () {
+      const g = yield* faustWaterCellLook(F.seed, F.S, i, j)
+      v.mesh = new THREE.Mesh(g, F.materials.stone); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
+    }, { valid: () => faustState === F && F.waterLooks === V && V.get(key) === v }).catch(e => frameFailed('water', e))
+  }
+}
+// the map (#68): the bodies, the river's centre line, the docks
+function faustWaterMapLayer() {
+  GAME.map?.layer?.('water', { static(g, c) {
+    const F = faustState
+    if (!F) return
+    const w = faustWater(F.seed, F.S)
+    g.fillStyle = '#1f4a5c'
+    for (const b of w.bodies) for (const cp of b.caps) {
+      if (b.kind === 'river') { const [ax, ay] = c.xy(cp[0], cp[1]), [bx, by] = c.xy(cp[2], cp[3]); g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.lineWidth = Math.max(1.2, 40 * c.k); g.lineCap = 'round'; g.strokeStyle = '#1f4a5c'; g.stroke() }
+      else { const [x, y] = c.xy(cp[0], cp[1]); g.beginPath(); g.arc(x, y, Math.max(1.5, (cp[4] - 6) * c.k), 0, 6.2832); g.fill() }
+    }
+    g.fillStyle = '#c9a45c'
+    for (const b of w.bodies) for (const k of b.docks || []) { const [x, y] = c.xy(k.x, k.z); g.fillRect(x - 1.5, y - 1.5, 3, 3) }
+  } })
+}
+// the API for what moves in water (#93, #94): at(x, z[, out]), exit(x, z), bodies, the wave table, waveAt
+const faustWaterWho = () => LV.faust && LV.grow ? LV.grow : null
+const faustWaterBodies = (seed, S) => {
+  const w = faustWater(seed, S)
+  return w.listed ||= [...w.bodies.map(b => ({ id: b.id, kind: b.kind, level: b.level, bounds: b.bounds, ...b.centre && { centre: b.centre }, ...b.docks && { docks: b.docks.map(k => ({ id: k.id, x: k.x, z: k.z, yaw: k.yaw })) }, ...b.dam && { dam: b.dam }, ...b.channel && { channel: b.channel } })),
+    ...faustChannels(seed, S).list.filter(c => c.kind !== 'river').map(c => ({ id: c.id, kind: 'channel', level: FAUST_CHAN.ground - FAUST_CHAN.depth - FAUST_CHAN.gutter[2] + FAUST_CHAN.water, bounds: [c.rect.a0, c.rect.b0, c.rect.a1, c.rect.b1] }))]
+}
 // ---- card #18 stage 3: the rings round the city. Past the grid the city thins, by the distance r = max(|x|, |z|) (the
 // city and its ring road are square), jittered a cell at a time so the rings' edges wander: mid-rise URBAN blocks on the
 // city's 96 m pitch to FAUST_RINGS.urban, SUBURBS of gabled houses on a looser grid to .suburb, then fields with sparse
@@ -5700,7 +6108,7 @@ function faustRingCell(seed, S, plan, i, j) {
   const part = (k, sx, sy, sz, x, y, z, yaw, roll, tint) => out.part.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint])
   const HALF = 1.5707963267948966
   if (band === 'city' || band === 'edge') return out
-  const x0 = i * C, z0 = j * C, x1 = x0 + C, z1 = z0 + C, segs = faustRingRoads(plan, x0, z0, x1, z1).concat(faustChanSegs(seed, S, x0, z0, x1, z1)), A = S * 48, cuts = faustChannels(seed, S).rects
+  const x0 = i * C, z0 = j * C, x1 = x0 + C, z1 = z0 + C, segs = faustRingRoads(plan, x0, z0, x1, z1).concat(faustChanSegs(seed, S, x0, z0, x1, z1)).concat(faustWaterSegs(seed, S, x0, z0, x1, z1)), A = S * 48, cuts = faustChannels(seed, S).rects.concat(faustWaterRectsIn(seed, S, x0, z0, x1, z1))
   const H = (k, a, b = 0) => faustMix(seed ^ k, a, b), pick = (list, h) => list[h % list.length]
   const inCity = (x, z, e) => Math.abs(x) < A + R.city + e && Math.abs(z) < A + R.city + e
   // a flat rect, less any part of it over the city's grid (±A)
@@ -6886,7 +7294,7 @@ function faustTick() {
   if (!points.length) points.push([0, 144])
   const vp = me ? [me.x, me.z, me.y] : points[0]
   try { faustStream(points, vp) } catch (e) { frameFailed('city', e) }
-  try { faustRoadsTick(points) } catch (e) { frameFailed('roads', e) }; try { faustChanTick(points) } catch (e) { frameFailed('channels', e) }      // card #18: the highways' colliders
+  try { faustRoadsTick(points) } catch (e) { frameFailed('roads', e) }; try { faustChanTick(points) } catch (e) { frameFailed('channels', e) }; try { faustWaterTick(points) } catch (e) { frameFailed('water', e) }      // card #18: the highways' colliders
   try { faustRingsTick(points) } catch (e) { frameFailed('rings', e) }
   try { faustRingInTick(participants) } catch (e) { frameFailed('ring interiors', e) }      // card #78: ring houses and shacks open      // card #18: the rings' buildings' colliders
   GAME.fogGrown.x = 1e9
@@ -8479,7 +8887,7 @@ function faustAlleySteam() {
     sp.scale.setScalar(0.45 + 1.5 * ph); sp.material.opacity = K.opacity * a * a
   })
 }
-function faustAtmosphereFrame() { faustAlleySteam(); faustFieldsFrame(); faustRoadsFrame(); faustRingsFrame(); faustChanFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
+function faustAtmosphereFrame() { faustAlleySteam(); faustFieldsFrame(); faustRoadsFrame(); faustRingsFrame(); faustChanFrame(); faustWaterFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
 function faustFarLights() { return drain(faustFarLightsSteps()) }
 function* faustFarLightsSteps() {
   const F = faustState, lights = faustBatch(F.S * F.S * 48), warnings = []
@@ -8522,7 +8930,7 @@ function* faustFarLightsSteps() {
 const FAUST_FIELDS = { plot: 160, reach: 2600, step: 480, hedge: 2.5, tints: [0x2b3527, 0x3a3128, 0x464232, 0x30392a], hedgeTint: 0x1a2118 }
 // the patch about (cx, cz): a background job's steps, 128 plots a step; returns its geometry
 function* faustFieldsSteps(cx, cz, seed) {
-  const { plot: P, reach: R, hedge: E, tints, hedgeTint } = FAUST_FIELDS, W = FAUST.world, a = ARENA, city = [{ a0: -a, a1: a, b0: -a, b1: a }, ...faustChannels(seed, faustState.S).rects], pieces = []
+  const { plot: P, reach: R, hedge: E, tints, hedgeTint } = FAUST_FIELDS, W = FAUST.world, a = ARENA, city = [{ a0: -a, a1: a, b0: -a, b1: a }, ...faustChannels(seed, faustState.S).rects, ...faustWaterRectsIn(seed, faustState.S, cx - R, cz - R, cx + R, cz + R)], pieces = []
   const i0 = Math.floor((cx - R) / P), i1 = Math.ceil((cx + R) / P), j0 = Math.floor((cz - R) / P), j1 = Math.ceil((cz + R) / P)
   let n = 0
   for (let i = i0; i < i1; i++) for (let j = j0; j < j1; j++) {
@@ -8560,7 +8968,7 @@ function faustOutskirts() {
   const first = faustFieldsSteps(0, 144, F.seed); let r; do r = first.next(); while (!r.done)
   const fields = new THREE.Mesh(r.value, F.materials.stone); fields.position.y = -0.02; fields.receiveShadow = true; worldGroup.add(fields)
   F.fields = { mesh: fields, at: '0 144', job: null }
-  F.roadLooks = new Map(); F.roadStamp = ''; faustRoadsMapLayer(); F.ringStamp = ''; F.ringMeshes = []; faustRingsMapLayer(); F.chanLooks = new Map(); F.chanStamp = ''; faustChanMapLayer()      // stage 2's highways: their look streams in afresh
+  F.roadLooks = new Map(); F.roadStamp = ''; faustRoadsMapLayer(); F.ringStamp = ''; F.ringMeshes = []; faustRingsMapLayer(); F.chanLooks = new Map(); F.chanStamp = ''; faustChanMapLayer(); F.waterLooks = new Map(); F.waterStamp = ''; faustWaterMapLayer()      // stage 2's highways: their look streams in afresh
   // the wall: its inner face on the world's edge, 36 m tall, with a coping; the pylons and lamps
   const H = 36, pylons = Math.ceil((2 * W - 200) / 400), wall = faustBatch(4 * 36 * (2 + 2 * pylons))
   for (const side of [-1, 1]) for (const axis of [0, 1]) {
@@ -9643,6 +10051,13 @@ const GAME = { faustland: FAUSTLAND_API, interiors: FAUSTLAND_API.interiors }
 FAUSTLAND_API.channels = { plan: () => faustState && faustChannels(faustState.seed, faustState.S), config: FAUST_CHAN,
   at: (x, z) => { const F = faustState; if (!F) return null; for (const ch of faustChannels(F.seed, F.S).list) { const r = ch.rect; if (x > r.a0 && x < r.a1 && z > r.b0 && z < r.b1) return ch } return null },
   outfalls: () => { const F = faustState; return F ? faustChannels(F.seed, F.S).list.flatMap(ch => ch.outfalls) : [] }, water: { level: FAUST_CHAN.water } }
+// card #92: water for what moves in it (boats, swimmers, #93, #94): at(x, z[, out]) null on dry land else { id, kind, y, level, floor, depth, flow: [fx, fz] }, exit(x, z), the bodies
+// (id, kind river|lake|reservoir|bay|channel, level, bounds, centre, docks, dam), the wave table and waveAt (a surface that moves reads this table); y is time-free
+FAUSTLAND_API.water = { at: (x, z, out) => { const g = faustWaterWho(); return g ? faustWaterAt(g.seed, g.S, x, z, out) : null },
+  exit: (x, z) => { const g = faustWaterWho(); return g ? faustWaterExit(g.seed, g.S, x, z) : null },
+  get bodies() { const g = faustWaterWho(); return g ? faustWaterBodies(g.seed, g.S) : [] }, get plan() { const g = faustWaterWho(); return g ? faustWater(g.seed, g.S) : null },
+  get mix() { const g = faustWaterWho(); return g ? faustWater(g.seed, g.S).mix : null }, waves: FAUST_WATER.waves, waveAt: faustWaveAt, config: FAUST_WATER }
+FAUSTLAND_API.water.waterAt = FAUSTLAND_API.water.at
 // Cooperative background work. Every job is a generator: yield between bounded
 // units, yield 'frame' after a GPU upload, or yield a Promise to await a dependency.
 // Work runs after paint, shares one 4 ms budget, and never holds scene state over a yield.
