@@ -12615,10 +12615,73 @@ function tickChars(list, inputFor, dt, P, t) {
   return ms
 }
 
+// Card #12 follow-up (#63; #62's contacts run on bca782b8, frames 700-707: the given car hit a wall at about 50 m/s and sat
+// 0.463 m inside it for 7 frames). Bullet finds a body's contacts where it stands before the step's move. At 50 m/s that move
+// is 0.83 m, so a car clear of a wall when a tick starts can end it up to 0.83 m inside, and the push-out (m_erp2) takes the
+// ticks after. Its CCD sphere (0.3 of its width, at its middle) meets a wall only once the nose is 2 m in. So each vehicle at
+// speed is swept, its own hull from where it stood to where the step put it, against the static world. If it crossed into a
+// wall face, it goes back along that face's normal to where it touches, and keeps its move along the face (two passes, for
+// a corner). Its velocity is Bullet's: the next tick's contact stops it against the face with the same impulse, the same spin
+// and the same hit points (vehicleTick) as before. A wall: a static face within 60 deg of upright. Floors, kerbs and ramps
+// (its wheels' to ride), people, other vehicles and Bullet's own response are as they were
+// speed: m/s along the ground (0.05 m a tick) from which a vehicle is swept; the traffic's own cars keep to their lanes at
+// cruise (up to 11 m/s) and are swept from the speed the city's destruction takes as their crash (DESTRUCT.trafficCrash)
+const CAR_SWEEP = { speed: 3, ny: 0.5 }
+const carSwept = []
+let carSweepCb = null, carSweepA = null, carSweepB = null
+function carsAtSpeed() {
+  carSwept.length = 0
+  for (const o of objs) {
+    if (!o.V || o.V.fly || o.away || o.heldBy !== undefined || !o.body.isActive()) continue
+    const v = o.body.getLinearVelocity()
+    if (Math.hypot(v.x(), v.z()) < (o.traffic ? DESTRUCT.trafficCrash : CAR_SWEEP.speed)) continue
+    const t = o.body.getWorldTransform(), p = t.getOrigin(), q = t.getRotation()
+    carSwept.push(o, p.x(), p.y(), p.z(), q.x(), q.y(), q.z(), q.w())
+  }
+  return carSwept
+}
+// every static face its hull meets on its way from where it stood (x0, y0, z0, turned q0) to (x, y, z), turned as it is now
+function carSweepHits(o, x0, y0, z0, q0, x, y, z) {
+  if (!carSweepCb) {
+    carSweepCb = new A.AllHitsConvexResultCallback(rayFrom, rayTo); carSweepCb.set_m_collisionFilterGroup(RAY_CAST); carSweepCb.set_m_collisionFilterMask(G_STATIC)
+    carSweepA = new A.btTransform(); carSweepB = new A.btTransform()
+  }
+  const cb = carSweepCb
+  quatVec.setValue(...q0); carSweepA.setIdentity(); carSweepA.setRotation(quatVec); posVec.setValue(x0, y0, z0); carSweepA.setOrigin(posVec)
+  carSweepB.setIdentity(); carSweepB.setRotation(o.body.getWorldTransform().getRotation()); posVec.setValue(x, y, z); carSweepB.setOrigin(posVec)
+  cb.get_m_hitCollisionObjects().clear(); cb.get_m_hitFractions().clear(); cb.get_m_hitNormalWorld().clear(); cb.get_m_hitPointWorld().clear()
+  cb.set_m_closestHitFraction(1)
+  world.convexSweepTest(o.body.getCollisionShape(), carSweepA, carSweepB, cb, 0)
+  return cb
+}
+function carSweep(L) {
+  for (let i = 0; i < L.length; i += 8) {
+    const o = L[i], x0 = L[i + 1], y0 = L[i + 2], z0 = L[i + 3], q0 = L.slice(i + 4, i + 8), p = o.body.getWorldTransform().getOrigin(), y = p.y()
+    let x = p.x(), z = p.z(), moved = false
+    for (let pass = 0; pass < 2; pass++) {
+      const dx = x - x0, dz = z - z0
+      if (dx * dx + dz * dz < 1e-6) break
+      const H = carSweepHits(o, x0, y0, z0, q0, x, y, z), F = H.get_m_hitFractions(), N = H.get_m_hitNormalWorld()
+      let at = 2, ux = 0, uz = 0
+      for (let k = 0; k < F.size(); k++) {
+        const n = N.at(k), h = Math.hypot(n.x(), n.z())
+        if (Math.abs(n.y()) > CAR_SWEEP.ny || h < 1e-6) continue
+        const nx = n.x() / h, nz = n.z() / h
+        if (dx * nx + dz * nz < 0 && F.at(k) < at) { at = F.at(k); ux = nx; uz = nz }      // the first face it moved into
+      }
+      if (at > 1) break
+      const cut = (dx * ux + dz * uz) * (1 - at)          // into it: only as far as touching; along it: all
+      x -= cut * ux; z -= cut * uz; moved = true
+    }
+    if (moved) teleportBody(o.body, x, y, z)
+  }
+}
 function stepPhysics(dt) {
   padLaunch()
   for (const o of objs) if (o.V && o.body.isActive()) { const v = o.body.getLinearVelocity(); o.v0 = [v.x(), v.y(), v.z()] }
+  const swept = carsAtSpeed()
   world.stepSimulation(dt, 0)            // 0 substeps: exactly one step of dt
+  carSweep(swept)
   holdObjects()
   partsHoldChars()
   stepObjects()
