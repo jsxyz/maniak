@@ -33501,7 +33501,9 @@ const slInside = (r, x, z, pad = 0) => x > r[0] - pad && x < r[2] + pad && z > r
 // Rects are [x0, z0, x1, z1]; r is a body's radius and gap the room kept past it. A detour is level for lead m either side
 // of a post and eases over ease m, so a dog swung by it stays clear. A walked dog runs up to 1.07 m out on its owner's street
 // side: a dog walker's way round (wide) passes a post that near the street side of the ring too.
-const SL_CLEAR = { r: 0.3, gap: 0.12, ease: 3, lead: 1.3, dog: 1.2, junction: [11.2, 9.6] }
+// card #91: kerb: a city side street's pavement edge, m from its centre line (the ground's own 9.2: its tiles start there, and
+// a621a3c7's parked cars stand 0.25 m off it); a walked dog heels (slHeelSpans) where its reach would cross it or brush a post
+const SL_CLEAR = { r: 0.3, gap: 0.12, ease: 3, lead: 1.3, dog: 1.2, junction: [11.2, 9.6], heel: -0.05, heelEase: 1.5, kerb: 9.2 }
 function slLotBody(lot) {
   const pier = lot.district !== 'industrial' && lot.district !== 'tenement', s = pier ? 1.13 : 0.25, f = pier ? 1.3 : 0.5
   return [lot.x - lot.w - s, lot.z - lot.d - s, lot.x + lot.w + s, lot.z + lot.d + f]
@@ -33520,7 +33522,21 @@ function slNear(ci, cj) {
     for (const s of faustLampSites(P)) if (!s.own) { if (s.nx || s.nz) post(s.x + s.nx * reach, s.z + s.nz * reach, 0.12); else post(s.x, s.z, 0.14) }
     if ((slAvenue('z', X, Z, 1) || slAvenue('z', X, Z, -1)) && (slAvenue('x', X, Z, 1) || slAvenue('x', X, Z, -1))) { post(X + 9, Z + 9, 0.08); post(X - 9, Z - 9, 0.08) }
   }
-  return { bodies, posts }
+  return { bodies, posts, kerbs: slNearKerbs(ci, cj) }
+}
+// card #91: the side streets' roadways round a cell and its eight neighbours, kerb to kerb (SL_CLEAR.kerb each side of the centre
+// line), as rects: a walked dog keeps off them (its heel); avenues (their bike lanes at the kerb) and slanted roads left out
+function slNearKerbs(ci, cj) {
+  const S = slState.S, k = SL_CLEAR.kerb, out = []
+  for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) {
+    if (i < 0 || j < 0 || i >= S || j >= S) continue
+    for (const r of slPlan(i, j).roads || []) {
+      if (r.avenue || r.width !== 8) continue
+      const x0 = Math.min(r.a[0], r.b[0]), x1 = Math.max(r.a[0], r.b[0]), z0 = Math.min(r.a[2], r.b[2]), z1 = Math.max(r.a[2], r.b[2])
+      if (x1 - x0 < 1e-6) out.push([x0 - k, z0, x0 + k, z1]); else if (z1 - z0 < 1e-6) out.push([x0, z0 - k, x1, z0 + k])
+    }
+  }
+  return out
 }
 // a ring's walking path: its corners, and a detour round each post a side would brush (within out m on the street side), always
 // on the post's street side (a walked dog keeps to the street side of its owner). corner: the corners' indices in the path
@@ -33581,6 +33597,36 @@ function slDogClear(path, posts) {
     }
   }
   return true
+}
+// card #91 (the lead's call, a621a3c7's parked cars): where a walked dog heels: the spans of its owner's route (m along it, the dog's
+// own place, as slAmbient puts it: 0.9 m ahead, 0.35-0.85 m out on its owner's left along the way's heading over 3 m) where that
+// sweep would come within 0.35 m (its body, 0.22, and the sweep's sampling) of an obstacle: a post, or a side street's roadway
+// (slNearKerbs). Sampled every 0.25 m; merged where less than two eases apart; sorted
+function slHeelSpans(R, obstacles) {
+  const out = [], L = R.cum[R.n - 1], K = R.keys
+  if (!obstacles?.length || !(L > 3)) return out
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity
+  for (let i = 0; i < R.n; i++) { const x = K[i * 5 + 1], z = K[i * 5 + 2]; x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z) }
+  const near = obstacles.filter(p => p[0] < x1 + 2.5 && p[2] > x0 - 2.5 && p[1] < z1 + 2.5 && p[3] > z0 - 2.5)
+  if (!near.length) return out
+  const c = { x: 0, z: 0, yaw: 0 }, a = { x: 0, z: 0, yaw: 0 }, b = { x: 0, z: 0, yaw: 0 }, spans = []
+  for (let s = 0; s < L; s += 0.25) {
+    slAlong(R, s, c); slAlong(R, s - 1.5, a); slAlong(R, s + 1.5, b)
+    let fx = b.x - a.x, fz = b.z - a.z; const n = Math.hypot(fx, fz) || 1; fx /= n; fz /= n
+    let hit = false
+    for (const lat of [-0.35, -0.6, -0.85]) { const x = c.x + fz * lat, z = c.z - fx * lat; if (near.some(p => slPointGap(x, z, p) < 0.35)) { hit = true; break } }
+    if (hit) { const m = spans.at(-1); if (m && s - m[1] < 0.3) m[1] = s + 0.25; else spans.push([s - 0.25, s + 0.25]) }
+  }
+  for (const sp of spans) { const m = out.at(-1); if (m && sp[0] < m[1] + 2 * SL_CLEAR.heelEase) m[1] = Math.max(m[1], sp[1]); else out.push(sp) }
+  return out
+}
+// card #91: how far a walked dog heels at s (its place along its owner's route, any lap): 1 inside a span, eased to 0 over
+// SL_CLEAR.heelEase m either side
+function slHeelAt(R, s) {
+  const L = R.cum[R.n - 1], E = SL_CLEAR.heelEase; s = ((s % L) + L) % L
+  let h = 0
+  for (const [a, b] of R.heel) for (const q of [s, s - L, s + L]) { const d = q < a ? a - q : q > b ? q - b : 0; if (d < E) { const u = 1 - d / E; h = Math.max(h, u * u * (3 - 2 * u)) } }
+  return h
 }
 // a loop round a ring from corner `start`, forward or reversed, with stops at corners (as slLoop's, by corner); wide: a dog
 // walker's way round
@@ -33683,7 +33729,8 @@ function slCell(ci, cj) {
   const near = slNear(ci, cj)
   cell.rings = rings.map(([r, body, alley]) => {
     const posts = near.posts.filter(p => p[0] < r[2] + 4 && p[2] > r[0] - 4 && p[1] < r[3] + 4 && p[3] > r[1] - 4)
-    return { r, body, alley, pts: [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]], ...slRingPath(r, posts), wide: slRingWide(r, posts) }
+    const kerbs = near.kerbs.filter(p => p[0] < r[2] + 4 && p[2] > r[0] - 4 && p[1] < r[3] + 4 && p[3] > r[1] - 4)          // card #91
+    return { r, body, alley, pts: [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]], ...slRingPath(r, posts), posts, kerbs }          // card #91: no wide way (a dog walker's dog heels past posts and kerbs)
   })
   const district = P.plaza ? 'plaza' : P.district
   const n = Math.round((STREET.density[district] ?? 10) * q * (0.85 + 0.3 * rng()))
@@ -33740,7 +33787,8 @@ function slCell(ci, cj) {
     const stops = new Map(); if (rng() < 0.5) { const j = rng() * 4 | 0, a = pts[j], c = pts[(j + 1) % 4]; stops.set(j, [3 + rng() * 6, 1, Math.atan2((ring.r[0] + ring.r[2]) / 2 - a[0], (ring.r[1] + ring.r[3]) / 2 - a[1])]) }
     const kind0 = rng() < STREET.share.pram ? SL_K.pram : rng() < STREET.share.dog ? SL_K.walker : SL_K.ped, kind = ring.alley && kind0 !== SL_K.ped ? SL_K.ped : kind0      // card #96
     // a walked dog keeps to its owner's left, so owners go round the reversed way: the dog on the street side (card #56)
-    const R = slRingLoop(ring, kind === SL_K.walker || !dir, start, kind === SL_K.pram ? null : stops, kind === SL_K.pram ? STREET.pram : v, -rng() * 3e5, kind === SL_K.walker)
+    const R = slRingLoop(ring, kind === SL_K.walker || !dir, start, kind === SL_K.pram ? null : stops, kind === SL_K.pram ? STREET.pram : v, -rng() * 3e5)
+    if (kind === SL_K.walker) R.heel = slHeelSpans(R, ring.posts.concat(ring.kerbs))          // card #91: his dog heels past posts and a near kerb
     cell.agents.push({ id: id(k++), kind, body: kind === SL_K.pram ? 3 + (rng() < 0.5 ? 0 : 1) : b, tint: tw, route: R })
   }
   // Under the avenue's lamps, at the plan's shared offsets: someone loitering, facing the street.
@@ -34375,7 +34423,8 @@ function slAmbient(ag, t, o) {
     if (R && R.cum[R.n - 1] > 3) {
       const s = o.s + 0.9, c = slAlong(R, s, slDogAt[0]), a = slAlong(R, s - 1.5, slDogAt[1]), b = slAlong(R, s + 1.5, slDogAt[2])
       let fx = b.x - a.x, fz = b.z - a.z; const L = Math.hypot(fx, fz) || 1; fx /= L; fz /= L
-      o.x = c.x + fz * lat; o.z = c.z - fx * lat; o.yaw = Math.atan2(fx, fz) + Math.sin(t / 2100 + owner.id * 1.7) * 0.3
+      const h = R.heel?.length ? slHeelAt(R, s) : 0, ld = lat + (SL_CLEAR.heel - lat) * h          // card #91: in beside its owner past a post
+      o.x = c.x + fz * ld; o.z = c.z - fx * ld; o.yaw = Math.atan2(fx, fz) + Math.sin(t / 2100 + owner.id * 1.7) * 0.3 * (1 - 0.8 * h)
     } else {
       const yaw = o.mode === 1 && R ? slHeading(R, o.i, o.yaw) : o.yaw
       o.x += Math.cos(yaw) * lat + Math.sin(yaw) * 0.9; o.z += -Math.sin(yaw) * lat + Math.cos(yaw) * 0.9
