@@ -3350,8 +3350,9 @@ function faustAlleyRecord(al, gx, gz, layout, ds, ci, cj, lots) {
     const s1 = hh & 1 ? 1 : -1, off = (d > 20 ? 0.45 : K.door) * d
     const doors = [[inCm(zc + ((hh >> 1 & 1) ? 1 : -1) * off), s1]]
     if (d > 20 || hh >> 2 & 1) doors.push([inCm(zc - ((hh >> 1 & 1) ? 1 : -1) * off), -s1])
-    const lw = lots[layout === 4 ? 2 * k : 0], le = lots[layout === 4 ? 2 * k + 1 : 1]
-    segs.push({ k, z0: inCm(zc - d), z1: inCm(zc + d), doors, mouth: [hh >> 3 & 1 ? 1 : -1, hh >> 4 & 1 ? 1 : -1],
+    const lw = lots[layout === 4 ? 2 * k : 0], le = lots[layout === 4 ? 2 * k + 1 : 1], dd = []
+    for (const [z, s] of doors) { const L = s < 0 ? lw : le, c = L?.club?.back ? [inCm(L.club.back[1]), s, 1] : [z, s]; if (!c[2] || !dd.some(q => q[2] && q[1] === s)) dd.push(c) }      // card #98: a club keeps its own door
+    segs.push({ k, z0: inCm(zc - d), z1: inCm(zc + d), doors: dd, mouth: [hh >> 3 & 1 ? 1 : -1, hh >> 4 & 1 ? 1 : -1],
       esc: !!lw && lw.district === 'tenement' && faustTenementEscapes(lw).includes(1), H: [lw?.height | 0, le?.height | 0] })
   }
   return { id: ci + ' ' + cj, x: inCm(al.x), W: al.W, E: al.E, G: al.G, district: al.district, segs }
@@ -3387,7 +3388,7 @@ function faustAlleySpots(a, ci, cj) {
 // at most 0.9 m deep; a core alley's props keep off its piers. A segment's parts stay under FAUST_ALLEY.cost vertices.
 function faustAlleyLayout(f) {
   const W = f.W, hl = f.L / 2, face = f.G / 2 - 0.25, rng = genRng(f.h ^ 0x616c6c65), pier = f.district === 'core' || f.district === 'civic'
-  const doors = f.doors.map(([z, s]) => ({ s, v: z - f.z })), keep = [], piers = pier ? [-0.86 * hl, 0, 0.86 * hl] : []
+  const doors = f.doors.map(([z, s, club]) => ({ s, v: z - f.z, club: !!club })), keep = [], piers = pier ? [-0.86 * hl, 0, 0.86 * hl] : []
   for (const d of doors) { const near = d.v + hl < hl - d.v ? -1 : 1; d.rv = d.v - near * 2; keep.push([d.v - 1.9, d.v + 1.9], [d.rv - 1.2, d.rv + 1.2]) }
   const free = (v, half) => Math.abs(v) + half < hl - 2.6 && !keep.some(([a, b]) => v + half > a && v - half < b) && !piers.some(p => Math.abs(v - p) < half + 0.7)
   const items = [], vents = [], signs = [], big = { '-1': [], 1: [] }
@@ -3412,8 +3413,8 @@ function faustAlleyLayout(f) {
     const v = (rng() - 0.5) * (hl * 2 - 8), k = rng() * 4 | 0
     if (free(v, 0.9) && rng() < 0.7) signs.push({ t: rng() < 0.45 ? 'poster' : 'tag', s, v, y: 1.7 + rng() * 0.8, k, c: rng() * 5 | 0 })
   }
-  const bulbs = doors.map(d => ({ s: d.s, v: d.v }))
-  if (f.L > 30) for (const v of [-hl * 0.5, hl * 0.5]) bulbs.push({ s: v < 0 ? 1 : -1, v })      // card #96 inc 3
+  const bulbs = doors.filter(d => !d.club).map(d => ({ s: d.s, v: d.v }))
+  if (f.L > 30) for (const v of [-hl * 0.5, hl * 0.5]) bulbs.push({ s: v < 0 ? 1 : -1, v, extra: true })      // card #96 inc 3
   const gate = (f.h >> 5 & 3) === 0 ? { v: ((f.h >> 7 & 1) ? 1 : -1) * (hl - 0.5) } : null      // card #96 inc 5
   return { doors, items, vents, signs, bulbs, gate, face, hl, piers }
 }
@@ -3446,6 +3447,7 @@ function faustAlleyParts(f) {
   // the back doors: frame, leaf, handle, step; a caged bulb over each, on its bracket
   const leaf = [0x3b4a3f, 0x4a2f2a, 0x2d3b52, 0x57534a]
   L.doors.forEach((d, i) => {
+    if (d.club) return      // the club's own door is drawn by its lot
     const s = d.s, x = s * face, y = f.h >> (i * 2 + 4) & 3
     B(x - s * 0.03, 1.05, d.v, 0.03, 1.05, 0.58, 0x2a2f36)
     B(x - s * 0.07, 1.0, d.v, 0.03, 0.98, 0.47, leaf[y])
@@ -3455,7 +3457,7 @@ function faustAlleyParts(f) {
     B(x - s * 0.4, 2.52, d.v, 0.09, 0.09, 0.09, 0x2b2f35)
     B(x - s * 0.4, 2.52, d.v, 0.055, 0.055, 0.055, 0xfff0c0, 1.9)
   })
-  for (const b of L.bulbs.slice(L.doors.length)) { const x = b.s * face
+  for (const b of L.bulbs.filter(b => b.extra)) { const x = b.s * face
     B(x - b.s * 0.2, 2.6, b.v, 0.2, 0.03, 0.03, 0x2b2f35); B(x - b.s * 0.4, 2.52, b.v, 0.09, 0.09, 0.09, 0x2b2f35); B(x - b.s * 0.4, 2.52, b.v, 0.055, 0.055, 0.055, 0xfff0c0, 1.9) }
   const col = { dumpster: [0x2a4a35, 0x34485e, 0x6a3a28, 0x3a3f46], crates: [0x6a5236, 0x7a6244, 0x5a4630, 0x6a5236], barrel: [0x7a2a22, 0x2f4a5e, 0x4a4f55, 0x7a2a22] }
   for (const o of L.items) {
@@ -3613,6 +3615,10 @@ function faustPlan(seed, ci, cj, S = 20) {
   const props = chan ? [] : faustProps({ ci, cj, S, plaza, diagonal, layout, roads, lots, alley: !!al }, rail.boxes.filter(b => b.cy - b.ey < 3 && Math.abs(b.cx - X - 48) < 60 + b.ex && Math.abs(b.cz - Z - 48) < 60 + b.ez))
   boxes.push(...faustFeatBoxes(props))
   boxes.push(...faustFeatBoxes(sites))      // card #82
+  for (const a of alleys) for (const sg of a.segs) for (const [z, s, club] of sg.doors) {      // card #96/#78: each alley door is a back door of the lot whose flank wall it is on
+    const lot = !club && lots[(layout === 4 ? 2 * sg.k : 0) + (s < 0 ? 0 : 1)]
+    if (lot?.alley) (lot.backDoors ||= []).push({ x: inCm(lot.x + lot.alley.side * lot.w), z, out: [lot.alley.side, 0] })
+  }
   const alleyFeat = alleys.flatMap(a => a.segs.map(sg => ({ k: 'alley', x: a.x, z: inCm((sg.z0 + sg.z1) / 2), q: 0, s: 1, h: faustMix(seed ^ 0x61446573, gx * 8 + sg.k, gz), W: a.W, G: a.G, L: inCm(sg.z1 - sg.z0),
     doors: sg.doors, esc: sg.esc, H: sg.H, district: a.district })))      // card #96
   boxes.push(...faustFeatBoxes(alleyFeat))
