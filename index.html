@@ -29063,7 +29063,7 @@ function slRider(L, R, t, o) {
 
 // ---- records: what the host decides, played the same on every client. kind 1 knocked down, 2 panic (an area), 3 pigeons
 // scattered, 4 a driver out of a taken car, 5 got out of the way (one agent). Wire form: [kind, id, t, x, z, ...]
-const SL_REC = { knock: 1, panic: 2, scatter: 3, exit: 4, dodge: 5 }
+const SL_REC = { knock: 1, panic: 2, scatter: 3, exit: 4, dodge: 5, stagger: 10 }
 function slAddRec(a, local) {
   const st = slState; if (!st) return null
   const key = a[0] + ':' + a[1] + ':' + Math.round(a[2])
@@ -29074,6 +29074,7 @@ function slAddRec(a, local) {
   if (r.kind === 2) r.r = a[5]
   if (r.kind === 4) { r.x1 = r.x; r.z1 = r.z; r.x2 = a[5]; r.z2 = a[6]; r.body = a[7] | 0; st.exits.set(key, { ag: { id: r.id, kind: SL_K.exit, body: r.body % 3, tint: [0.9, 0.9, 0.9], r } }) }
   if (r.kind === 5) r.dir = a[5] < 0 ? -1 : 1
+  if (r.kind === 10) { r.x1 = a[5]; r.z1 = a[6]; r.hold = a[7] || 0 }          // card #67: a stagger
   if (r.kind === 8 || r.kind === 9) partsRecParse(r, a)          // card #55
   st.rec.set(key, r)
   if (r.kind !== 2) { const L = st.byId.get(r.id) || st.byId.set(r.id, []).get(r.id); L.push(r); L.sort((p, q) => p.t - q.t) }
@@ -29098,7 +29099,7 @@ function slRecFor(ag, t) {
   const st = slState, back = STREET.backS * 1000
   let best = null
   const own = st.byId.get(ag.id)
-  if (own) for (const r of own) if (r.t <= t && t - r.t < back && (!best || r.t > best.t)) best = r
+  if (own) for (const r of own) if (r.t <= t && t - r.t < back && (r.kind !== 10 || t - r.t < slStaggerLen(ag, r)) && (!best || r.t > best.t)) best = r          // a stagger lasts its out, hold and walk back
   for (const p of st.panics) {
     if (p.t > t || t - p.t >= back || best && best.t >= p.t || ag.kind === SL_K.cyclist || ag.kind === SL_K.exit) continue
     const c = ag.pan?.get(p.key) ?? slCaught(ag, p)
@@ -29226,9 +29227,33 @@ function slTumble(d) {
 }
 // the distance along the throw after tau s
 const slTumbleAt = (tb, tau) => tau < tb.ta ? tb.vl * tau - tb.aa * tau * tau / 2 : Math.min(tb.d, tb.da + tb.vt * (tau - tb.ta) - tb.ag * (tau - tb.ta) ** 2 / 2)
+// card #67: a stagger. Out to the step in 0.35 s, held there r.hold ms with the walk frozen (a car passing, side-on, must not find
+// the person walking back into it), then a brisk walk (2.2 m/s) to where the schedule has them by the time they arrive
+const slStagA = { x: 0, z: 0, yaw: 0, mode: 0, v: 0, s: 0, i: 0, u: 0 }, slStagB = { x: 0, z: 0, yaw: 0, mode: 0, v: 0, s: 0, i: 0, u: 0 }
+function slStaggerLen(ag, r) {
+  if (r.len) return r.len
+  const t1 = r.t + 350 + (r.hold || 0), a = slAmbient(ag, t1, slStagA), d0 = Math.hypot(a.x - r.x1, a.z - r.z1) / 2.2
+  const b = slAmbient(ag, t1 + d0 * 1000, slStagA); r.walk = Math.hypot(b.x - r.x1, b.z - r.z1) / 2.2
+  return r.len = 350 + (r.hold || 0) + r.walk * 1000 + 1
+}
+function slStaggerPose(ag, r, t, o) {
+  const tau = (t - r.t) / 1000, H = (r.hold || 0) / 1000, len = slStaggerLen(ag, r), q = ag.kind === SL_K.stray, t1 = r.t + 350 + (r.hold || 0)
+  const A = slAmbient(ag, r.t, slStagA), ax = A.x, az = A.z, ay = A.yaw
+  if (tau < 0.35 + H) {
+    const b = tau < 0.35 ? Math.sin(tau / 0.35 * Math.PI / 2) : 1
+    o.x = ax + (r.x1 - ax) * b; o.z = az + (r.z1 - az) * b; o.yaw = ay; o.v = 0; o.mode = 1; slClip(ag, o, t)
+    if (tau < 0.7) { o.clip = q ? 'flinch' : 'knockback'; o.ct = q ? 0.3 * tau / 0.7 : 0.3 * Math.sin(Math.PI * tau / 0.7) }
+    return
+  }
+  const Q = slAmbient(ag, r.t + len, slStagB), f = Math.min(1, (t - t1) / Math.max(1, len - 350 - (r.hold || 0)))
+  o.x = r.x1 + (Q.x - r.x1) * f; o.z = r.z1 + (Q.z - r.z1) * f
+  if (Math.hypot(Q.x - r.x1, Q.z - r.z1) > 0.02) o.yaw = Math.atan2(Q.x - r.x1, Q.z - r.z1)
+  o.v = 2.2; o.mode = 0; o.s = (t - t1) / 1000 * 2.2; slClip(ag, o, t)
+}
 // the pose under a record
 function slDetached(ag, r, t, o) {
   if (r.kind === 8 || r.kind === 9) return partsStreetPose(ag, r, t, o)          // card #55: held, flung
+  if (r.kind === 10) return slStaggerPose(ag, r, t, o)          // card #67: a stagger, still on its feet
   const tau = (t - r.t) / 1000, H = ag.body >= 3 ? 1.66 : 1.78, S = STREET
   const dog = ag.kind === SL_K.stray
   if (r.kind === 1 || r.kind === 4) {
@@ -29347,8 +29372,14 @@ function slRunTo(x, z, dx, dz, d) {
 }
 const slR2 = v => Math.round(v * 100) / 100
 const slFling = v => clamp(0.25 * v * 0.45 + 0.1 * (v * 0.45) ** 2, 0.3, 12)          // m thrown by an impact at v m/s (card #67)
-function slKnock(ag, p, ux, uz, power, by, T, fling) {
+function slKnock(ag, p, ux, uz, power, by, T, fling, step, hold) {
   if (ag.kind === SL_K.pram) slPramHit(ag, p, by, T)          // card #45: its baby turns on the attacker; a hit pram burns or blows
+  // card #67: a hit under about 3 m/s (fling < 0.5 m) is a stagger: a step back, still up (a rider still falls)
+  if (p.rec?.kind === 10) return          // still staggering
+  if (fling < 0.5 && ag.kind !== SL_K.cyclist && !p.rec) {
+    const n = Math.hypot(ux, uz) || 1, [x1, z1] = slRunTo(p.x, p.z, ux / n, uz / n, step ?? 0.4)
+    return slAddRec(hold > 0 ? [SL_REC.stagger, ag.id, Math.round(T), slR2(p.x), slR2(p.z), slR2(x1), slR2(z1), Math.round(Math.min(hold, 5000))] : [SL_REC.stagger, ag.id, Math.round(T), slR2(p.x), slR2(p.z), slR2(x1), slR2(z1)])
+  }
   if (!slKnockable(ag, p)) return slDodge(ag, p, ux, uz, T)
   const n = Math.hypot(ux, uz) || 1, d = fling ?? Math.max(1, Math.min(7, 0.8 + power))
   const [x1, z1] = slRunTo(p.x, p.z, ux / n, uz / n, d)
@@ -29474,7 +29505,7 @@ function slHostTick() {
       const vx = mx / dt - Math.sin(p.yaw) * (p.v || 0), vz = mz / dt - Math.cos(p.yaw) * (p.v || 0), rel = Math.hypot(vx, vz)          // the character's speed on the person
       if (rel < 3.0) return
       const sgn = sp >= (p.v || 0) ? 1 : -1, fx = sgn * vx / rel, fz = sgn * vz / rel, side = (p.x - c.x) * -fz + (p.z - c.z) * fx >= 0 ? 1 : -1
-      slKnock(ag, p, fx + -fz * side * 0.6, fz + fx * side * 0.6, rel * 0.3, c, T, slFling(rel))
+      slKnock(ag, p, fx * 0.4 + -fz * side, fz * 0.4 + fx * side, rel * 0.3, c, T, Math.max(1.3, slFling(rel)))
     })
   }
   st.stats.hostMs = st.stats.hostMs * 0.9 + (performance.now() - t0) * 0.1
@@ -29545,7 +29576,7 @@ function slWireOut() {
 }
 function slWireIn(d) {
   if (isHost || !slState || !Array.isArray(d.sl) || d.sl.length > 400) return
-  for (const a of d.sl) if (Array.isArray(a) && a.length >= 5 && a.every(Number.isFinite) && (a.length <= 12 && a[0] >= 1 && a[0] <= 5 || partsRecOk(a))) slAddRec(a, true)
+  for (const a of d.sl) if (Array.isArray(a) && a.length >= 5 && a.every(Number.isFinite) && (a.length <= 12 && (a[0] >= 1 && a[0] <= 5 || a[0] === 10 && (a.length === 7 || a.length === 8)) || partsRecOk(a))) slAddRec(a, true)
 }
 
 // ---- drawing: each model's clips baked into a bone texture (a 3x4 matrix per joint per frame, root space), skinned on the
