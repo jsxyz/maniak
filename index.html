@@ -6888,7 +6888,7 @@ function faustRingCell(seed, S, plan, i, j) {
                 const m = (a + b) / 2, h = (b - a) / 2
                 if (kind === 'picket') { const nP = Math.max(1, Math.round((b - a) / 2)), hp = (b - a) / (2 * nP); for (let q = 0; q < nP; q++) close('picket', hp, 1, 1, a + hp * (2 * q + 1), 0, fl, 0, 0, T.picket)
                   mid('body', h, 0.42, 0.03, m, 0.42, fl, 0, 0, T.picket) }      // (#72) modelled pickets within 220 m, a plain panel beyond
-                else near('hedge', h, 0.55, 0.35, m, 0.55, fl, 0, 0, pick(T.hedge, hq >>> 11))
+                else near('hedge', h, 0.55, 0.3, m, 0.55, fl - sg * 0.05, 0, 0, pick(T.hedge, hq >>> 11))
                 const seg = [faustCm(a), faustCm(fl), faustCm(b), faustCm(fl), kind]
                 lot.fence.push(seg); out.fences.push(seg)
               }
@@ -6902,7 +6902,7 @@ function faustRingCell(seed, S, plan, i, j) {
             for (let q = 0; q < 2; q++) { const a = (((tt >>> (17 + q * 4)) % 16) / 16) * 6.283185307179586, f = 0.55 + ((tt >>> (25 + q)) % 4) * 0.06
               near('crown', r * f, r * f * 0.95, r * f, tx + Math.cos(a) * r * 0.55, h + r * (0.55 + 0.35 * q), tz + Math.sin(a) * r * 0.55, 0, 0, pick(T.crown, tt >>> (13 + q + 1))) }
             const t = [faustCm(tx), faustCm(tz), faustCm(r)]; lot.trees.push(t); out.trees.push(t) }
-          if ((hq >>> 12) % 10 < 6) tree(x - gs * (hx + 3.5), cz + sg * (e - 6), hq)
+          if ((hq >>> 12) % 10 < 6 && Math.abs(x - gs * (hx + 3.5) - cx) <= e - 3) tree(x - gs * (hx + 3.5), cz + sg * (e - 6), hq)
           if ((hq >>> 16) % 10 < 5) tree(x + ((hq >>> 20) % 9 - 4), z - sg * (hz + 9 + (hq >>> 24) % 8), hq)
           // out back: a shed in a corner, a washing line with a few things on it
           const bz = z - sg * (hz + 6)
@@ -7069,6 +7069,9 @@ function faustDropLater(chunks, what, w) {
 // card #91 (#64): the outskirts' foliage (tree crowns, hedges) in a material of its own: the stone shader and program (the same
 // cache key), a separate object, so Realistic's swap (realSwapFor: F.materials.stone -> the facades' patterned ornament) leaves it
 const FAUST_FOLIAGE = new Set(['crown', 'crownHi', 'crownTop', 'hedge'])
+// (card #91) and the glowing kinds (lamp heads and bulbs, lit windows, light pools) likewise: their glow is the stone shader's own
+const FAUST_GLOWS = new Set(['light', 'lit', 'pool'])
+function faustGlowMaterial(F) { if (!F.materials.glow) { F.materials.glow = faustStoneMaterial(); F.materials.glow.name = 'faust-glow' } return F.materials.glow }
 function faustFoliageMaterial(F) { if (!F.materials.foliage) { F.materials.foliage = faustStoneMaterial(); F.materials.foliage.name = 'faust-foliage' } return F.materials.foliage }
 // card #91 (#72): the trees within FAUST_RINGS.tree (40 m) of the camera, their crowns in the 320-face lobe, in a small mesh of
 // their own: rebuilt (at once: a few cells' parts scanned) each 8 m the camera moves; 1.05 times the pool's 80-face lobe of the same
@@ -7168,7 +7171,7 @@ function faustRingsFrame() {
     // (card #91) the hidden set's upload, before the swap: each kind in slices of 12,000 instances a frame, the set wearing a
     // material never drawn (three uploads a visible object's instance buffers before it checks material.visible)
     const ghost = F.ringGhost ||= Object.assign(new THREE.MeshBasicMaterial(), { visible: false, name: 'faust-ring-ghost' })
-    const real = k => k === 'far' ? F.materials.far : FAUST_FOLIAGE.has(k) ? faustFoliageMaterial(F) : F.materials.stone, CH = 12000
+    const real = k => k === 'far' ? F.materials.far : FAUST_FOLIAGE.has(k) ? faustFoliageMaterial(F) : FAUST_GLOWS.has(k) ? faustGlowMaterial(F) : F.materials.stone, CH = 12000
     const sphere = new THREE.Sphere(new THREE.Vector3(cx, 0, cz), reach + 600)
     for (const k of KINDS) {
       const P = pools[k]
