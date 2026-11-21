@@ -6507,8 +6507,8 @@ function faustRingInterior(b) {
   sbox(-ex, -ex + T, 0, H, T, 2 * ez - T); sbox(ex - T, ex, 0, H, T, 2 * ez - T)
   const walls = shell.map(s => ({ cx: s.cx, cy: s.cy, cz: s.cz, ex: s.ex, ey: s.ey, ez: s.ez }))
   { const [z0, z1] = zr(0, 2 * ez); walls.push({ cx: inCm(cx), cy: inCm(H - SL / 2), cz: inCm((z0 + z1) / 2), ex: inCm(ex), ey: inCm(SL / 2), ez: inCm((z1 - z0) / 2) }) }
-  const wallT = shack ? pick([IN_TINT.crate, IN_TINT.woodLight, IN_TINT.concrete, IN_TINT.wood]) : pick([IN_TINT.plaster, IN_TINT.plasterCool, IN_TINT.cream, IN_TINT.plaster])
-  const floorT = shack ? IN_TINT.wood : pick([IN_TINT.woodLight, IN_TINT.lino, IN_TINT.woodLight, IN_TINT.tile])
+  const wallT = shack ? pick([IN_TINT.crate, IN_TINT.woodLight, IN_TINT.concrete, IN_TINT.wood]) : b.venue === 'conv' ? IN_TINT.cream : pick([IN_TINT.plaster, IN_TINT.plasterCool, IN_TINT.cream, IN_TINT.plaster])
+  const floorT = shack ? IN_TINT.wood : b.venue === 'conv' ? IN_TINT.lino : pick([IN_TINT.woodLight, IN_TINT.lino, IN_TINT.woodLight, IN_TINT.tile])
   const ceilT = shack ? IN_TINT.concrete : IN_TINT.paper
   const dark = IN_TINT.dark, wood = IN_TINT.wood, woodL = IN_TINT.woodLight, cloth = IN_TINT.cloth, red = IN_TINT.red
   const skins = k => {
@@ -6613,6 +6613,53 @@ function faustRingInterior(b) {
     poster(R, wall, wall[0] === 'u' ? (Vi0 + Vi1) / 2 : (Ui0 + Ui1) / 2, 1.5, 0.55, 0.8, pick(['poster', 'poster2', 'poster3', 'poster4']))
     lampShade((Ui0 + Ui1) / 2, (Vi0 + Vi1) / 2 + 0.3, H - SL - 0.45, 2, true)
     lamp((Ui0 + Ui1) / 2, (Vi0 + Vi1) / 2 + 0.3, H - SL - 0.6, 2, 1.4, 0xffc890)
+  } else if (b.venue === 'conv') {
+    F = floors[0]; occ = []; keep = []
+    skins(0)
+    const s = ud > 0 ? -1 : 1, W = s > 0 ? Ui1 : Ui0, X = d => W - s * d, face = s > 0 ? 2 : 1
+    const bx = (d0_, d1_, y0, y1, v0, v1, t, more) => box_(Math.min(X(d0_), X(d1_)), Math.max(X(d0_), X(d1_)), y0, y1, v0, v1, t, more)
+    const spots = []
+    keep.push([d0 - 0.4, d1 + 0.4, Vi0, Vi0 + 1.8])
+    box_(Ui0, Ui1, 0.0, 0.05, Vi0, Vi1, floorT, { f: 4 }); box_(Ui0, Ui1, H - SL - 0.03, H - SL, Vi0, Vi1, ceilT, { f: 8 })
+    room(Ui0, Ui1, Vi0, Vi1, 'shell', false); room(Ui0, Ui1, Vi0, Vi1, 'shell', false); room(Ui0, Ui1, Vi0, Vi1, 'conv', true)
+    frontDoor()
+    const c0 = Vi0 + 0.5, c1 = c0 + 4.2, dd = 2.05, tz = c1 - 0.45
+    bx(dd - 0.35, dd + 0.35, 0, 1.05, c0, c1, wood, { c: 1 }); bx(dd - 0.4, dd + 0.4, 1.05, 1.1, c0, c1, IN_TINT.cream, { m: 1 }); bx(dd + 0.35, dd + 0.45, 0.15, 0.2, c0, c1, IN_TINT.brass, { m: 1 })
+    bx(dd - 0.22, dd + 0.18, 1.1, 1.34, tz - 0.25, tz + 0.25, IN_TINT.brass, { m: 1 }); bx(dd - 0.2, dd + 0.16, 1.34, 1.55, tz - 0.2, tz - 0.1, dark)
+    bx(0.06, 0.46, 0, 2.4, c0, c1, dark, { c: 1 })
+    for (const gy of [1.25, 1.7, 2.15]) for (let q = c0 + 0.1; q < c1 - 0.2;) {
+      const len = 0.12 + rng() * 0.12
+      bx(0.46, 0.5, gy, gy + 0.16, q, q + len + 0.1, pick([0xb02a2a, 0xe8e0c8, 0x2a4a8a, 0xd0a030]), { f: face | 4 })
+      q += len + 0.15 + rng() * 0.08
+    }
+    occ.push([Math.min(X(0), X(dd + 1.1)), Math.max(X(0), X(dd + 1.1)), Vi0, c1 + 0.3])
+    keep.push([Math.min(X(0), ud) - 0.5, Math.max(X(0), ud) + 0.5, Vi0, Vi0 + 1.3])
+    box_(ud - 0.08, ud + 0.08, 2.62, 2.78, Vi0 + 0.04, Vi0 + 0.2, IN_TINT.brass, { m: 1, p: 'bell' })
+    const gx0 = s > 0 ? Ui0 + 1.2 : X(dd + 1.9), gx1 = s > 0 ? X(dd + 1.9) : Ui1 - 1.2
+    const gondola = (u0, u1, vc) => {
+      for (const [v0, v1, f] of [[vc - 0.5, vc, 32], [vc, vc + 0.5, 16]]) {
+        box_(u0, u1, 0, 1.55, v0, v1, IN_TINT.shelf, { c: 1 })
+        for (let q = 0; q < 4; q++) for (let g = u0 + 0.06; g < u1 - 0.2; g += 0.2 + rng() * 0.08) box_(g, g + 0.16, 0.28 + q * 0.34, 0.28 + q * 0.34 + 0.24, f === 16 ? v1 - 0.03 : v0, f === 16 ? v1 : v0 + 0.03, pick([0xc8c8c0, 0xb02a2a, 0x2a5a9a, 0xd0a030, 0x4a7a3a]), { m: 1, f })
+      }
+      occ.push([u0 - 0.45, u1 + 0.45, vc - 0.95, vc + 0.95])
+    }
+    for (let vc = Vi0 + 2.8; vc + 0.95 < Vi1 - 3.2; vc += 2.3) if (gx1 - gx0 > 2.0) gondola(gx0, gx1, vc)
+    { const cl = Math.max(gx0 + 0.5, Ui0 + 1.4), cr = Math.min(cl + 3.0, gx1 - 0.2)
+      if (cr - cl > 2.0) {
+        box_(cl, cr, 0, 2.0, Vi1 - 0.7, Vi1, IN_TINT.steel, { c: 1 }); box_(cl, cr, 1.95, 2.0, Vi1 - 0.7, Vi1, IN_TINT.steel); box_(cl + 0.1, cr - 0.1, 1.86, 1.92, Vi1 - 0.72, Vi1 - 0.66, 0xe8f4ff, { m: 2, r: 2 })
+        for (let q = 0; q < 4; q++) { const gy = 0.25 + q * 0.4; box_(cl + 0.04, cr - 0.04, gy - 0.04, gy, Vi1 - 0.68, Vi1 - 0.05, IN_TINT.shelf, { f: 32 | 4 })
+          for (let g = cl + 0.1; g < cr - 0.15; g += 0.18 + rng() * 0.1) box_(g, g + 0.12, gy, gy + 0.3, Vi1 - 0.68, Vi1 - 0.5, pick([0xc8c8c0, 0xb02a2a, 0x2a5a9a, 0xd0a030]), { m: 1, f: 32 }) }
+        occ.push([cl - 0.45, cr + 0.45, Vi1 - 1.5, Vi1])
+      } }
+    place({ u0: Ui0, u1: Ui1, v0: Vi0, v1: Vi1 }, s > 0 ? 'u0' : 'u1', 0.9, 0.4, 'a', ib => { ib(-0.45, 0.45, 0, 0.4, 0, 1.5, IN_TINT.steel, { c: 1 }); for (let q = 0; q < 3; q++) for (let g = -0.4; g < 0.25; g += 0.22) ib(g, g + 0.18, 0.04, 0.3, 0.5 + q * 0.32, 0.74 + q * 0.32, pick([0xb02a2a, 0xe8e0c8, 0x2a4a8a, 0xd0a030]), { nc: 1 }) })
+    poster({ u0: Ui0, u1: Ui1, v0: Vi0, v1: Vi1 }, s > 0 ? 'u0' : 'u1', (Vi0 + Vi1) / 2, 2.1, 0.7, 1.0, 'open')
+    for (const vv of [Vi0 + 2.2, Vi0 + 5.0, Vi1 - 1.6]) for (const uu of [Ui0 + 2.6, Ui1 - 2.6]) { lampShade(uu, vv, H - SL - 0.45, 2, true); lamp(uu, vv, H - SL - 0.6, 2, 1.1, 0xe8f4ff) }
+    lamp(X(0.9), Vi0 + 2.2, 2.3, 2, 0.9, 0xe8f4ff)
+    const [zc] = zr((c0 + c1) / 2, (c0 + c1) / 2), [zt] = zr(tz, tz)
+    spots.push({ kind: 'clerk', x: inCm(cx + X((0.46 + dd - 0.35) / 2)), y: 0.06, z: inCm(zc), face: [-s, 0] }, { kind: 'till', x: inCm(cx + X(dd)), y: 1.1, z: inCm(zt), face: [s, 0] },
+      { kind: 'counter', x: inCm(cx + X(dd + 0.9)), y: 0.06, z: inCm(zt), face: [s, 0] }, { kind: 'bell', x: inCm(b.door.x), y: 2.7, z: inCm(b.door.z - sg * 0.1), face: [0, -sg] })
+    for (const [uu, vv] of [[ud + 2.4, Vi0 + 1.8], [ud - 2.4, Vi0 + 1.8], [0, Vi1 - 2.4]]) if (fits([uu - 0.5, uu + 0.5, vv - 0.5, vv + 0.5]) && uu > Ui0 + 0.6 && uu < Ui1 - 0.6) { const [zz] = zr(vv, vv); spots.push({ kind: 'customer', x: inCm(cx + uu), y: 0.06, z: inCm(zz), face: [0, -sg] }) }
+    F.spots = spots
   } else {
     const hh = K.hall / 2, h0 = ud - hh - P / 2, h1 = ud + hh + P / 2
     const nSide = ud > 0 ? 1 : -1
@@ -6695,7 +6742,7 @@ function faustRingInterior(b) {
   const ramps = floors.flatMap(f => f.ramps)
   const out = { version: K.version, id: b.id, kind: b.kind, seed: b.seed, tint, rect: { x0: inCm(cx - ex), x1: inCm(cx + ex), z0: inCm(cz - ez), z1: inCm(cz + ez), y1: H },
     halfD: inCm(ez), storeys: floors.length, height: FH, door: { x: b.door.x, z: b.door.z, w: dw, h: dh, face: b.door.face, out: [inCm(b.door.x), 0, inCm(b.door.z + sg * 2.2)], in: [inCm(b.door.x), 0, inCm(b.door.z - sg * (T + 1.0))] },
-    pieces, colliders, ramps, floors: floors.map(f => ({ k: f.k, y: f.y, boxes: f.boxes, lights: f.lights, rooms: f.rooms, ramps: f.ramps })), stairs }
+    pieces, colliders, ramps, floors: floors.map(f => ({ k: f.k, y: f.y, boxes: f.boxes, lights: f.lights, rooms: f.rooms, ramps: f.ramps })), stairs, ...floors[0].spots ? { spots: floors[0].spots } : {} }
   out.hash = inHash({ ...out, floors: out.floors.map(f => ({ ...f, boxes: f.boxes.length, hash: inHash(f.boxes) })) })
   return out
 }
