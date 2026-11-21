@@ -29339,6 +29339,27 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   },
   // card #78: a crater for tests (host, Faustland): as a leap smash makes it, at the surface height y; true if it fits
   crater(x, z, r = 2.4, y = 0) { return isHost && LV.faust && [x, z, r, y].every(Number.isFinite) ? addCrater(x, z, r, y) : false },
+  // card #90: what the crater round (x, z) is drawn with, read in this page (tests: the plaza's pale lip on a GPU)
+  craterInfo(x = -20, z = -62, h = 2.9) { if (!worldGroup || !Number.isFinite(x) || !Number.isFinite(z)) return null
+    const r3 = v => Math.round(v * 1000) / 1000, hex = c => c?.getHexString?.(), slots = [], crater = []
+    worldGroup.traverse(m => { const g = m.geometry; if (!m.isMesh || !g?.attributes?.position) return
+      if (m.userData.crater && m.children.length) {      // the crater mesh (its soot layer is its child)
+        const P = g.attributes.position, C = g.attributes.color, N = g.attributes.normal, U = g.attributes.uv, G = g.attributes.faustGlow, nb = m.children[0].geometry.attributes.position.count, n = P.count
+        const mean = (A, k, a, b) => { if (!A) return null; let s = 0; for (let i = a; i < b; i++) s += A.getComponent(i, k); return r3(s / Math.max(1, b - a)) }
+        const at = i => [r3(P.getX(i)), r3(P.getY(i)), r3(P.getZ(i))]
+        if (Math.hypot(P.getX(0) - x, P.getZ(0) - z) < 12) crater.push({ verts: n, bowl: nb, lip: n - nb, mat: { type: m.material.type, color: hex(m.material.color), vertexColors: m.material.vertexColors, side: m.material.side, emissive: hex(m.material.emissive), map: !!m.material.map, transparent: m.material.transparent, shared: m.material === (faustState?.materials?.stone) },
+          colourBowl: C && [0, 1, 2].map(k => mean(C, k, 0, nb)), colourLip: C && [0, 1, 2].map(k => mean(C, k, nb, n)), colourLipMax: C && (() => { let hi = 0; for (let i = nb; i < n; i++) hi = Math.max(hi, C.getX(i) + C.getY(i) + C.getZ(i)); return r3(hi / 3) })(),
+          normalY: { bowl: mean(N, 1, 0, nb), lip: mean(N, 1, nb, n) }, uv: U && [r3(U.getX(0)), r3(U.getY(0)), r3(U.getX(n - 1)), r3(U.getY(n - 1))], glow: G ? [mean(G, 0, 0, nb), mean(G, 0, nb, n)] : 'none', firstLip: at(nb), receiveShadow: m.receiveShadow, castShadow: m.castShadow,
+          soot: { type: m.children[0].material.type, color: hex(m.children[0].material.color), opacity: m.children[0].material.opacity, renderOrder: m.children[0].renderOrder } })
+        return }
+      const bs = g.boundingSphere || g.computeBoundingSphere() || g.boundingSphere
+      if (!bs || Math.max(x - h - bs.center.x, 0, bs.center.x - x - h) ** 2 + Math.max(z - h - bs.center.z, 0, bs.center.z - z - h) ** 2 > bs.radius ** 2) return
+      const why = m.isInstancedMesh ? 'instanced' : m === scarMesh ? 'scar' : m.userData.crater ? 'crater' : g.index ? 'indexed' : !g.attributes.uv ? 'no uv' : ''
+      const P = g.attributes.position.array, C = g.attributes.color; let tris = 0, area = 0, col = null
+      if (!g.index) for (let i = 0; i < 3 * Math.min(g.attributes.position.count, g.drawRange.count); i += 9) { const xs = [P[i], P[i + 3], P[i + 6]], ys = [P[i + 1], P[i + 4], P[i + 7]], zs = [P[i + 2], P[i + 5], P[i + 8]]
+        if (Math.max(...xs) > x - h && Math.min(...xs) < x + h && Math.max(...zs) > z - h && Math.min(...zs) < z + h && ys.every(v => v > -.01 && v < .05)) { tris++; area += Math.abs((xs[1] - xs[0]) * (zs[2] - zs[0]) - (xs[2] - xs[0]) * (zs[1] - zs[0])) / 2; if (C && !col) col = [C.getX(i / 3), C.getY(i / 3), C.getZ(i / 3)].map(r3) } }
+      if (tris || why) slots.push({ id: m.id, why, tris, area: Math.round(area), mat: m.material?.type, matColor: hex(m.material?.color), vertexColors: !!m.material?.vertexColors, colorAttr: !!C, glowAttr: !!g.attributes.faustGlow, colour: col, visible: m.visible }) })
+    return { slots, crater, renderer: { quality: settings.quality, pixelRatio: renderer?.getPixelRatio(), shadows: !!renderer?.shadowMap?.enabled, shadowType: renderer?.shadowMap?.type, gpu: gpuName(), toneMapping: renderer?.toneMapping } } },
   // card #90: a scar for tests (SCARS: hole, scorch, dent, blast) where the camera looks, on the level's first face within
   // range: [x, y, z, nx, ny, nz], else null. Drawn on this page only, as a shot's is
   scar(kind = 'hole', range = 60) { if (!world || !camera || !SCARS[kind] || !(range > 0)) return null
