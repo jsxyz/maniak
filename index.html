@@ -25834,8 +25834,9 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   // card #74: the /blackbox recorder's frame rows, for a test script: gameHooks.blackbox() returns { on, flags, rows } (the last 300 frames, each with its flags), gameHooks.blackbox('on' | 'off') switches it
   blackbox(cmd) { if (cmd === 'on' || cmd === 'off') blackbox.run(cmd); return { on: blackbox.on, flags: blackbox.flags, rows: blackbox.rows.slice() } },
   // card #63, for live QA: street life's test calls (a test page reaches gameHooks only): around(x, z, r, T) people near a point
-  // and their poses; vehicles(x, z, r) the vehicles near it, nearest first, for ram; ram(vehicleId, agentId, speed, back) (host)
-  // a real vehicle rolled undriven at a person from back m behind; view([x, y, z], [tx, ty, tz]) a free camera, view(null) the game's
+  // and their poses; vehicles(x, z, r) the vehicles near it, nearest first, for ram; ram(vehicleId, agentId, speed, back) a real
+  // vehicle rolled undriven at a person from back m behind; view([x, y, z], [tx, ty, tz]) a free camera, view(null) the game's.
+  // ram and view are the host's only (on a guest they would roll cars into people or see through walls): refused as /tp is
   streetLife: Object.freeze({
     around(x, z, r = 30, T) {
       hookCheck([x, z, r].every(Number.isFinite) && r > 0 && r <= 250 && (T === undefined || Number.isFinite(T)), 'around(x, z, r <= 250, T?) needs numbers')
@@ -25847,10 +25848,12 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
         .filter(v => v.d < r).sort((a, b) => a.d - b.d)
     },
     ram(vehicleId, agentId, speed = 13, back = 16) {
+      hookCheck(isHost, 'Only the host can use test commands.')
       hookCheck([vehicleId, agentId, speed, back].every(Number.isFinite) && speed >= 0 && speed <= 40 && back >= 0 && back <= 60, 'ram(vehicleId, agentId, speed 0-40, back 0-60) needs numbers')
       return GAME.streetLife.ram(vehicleId, agentId, speed, back)
     },
     view(p, t) {
+      hookCheck(isHost, 'Only the host can use test commands.')
       const v3 = a => Array.isArray(a) && a.length === 3 && a.every(Number.isFinite)
       hookCheck(p === null || v3(p) && v3(t), 'view([x, y, z], [tx, ty, tz]) or view(null)')
       GAME.streetLife.view(p && [...p], p && [...t]); return true
