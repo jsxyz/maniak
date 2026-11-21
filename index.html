@@ -5976,8 +5976,11 @@ function faustWaterExit(seed, S, x, z) {
   const u = (ch.axis ? x : z) - ch.c, s = ch.axis ? z : x, side = u < 0 ? -1 : 1, top = FAUST_CHAN.top
   let best = null
   for (const r of ch.ramps) if (r.side === side && Math.abs(r.s - s) < 14) { const dist = Math.hypot(Math.abs(u) - 16, r.s - s); if (!best || dist < best[0]) best = [dist, r.s] }
-  const lip = best ? best[1] : s, ex = ch.axis ? ch.c + side * (top + 1.5) : lip, ez = ch.axis ? lip : ch.c + side * (top + 1.5)
-  if (Math.hypot(ex - x, ez - z) > 12 + (best ? 14 : 0) && Math.abs(Math.abs(u) - top) > 12) return null
+  // a river's exit point lies 1.5 m past its water's edge on the bank (bots head for it); a flood channel's on the lip
+  const reach = ch.kind === 'river' ? faustChanWet(faustChanSec(ch), FAUST_WATER.river.level - FAUST_CHAN.ground) + 1.5 : top + 1.5
+  const lip = best ? best[1] : s, ex = ch.axis ? ch.c + side * reach : lip, ez = ch.axis ? lip : ch.c + side * reach
+  // (a river's whole width is within reach of a bank: its swimmers' bots head for the lip, 24 m at most)
+  if (Math.hypot(ex - x, ez - z) > (ch.kind === 'river' ? 24 : 12) + (best ? 14 : 0) && Math.abs(Math.abs(u) - top) > 12) return null
   return { id: ch.id, kind: ch.kind === 'river' ? 'river' : 'channel', y: 0, x: ex, z: ez, nx: ch.axis ? side : 0, nz: ch.axis ? 0 : side, bank: best ? 'stairs' : ch.kind === 'river' ? 'low' : 'high' }
 }
 // the wave table's height at (x, z) at time t (s) for a body kind: the surface the look draws; zero for a channel. The water's `y` itself is time-free.
