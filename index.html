@@ -8080,11 +8080,23 @@ function faustDrop(c) {
     c.physics = null
     try { craterDropSources(c.plan.boxes) } catch (e) { frameFailed('city', e) }
     const gone = new Set(c.plan.boxes)
-    for (let i = BOXES.length; i--;) if (gone.has(BOXES[i])) BOXES.splice(i, 1)
+    { let w = 0; for (let r = 0; r < BOXES.length; r++) if (!gone.has(BOXES[r])) BOXES[w++] = BOXES[r]; BOXES.length = w }      // (#64) one pass, in order
     grown.delete(c.key)
   }
   if (c.visual) { worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); faustSkyCell(c, true) }
   faustState.chunks.delete(c.key); faustState.stats.dropped++
+}
+// (#64) the city cells left behind, dropped in the background: whole cells, as many as fit in 2 ms a step (at least one), oldest
+// first; a cell unmarked since (wanted again) or already gone is skipped. One job at a time; it restarts while any are queued.
+function faustDropQueue(F) {
+  if (!F.dropQueue?.length || F.dropJob) return
+  F.dropJob = background.run('city drops', function* () {
+    while (F.dropQueue.length) {
+      const t0 = realNow()
+      do { const c = F.dropQueue.shift(); if (c.dropQueued && F.chunks.get(c.key) === c) { c.dropQueued = false; faustDrop(c) } } while (F.dropQueue.length && realNow() - t0 < 2)
+      yield
+    }
+  }, { priority: 1, valid: () => faustState === F }).catch(e => frameFailed('city', e)).finally(() => { F.dropJob = null; if (faustState === F) faustDropQueue(F) })
 }
 function faustStream(points, viewPoint) {
   const F = faustState, t = realNow(), cell = v => Math.floor((v + ARENA) / 96)
@@ -8102,11 +8114,13 @@ function faustStream(points, viewPoint) {
     })
     for (const c of wanted) if (core.has(c.key)) faustPhysics(c)
     for (const c of [...F.chunks.values()]) {
-      if (!keep.has(c.key) && !drawn.has(c.key)) faustDrop(c)
-      else if (c.visual && !drawn.has(c.key)) {
-        worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); c.visual = null; faustSkyCell(c, true)
+      if (!keep.has(c.key) && !drawn.has(c.key)) { if (!c.dropQueued) { c.dropQueued = true; (F.dropQueue ||= []).push(c) } }      // (#64) dropped in the background
+      else {
+        c.dropQueued = false      // wanted again before its drop: kept as it is
+        if (c.visual && !drawn.has(c.key)) { worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); c.visual = null; faustSkyCell(c, true) }
       }
     }
+    faustDropQueue(F)
     F.selection = { signature, drawn, physics: wanted.filter(c => nearby.has(c.key) && !c.physics),
       visuals: wanted.filter(c => drawn.has(c.key) && !c.visual && F.visualJob?.chunk !== c) }
   }
