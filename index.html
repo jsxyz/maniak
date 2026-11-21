@@ -27930,7 +27930,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
       hookCheck([flockId, i, ux, uz].every(Number.isFinite) && i >= 0 && i < 32, 'killBird(flockId, i 0-31, ux, uz) needs numbers')
       return GAME.streetLife.killBird(flockId, i, ux, uz)
     },
-    // card #101: flocks(x, z, r) the pigeon flocks near a point: [{ id, x, z, n, out, dead, birds: [[x, z, y, dead]] }], killBird's ids
+    // card #101: flocks(x, z, r) the pigeon flocks near a point: [{ id, x, z, n, out, dead, birds: [[x, z, y, dead, age s if dead]] }]
+    // (each bird where it is drawn), killBird's ids
     flocks(x, z, r = 40) {
       hookCheck([x, z, r].every(Number.isFinite) && r > 0 && r <= 80, 'flocks(x, z, r <= 80) needs numbers')
       return GAME.streetLife.flocks(x, z, r)
@@ -32913,7 +32914,9 @@ GAME.streetLife = {
     slAround(x, z, r, T ?? slNow(), (ag, p) => out.push({ id: ag.id, kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: +p.x.toFixed(3), z: +p.z.toFixed(3), yaw: +p.yaw.toFixed(3), clip: p.clip, mode: p.mode, rec: p.rec?.kind || 0, down: p.down, dead: !!p.dead, hp: slHpNow(ag, T ?? slNow()), y: +p.y.toFixed(3), roll: +(p.roll || 0).toFixed(3),
       pram: ag.kind === SL_K.pram ? [slR2(p.x + Math.sin(p.yaw) * STREET.pramBack * p.scale), slR2(p.z + Math.cos(p.yaw) * STREET.pramBack * p.scale), slR2(p.yaw)] : undefined })); return out },
   clock: () => slNow(),
-  flocks(x, z, r = 40) { const out = []; if (slState) slFlocksNear(x, z, r, f => out.push({ id: f.id, x: f.x, z: f.z, n: f.birds.length, out: f.out || [0, 1], dead: f.birds.filter((b, i) => slBirdDeath(f, i, slNow())).length, birds: f.birds.map((b, i) => { const T = slNow(), q = slBirdAt(f, i, b, T, slFlockScatter(f, T), {}); return [slR2(q.x), slR2(q.z), slR2(q.y), slBirdDeath(f, i, T) ? 1 : 0] }) })); return out },
+  flocks(x, z, r = 40) { const out = []; if (slState) slFlocksNear(x, z, r, f => out.push({ id: f.id, x: f.x, z: f.z, n: f.birds.length, out: f.out || [0, 1], dead: f.birds.filter((b, i) => slBirdDeath(f, i, slNow())).length, birds: f.birds.map((b, i) => { const T = slNow(), dr = slBirdDeath(f, i, T), q = {}          // card #101: where each is drawn (a dead one: where it fell, and its age)
+    if (dr) { slDeadBirdPose(dr, T, q); return [slR2(q.x), slR2(q.z), slR2(q.y), 1, slR2((T - dr.t) / 1000)] }
+    slBirdAt(f, i, b, T, slFlockScatter(f, T), q); return [slR2(q.x), slR2(q.z), slR2(q.y), 0] }) })); return out },
   records: () => slState ? [...slState.rec.values()].map(r => r.a) : [],
   lineup(x, z, yaw = 0, opts = {}) { if (slState) slState.lineup = x === null ? null : { x, z, yaw, T0: slNow(), ...opts } },
   // card #101: fn(record, agent) as each death record is added, on every machine; returns what removes it
