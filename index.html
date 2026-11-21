@@ -869,6 +869,10 @@ const SOUNDS = {
   over: { say: 'the round over and you beaten: a short falling phrase', seed: 0, file: null, synth: null },                           // the results, you lost
   ui: { say: 'the volume slider\'s preview: one soft tone at the new level', seed: 0, file: null, synth: null },                      // the volume slider's preview, the only UI sound so far
 
+  // ---- the weather (card #85)
+  Rain: { say: 'steady rain on streets and roofs: a soft hiss over a low patter', seed: 0, file: null, synth: 'rain', vol: 0.5 },   // while it rains: a loop whose level follows the rain, softer under a roof
+  Thunder: { say: 'thunder: a crack and a long low rolling rumble, the nearer the louder and sharper', seed: 0, file: null, synth: 'thunder', vol: 1 },   // each lightning bolt's thunder, seconds after its flash (the farther the bolt, the later)
+
   // ---- not played yet: places kept for the cards that add them (#11 fills them). Each plays only through /sound until a call site
   //      (playSound(key, { at, cat, lvl })) is added
   Footstep: { say: 'a footfall on pavement', seed: 0, file: null, synth: null },                                   // a walking footstep (not wired yet)
@@ -6874,7 +6878,7 @@ function faustLampGrid(plans = FAUST_NIGHT.grid.plans) {
   if (!F || !camera || !LV.faust) { U.faustLampArea.value.w = 0; return }
   const look = FAUST_NIGHT.looks[activeLook] || FAUST_NIGHT.looks.other, colour = S.colour ||= new THREE.Color(L.color), R = L.range
   U.faustLampLight.value.set(colour.r * look.lamps, colour.g * look.lamps, colour.b * look.lamps, 1 / (R * R))
-  U.faustLampFade.value.z = look.wet
+  U.faustLampFade.value.z = look.wet * (0.7 + 0.8 * weatherWetNow()); U.faustLampFade.value.w = weatherWetNow()
   const H = FAUST_NIGHT.hero, hero = S.hero ||= [new THREE.Color(), new THREE.Color()]
   hero[0].set(H.fillColor).multiplyScalar(H.fill); hero[1].set(H.rimColor).multiplyScalar(H.rim)
   U.faustHeroFill.value.set(hero[0].r, hero[0].g, hero[0].b, H.wrap); U.faustHeroRim.value.set(hero[1].r, hero[1].g, hero[1].b, H.rimPower)
@@ -6965,7 +6969,7 @@ if (faustLampArea.w > 0.0) {
     vec3 faustN = geometryNormal * mat3(viewMatrix);
     ivec2 faustCell = ivec2(int(faustG.x) * ${FAUST_NIGHT.grid.k}, int(faustG.y));
     float faustE = 0.0;${wet ? `
-    float faustS = 0.0, faustWet = faustLampFade.z * smoothstep(0.9, 0.98, faustN.y) * (1.0 - smoothstep(0.08, 0.3, faustP.y));
+    float faustS = 0.0, faustGrd = smoothstep(0.9, 0.98, faustN.y) * (1.0 - smoothstep(0.08, 0.3, faustP.y)), faustWet = faustLampFade.z * faustGrd;
     vec3 faustV = normalize(cameraPosition - faustP);` : ''}
     for (int i = 0; i < ${FAUST_NIGHT.grid.k}; i++) {
       vec4 faustLampAt = texelFetch(faustLampGrid, faustCell + ivec2(i, 0), 0);
@@ -6976,10 +6980,12 @@ if (faustLampArea.w > 0.0) {
       float faustAim = mix(0.1, 1.0, smoothstep(-0.1, 0.35, faustL.y * faustInv));
       float faustI = faustLampAt.w * faustW * faustW * faustAim * max(dot(faustN, faustL), 0.0) * faustInv / faustD2;
       faustE += faustI;${wet ? `
-      if (faustWet > 0.0) faustS += faustI * pow(max(dot(faustN, normalize(faustL * faustInv + faustV)), 0.0), 36.0);` : ''}
+      if (faustWet > 0.0) faustS += faustI * pow(max(dot(faustN, normalize(faustL * faustInv + faustV)), 0.0), 36.0 - 24.0 * faustLampFade.w);      // card #85: rain widens the lamps' reflection` : ''}
     }
     reflectedLight.directDiffuse += faustE * faustFar * faustLampLight.rgb * BRDF_Lambert(material.diffuseColor);${wet ? `
-    reflectedLight.directSpecular += faustS * faustWet * faustFar * 0.3 * faustLampLight.rgb;` : ''}
+    reflectedLight.directSpecular += faustS * faustWet * faustFar * 0.3 * (1.0 + 2.2 * faustLampFade.w) * faustLampLight.rgb;
+    float faustDark = 1.0 - 0.22 * faustLampFade.w * faustGrd * faustFar * step(0.001, faustLampFade.z);      // card #85: wet paving is darker
+    reflectedLight.directDiffuse *= faustDark; reflectedLight.indirectDiffuse *= faustDark;` : ''}
   }
 }
 `
@@ -15995,7 +16001,7 @@ function* citySteps(rows, faces) {
           t.position.set(b.cx, base + bottom, b.cz); t.rotation.y = (cityHash(r.seed) & 3) * Math.PI / 2
           t.scale.set(width, r.h - bottom, width)
         })
-        m.castShadow = !coarse
+        m.castShadow = !coarse; weatherCrowns.add(m)      // card #85: the wind sways them
         ;(coarse ? far : near).add(m)
       }
     }
@@ -16833,6 +16839,7 @@ const REAL_TINTS = [
 const REAL_GLSL = /* glsl */`
 uniform sampler2DArray realAlbedo, realNormal;
 uniform float realTime;
+uniform float realWet;     // card #85: the streets' wetness 0..1, from the weather
 varying vec3 vRealW, vRealN;
 // flat: a box's identity is exact on every pixel (interpolated, its last bits jitter and every hash of it is noise)
 flat varying vec4 vRealBox;
@@ -17094,7 +17101,7 @@ function realCityMaterial(kind, R) {
   m.onBeforeCompile = shader => {
     faustLampHook(shader, 'pbr')      // every street lamp near the camera, as in the other looks (card #28)
     shader.vertexShader = faustShopTintGlsl() + shader.vertexShader
-    Object.assign(shader.uniforms, { realAlbedo: R.uniforms.albedo, realNormal: R.uniforms.normal, realTime: R.uniforms.time }, dsUniforms)
+    Object.assign(shader.uniforms, { realAlbedo: R.uniforms.albedo, realNormal: R.uniforms.normal, realTime: R.uniforms.time, realWet: R.uniforms.wet }, dsUniforms)
     shader.defines = { ...shader.defines, [define]: 1 }
     const swap = (src, from, to) => { if (!src.includes(from)) throw new Error('realistic: no shader anchor ' + from); return src.replace(from, to) }
     let vs = shader.vertexShader, fs = shader.fragmentShader
@@ -17154,7 +17161,7 @@ RealSurf realSurface() {
   vec3 base = mix(vec3(lum), tint, 0.45) * (layer == 1.0 ? REAL_MEAN[1] / dot(REAL_MEAN[1], REAL_LW) : vec3(1.0));
   s.albedo *= base * 2.4 * (0.75 + 0.5 * lh);
   if (N.y > 0.5) { // a tar-and-gravel roof, dark and wet in its low spots
-    float pud = realPuddle(vRealW.xz * 1.7 + 31.0, 0.0);
+    float pud = realPuddle(vRealW.xz * 1.7 + 31.0, -0.3 * (1.0 - realWet)) * smoothstep(0.15, 0.45, realWet);
     s.albedo *= 0.4 * mix(1.0, 0.6, pud); s.rough = mix(0.85, 0.04, pud); s.reflect = pud * 0.85; nT = normalize(mix(nT, vec3(0, 0, 1), pud));
   } else if (isBox && N.y > -0.5) realFacade(N, T, u, hw, y0, y1, lod, s, nT);
 #else
@@ -17179,8 +17186,8 @@ RealSurf realSurface() {
   // the macro variation that breaks a tiling texture's repeat
   s.albedo *= 0.8 + 0.4 * realNoise(vRealW.xz * 0.19 + vRealW.y * 0.13);
   if (m.wet > 0.0 && N.y > 0.5) {
-    float pud = realPuddle(vRealW.xz, k == 3 ? 0.0 : -0.08) * step(0.5, m.wet);
-    float wet = m.wet * (0.6 + 0.4 * realNoise(vRealW.xz * 0.05));
+    float pud = realPuddle(vRealW.xz, (k == 3 ? 0.0 : -0.08) - 0.3 * (1.0 - realWet)) * step(0.5, m.wet) * smoothstep(0.15, 0.45, realWet);
+    float wet = m.wet * (0.6 + 0.4 * realNoise(vRealW.xz * 0.05)) * realWet;
     s.albedo *= mix(1.0, 0.55, wet) * mix(1.0, 0.5, pud);
     s.rough = mix(mix(s.rough, 0.2, wet * 0.85), 0.02, pud);
     nT = normalize(mix(nT, vec3(0, 0, 1), max(pud, wet * 0.3)));
@@ -17442,8 +17449,8 @@ function realSwap(R, s, tier, undo) {
   if (signals?.material?.color) put(signals.material, 'color', R.signalGlow)
   put(s, 'fog', R.fog); put(s, 'environment', R.env.texture)
   const hemi = s.children.find(o => o.isHemisphereLight)
-  if (hemi) put(hemi, 'intensity', REAL_SKY.hemi)
-  if (sunLight) put(sunLight, 'intensity', REAL_SKY.moonLight)
+  if (hemi) put(hemi, 'intensity', REAL_SKY.hemi + RAIN.flash.real[0] * weather.flash * (WEATHER_LOOKS.realistic ? 1 : 0) * (weatherReduced ? RAIN.flash.reduced : 1))      // card #85: a lightning flash, 0..1
+  if (sunLight) put(sunLight, 'intensity', REAL_SKY.moonLight + RAIN.flash.real[1] * weather.flash * (WEATHER_LOOKS.realistic ? 1 : 0) * (weatherReduced ? RAIN.flash.reduced : 1))
   for (const l of F?.localLights || []) put(l, 'intensity', 0)
   s.add(R.lampGroup); undo.push([null, () => s.remove(R.lampGroup)])
   // the sky in the same light: the night environment on the globe and Faust's head (#19's PBR model), the dome behind
@@ -17712,7 +17719,7 @@ function* realInitSteps() {
   const R = { ready: false, failed: false, size: 0, swaps: new WeakMap(), owned: [], lamps: [], lampList: [], litLamps: [],
     lampGroup: new THREE.Group(), v3: new THREE.Vector3(), v2: new THREE.Vector2(), t: null, tier: null, frame: 0,
     moonDir: new THREE.Vector3(...REAL_SKY.moon).normalize(),
-    uniforms: { albedo: { value: null }, normal: { value: null }, time: { value: 0 } } }
+    uniforms: { albedo: { value: null }, normal: { value: null }, time: { value: 0 }, wet: { value: 1 } } }
   R.fog = new THREE.FogExp2(REAL_SKY.fog, REAL_SKY.fogDensity)
   R.signalGlow = new THREE.Color(6, 6, 6)
   R.env = yield* realEnvironmentSteps(R)
@@ -17846,7 +17853,7 @@ function realRender(raw, s, cam) {
     for (let i = T.up.length - 1; i >= 0; i--) { const u = U.up.uniforms, low = i === T.up.length - 1 ? T.down[i + 1] : T.up[i + 1]
       u.tSrc.value = T.down[i].texture; u.tLow.value = low.texture; u.uLowTexel.value.set(1 / low.width, 1 / low.height); realPassTo(raw, R, 'up', T.up[i]) }
     const F = U.final.uniforms, G = REAL_GRADE
-    F.tColor.value = frame.texture; F.tBloom.value = (T.up[0] || T.down[0]).texture; F.uExposure.value = G.exposure; F.uBloom.value = G.bloom; F.uBloomN.value = tier.bloom
+    F.tColor.value = frame.texture; F.tBloom.value = (T.up[0] || T.down[0]).texture; F.uExposure.value = G.exposure * (1 - 0.25 * weatherLit()); F.uBloom.value = G.bloom * (1 - 0.7 * weatherLit());      // card #85: a lightning flash lights the street, it does not bloom the frame white F.uBloomN.value = tier.bloom
     F.uSat.value = G.saturation; F.uVignette.value = G.vignette; F.uGrain.value = G.grain; F.uTime.value = R.uniforms.time.value
     F.uShadows.value.set(...G.shadows); F.uHighlights.value.set(...G.highlights)
     if (tier.msaa) realPassTo(raw, R, 'final', out)
@@ -20239,7 +20246,7 @@ function capePose(R, from, to = R.cape.length - 1) {
 }
 function rigCape(a, R, dt) {
   if (!R.cape.length || !dt || !capePoints(R)) return
-  const M = R.M, v = a.v || 0, h = Math.min(dt, 0.05), bend = M.capeBend || [1, 0.55, 0.75]
+  const M = R.M, v = Math.max(0, (a.v || 0) + weatherPush(a)), h = Math.min(dt, 0.05), bend = M.capeBend || [1, 0.55, 0.75]
   // seated in a car he moves with it: the cape gets no wind (it would sweep up through the roof) and hangs down his back
   const seated = a.hold === 'sit', dying = a.dying >= 0
   const lift = seated || dying ? 0 : Math.min(a.chainState?.[0] >= 3 ? 0.35 : a.moveState ? 0.6 : M.capeMax, v * M.capeK)
@@ -23502,7 +23509,7 @@ function drawDebug(me, fps) {
         '  touch ' + String(IS_TOUCH).padEnd(5) + ' shadows ' + String(renderer.shadowMap.enabled).padEnd(5)) +
     row('look', LOOKS[settings.look].label + '  post ' + lookStats.passes + '  targets ' + (lookStats.targetBytes / 1048576).toFixed(1) + ' MiB') +
     row('screens', (() => { const T = teleState(0), o = T.own; return v(T.src) + ' ' + T.w + 'x' + T.h + '  ' + (T.framed ? 'framed' : 'alone') + ' want ' + T.want + '  recv ' + v(T.recvPerSec) + '/s  last ' + v(T.lastAgeMs == null ? '-' : T.lastAgeMs + 'ms') + '  up ' + T.uploadN + '  refused ' + v(Object.entries(T.refused).map(([k, n]) => k + ' ' + n).join(' ') || 0) + '  screens ' + T.screens + (o ? '\n' + ''.padEnd(9) + 'own ' + o.w + 'x' + o.h + ' buf ' + (bc.video.buffered.length ? (bc.video.buffered.end(bc.video.buffered.length - 1) - bc.video.currentTime).toFixed(1) : '-') + 's lat ' + (bc.hls?.latency != null ? bc.hls.latency.toFixed(1) + 's' : '-') + ' retries ' + bc.retries + (bcastUrl || bc.url ? '  ' + esc(bcastOrigin(isHost ? bcastUrl : bc.url)) : '') : '') })()) +
-    row('weather', weather.kind + '  rain ' + weather.rain.toFixed(2) + '  fog ' + weather.fog.toFixed(2) + '  wind ' + weather.wind.toFixed(2) + '  storm ' + weather.storm.toFixed(2) + '  wet ' + weather.wet.toFixed(2) + (weather.override ? '  (host: ' + weather.override.kind + ')' : '')) +
+    row('weather', weather.kind + '  rain ' + weather.rain.toFixed(2) + '  fog ' + weather.fog.toFixed(2) + '  wind ' + weather.wind.toFixed(2) + '  storm ' + weather.storm.toFixed(2) + '  wet ' + weather.wet.toFixed(2) + (weather.override ? '  (host: ' + weather.override.kind + ')' : '') + (rainState.n ? '  drops ' + rainState.n + '/' + rainState.m : '')) +
     row('cost', 'sim ' + v(f(msSim, 5, 2)) + 'ms  phys ' + v(f(msPhys, 5, 2)) +
         'ms  draw ' + v(f(msDraw, 5, 2)) + 'ms  steps ' + p(lastSteps, 2)) +
     (joinLog.length ? row('joins', esc(joinLog.join('  '))) : '') +
@@ -24007,7 +24014,7 @@ function sfxPlay(name, at, cat, lvl, delay, span, who) { return playSound(name, 
 // ---- synth recipes: what a row's `synth` names. A recipe is (out, t, span, o) -> { srcs, len }: it builds its nodes into the gain node
 // `out`, to start at context time t, and returns every source it started (they are stopped if the voice is cut) and how long it lasts s.
 // span is 0, or Infinity for a loop it must keep going; o is the playSound options (o.line, o.text for a voice line).
-let soundNoise = null
+let soundNoise = null, soundRain = null
 function coinRattle(out, t, srcs) {
   for (let i = 0, n = 3 + (Math.random() * 4 | 0); i < n; i++) {
     const o = actx.createOscillator(), g = actx.createGain(), f = 2400 + Math.random() * 3200
@@ -24019,6 +24026,37 @@ function coinRattle(out, t, srcs) {
   return t
 }
 const SYNTH = {
+  // card #85: rain on streets and roofs: noise looped, a hiss over a low patter (its level is set by the weather, each frame)
+  rain(out, t, span) {
+    if (!soundRain) { soundRain = actx.createBuffer(1, actx.sampleRate * 2, actx.sampleRate); const c = soundRain.getChannelData(0); let b0 = 0, b1 = 0; for (let i = 0; i < c.length; i++) { const w = Math.random() * 2 - 1; b0 = 0.99 * b0 + w * 0.1; b1 = 0.9 * b1 + w * 0.3; c[i] = (b0 + 0.3 * b1 + 0.2 * w) * 0.5 } }
+    const srcs = [], len = span === Infinity ? 1 : 3
+    for (const [rate, type, f, q, gain] of [[1, 'highpass', 450, 0.5, 0.8], [0.73, 'bandpass', 260, 0.7, 0.7]]) {
+      const s = actx.createBufferSource(), flt = actx.createBiquadFilter(), g = actx.createGain()
+      s.buffer = soundRain; s.loop = true; s.playbackRate.value = rate; flt.type = type; flt.frequency.value = f; flt.Q.value = q; g.gain.value = gain
+      s.connect(flt); flt.connect(g); g.connect(out); s.start(t, Math.random() * 1.5)
+      if (span !== Infinity) { g.gain.setValueAtTime(gain, t + len - 0.4); g.gain.linearRampToValueAtTime(0, t + len); s.stop(t + len) }
+      srcs.push(s)
+    }
+    return { srcs, len }
+  },
+  // card #85: thunder, from o.dist m: the nearer, the sharper the crack and the shorter the roll
+  thunder(out, t, span, o) {
+    if (!soundRain) SYNTH.rain(actx.createGain(), t, 0).srcs.forEach(s => { try { s.stop() } catch (e) {} })
+    const d = clamp((o.dist || 1500) / 3200, 0, 1), len = 4 + 5 * d, srcs = []
+    const rumble = actx.createBufferSource(), lp = actx.createBiquadFilter(), g = actx.createGain()
+    rumble.buffer = soundRain; rumble.loop = true; rumble.playbackRate.value = 0.5 + 0.3 * (1 - d); lp.type = 'lowpass'; lp.frequency.value = 650 - 420 * d; lp.Q.value = 0.8
+    const at = 0.04 + 0.3 * d, peak = 1 - 0.4 * d, n = 5 + (d * 4 | 0)
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + at)
+    for (let i = 1; i <= n; i++) { const x = i / n; g.gain.linearRampToValueAtTime(Math.max(0.0005, peak * Math.exp(-3 * x) * (i % 2 ? 0.55 : 1)), t + at + x * (len - at)) }
+    g.gain.linearRampToValueAtTime(0, t + len)
+    rumble.connect(lp); lp.connect(g); g.connect(out); rumble.start(t, Math.random() * 1.5); rumble.stop(t + len + 0.1); srcs.push(rumble)
+    if (d < 0.35) {      // close: a crack
+      const k = actx.createBufferSource(), hp = actx.createBiquadFilter(), kg = actx.createGain()
+      k.buffer = soundRain; k.loop = true; hp.type = 'highpass'; hp.frequency.value = 1500; kg.gain.setValueAtTime(0.55 * (1 - d / 0.35), t); kg.gain.exponentialRampToValueAtTime(0.001, t + 0.18)
+      k.connect(hp); hp.connect(kg); kg.connect(out); k.start(t, Math.random() * 1.5); k.stop(t + 0.2); srcs.push(k)
+    }
+    return { srcs, len }
+  },
   // card #59: coins rattled in the tin cup
   coins(out, t) {
     const srcs = [], end = coinRattle(out, t + 0.01, srcs)
@@ -34842,9 +34880,20 @@ function weatherSlot(seed, n) {
   for (const [kind, p] of WEATHER.odds) { acc += p; if (r < acc) return { kind, s } }
   return { kind: 'clear', s }
 }
-// the schedule alone: the seed picks where in the slots a game's clock begins
+// where in the slots a game's clock begins: the seed picks one of eight, and a game starts in a clear slot, already faded in (so the
+// weather arrives while he plays; the streets may still be damp from the slot before it)
+let weatherStartMemo = null
+function weatherStart(seed) {
+  if (weatherStartMemo?.seed === seed) return weatherStartMemo.off
+  const first = weatherHash(seed, -7) % 8
+  let n = first
+  for (let k = 0; k < 8; k++) if (weatherSlot(seed, first + k).kind === 'clear') { n = first + k; break }
+  weatherStartMemo = { seed, off: n * WEATHER.slot + WEATHER.blend }
+  return weatherStartMemo.off
+}
+// the schedule alone
 function weatherSched(seed, t) {
-  const off = (weatherHash(seed, -7) % 8) * WEATHER.slot, u = t + off, n = Math.floor(u / WEATHER.slot)
+  const u = t + weatherStart(seed), n = Math.floor(u / WEATHER.slot)
   const a = weatherSlot(seed, n - 1), b = weatherSlot(seed, n), k = weatherEase((u - n * WEATHER.slot) / WEATHER.blend)
   const A = weatherLevels(a.kind, a.s), B = weatherLevels(b.kind, b.s), lv = A.map((v, i) => weatherMix(v, B[i], k))
   let wet = weatherWet(lv[0])
@@ -34872,7 +34921,7 @@ function weatherAt(seed, t, ov) {
 // lightning: at most one bolt in each WEATHER.bolt window, if the storm then allows it (a pure function of the seed and the window).
 // start: ms; power 0.4..1 (how bright the flash); dist m (the thunder comes dist / 0.34 ms later)
 function weatherBolt(seed, w, ov) {
-  const start = w * WEATHER.bolt + Math.floor(weatherUnit(seed ^ 0x2545f491, w) * WEATHER.bolt * 0.8)
+  const start = w * WEATHER.bolt + Math.floor(WEATHER.bolt * 0.15 + weatherUnit(seed ^ 0x2545f491, w) * WEATHER.bolt * 0.6)      // 0.75 to 3.75 s into the window: bolts at least 2 s apart, so never more than three flashes in a second
   if (weatherUnit(seed ^ 0x1b873593, w) >= 0.8 * weatherAt(seed, start, ov).storm) return null
   const dist = 300 + Math.floor(weatherUnit(seed ^ 0x68e31da4, w) * 2600)
   return { w, start, power: 0.4 + 0.6 * weatherUnit(seed ^ 0x3c6ef372, w), dist, thunderAt: start + Math.round(dist / 0.34) }
@@ -34907,15 +34956,16 @@ function weatherWind(seed, t, wind) {
 // the live state every look reads: weather.rain, .fog, .wind, .storm, .cloud, .wet (0..1), .flash (0..1: a lightning flash now),
 // .windX/.windZ (m/s), .gust, .thunder (bolts whose thunder just arrived, for the sound), .kind, .override (the host's, or null)
 const weather = { kind: 'clear', rain: 0, fog: 0, wind: 0, storm: 0, cloud: 0, wet: 0, flash: 0, gust: 0, windX: 0, windZ: 0, thunder: [], blend: 1, slot: 0, t: 0, override: null }
-let weatherOv = null, weatherSentAt = -1e9, weatherBurst = 0, weatherLastT = -1
+let weatherOv = null, weatherSentAt = -1e9, weatherBurst = 0, weatherLastT = -1, weatherForce = null      // weatherForce: a test's own flash level, local only
 const weatherSeed = () => levelGen ? levelGen.seed >>> 0 : 0
 // once a frame: the state at the room clock
-function weatherFrame() {
+function weatherFrame(dt = 1 / 60) {
   const t = trafficClock() * 1000, seed = weatherSeed(), S = weatherAt(seed, t, weatherOv), W = weatherWind(seed, t, S.wind)
   const last = weatherLastT >= 0 && t - weatherLastT < 1500 && t >= weatherLastT ? weatherLastT : undefined   // a jump in the clock fires no old thunder
   const sky = weatherSky(seed, t, weatherOv, last)
-  Object.assign(weather, S, { flash: sky.flash, thunder: sky.thunder, gust: W.gust, windX: W.x, windZ: W.z, t, override: weatherOv })
+  Object.assign(weather, S, { wetness: S.wet, flash: weatherForce ?? sky.flash, thunder: sky.thunder, gust: W.gust, windX: W.x, windZ: W.z, t, override: weatherOv })
   weatherLastT = t
+  weatherLook(dt)
 }
 // the host's choice, carried in its snapshots (wx) until a guest has it: [kind, strength, t0, ...the levels it started from]
 function weatherSet(kind, s) {
@@ -34954,9 +35004,228 @@ Object.assign(GAME.commands, { weather: { args: '[clear|rain|storm|fog|auto] [0-
 // gameHooks.weather: the state, and the schedule at any time: weather.at(ms) with this seed, weather.schedule(seed, fromMs, toMs, stepMs)
 function weatherApi() {
   return { state: weather, at: (t, seed = weatherSeed()) => weatherAt(seed, t, null), seedNow: weatherSeed,
-    set: (kind, s = 0.8) => isHost && (kind === 'auto' || Object.hasOwn(WEATHER.levels, kind)) ? (weatherSet(kind, s), true) : false,
+    looks: WEATHER_LOOKS,      // which looks show the weather: Plain on; set .ink / .realistic = true to see them before they pass review
+    drops: () => ({ streaks: rainState.n, splashes: rainState.m, cover: +rainState.cover.toFixed(2), shown: !!rainState.group?.visible, inScene: rainState.group?.parent === scene, buf: renderer?.domElement.height, paper0: (a => a && Number.isFinite(a[0]) ? [0, 1, 2].map(k => (a[k] + a[3 + k] + a[6 + k] + a[9 + k]) / 4) : null)(rainState.paper?.geometry.attributes.position.array) }),
+    force: v => { weatherForce = v === null ? null : clamp(+v || 0, 0, 1); return weatherForce },      // for a capture: hold the flash at v (0..1) on this page, null releases it
+    bolts: (from, to) => { const out = []; for (let w = Math.floor(from / WEATHER.bolt); w <= Math.floor(to / WEATHER.bolt); w++) { const b = weatherBolt(weatherSeed(), w, weatherOv); if (b) out.push(b) } return out },
+    set: (kind, s = 0.8, instant = false) => isHost && (kind === 'auto' || Object.hasOwn(WEATHER.levels, kind)) ? (weatherSet(kind, s), instant && (weatherOv.t0 -= WEATHER.fade), true) : false,      // instant: a test's, no fade
+
     schedule(seed, from, to, step = 10000) { const out = []; let was = ''; for (let t = from; t <= to; t += step) { const S = weatherAt(seed, t, null), key = S.kind + '/' + S.slot; if (key !== was) { was = key; out.push([t, S.kind, S.slot, +S.rain.toFixed(2), +S.fog.toFixed(2), +S.storm.toFixed(2), +S.wet.toFixed(2)]) } } return out } }
 }
+// ---- what the weather does to the picture (card #85). Rain streaks and splashes, a darker overcast, fog banks, wet sheen.
+// The rain is two camera-facing ribbon meshes (fxRibbon: the effects' own program, already compiled for the game, so no new
+// shader), one quad a streak and a flat ring a splash, written on the CPU each frame inside a box that wraps around the camera.
+// The counts scale with the quality's fx share and the rain level, and are capped: RAIN.streaks and RAIN.splashes at most.
+// each look's rain: colour, the alpha share, and for Ink a second colour taken by every other streak (ink lines on the paper, paper lines on the black)
+const RAIN_LOOK = { plain: { c: [0.8, 0.88, 1], a: 1, alt: null }, ink: { c: [0.02, 0.02, 0.03], a: 2.2, alt: [0.92, 0.92, 0.9] }, realistic: { c: [0.38, 0.45, 0.58], a: 0.8, alt: null } }
+const RAIN = { streaks: 1100, splashes: 120, box: 28, top: 16, bottom: 7, speed: [10, 15], len: [1.3, 2.6], width: 0.016, alpha: 0.5, colour: [0.8, 0.88, 1],
+  ring: [0.1, 0.5], life: [0.3, 0.6], reach: 14, sky: 0x10151b, skyK: 0.35, lit: 0.35, litHemi: 0.18, damp: 0.1, windFrom: 0.15,
+  // lightning, each 0..1 times weather.flash (itself at most 1): Plain and Ink's sun and sky light up by these shares, the sky toward skyC; Realistic's moon and ambient add these
+  flash: { sun: 1.2, hemi: 3, sky: 0.8, skyC: 0xdfe8ff, real: [0.5, 0.8], reduced: 0.35 } }
+// fog banks: weather.fog 0..1 pulls the linear fog (Plain, Ink) in from where it was to FOG.near..FOG.far and thickens Realistic's
+// exponential fog by up to FOG.density times; the bank's thickness drifts (±FOG.bank) with where he stands and with time
+// which looks show the weather: Plain passed #72; Ink and Realistic are switched on as each passes (a test may set gameHooks.weather.looks.ink = true)
+const WEATHER_LOOKS = { plain: true, ink: false, realistic: false }
+const FOG = { near: 10, far: 230, density: 5, bank: 0.18, tint: 0x3a4655, tintK: 0.5, curve: 0.8 }
+// loose paper in the wind: flat bits tumbling along the street ahead of the gusts, a ribbon mesh of its own (the rain's program)
+const PAPER = { n: 14, box: 34, size: [0.3, 0.21], from: 0.15, full: 0.6, drift: 0.8, colour: { plain: [0.46, 0.45, 0.4], ink: [0.02, 0.02, 0.03], realistic: [0.2, 0.19, 0.17] } }
+const rainState = { group: null, streaks: null, splashes: null, T: 0, ox: 0, oz: 0, px: 0, pz: 0, pT: 0, cover: 1, coverTo: 1, coverAt: 0, n: 0, m: 0, lit: null,
+  a: null, s: null }
+function rainBuild() {
+  const rnd = (seed => () => (seed = Math.imul(seed ^ seed >>> 15, 2246822519) + 0x6d2b79f5 | 0, ((seed ^ seed >>> 13) >>> 0) / 4294967296))(0x7a1e5)
+  const R = rainState, N = RAIN.streaks, M = RAIN.splashes, S = R.a = { x: new Float32Array(N), y: new Float32Array(N), z: new Float32Array(N), v: new Float32Array(N), l: new Float32Array(N), a: new Float32Array(N) }
+  for (let i = 0; i < N; i++) { S.x[i] = rnd() * RAIN.box; S.z[i] = rnd() * RAIN.box; S.y[i] = rnd() * (RAIN.top + RAIN.bottom)
+    S.v[i] = RAIN.speed[0] + rnd() * (RAIN.speed[1] - RAIN.speed[0]); S.l[i] = RAIN.len[0] + rnd() * (RAIN.len[1] - RAIN.len[0]); S.a[i] = 0.4 + 0.6 * rnd() }
+  const idx = []
+  for (let i = 0; i < N; i++) idx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 2, i * 4 + 1, i * 4 + 3)
+  R.streaks = fxRibbon(N * 4, idx, { fog: false })
+  const ring = []
+  for (let i = 0; i < M; i++) for (let k = 0; k < 8; k++) { const a = i * 16 + k * 2, b = i * 16 + (k + 1) % 8 * 2; ring.push(a, a + 1, b, b, a + 1, b + 1) }
+  R.splashes = fxRibbon(M * 16, ring, { fog: false })
+  R.s = { x: new Float32Array(M), z: new Float32Array(M), p: new Float32Array(M), t: new Float32Array(M), c: new Int32Array(M).fill(-1) }
+  for (let i = 0; i < M; i++) { R.s.p[i] = rnd(); R.s.t[i] = RAIN.life[0] + rnd() * (RAIN.life[1] - RAIN.life[0]) }
+  const pidx = []
+  for (let i = 0; i < PAPER.n; i++) pidx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 2, i * 4 + 1, i * 4 + 3)
+  R.paper = fxRibbon(PAPER.n * 4, pidx, { fog: false })
+  R.p = { x: new Float32Array(PAPER.n), z: new Float32Array(PAPER.n), f: new Float32Array(PAPER.n), s: new Float32Array(PAPER.n), p: new Float32Array(PAPER.n) }
+  for (let i = 0; i < PAPER.n; i++) { R.p.x[i] = rnd() * PAPER.box; R.p.z[i] = rnd() * PAPER.box; R.p.f[i] = 0.55 + 0.45 * rnd(); R.p.s[i] = 0.6 + 0.8 * rnd(); R.p.p[i] = rnd() * 6.283 }
+  R.group = new THREE.Group(); R.group.name = 'rain'
+  for (const m of [R.streaks, R.splashes, R.paper]) { m.frustumCulled = false; m.renderOrder = 6; m.matrixAutoUpdate = false; R.group.add(m) }
+}
+const rainWrap = (v, w) => v - Math.floor(v / w) * w
+// the rain's frame: dt s, the camera, the player's feet (the splashes' ground)
+// a roof overhead (an awning, a bridge, a ceiling) keeps the rain and the wind off: looked for at 6 Hz, eased (rainState.cover 1 open .. 0.12 roofed)
+function weatherCover(dt) {
+  const R = rainState, c = camera.position, t = performance.now()
+  if (t - R.coverAt > 160) { R.coverAt = t; try { R.coverTo = staticRay(c.x, c.y + 0.3, c.z, 0, 1, 0, 30) < 29.5 ? 0.12 : 1 } catch (e) { R.coverTo = 1 } }
+  R.cover += (R.coverTo - R.cover) * (1 - Math.exp(-dt * 4))
+}
+// the wind's push on a character's cape: m/s added to his speed, as if the air he runs into (a headwind lifts it, a tail wind lays it down)
+function weatherPush(a) {
+  if (!(weather.wind > 0.02) || !WEATHER_LOOKS[activeLook]) return 0
+  const yaw = a.mesh?.rotation?.y || 0, head = -(weather.windX * -Math.sin(yaw) + weather.windZ * -Math.cos(yaw))
+  return Math.max(-3, Math.min(6, head * 0.6)) * (0.3 + 0.7 * rainState.cover)
+}
+function paperDraw(dt, fx, look) {
+  const R = rainState, c = camera.position, P = R.p, K = PAPER, col = K.colour[activeLook] || K.colour.plain, alt = activeLook === 'ink' ? [0.92, 0.92, 0.9] : col
+  const wind = weather.wind, ease = Math.min(1, Math.max(0, (wind - K.from) / (K.full - K.from))), n = Math.round(K.n * fx * ease * (0.4 + 0.6 * R.cover))
+  R.paper.visible = n > 0
+  if (!n) return
+  R.px += weather.windX * K.drift * dt; R.pz += weather.windZ * K.drift * dt; R.pT += dt
+  const me = isHost ? players.get(0) : predicted, gy = me ? me.y - me.h - me.r : c.y - 1.7
+  const pa = R.paper.geometry.attributes.position.array, ka = R.paper.geometry.attributes.color.array, hop = Math.min(1, weather.windX * weather.windX + weather.windZ * weather.windZ > 0 ? Math.hypot(weather.windX, weather.windZ) / 9 : 0)
+  for (let i = 0; i < n; i++) {
+    const f = P.f[i], rx = rainWrap(P.x[i] + R.px * f - c.x, K.box) - K.box / 2, rz = rainWrap(P.z[i] + R.pz * f - c.z, K.box) - K.box / 2
+    const th = R.pT * (1.4 + P.s[i] * 2.2) + P.p[i], air = hop * Math.abs(Math.sin(R.pT * 1.9 * P.s[i] + P.p[i] * 2)), y = gy + 0.03 + 0.5 * air, ph = 0.08 + (0.25 + 0.75 * Math.abs(Math.sin(R.pT * 2.3 * P.s[i] + P.p[i]))) * Math.min(1, air * 4)      // tilting in the air, flat on the street
+    const x = c.x + rx, z = c.z + rz, cth = Math.cos(th), sth = Math.sin(th), cph = Math.cos(ph), sph = Math.sin(ph), hw = K.size[0] / 2, hh = K.size[1] / 2
+    const ux = cth * hw, uz = sth * hw, vx = -sth * cph * hh, vy = sph * hh, vz = cth * cph * hh, k = i * 12
+    pa[k] = x - ux - vx; pa[k + 1] = y - vy; pa[k + 2] = z - uz - vz; pa[k + 3] = x + ux - vx; pa[k + 4] = y - vy; pa[k + 5] = z + uz - vz
+    pa[k + 6] = x - ux + vx; pa[k + 7] = y + vy; pa[k + 8] = z - uz + vz; pa[k + 9] = x + ux + vx; pa[k + 10] = y + vy; pa[k + 11] = z + uz + vz
+    const d = Math.hypot(rx, rz), a = 0.9 * Math.min(1, d / 1.5) * (1 - Math.min(1, Math.max(0, (d - 11) / 6))), cc = i & 1 ? alt : col, q = i * 16
+    for (let v = 0; v < 4; v++) { ka[q + v * 4] = cc[0]; ka[q + v * 4 + 1] = cc[1]; ka[q + v * 4 + 2] = cc[2]; ka[q + v * 4 + 3] = a }
+  }
+  R.paper.geometry.attributes.position.needsUpdate = R.paper.geometry.attributes.color.needsUpdate = true; R.paper.geometry.setDrawRange(0, n * 6)
+}
+function rainDraw(dt, level, fx, look) {
+  const R = rainState, c = camera.position, wx = weather.windX, wz = weather.windZ
+  if (!R.group) rainBuild()
+  if (R.group.parent !== scene) scene.add(R.group)
+  R.group.visible = true
+  const me = isHost ? players.get(0) : predicted, gy = me ? me.y - me.h - me.r : c.y - 1.7
+  R.T += dt; R.ox += wx * 0.9 * dt; R.oz += wz * 0.9 * dt
+  const B = RAIN.box, H = RAIN.top + RAIN.bottom, col0 = look.c, col1 = look.alt || look.c, amax = Math.min(1, RAIN.alpha * look.a) * level * R.cover
+  const n = R.n = Math.min(RAIN.streaks, Math.round(RAIN.streaks * fx * Math.min(1, level * 1.25))), A = R.a
+  const P = R.streaks.geometry.attributes.position, K = R.streaks.geometry.attributes.color, pa = P.array, ka = K.array
+  const vx = wx * 0.9, vz = wz * 0.9
+  const pix = 1.3 * 2 * Math.tan(camera.fov * Math.PI / 360) / Math.max(1, renderer.domElement.height)      // a pixel and a third at any distance, however small the buffer
+  for (let i = 0; i < n; i++) {
+    const v = A.v[i]
+    const rx = rainWrap(A.x[i] + R.ox - c.x, B) - B / 2, rz = rainWrap(A.z[i] + R.oz - c.z, B) - B / 2
+    const ry = rainWrap(A.y[i] - v * R.T, H) - RAIN.bottom                  // metres above the camera
+    const px = c.x + rx, py = c.y + ry, pz = c.z + rz
+    // along the fall: the streak's tail is up the way it came
+    let dx = vx, dy = -v, dz = vz; const dl = Math.sqrt(dx * dx + dy * dy + dz * dz); dx /= dl; dy /= dl; dz /= dl
+    const L = A.l[i], tx = px - dx * L, ty = py - dy * L, tz = pz - dz * L
+    // across it, facing the camera
+    const ex = px - c.x, ey = py - c.y, ez = pz - c.z, dist = Math.sqrt(ex * ex + ey * ey + ez * ez)
+    let sx = dy * ez - dz * ey, sy = dz * ex - dx * ez, sz = dx * ey - dy * ex; const sl = Math.sqrt(sx * sx + sy * sy + sz * sz) || 1
+    const w = Math.max(RAIN.width, dist * pix) * 0.5 / sl; sx *= w; sy *= w; sz *= w
+    const k = i * 12
+    pa[k] = px - sx; pa[k + 1] = py - sy; pa[k + 2] = pz - sz; pa[k + 3] = px + sx; pa[k + 4] = py + sy; pa[k + 5] = pz + sz
+    pa[k + 6] = tx - sx; pa[k + 7] = ty - sy; pa[k + 8] = tz - sz; pa[k + 9] = tx + sx; pa[k + 10] = ty + sy; pa[k + 11] = tz + sz
+    // gone near the lens and at the box's edge, thinner with the reach
+    const near = Math.min(1, Math.max(0, (dist - 0.7) / 2.5)), far = 1 - Math.min(1, Math.max(0, (dist - 14) / 16)), a = amax * A.a[i] * near * far
+    const q = i * 16, col = i & 1 ? col1 : col0
+    ka[q] = col[0]; ka[q + 1] = col[1]; ka[q + 2] = col[2]; ka[q + 3] = a
+    ka[q + 4] = col[0]; ka[q + 5] = col[1]; ka[q + 6] = col[2]; ka[q + 7] = a
+    ka[q + 8] = col[0]; ka[q + 9] = col[1]; ka[q + 10] = col[2]; ka[q + 11] = 0
+    ka[q + 12] = col[0]; ka[q + 13] = col[1]; ka[q + 14] = col[2]; ka[q + 15] = 0
+  }
+  P.needsUpdate = K.needsUpdate = true; R.streaks.geometry.setDrawRange(0, n * 6); R.streaks.visible = n > 0
+  // splashes: a ring opening on the ground, each on its own cycle, where it began near the camera
+  const Sp = R.s, m = R.m = Math.min(RAIN.splashes, Math.round(RAIN.splashes * fx * Math.min(1, level * 1.1)))
+  const sp = R.splashes.geometry.attributes.position, sk = R.splashes.geometry.attributes.color, spa = sp.array, ska = sk.array
+  for (let i = 0; i < m; i++) {
+    const u0 = R.T / Sp.t[i] + Sp.p[i], cyc = Math.floor(u0), u = u0 - cyc
+    if (Sp.c[i] !== cyc) { Sp.c[i] = cyc; const h = weatherHash(i * 7919 + 13, cyc); Sp.x[i] = c.x + (((h & 0xffff) / 65535) * 2 - 1) * RAIN.reach; Sp.z[i] = c.z + ((((h >>> 16) & 0xffff) / 65535) * 2 - 1) * RAIN.reach }
+    const r = RAIN.ring[0] + (RAIN.ring[1] - RAIN.ring[0]) * u, r0 = r * 0.7, d = Math.hypot(Sp.x[i] - c.x, Sp.z[i] - c.z)
+    const a = Math.min(1, amax * 2) * (1 - u) * (1 - u) * Math.min(1, d / 2.5) * (1 - Math.min(1, Math.max(0, (d - 8) / 7)))
+    for (let k = 0; k < 8; k++) {
+      const ang = k * Math.PI / 4, ca = Math.cos(ang), sa = Math.sin(ang), o = i * 48 + k * 6, q = i * 64 + k * 8
+      spa[o] = Sp.x[i] + ca * r0; spa[o + 1] = gy + 0.03; spa[o + 2] = Sp.z[i] + sa * r0; spa[o + 3] = Sp.x[i] + ca * r; spa[o + 4] = gy + 0.03; spa[o + 5] = Sp.z[i] + sa * r
+      ska[q] = col0[0]; ska[q + 1] = col0[1]; ska[q + 2] = col0[2]; ska[q + 3] = a * 0.4; ska[q + 4] = col0[0]; ska[q + 5] = col0[1]; ska[q + 6] = col0[2]; ska[q + 7] = a
+    }
+  }
+  if (m < RAIN.splashes) for (let i = m; i < Math.min(RAIN.splashes, m + 2); i++) for (let k = 0; k < 8; k++) { ska[i * 64 + k * 8 + 3] = 0; ska[i * 64 + k * 8 + 7] = 0 }
+  sp.needsUpdate = sk.needsUpdate = true; R.splashes.geometry.setDrawRange(0, m * 48); R.splashes.visible = m > 0
+}
+// the overcast: Plain's sky and fog colour and the two lights, eased toward the weather's cloud and restored when it clears.
+// Whoever else sets a light (an event) is followed: the share is taken from whatever value was last left there.
+function weatherFog() {
+  const f = scene.fog
+  if (!f) return 0
+  const c = camera.position, t = weather.t / 1000, g = Math.min(1, Math.pow(WEATHER_LOOKS[activeLook] ? weather.fog : 0, FOG.curve) * (1 + FOG.bank * Math.sin(c.x * 0.007 + t * 0.045) * Math.sin(c.z * 0.006 - t * 0.037 + 1.3)))
+  if (f.isFog) { const end = viewEnd(), near0 = Math.min(ARENA * LV.theme.fog[1] * viewScale, end); f.near = near0 + (FOG.near - near0) * g; f.far = end + (FOG.far - end) * g }
+  else if (f.isFogExp2) f.density = REAL_SKY.fogDensity * (1 + FOG.density * g)
+  return g
+}
+const weatherReduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches      // a player who asks for less motion gets a flash a third as strong
+function weatherLights(k, fogK, flash) {
+  flash *= weatherReduced ? RAIN.flash.reduced : 1
+  const R = rainState, F = RAIN.flash, L = R.lit ||= { sun: 0, hemi: 0, sunSet: -1, hemiSet: -1, hemiLight: null, scene: null, sky: new THREE.Color(), grey: new THREE.Color(RAIN.sky), tint: new THREE.Color(FOG.tint), flash: new THREE.Color(F.skyC), on: false, bg: null, fog: null }
+  if (L.scene !== scene) { L.scene = scene; L.hemiLight = scene.children.find(n => n.isHemisphereLight) || null; L.sunSet = L.hemiSet = -1 }
+  if (sunLight) { if (L.sunSet < 0 || Math.abs(sunLight.intensity - L.sunSet) > 1e-6) L.sun = sunLight.intensity; sunLight.intensity = L.sunSet = L.sun * (1 - RAIN.lit * k + F.sun * flash) }
+  const h = L.hemiLight
+  if (h) { if (L.hemiSet < 0 || Math.abs(h.intensity - L.hemiSet) > 1e-6) L.hemi = h.intensity; h.intensity = L.hemiSet = L.hemi * (1 - RAIN.litHemi * k + F.hemi * flash) }
+  // the colours: the objects touched are kept, so a look left mid-rain gets its own back and Realistic's fog is never written
+  if ((k > 0 || fogK > 0 || flash > 0) && scene.background?.isColor) { L.bg = scene.background; L.fog = scene.fog?.isFog === true ? scene.fog : null }
+  if (L.bg) { L.sky.setHex(LV.theme.fog[0]).lerp(L.grey, RAIN.skyK * k).lerp(L.tint, FOG.tintK * fogK).lerp(L.flash, F.sky * flash); L.bg.copy(L.sky); if (L.fog) L.fog.color.copy(L.sky) }
+  L.on = k > 0 || fogK > 0 || flash > 0
+  if (!L.on) L.bg = L.fog = null
+}
+// sound: the rain's loop (its level follows the rain, softer under a roof) and each bolt's thunder as it arrives
+let sfxRain = null
+function weatherSound() {
+  if (!sfxLive()) { sfxRain = null; return }
+  const t = actx.currentTime, R = rainState
+  if (sfxRain && sfxRain.end <= t) sfxRain = null
+  const live = !!WEATHER_LOOKS[activeLook], want = live && weather.rain > 0.04 ? (0.15 + 0.85 * weather.rain) * (0.3 + 0.7 * R.cover) : 0
+  if (want > 0) {
+    if (!sfxRain || sfxRain.off) sfxRain = playSound('Rain', { cat: 'world', lvl: 0.05, span: Infinity })      // starts quietly and is eased up
+    if (sfxRain) { sfxRain.off = false; sfxRain.end = t + 0.25; for (const s of sfxRain.srcs) { try { s.stop(sfxRain.end) } catch (e) {} } sfxRain.out.gain.setTargetAtTime(want * (SOUNDS.Rain.vol ?? 1), t, 0.4) }
+  } else if (sfxRain && !sfxRain.off) { sfxRain.off = true; sfxCut(sfxRain, t) }
+  if (live) for (const b of weather.thunder) playSound('Thunder', { cat: 'world', lvl: clamp(1.1 - b.dist / 3200, 0.25, 1) * (0.5 + 0.5 * R.cover) * (0.7 + 0.3 * b.power), dist: b.dist })
+}
+// once a frame, after the state: the look's share of the weather
+function weatherLook(dt) {
+  const R = rainState
+  if (!camera || !scene || renderHeadless) return
+  const live = !!WEATHER_LOOKS[activeLook], plain = activeLook === 'plain', look = RAIN_LOOK[activeLook] || RAIN_LOOK.plain, level = live ? weather.rain : 0, fx = (QUALITY[settings.quality] || QUALITY.high).fx * 0.5 + 0.5, d = Math.min(dt, 0.1)
+  const rain = level > 0.02, wind = live && weather.wind > RAIN.windFrom
+  if (rain || wind) weatherCover(d)
+  if (rain || wind) { if (!R.group) rainBuild(); if (R.group.parent !== scene) scene.add(R.group); R.group.visible = true }
+  if (rain) rainDraw(d, level, fx, look); else if (R.streaks) { R.streaks.visible = R.splashes.visible = false }
+  if (wind) paperDraw(d, fx, look); else if (R.paper) R.paper.visible = false
+  weatherTrees(wind ? weather.wind : 0)
+  if (R.group && !rain && !wind) R.group.visible = false
+  // Realistic's streets: its own wetness (the puddles grow with it and the sheen follows it), and a floor of damp
+  if (activeLook === 'realistic' && realState) realState.uniforms.wet.value = live ? RAIN.damp + (1 - RAIN.damp) * weather.wet : 1      // not switched on: the street as it was, always wet
+  const g = weatherFog(), k = plain ? weather.cloud : 0, fogK = plain ? g : 0, flash = live && (plain || activeLook === 'ink') ? weather.flash : 0
+  if (k > 0.001 || fogK > 0.001 || flash > 0.001 || R.lit?.on) weatherLights(k, fogK, flash)
+  weatherSound()
+}
+// trees in the wind: each crown's instance tilts about its own base (the trunk's top) toward the wind, a few degrees, slowly, with the
+// gusts; the trunk stays. CPU, the instance matrices of the crown meshes near the camera only (registered as the city builds them);
+// when the wind drops the matrices are put back as they were built.
+const TREES = { deg: 8, max: 8, hz: 0.4, near: 260 }
+const weatherCrowns = new Set()
+function weatherTrees(wind) {
+  if (!weatherCrowns.size) return
+  const c = camera.position, t = weather.t / 1000, on = wind > RAIN.windFrom, sp = Math.hypot(weather.windX, weather.windZ)
+  const ax = sp > 1e-3 ? weather.windZ / sp : 0, az = sp > 1e-3 ? -weather.windX / sp : 0       // up x wind: tilting a crown's top toward the wind
+  const amp = Math.min(TREES.max, TREES.deg * wind) * Math.PI / 180
+  for (const m of weatherCrowns) {
+    let p = m, up = 0; while (p.parent && up++ < 8) p = p.parent
+    if (p !== scene) { if (!m.parent || up >= 8 || !m.userData.swayBase) weatherCrowns.delete(m); continue }       // the city dropped it
+    const A = m.instanceMatrix.array, B = m.userData.swayBase ||= Float32Array.from(A)
+    if (Math.hypot(B[12] - c.x, B[14] - c.z) > TREES.near || !m.visible) continue
+    if (!on) { if (m.userData.swayOn) { A.set(B); m.instanceMatrix.needsUpdate = true; m.userData.swayOn = false } continue }
+    m.userData.swayOn = true
+    for (let i = 0, n = m.count; i < n; i++) {
+      const k = i * 16, ph = B[k + 12] * 0.37 + B[k + 14] * 0.23, th = amp * (0.55 + 0.35 * Math.sin(t * TREES.hz * 6.2832 + ph) + 0.1 * Math.sin(t * 1.3 + ph * 2.1)) * (0.6 + 0.4 * weather.gust)
+      const s = Math.sin(th), co = Math.cos(th), om = 1 - co
+      for (let col = 0; col < 3; col++) {
+        const j = k + col * 4, x = B[j], y = B[j + 1], z = B[j + 2], d = ax * x + az * z
+        A[j] = x * co + (-az * y) * s + ax * d * om            // a x v with a = (ax, 0, az): (0*z - az*y, az*x - ax*z, ax*y - 0*x)
+        A[j + 1] = y * co + (az * x - ax * z) * s
+        A[j + 2] = z * co + (ax * y) * s + az * d * om
+      }
+    }
+    m.instanceMatrix.needsUpdate = true
+  }
+}
+const weatherWetNow = () => weather.wet
+const weatherLit = () => WEATHER_LOOKS[activeLook] ? weather.flash : 0      // the flash a look is showing
 function draw(dt, t) {
   let me, others, pkl
   shotSkip = null
@@ -35079,8 +35348,9 @@ function draw(dt, t) {
   for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP))
   shake(camera, t)
   followSun()
-  weatherFrame()
   background.sec('camera')
+  weatherFrame(dt)
+  background.sec('weather')
   slFrameSafe(t, dt, obl)
   background.sec('street life')
   dsFrameSafe(t, dt)
