@@ -1246,6 +1246,9 @@ const OBJECTS = [
   { name: 'Biplane', shape: 'hull', mass: 8, bounce: 0.1, friction: 0.7, damp: [0, 0.3], hit: 0.3, color: 0x6e1c1c, drive: 'Biplane', plane: true, points: PLANE_HULL },
   { name: 'Biplane wreck', shape: 'hull', model: 'Biplane', mass: 8, bounce: 0.05, friction: 0.9, damp: [0.2, 0.5], hit: 0.2, color: 0x2b2b2b, plane: true },
 ]
+// card #84: a manhole's cover, once ripped off (a 16-sided slab, 92 cm across, 7 cm thick); its look is PROP_MODELS' 'Manhole cover'
+OBJECTS.push({ name: 'Manhole cover', shape: 'hull', points: Array.from({ length: 16 }, (_, i) => [Math.cos(i / 16 * Math.PI * 2) * 0.46, 0, Math.sin(i / 16 * Math.PI * 2) * 0.46]).flatMap(p => [[p[0], -0.035, p[2]], [p[0], 0.035, p[2]]]),
+  mass: 1.6, bounce: 0.2, friction: 0.6, damp: [0.08, 0.25], hit: 1, color: 0x2d3034, dmg: 45 })
 // rider centre over its cushion, × (h + r)
 const SIT_HIP = 0.29
 const seatFit = (s, C) => { const M = MODELS[C.model || 'man']
@@ -7602,6 +7605,7 @@ function faustNav(at, target) {
 
 let faustState = null
 function faustReset() {
+  faustSewReset()      // card #84
   faustRingInReset()
   faustDisposeSky()
   inReset()
@@ -7704,6 +7708,7 @@ function faustTick() {
   try { faustRingInTick(participants) } catch (e) { frameFailed('ring interiors', e) }      // card #78: ring houses and shacks open      // card #18: the rings' buildings' colliders
   GAME.fogGrown.x = 1e9
   try { faustInteriorTick(participants) } catch (e) { frameFailed('interiors', e) }
+  try { faustSewTick(participants) } catch (e) { frameFailed('sewers', e) }      // card #84
   faustState.stats.maxTickMs = Math.max(faustState.stats.maxTickMs, performance.now() - t)
 }
 
@@ -10044,6 +10049,751 @@ function faustInLid(c, vy) {
 // no smash crater in an open building, on any floor or its roof
 const faustInNoCrater = (x, z) => [...faustIn.open.values()].some(O => Math.abs(x - O.B.x) < O.B.w + 1.2 && Math.abs(z - O.B.z) < O.B.d + 1.2) || faustRingInHere(x, z)
 
+// ---------------------------------------------------------------- card #84: the sewers under the city
+// A network of brick and concrete tunnels under the avenues, one level (the walkway at -8 m), pure in (seed, size): the same for every
+// player. Its nodes are the avenues' junctions (96 m apart), each a chamber 9 m across; its edges run along the avenues between them: a
+// spanning tree of them (hashed order) plus about a third of the rest, so every chamber is reached and some are dead ends. A tunnel is 5 m
+// wide and 4.4 m high: a channel of water down its middle (2 m wide, a step down) with a walkway along each wall, ribs every 8 m, a pipe
+// and a caged lamp every 24 m (about 6 in 10 lit). Manholes: one in the street over the middle of each tunnel (36 or 60 m along, 1.75 m
+// off the avenue's centre line, on the walkway's side), one over some chambers' corners, over every dead end's. Never inside the central
+// plaza's square (no avenue there), on a rail beam's pylon or station, or on a flood channel's row (#83). Use (E) on one climbs down its
+// ladder to the walkway; E at a ladder's foot climbs back up. The way down is a step of the character's place (the lift's way: setCharPos,
+// a fade), not a hole in the floor: the world's floor plane is gone in Faustland (the cells' slabs, 1 m thick, are the floor in reach; below
+// -30 m the void rescues, as ever), so the space under the slabs is free.
+// Streamed like the interiors: colliders (a body a box, a unit a chunk) for the units within FAUST_SEW.reach of a participant under the
+// street (or FAUST_SEW.mouth of a manhole, for a player that may climb down); the look (one indexed mesh a unit, the interiors' vertex-lit
+// material: no new program) only while the camera is under the street, and a manhole's unit when the camera is near it. Nothing is built
+// where nobody is.
+const FAUST_SEW = { version: 1, floor: -8, ceil: -3.6, spring: -5, slab: 0.7, wall: 0.8, half: 2.5, chan: 1, trench: 0.9, bed: 0.7, chamber: 4.5, extra: 33,
+  reach: 70, mouth: 18, drop: 40, keep: 3000, along: [36, 60], across: 1.75, shaft: [0.65, 1.3], rib: 8, lampEvery: 24, lit: 50, ambient: 0.007, lamp: 4.2,
+  look: 80, cell: 1.6, covers: 220, plaza: 200, tint: { floor: 0x5a5d60, bed: 0x2b2f2d, brick: 0x5d4a42, brickDark: 0x4a3a34, ceil: 0x4b4e51, rib: 0x7b7d7c, pipe: 0x5e3b2a,
+    iron: 0x1d1f21, lens: 0xffd9a0, cold: 0x2a2a2a, water: 0x101a16, cap: 0x7a5a38, rung: 0x6c6f72 } }
+let faustSewMemo = null
+// the plan: { seed, S, nodes, edges, manholes, byCell (Map 'cx cz' -> manholes), hash, version, units (Map) }
+// node { id, i, j, x, z, arms (bits 1 +x, 2 -x, 4 +z, 8 -z), deg, edges, manhole }; edge { id, axis (0 along x, 1 along z), i, j, a, b, tree, manhole }
+// manhole { id, kind 'n' | 'e', ref (a node's or an edge's index), x, z (the street, and the ladder's foot under it), wall (which wall its ladder
+// climbs: [axis, side] in the unit's own frame), foot: y of the walkway }
+function faustSewers(seed, S) {
+  seed >>>= 0; S = Math.max(16, Math.min(32, S & ~1))
+  if (faustSewMemo?.seed === seed && faustSewMemo.S === S) return faustSewMemo
+  const K = FAUST_SEW, H = S / 2, N = S + 1, salt = seed ^ 0x53455745, nid = (i, j) => (i + H) * N + (j + H)
+  const nodes = [], edges = [], cand = []
+  // a flood channel's trench (#83, when it is there) is no place for a tunnel: no chamber or tunnel within 6 m of its cut
+  const cuts = typeof faustChannels === 'function' ? faustChannels(seed, S).rects : []
+  const inCut = (x0, z0, x1, z1) => cuts.some(r => x0 < r.a1 + 6 && x1 > r.a0 - 6 && z0 < r.b1 + 6 && z1 > r.b0 - 6)
+  for (let i = -H; i <= H; i++) for (let j = -H; j <= H; j++) nodes.push({ id: 'n:' + i + ':' + j, i, j, x: 96 * i, z: 96 * j, arms: 0, deg: 0, edges: [], manhole: null, cut: inCut(96 * i - 6, 96 * j - 6, 96 * i + 6, 96 * j + 6) })
+  for (let i = -H; i <= H; i++) for (let j = -H; j <= H; j++) {
+    if (i < H && !inCut(96 * i, 96 * j - 4, 96 * i + 96, 96 * j + 4)) cand.push({ axis: 0, i, j, a: nid(i, j), b: nid(i + 1, j), h: faustMix(salt, (i + H) * 2, j + H) })
+    if (j < H && !inCut(96 * i - 4, 96 * j, 96 * i + 4, 96 * j + 96)) cand.push({ axis: 1, i, j, a: nid(i, j), b: nid(i, j + 1), h: faustMix(salt, (i + H) * 2 + 1, j + H) })
+  }
+  // a spanning tree by hashed order (union-find), then a share of the rest
+  const up = nodes.map((_, k) => k), find = k => { while (up[k] !== k) k = up[k] = up[up[k]]; return k }
+  for (const e of [...cand].sort((p, q) => p.h - q.h || p.a - q.a || p.axis - q.axis)) {
+    const ra = find(e.a), rb = find(e.b)
+    if (ra !== rb) { up[ra] = rb; e.tree = true }
+  }
+  for (const e of cand) {
+    if (!e.tree && (e.h >>> 11) % 100 >= K.extra) continue
+    const k = edges.length, A = nodes[e.a], B = nodes[e.b]
+    e.id = 'e:' + e.axis + ':' + e.i + ':' + e.j; e.manhole = null
+    edges.push(e); A.edges.push(k); B.edges.push(k); A.deg++; B.deg++
+    A.arms |= e.axis ? 4 : 1; B.arms |= e.axis ? 8 : 2
+  }
+  // manholes: clear of the central plaza's square (no avenue over it), the rail's beams and stations, the flood channels' rows
+  const low = [], rail = faustRail(seed, S)
+  for (const b of rail.boxes) if (b.cy - b.ey < 3.2) low.push(b)
+  const grid = new Map(), G = 16
+  for (const b of low) for (let i = Math.floor((b.cx - b.ex) / G); i <= Math.floor((b.cx + b.ex) / G); i++) for (let j = Math.floor((b.cz - b.ez) / G); j <= Math.floor((b.cz + b.ez) / G); j++) {
+    const k = i + ' ' + j; if (!grid.has(k)) grid.set(k, []); grid.get(k).push(b)
+  }
+  const chans = typeof faustChannels === 'function' ? faustChannels(seed, S).rects : []
+  const clear = (x, z) => {
+    if (Math.abs(x) < K.plaza && Math.abs(z) < K.plaza) return false
+    if (Math.abs(x) > S * 48 - 8 || Math.abs(z) > S * 48 - 8) return false
+    for (const r of chans) if (x > r.a0 - 4 && x < r.a1 + 4 && z > r.b0 - 4 && z < r.b1 + 4) return false
+    for (const b of grid.get(Math.floor(x / G) + ' ' + Math.floor(z / G)) || []) if (Math.abs(x - b.cx) < b.ex + 1.8 && Math.abs(z - b.cz) < b.ez + 1.8) return false
+    return true
+  }
+  const manholes = [], byCell = new Map()
+  const add = m => { m.foot = K.floor; manholes.push(m); const k = Math.floor(m.x / 96) + ' ' + Math.floor(m.z / 96); if (!byCell.has(k)) byCell.set(k, []); byCell.get(k).push(m); return m }
+  edges.forEach((e, k) => {
+    const A = nodes[e.a], h = faustMix(salt ^ 0x4d48, k, 7), side = h & 2 ? 1 : -1
+    for (const s of [K.along[h & 1], K.along[1 - (h & 1)]]) {
+      const x = e.axis ? A.x + side * K.across : A.x + s, z = e.axis ? A.z + s : A.z + side * K.across
+      if (!clear(x, z)) continue
+      e.manhole = add({ id: 'm:' + e.id, kind: 'e', ref: k, x, z, edge: [s, side] }).id; break
+    }
+  })
+  nodes.forEach((n, k) => {
+    const h = faustMix(salt ^ 0x4e4d, k, 9), want = n.deg === 1 || (h >>> 4) % 100 < 45
+    if (!want) return
+    for (let t = 0; t < 4; t++) {
+      const q = (h + t) & 3, sx = q & 1 ? 1 : -1, sz = q & 2 ? 1 : -1, wallX = (h >>> 6) & 1
+      // the corner by a wall: 3.85 m off the middle on the wall's axis, 1.75 on the other
+      const x = n.x + sx * (wallX ? 3.85 : K.across), z = n.z + sz * (wallX ? K.across : 3.85)
+      if (!clear(x, z)) continue
+      n.manhole = add({ id: 'm:' + n.id, kind: 'n', ref: k, x, z, wall: wallX ? [0, sx] : [1, sz] }).id; break
+    }
+  })
+  let hh = 2166136261
+  for (const m of manholes) for (const ch of m.id + ' ' + m.x + ' ' + m.z) hh = Math.imul(hh ^ ch.charCodeAt(0), 16777619)
+  for (const e of edges) for (const ch of e.id) hh = Math.imul(hh ^ ch.charCodeAt(0), 16777619)
+  const edgeAt = new Map(edges.map((e, k) => [e.axis + ':' + e.i + ':' + e.j, k]))
+  return faustSewMemo = { seed, S, nodes, edges, manholes, byCell, edgeAt, units: new Map(), hash: (hh >>> 0).toString(16).padStart(8, '0'), version: K.version }
+}
+// the nearest manhole within r of (x, z), or null
+function faustSewNear(plan, x, z, r) {
+  let best = null, bd = r * r
+  const ci = Math.floor(x / 96), cj = Math.floor(z / 96)
+  for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) for (const m of plan.byCell.get(i + ' ' + j) || []) {
+    const d = (m.x - x) ** 2 + (m.z - z) ** 2
+    if (d < bd) { bd = d; best = m }
+  }
+  return best
+}
+// ---- a unit's boxes: the pen draws in a unit's own frame (u along the tunnel, v across it, y up) and turns them into the world's
+const faustSewMask = (axis, f) => axis ? (f & 12) | (f & 1 ? 16 : 0) | (f & 2 ? 32 : 0) | (f & 16 ? 1 : 0) | (f & 32 ? 2 : 0) : f
+const FSU = 1, FSD = 2, FSY = 4, FSB = 8, FSV = 16, FSW = 32        // a visual box's faces in the frame: +u, -u, up, down, +v, -v
+// the vault's profile: a segmental arch from the springline (y -5) over the walkways' width to the apex (the ceiling's -3.6), as (v, y) rows
+const FAUST_SEW_V = [-2.5, -2, -1.5, -1.2, -1, -0.5, 0, 0.5, 1, 1.2, 1.5, 2, 2.5]
+const faustSewArchY = (v, inset = 0) => { const K = FAUST_SEW, h = K.ceil - K.spring, w = K.half, r = (h * h + w * w) / (2 * h) - inset; return K.ceil - (h * h + w * w) / (2 * h) + Math.sqrt(Math.max(0, r * r - v * v)) }
+function faustSewPen(axis, ox, oz, out) {
+  const c2 = v => Math.round(v * 100) / 100
+  const at = (u, y, v) => axis ? [c2(ox + v), c2(y), c2(oz + u)] : [c2(ox + u), c2(y), c2(oz + v)]
+  const box = (u0, u1, y0, y1, v0, v1, more) => { const a = at((u0 + u1) / 2, (y0 + y1) / 2, (v0 + v1) / 2), eu = c2((u1 - u0) / 2), ev = c2((v1 - v0) / 2), ey = c2((y1 - y0) / 2)
+    return axis ? faustBox(a[0], a[1], a[2], ev, ey, eu, more) : faustBox(a[0], a[1], a[2], eu, ey, ev, more) }
+  const ok = (u0, u1, y0, y1, v0, v1) => u1 - u0 > 0.01 && y1 - y0 > 0.01 && v1 - v0 > 0.01
+  return { at,
+    col(u0, u1, y0, y1, v0, v1) { if (ok(u0, u1, y0, y1, v0, v1)) out.col.push(box(u0, u1, y0, y1, v0, v1)) },
+    // a visual box: tint, the faces drawn (this frame's bits), a glow added to its light; o: { k: 1 brick (the textured mesh), cap: 1 the cover's underside }
+    vis(u0, u1, y0, y1, v0, v1, t, f, g = 0, o) { if (ok(u0, u1, y0, y1, v0, v1)) out.vis.push(box(u0, u1, y0, y1, v0, v1, { t, f: faustSewMask(axis, f), g, ...o })) },
+    // the same, shown only while its manhole's cover is off (the shaft up to the street)
+    open(u0, u1, y0, y1, v0, v1, t, f) { if (ok(u0, u1, y0, y1, v0, v1)) (out.openVis ||= []).push(box(u0, u1, y0, y1, v0, v1, { t, f: faustSewMask(axis, f), g: 0, k: 1 })) },
+    water(u0, u1, y0, y1, v0, v1, t, f, g = 0) { if (ok(u0, u1, y0, y1, v0, v1)) out.vis.push(box(u0, u1, y0, y1, v0, v1, { t, f: faustSewMask(axis, f), g, w: 1 })) },
+    // a quad of four (u, y, v) points, seen from the side `toward` (a (u, y, v) point) lies on; o: { k, g, uv: [[s, t] x 4] }
+    quad(p, t, toward, o) { out.vis.push({ q: p.map(q => at(q[0], q[1], q[2])), tw: at(...toward), t, g: 0, ...o }) },
+    lamp(u, y, v, power, lit, col = [1, 0.8, 0.5]) { const p = at(u, y, v); if (lit) out.lamps.push([p[0], p[1], p[2], power, ...col]) },
+  }
+}
+// the vault over u0..u1 (a tunnel's length), less `hole` ({ u0, u1, v0, v1 }: a manhole's pocket); quads of up to 1.6 m along it
+function faustSewVault(P, u0, u1, hole) {
+  const T = FAUST_SEW.tint, cuts = [u0, u1]
+  for (let u = u0 + 1.6; u < u1 - 0.8; u += 1.6) cuts.push(u)
+  if (hole) cuts.push(hole.u0, hole.u1)
+  cuts.sort((a, b) => a - b)
+  const us = cuts.filter((u, i) => !i || u - cuts[i - 1] > 0.05)
+  let s = 0
+  for (let j = 0; j + 1 < FAUST_SEW_V.length; j++) {
+    const va = FAUST_SEW_V[j], vb = FAUST_SEW_V[j + 1], ya = faustSewArchY(va), yb = faustSewArchY(vb), s1 = s + Math.hypot(vb - va, yb - ya)
+    for (let i = 0; i + 1 < us.length; i++) {
+      const ua = us[i], ub = us[i + 1]
+      if (hole && ua >= hole.u0 - 1e-6 && ub <= hole.u1 + 1e-6 && va >= hole.v0 - 1e-6 && vb <= hole.v1 + 1e-6) continue
+      P.quad([[ua, ya, va], [ub, ya, va], [ub, yb, vb], [ua, yb, vb]], T.brick, [(ua + ub) / 2, FAUST_SEW.floor, 0], { k: 1, uv: [[ua, s], [ub, s], [ub, s1], [ua, s1]] })
+    }
+    s = s1
+  }
+}
+// a rib: an arch of 12 cm of concrete standing 50 cm along the vault
+function faustSewRib(P, u) {
+  const T = FAUST_SEW.tint
+  for (let j = 0; j + 1 < FAUST_SEW_V.length; j++) {
+    const va = FAUST_SEW_V[j], vb = FAUST_SEW_V[j + 1], oa = faustSewArchY(va), ob = faustSewArchY(vb), ia = faustSewArchY(va, 0.12), ib = faustSewArchY(vb, 0.12), mid = [u, FAUST_SEW.floor, 0]
+    P.quad([[u - 0.25, ia, va], [u + 0.25, ia, va], [u + 0.25, ib, vb], [u - 0.25, ib, vb]], T.rib, mid)
+    for (const [uu, sg] of [[u - 0.25, -1], [u + 0.25, 1]]) P.quad([[uu, oa, va], [uu, ob, vb], [uu, ib, vb], [uu, ia, va]], T.rib, [uu + sg * 2, FAUST_SEW.floor, 0])
+  }
+}
+// a ladder against a wall: rails and rungs from y0 to y1. wallAxis 'u' or 'v': the wall is the plane of that constant; the room is on the
+// side `into`; `cross` is the ladder's middle along the wall
+function faustSewLadder(P, wallAxis, wall, into, cross, y0, y1) {
+  const T = FAUST_SEW.tint, d0 = Math.min(wall, wall + into * 0.12), d1 = Math.max(wall, wall + into * 0.12)
+  const q = (c0, c1, ya, yb, t, a = d0, b = d1) => wallAxis === 'v' ? P.vis(c0, c1, ya, yb, a, b, t, 63) : P.vis(a, b, ya, yb, c0, c1, t, 63)
+  q(cross - 0.31, cross - 0.25, y0, y1, T.rung); q(cross + 0.25, cross + 0.31, y0, y1, T.rung)
+  const r0 = Math.min(wall, wall + into * 0.09), r1 = Math.max(wall, wall + into * 0.09)
+  for (let y = y0 + 0.35; y < y1 - 0.1; y += 0.3) q(cross - 0.28, cross + 0.28, y - 0.025, y + 0.025, T.rung, r0, r1)
+}
+// a manhole's pocket in the ceiling slab, from the vault's surface up to the cover's underside (the cap, which glows a little while the cover is
+// on; with it off the shaft goes on up to the street). The pool of light under it: a cold lamp, as the street's. uv0, uv1: the pocket's rectangle
+// in the frame's (u, v); `arch`: the pocket opens in the vault (an edge), with the rectangle's v from one springline side to 1.2 m in
+function faustSewPocket(P, u0, u1, v0, v1, arch) {
+  const K = FAUST_SEW, T = K.tint, top = K.ceil + K.slab - 0.05, mid = [(u0 + u1) / 2, K.floor, (v0 + v1) / 2], low = arch ? Math.min(faustSewArchY(v0), faustSewArchY(v1)) : K.ceil
+  const ya = v => arch ? faustSewArchY(v) : K.ceil
+  const vs = FAUST_SEW_V.filter(v => v >= Math.min(v0, v1) - 1e-6 && v <= Math.max(v0, v1) + 1e-6)
+  // the two u walls, as strips over the vault's curve
+  for (const [u, sg] of [[u0, 1], [u1, -1]]) for (let j = 0; arch && j + 1 < vs.length; j++)
+    P.quad([[u, ya(vs[j]), vs[j]], [u, ya(vs[j + 1]), vs[j + 1]], [u, top, vs[j + 1]], [u, top, vs[j]]], T.brick, [u + sg, K.floor, (v0 + v1) / 2], { k: 1, uv: [[vs[j], ya(vs[j])], [vs[j + 1], ya(vs[j + 1])], [vs[j + 1], top], [vs[j], top]] })
+  if (!arch) { P.vis(u0 - 0.1, u0, K.ceil, top, v0, v1, T.brick, FSU, 0, { k: 1 }); P.vis(u1, u1 + 0.1, K.ceil, top, v0, v1, T.brick, FSD, 0, { k: 1 }); P.vis(u0, u1, K.ceil, top, v0 - 0.1, v0, T.brick, FSV, 0, { k: 1 }); P.vis(u0, u1, K.ceil, top, v1, v1 + 0.1, T.brick, FSW, 0, { k: 1 }) }
+  else {
+    const vi = Math.abs(v0) < Math.abs(v1) ? v0 : v1, vo = vi === v0 ? v1 : v0, yi = ya(vi), yo = ya(vo)       // the inner edge (to the tunnel's middle) and the springline side
+    P.quad([[u0, yi, vi], [u1, yi, vi], [u1, top, vi], [u0, top, vi]], T.brick, [(u0 + u1) / 2, K.floor, vi + Math.sign(vi) * 0.7], { k: 1, uv: [[0, 0], [1, 0], [1, 1], [0, 1]] })
+    P.quad([[u0, yo, vo], [u1, yo, vo], [u1, top, vo], [u0, top, vo]], T.brick, [(u0 + u1) / 2, K.floor, vo - Math.sign(vo) * 0.7], { k: 1, uv: [[0, 0], [1, 0], [1, 1], [0, 1]] })
+  }
+  P.vis(u0, u1, top - 0.02, top + 0.02, Math.min(v0, v1), Math.max(v0, v1), T.cap, FSB, 1.4, { cap: 1 })
+  // with the cover off: the shaft goes up from the cap to the street (walls only), open to the sky
+  const vl = Math.min(v0, v1), vh = Math.max(v0, v1)
+  P.open(u0 - 0.1, u0, top, 0.02, vl, vh, T.floor, FSU); P.open(u1, u1 + 0.1, top, 0.02, vl, vh, T.floor, FSD)
+  P.open(u0, u1, top, 0.02, vl - 0.1, vl, T.floor, FSV); P.open(u0, u1, top, 0.02, vh, vh + 0.1, T.floor, FSW)
+  P.lamp((u0 + u1) / 2, K.floor + 3.2, (v0 + v1) / 2, K.lamp * 0.8, true, [0.7, 0.82, 1])
+}
+// ---- the units: a node's chamber and an edge's tunnel, as colliders (col) and look (vis), lamps (the baked light's sources)
+function faustSewUnit(plan, kind, k) {
+  const key = kind + k, have = plan.units.get(key)
+  if (have) return have
+  const K = FAUST_SEW, T = K.tint, W = K.half, WO = W + K.wall, C = K.chan, fl = K.floor, ce = K.ceil, sp = K.spring, sl = K.slab, td = K.trench, bd = K.bed, CH = K.chamber, CO = CH + K.wall, sh = K.shaft[0]
+  let U
+  if (kind === 'e') {
+    const e = plan.edges[k], a = plan.nodes[e.a], m = e.manhole && plan.manholes.find(q => q.id === e.manhole)
+    U = { id: e.id, kind, ref: k, col: [], vis: [], lamps: [], manhole: m ? m.id : null }
+    const P = faustSewPen(e.axis, a.x, a.z, U), u0 = CO, u1 = 96 - CO
+    P.col(u0, u1, fl - sl, fl, -WO, -C); P.col(u0, u1, fl - sl, fl, C, WO); P.col(u0, u1, fl - td - bd, fl - td, -C, C)
+    P.col(u0, u1, fl - sl, ce + sl, -WO, -W); P.col(u0, u1, fl - sl, ce + sl, W, WO); P.col(u0, u1, ce, ce + sl, -WO, WO)
+    P.vis(u0, u1, fl - td, fl, -W, -C, T.floor, FSY | FSV); P.vis(u0, u1, fl - td, fl, C, W, T.floor, FSY | FSW)
+    P.vis(u0, u1, fl - td, fl, -C - 0.02, -C, T.brick, FSV, 0, { k: 1 }); P.vis(u0, u1, fl - td, fl, C, C + 0.02, T.brick, FSW, 0, { k: 1 })
+    P.vis(u0, u1, fl - td - bd, fl - td, -C, C, T.bed, FSY)
+    P.water(u0, u1, fl - td - 0.002, fl - td + 0.45, -C, C, T.water, FSY, 0.02)           // the water: 45 cm deep in the step, dark
+    P.vis(u0 - 0.01, u0, fl - td, fl, -C, C, T.brick, FSU, 0, { k: 1 }); P.vis(u1, u1 + 0.01, fl - td, fl, -C, C, T.brick, FSD, 0, { k: 1 })      // the channel runs under the chamber's floor
+    // each end: a grate over the channel where it goes under the chamber
+    for (const [uu, sg] of [[u0, 1], [u1, -1]]) { for (let v = -0.85; v < 0.9; v += 0.2) P.vis(uu, uu + sg * 0.9, fl - 0.1, fl - 0.04, v - 0.035, v + 0.035, T.iron, 63 & ~FSB); P.vis(uu + sg * 0.85, uu + sg * 0.95, fl - 0.1, fl - 0.04, -C, C, T.iron, 63 & ~FSB) }
+    // walls to the springline, the vault over them (less the manhole's pocket)
+    P.vis(u0, u1, fl, sp, -WO, -W, T.brick, FSV, 0, { k: 1 }); P.vis(u0, u1, fl, sp, W, WO, T.brick, FSW, 0, { k: 1 })
+    let hole = null
+    if (m) { const s = m.edge[0], side = m.edge[1]; hole = { u0: s - sh, u1: s + sh, v0: side > 0 ? 1.2 : -W, v1: side > 0 ? W : -1.2 } }
+    faustSewVault(P, CH, 96 - CH, hole)
+    for (let u = u0 + 4; u < u1 - 2; u += K.rib) {
+      P.vis(u - 0.25, u + 0.25, fl, sp, -W, -W + 0.14, T.rib, FSU | FSD | FSV); P.vis(u - 0.25, u + 0.25, fl, sp, W - 0.14, W, T.rib, FSU | FSD | FSW)
+      faustSewRib(P, u)
+    }
+    // pipes along the right wall (a big one under the springline, a small one low), brackets every 4 m; a cable tray on the left
+    P.vis(u0, u1, sp - 0.5, sp - 0.22, W - 0.32, W - 0.04, T.pipe, FSY | FSB | FSV | FSW); P.vis(u0, u1, fl + 1.1, fl + 1.28, W - 0.2, W - 0.02, T.iron, FSY | FSB | FSV | FSW)
+    P.vis(u0, u1, sp - 0.9, sp - 0.84, -W + 0.02, -W + 0.12, T.iron, FSY | FSB | FSV | FSW); P.vis(u0, u1, sp - 1.25, sp - 1.19, -W + 0.02, -W + 0.12, T.iron, FSY | FSB | FSV | FSW)
+    for (let u = u0 + 2; u < u1 - 1; u += 4) { P.vis(u - 0.04, u + 0.04, sp - 0.55, sp - 0.17, W - 0.36, W - 0.02, T.iron, 63 & ~FSV); P.vis(u - 0.04, u + 0.04, sp - 1.3, sp - 0.8, -W + 0.01, -W + 0.14, T.iron, 63 & ~FSW) }
+    for (let n = 0, u = u0 + 12; u < u1 - 6; u += K.lampEvery, n++) {
+      const lit = faustMix(plan.seed ^ 0x4c414d50, e.i * 64 + n, (e.j + 40) * 2 + e.axis) % 100 < K.lit
+      P.vis(u - 0.22, u + 0.22, -5.25, -4.75, W - 0.28, W, T.iron, 63 & ~FSV); P.vis(u - 0.14, u + 0.14, -5.15, -4.85, W - 0.34, W - 0.28, lit ? T.lens : T.cold, FSW | FSY | FSB, lit ? 3 : 0)
+      P.lamp(u, -5, W - 0.6, K.lamp, lit)
+    }
+    if (m) {
+      const s = m.edge[0], side = m.edge[1]
+      faustSewPocket(P, s - sh, s + sh, side > 0 ? 1.2 : -W, side > 0 ? W : -1.2, true)
+      faustSewLadder(P, 'v', side * W, -side, s, fl, ce + sl - 0.1)
+    }
+  } else {
+    const n = plan.nodes[k], m = n.manhole && plan.manholes.find(q => q.id === n.manhole)
+    U = { id: n.id, kind, ref: k, col: [], vis: [], lamps: [], manhole: m ? m.id : null }
+    const P = faustSewPen(0, n.x, n.z, U)
+    // the floor is one slab at the walkway's height (the channels run under it: a grate shows them), so every walk through is level
+    P.col(-CO, CO, fl - sl, fl, -CO, CO); P.col(-CO, CO, ce, ce + sl, -CO, CO)
+    P.vis(-CO, CO, fl - td, fl, -CO, CO, T.floor, FSY)
+    P.vis(-CH, CH, fl, fl + 0.01, -C, C, T.bed, FSY, 0.04); P.vis(-C, C, fl, fl + 0.01, -CH, CH, T.bed, FSY, 0.04)
+    for (let v = -0.9; v < 0.95; v += 0.3) { P.vis(-CH, CH, fl + 0.01, fl + 0.03, v - 0.04, v + 0.04, T.iron, FSY); P.vis(v - 0.04, v + 0.04, fl + 0.01, fl + 0.03, -CH, CH, T.iron, FSY) }      // the grate over the channels' crossing
+    // the four walls (+x, -x, +z, -z), each less its arm's opening, which is arched
+    const arm = [n.arms & 1, n.arms & 2, n.arms & 4, n.arms & 8]
+    for (let s = 0; s < 4; s++) {
+      const zwall = s >> 1, sign = s & 1 ? -1 : 1, n0 = sign > 0 ? CH : -CO, n1 = sign > 0 ? CO : -CH
+      const inner = zwall ? (sign > 0 ? FSW : FSV) : (sign > 0 ? FSD : FSU), endHi = zwall ? FSD : FSW, endLo = zwall ? FSU : FSV
+      const seg = (t0, t1, f) => { if (zwall) { P.col(t0, t1, fl - sl, ce + sl, n0, n1); P.vis(t0, t1, fl, ce, n0, n1, T.brick, f, 0, { k: 1 }) } else { P.col(n0, n1, fl - sl, ce + sl, t0, t1); P.vis(n0, n1, fl, ce, t0, t1, T.brick, f, 0, { k: 1 }) } }
+      if (arm[s]) {
+        seg(W, CO, inner | endHi); seg(-CO, -W, inner | endLo)
+        // the arch's spandrels over the opening, on the chamber's face of the wall; and the opening's own vault through the wall's 80 cm
+        const wallAt = sign * CH
+        for (let j = 0; j + 1 < FAUST_SEW_V.length; j++) {
+          const va = FAUST_SEW_V[j], vb = FAUST_SEW_V[j + 1], ya = faustSewArchY(va), yb = faustSewArchY(vb)
+          const pts = zwall ? [[va, ya, wallAt], [vb, yb, wallAt], [vb, ce, wallAt], [va, ce, wallAt]] : [[wallAt, ya, va], [wallAt, yb, vb], [wallAt, ce, vb], [wallAt, ce, va]]
+          P.quad(pts, T.brick, zwall ? [0, fl, 0] : [0, fl, 0], { k: 1, uv: [[va, ya], [vb, yb], [vb, ce], [va, ce]] })
+        }
+      } else seg(-CO, CO, inner)
+    }
+    const holes = []
+    if (m) { const x = m.x - n.x, z = m.z - n.z; holes.push({ a0: x - sh, a1: x + sh, b0: z - sh, b1: z + sh }) }
+    for (const r of subtractRects({ a0: -CH, a1: CH, b0: -CH, b1: CH }, holes)) P.vis(r.a0, r.a1, ce, ce + sl, r.b0, r.b1, T.ceil, FSB)
+    P.vis(-CH, CH, ce - 0.22, ce, -0.3, 0.3, T.rib, FSU | FSD | FSV | FSW | FSB); P.vis(-0.3, 0.3, ce - 0.22, ce, -CH, CH, T.rib, FSU | FSD | FSV | FSW | FSB)
+    const lit = faustMix(plan.seed ^ 0x43484c, n.i + 40, n.j + 40) % 100 < 86
+    P.vis(-0.04, 0.04, ce - 0.9, ce - 0.22, -0.04, 0.04, T.iron, 63); P.vis(-0.22, 0.22, ce - 1.1, ce - 0.9, -0.22, 0.22, lit ? T.lens : T.cold, 63, lit ? 3 : 0)
+    P.lamp(0, ce - 1.3, 0, K.lamp * 1.5, lit)
+    if (m) {
+      const x = m.x - n.x, z = m.z - n.z, [axis, side] = m.wall
+      faustSewPocket(P, x - sh, x + sh, z - sh, z + sh, false)
+      if (axis === 0) faustSewLadder(P, 'u', side * CH, -side, z, fl, ce + sl - 0.1); else faustSewLadder(P, 'v', side * CH, -side, x, fl, ce + sl - 0.1)
+    }
+  }
+  U.rect = U.col.reduce((r, b) => ({ x0: Math.min(r.x0, b.cx - b.ex), x1: Math.max(r.x1, b.cx + b.ex), z0: Math.min(r.z0, b.cz - b.ez), z1: Math.max(r.z1, b.cz + b.ez) }), { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity })
+  plan.units.set(key, U)
+  return U
+}
+// the units (node chambers 'n' + index, edge tunnels 'e' + index) within r of (x, z), nearest first: [[distance, kind, index]]
+function faustSewUnitsNear(plan, x, z, r) {
+  const out = [], H = plan.S / 2, CO = FAUST_SEW.chamber + FAUST_SEW.wall, seen = new Set()
+  const i0 = Math.max(-H, Math.floor((x - r) / 96)), i1 = Math.min(H, Math.ceil((x + r) / 96)), j0 = Math.max(-H, Math.floor((z - r) / 96)), j1 = Math.min(H, Math.ceil((z + r) / 96)), N = plan.S + 1
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+    const k = (i + H) * N + (j + H), n = plan.nodes[k], d = Math.hypot(Math.max(0, Math.abs(x - n.x) - CO), Math.max(0, Math.abs(z - n.z) - CO))
+    if (d < r && n.deg) out.push([d, 'n', k])
+    for (const ei of n.edges) {
+      if (seen.has(ei)) continue
+      seen.add(ei)
+      const e = plan.edges[ei], A = plan.nodes[e.a], B = plan.nodes[e.b], ex = Math.max(0, Math.min(A.x, B.x) - x, x - Math.max(A.x, B.x)), ez = Math.max(0, Math.min(A.z, B.z) - z, z - Math.max(A.z, B.z))
+      const dd = Math.hypot(e.axis ? Math.max(0, Math.abs(x - A.x) - 3.3) : ex, e.axis ? ez : Math.max(0, Math.abs(z - A.z) - 3.3))
+      if (dd < r) out.push([dd, 'e', ei])
+    }
+  }
+  return out.sort((p, q) => p[0] - q[0])
+}
+// ---- streaming: the units' colliders (a body a box, one chunk a unit)
+function faustSewState(F) { return F.sew ||= { units: new Map(), queue: [], drawn: new Map(), pending: new Set(), covers: null, coverStamp: '', deep: false, told: new Set(), found: new Set(), open: new Set(), mapped: false, waterAt: -1,
+  stats: { built: 0, dropped: 0, maxBuildMs: 0, drawn: 0, undrawn: 0, maxDrawStepMs: 0, uses: 0 } } }
+// the unit's colliders, now (a unit already built is returned)
+function faustSewBuild(F, plan, kind, k) {
+  const Z = faustSewState(F), key = kind + k
+  let R = Z.units.get(key)
+  if (R) return R
+  const t = performance.now(), U = faustSewUnit(plan, kind, k)
+  R = { U, chunk: addChunk(U.col, 'sewer ' + U.id), seen: t }
+  Z.units.set(key, R); Z.stats.built++; Z.stats.maxBuildMs = Math.max(Z.stats.maxBuildMs, performance.now() - t)
+  return R
+}
+// each sim tick (host: every participant; guest: its own player): a participant under the street has the units within FAUST_SEW.reach, one at
+// a manhole's mouth those within 12 m of it (a bot only when under the street); built 2.5 ms a tick, those within 24 m of a participant under
+// the street at once; a unit nobody wants goes after FAUST_SEW.keep ms
+function faustSewTick(participants) {
+  const F = faustState
+  if (!F || !world || !LV.faust) return
+  const K = FAUST_SEW, plan = faustSewers(F.seed, F.S), Z = faustSewState(F), now_ = performance.now(), want = new Map()
+  faustSewKinds(); faustSewFalls(plan, Z, participants)
+  for (const c of participants) {
+    if (!c || !(c.x === c.x) || !(c.y === c.y)) continue
+    const feet = c.y - (c.h || 0) - (c.r || 0)
+    let x = c.x, z = c.z, r = 0, urgent = false
+    if (c === (isHost ? players.get(0) : predicted) && feet > -3 && feet < 3) for (let i = Math.floor(c.x / 96) - 1; i <= Math.floor(c.x / 96) + 1; i++) for (let j = Math.floor(c.z / 96) - 1; j <= Math.floor(c.z / 96) + 1; j++)
+      for (const h of plan.byCell.get(i + ' ' + j) || []) if ((h.x - c.x) ** 2 + (h.z - c.z) ** 2 < 900) Z.found.add(h.id)
+    if (feet < -1.5) { r = K.reach; urgent = true }
+    else if (!c.bot && feet < 3) {
+      const m = faustSewNear(plan, c.x, c.z, K.mouth)
+      if (m) {
+        x = m.x; z = m.z; r = 12
+        if (isHost && Math.hypot(m.x - c.x, m.z - c.z) < 2.5 && !Z.told.has(c.id)) { Z.told.add(c.id); tell(c.id, '§7A manhole: press use (E) to climb down into the sewers.') }
+      }
+    }
+    if (!r) continue
+    for (const [d, kind, k] of faustSewUnitsNear(plan, x, z, r)) { const key = kind + k, w = want.get(key); if (!w || d < w[0] || urgent && !w[3]) want.set(key, [d, kind, k, urgent && d < 24 || w?.[3]]) }
+  }
+  for (const [key, w] of want) {
+    const R = Z.units.get(key)
+    if (R) R.seen = now_
+    else if (w[3]) faustSewBuild(F, plan, w[1], w[2])
+    else if (!Z.queue.some(q => q[0] === key)) Z.queue.push([key, w[0], w[1], w[2]])
+  }
+  Z.queue = Z.queue.filter(q => want.has(q[0]) && !Z.units.has(q[0])).sort((p, q) => p[1] - q[1])
+  for (const t1 = performance.now(); Z.queue.length && performance.now() - t1 < 2.5;) { const q = Z.queue.shift(); faustSewBuild(F, plan, q[2], q[3]) }
+  for (const [key, R] of [...Z.units]) if (!want.has(key) && now_ - R.seen > K.keep) {
+    try { dropChunk(R.chunk) } catch (e) { frameFailed('sewers', e) }
+    Z.units.delete(key); Z.stats.dropped++
+  }
+}
+// ---- use (E): a manhole in reach climbs down to its ladder's foot; at a ladder's foot, back up to the street. Host and a guest's prediction alike
+// (the lift's way: the character is set down at the other end, the camera's player sees a fade)
+function faustSewUse(c) {
+  const F = faustState
+  if (!F || !LV.faust || !world || !c || c.dead > 0 || !(c.x === c.x) || c.seat) return false
+  const K = FAUST_SEW, plan = faustSewers(F.seed, F.S), feet = c.y - (c.h || 0) - (c.r || 0), lift = (c.h || 0) + (c.r || 0) + 0.06
+  if (feet > K.floor + 2.5) {
+    return faustSewDown(c, false)
+  } else {
+    let best = null, bd = 2.6
+    for (const [d, k2, k] of faustSewUnitsNear(plan, c.x, c.z, 8)) {
+      const mid = k2 === 'n' ? plan.nodes[k].manhole : plan.edges[k].manhole, m = mid && plan.manholes.find(q => q.id === mid)
+      const dd = m && (m.x - c.x) ** 2 + (m.z - c.z) ** 2
+      if (m && dd < bd) { bd = dd; best = m }
+    }
+    if (!best || feet > K.floor + 1.2) return false
+    const o = faustSewState(F).open.has(best.id) ? faustSewOut(plan, best) : [0, 0]
+    setCharPos(c, best.x + o[0] * 1.2, lift - 0.0, best.z + o[1] * 1.2)
+    c.sewT = performance.now()
+  }
+  faustSewState(F).stats.uses++
+  if (c === (isHost ? players.get(0) : predicted) && typeof faustIn === 'object') faustIn.fade = performance.now()
+  return true
+}
+// ---- the look: an indexed mesh a unit in the interiors' vertex-lit material: each vertex carries the light its lamps give it. Three meshes a unit:
+// the matte one (concrete, iron), the brick one (the interiors' textured material with a brick-course texture: the same program, so nothing compiles),
+// and the water (the polished material, near-black)
+let faustSewMatMemo = null
+function faustSewMats() {
+  if (faustSewMatMemo) return faustSewMatMemo
+  const base = inMaterials(), cv = document.createElement('canvas'); cv.width = 256; cv.height = 128
+  const g = cv.getContext('2d')
+  g.fillStyle = '#6f6a62'; g.fillRect(0, 0, 256, 128)                       // the mortar
+  const hues = ['#8a5a48', '#7c5240', '#926350', '#6e4a3c', '#855846', '#7a6256']
+  for (let r = 0; r < 6; r++) for (let c = -1; c < 5; c++) {
+    const x = c * 64 + (r & 1 ? 32 : 0), y = r * 21.3, h = ((r * 7 + c * 13 + 5) * 2654435761 >>> 0) % 997
+    g.fillStyle = hues[h % hues.length]; g.fillRect(x + 1.5, y + 1.5, 61, 18.3)
+    g.fillStyle = 'rgba(0,0,0,' + (0.04 + (h % 5) * 0.03) + ')'; g.fillRect(x + 1.5, y + 1.5, 61, 18.3)
+    g.fillStyle = 'rgba(255,240,220,0.07)'; g.fillRect(x + 1.5, y + 1.5, 61, 3)
+  }
+  const map = new THREE.CanvasTexture(cv); map.colorSpace = THREE.SRGBColorSpace; map.wrapS = map.wrapT = THREE.RepeatWrapping; map.anisotropy = 4
+  const brick = base[2].clone(); brick.map = map; brick.roughness = 0.85; brick.onBeforeCompile = base[2].onBeforeCompile; brick.customProgramCacheKey = base[2].customProgramCacheKey
+  return faustSewMatMemo = { matte: base[0], water: base[1], brick }
+}
+// the brick's colour by height above the walkway: dark and wet at the foot, a green tide line, clean above, sooty at the vault
+const faustSewShade = y => { const d = y - FAUST_SEW.floor
+  if (d < 0.15) return [0.3, 0.38, 0.32]
+  if (d < 0.5) { const k = (d - 0.15) / 0.35; return [0.3 + 0.55 * k, 0.38 + 0.5 * k, 0.32 + 0.5 * k] }
+  if (d < 0.7) return [0.62, 0.78, 0.6]
+  return y > FAUST_SEW.spring ? [0.74, 0.72, 0.72] : [0.86 + 0.14 * Math.min(1, (d - 0.7) / 0.8), 0.86 + 0.14 * Math.min(1, (d - 0.7) / 0.8), 0.86 + 0.14 * Math.min(1, (d - 0.7) / 0.8)] }
+function* faustSewDrawSteps(U, open) {
+  const K = FAUST_SEW, kits = [inKit(), inKit(), inKit()], col = new THREE.Color(), P = [0, 0, 0], lamps = U.lamps, amb = K.ambient
+  const hj = (a, b, c, d) => (Math.imul(Math.imul(a + 7919, 73856093) ^ Math.imul(b + 104729, 19349663) ^ Math.imul(c + 1299709, 83492791) ^ Math.imul(d, 2654435761), 0x45d9f3b) >>> 9 & 1023) / 1023
+  const lightAt = (x, y, z, n, g) => {
+    let er = amb + g, eg = amb + g * 0.9, eb = amb * 1.15 + g * 0.75
+    for (const L of lamps) {
+      const dx = L[0] - x, dy = L[1] - y, dz = L[2] - z, d2 = dx * dx + dy * dy + dz * dz, d = Math.sqrt(d2) || 1
+      const e = L[3] * (Math.max(0, (dx * n[0] + dy * n[1] + dz * n[2]) / d) * 0.75 + 0.25) / (1 + d2 / 2.2)
+      er += e * L[4]; eg += e * L[5]; eb += e * L[6]
+    }
+    return [er, eg, eb]
+  }
+  const mix = (kit, x, y, z, n, g, tint, brick, u, v) => {
+    const k = 0.88 + 0.24 * hj(Math.round(x * 2), Math.round(y * 2), Math.round(z * 2), n[0] * 3 + n[1] * 5 + n[2] * 7 + 20)
+    const sh = brick ? faustSewShade(y) : [1, 1, 1]
+    kit.pos.push(x, y, z); kit.nor.push(n[0], n[1], n[2]); kit.col.push(tint.r * k * sh[0], tint.g * k * sh[1], tint.b * k * sh[2])
+    kit.light.push(...lightAt(x, y, z, n, g)); kit.uv.push(brick ? u / 0.9 : u, brick ? v / 0.48 : v)      // a brick tile is 0.9 m by 0.48 m: bricks 22 by 8 cm
+  }
+  let work = 0
+  const list = open && U.openVis ? U.vis.filter(b => !b.cap).concat(U.openVis) : U.vis
+  for (const b of list) {
+    col.setHex(b.k ? 0xd8d0c6 : b.t)
+    if (b.q) {
+      // a quad: four points, its normal turned toward `tw`; split along its first edge into cells of up to 1.6 m
+      const p = b.q, kit = kits[b.k ? 2 : 0]
+      const ux = p[1][0] - p[0][0], uy = p[1][1] - p[0][1], uz = p[1][2] - p[0][2], vx = p[3][0] - p[0][0], vy = p[3][1] - p[0][1], vz = p[3][2] - p[0][2]
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl
+      const flip = (b.tw[0] - p[0][0]) * nx + (b.tw[1] - p[0][1]) * ny + (b.tw[2] - p[0][2]) * nz < 0
+      const o = kit.n, n = flip ? [-nx, -ny, -nz] : [nx, ny, nz]
+      for (let i = 0; i < 4; i++) mix(kit, p[i][0], p[i][1], p[i][2], n, b.g || 0, col, !!b.k, b.uv ? b.uv[i][0] : 0, b.uv ? b.uv[i][1] : 0)
+      // winding: (0,1,2)(0,2,3) is counter-clockwise seen from the computed normal's side; turned when it was flipped
+      if (flip) kit.idx.push(o, o + 2, o + 1, o, o + 3, o + 2); else kit.idx.push(o, o + 1, o + 2, o, o + 2, o + 3)
+      kit.n += 4
+    } else {
+      const kit = kits[b.w ? 1 : b.k ? 2 : 0], e = [b.ex, b.ey, b.ez], c0 = [b.cx, b.cy, b.cz]
+      for (const F of IN_FACE) {
+        if (!(b.f & F.bit)) continue
+        const X = F.axis, a = (X + 1) % 3, d = (X + 2) % 3, o = kit.n
+        const cell = ax => b.k && ax === 1 ? 0.4 : K.cell
+        const nu = Math.min(48, Math.max(1, Math.ceil(2 * e[a] / cell(a)))), nv = Math.min(48, Math.max(1, Math.ceil(2 * e[d] / cell(d))))
+        for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) {
+          P[X] = c0[X] + F.sign * e[X]; P[a] = c0[a] + (2 * i / nu - 1) * e[a]; P[d] = c0[d] + (2 * j / nv - 1) * e[d]
+          // a vertical face's texture: along the wall, and up (metres: the tile is 0.9 m by 0.48 m)
+          const along = X === 0 ? P[2] : P[0], su = X === 1 ? P[0] : along, sv = X === 1 ? P[2] : P[1]
+          mix(kit, P[0], P[1], P[2], F.n, b.g || 0, col, !!b.k, su, sv)
+        }
+        for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) {
+          const q = o + j * (nu + 1) + i, q1 = q + 1, q2 = q + nu + 2, q3 = q + nu + 1
+          if (F.sign > 0) kit.idx.push(q, q1, q2, q, q2, q3); else kit.idx.push(q, q3, q2, q, q2, q1)
+        }
+        kit.n += (nu + 1) * (nv + 1)
+      }
+    }
+    if ((work += 1) > 40) { work = 0; yield }
+  }
+  yield
+  const mats = faustSewMats(), group = new THREE.Group(); group.userData.sewer = U.id
+  kits.forEach((kit, i) => {
+    if (!kit.n) return
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.Float32BufferAttribute(kit.pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(kit.nor, 3))
+    g.setAttribute('color', new THREE.Float32BufferAttribute(kit.col, 3)); g.setAttribute('inLight', new THREE.Float32BufferAttribute(kit.light, 3))
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(kit.uv, 2))
+    g.setIndex(kit.n > 65535 ? new THREE.Uint32BufferAttribute(kit.idx, 1) : new THREE.Uint16BufferAttribute(kit.idx, 1))
+    g.computeBoundingSphere()
+    if (i === 1) g.boundingSphere.radius += 2
+    const mesh = new THREE.Mesh(g, i === 1 ? mats.water : i === 2 ? mats.brick : mats.matte); mesh.castShadow = false; mesh.receiveShadow = false; group.add(mesh)
+    if (i === 1) group.userData.water = mesh      // the water rises with the rain (faustSewWaterSet)
+  })
+  return group
+}
+function faustSewUndraw(Z, key) {
+  const D = Z.drawn.get(key)
+  if (!D) return
+  D.group.parent?.remove(D.group); D.group.traverse(n => n.geometry?.dispose())
+  Z.drawn.delete(key); Z.stats.undrawn++
+}
+// each frame (from the interiors' frame, which makes faustIn.root): the covers in the street; under the street the units within FAUST_SEW.look of
+// the camera drawn (3 at a time, nearest first, in the background), and a manhole's unit drawn when the camera is by it; 3 s after the
+// camera leaves they go. Z.deep (the camera under the street) is what the interiors' frame takes for a mode that hides the city
+function faustSewFrame(cam) {
+  const F = faustState
+  if (!F || renderHeadless || !LV.faust || !cam?.isCamera) return
+  const K = FAUST_SEW, Z = faustSewState(F), plan = faustSewers(F.seed, F.S), p = cam.position, now_ = performance.now()
+  Z.deep = p.y < -1.2
+  if (!Z.mapped) { Z.mapped = true; faustSewMapLayer() }
+  try { faustSewCovers(F, plan, cam) } catch (e) { frameFailed('manholes', e) }
+  const root = faustIn?.root
+  if (!root) return
+  // the interiors' dark ground (their mode 1 makes it the first time it is wanted: a program linked in the draw) exists, hidden, from the start, so the look watch warms it
+  if (!faustIn.ground) { const gm = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x0b0e13 })); gm.rotation.x = -Math.PI / 2; gm.scale.set(4 * ARENA, 4 * ARENA, 1); gm.position.y = 0.02; gm.visible = false; faustIn.ground = gm; root.add(gm) }
+  const want = new Map()
+  if (Z.deep) { for (const [d, kind, k] of faustSewUnitsNear(plan, p.x, p.z, K.look)) want.set(kind + k, [d, kind, k]) }
+  else if (p.y < 8) { const m = faustSewNear(plan, p.x, p.z, K.mouth); if (m) for (const [d, kind, k] of faustSewUnitsNear(plan, m.x, m.z, 4)) want.set(kind + k, [d, kind, k]) }
+  for (const [key, w] of [...want].sort((a, b) => a[1][0] - b[1][0])) {
+    const D = Z.drawn.get(key)
+    if (D) { D.seen = now_; continue }
+    if (Z.pending.has(key) || Z.pending.size >= 3) continue
+    Z.pending.add(key)
+    background.run('sewer:' + key, function* () {
+      const U = faustSewUnit(plan, w[1], w[2]), t = performance.now(), group = yield* faustSewDrawSteps(U, !!U.manhole && Z.open.has(U.manhole))
+      Z.stats.maxDrawStepMs = Math.max(Z.stats.maxDrawStepMs, performance.now() - t)
+      if (faustState !== F || F.sew !== Z) { group.traverse(n => n.geometry?.dispose()); return }
+      root.add(group); still(group); faustSewWaterSet(Z, group, faustSewLevel()); Z.drawn.set(key, { group, seen: performance.now() }); Z.stats.drawn++
+    }, { valid: () => faustState === F && F.sew === Z, priority: 2 }).catch(e => frameFailed('sewers', e)).finally(() => Z.pending.delete(key))
+  }
+  for (const [key, D] of [...Z.drawn]) if (!want.has(key) && now_ - D.seen > K.keep) faustSewUndraw(Z, key)
+  const level = faustSewLevel()
+  if (level !== Z.waterAt) { Z.waterAt = level; for (const D of Z.drawn.values()) faustSewWaterSet(Z, D.group, level) }
+}
+// the covers: a ring and a lid an instance, flush with the road; the ones within FAUST_SEW.covers of the camera, rebuilt as it moves 32 m
+function faustSewCovers(F, plan, cam) {
+  if (!F.materials?.stone || !worldGroup) return
+  const K = FAUST_SEW, Z = faustSewState(F), p = cam.position
+  if (!Z.covers) {
+    const g = new THREE.CylinderGeometry(1, 1, 1, 16), n = g.attributes.position.count
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(n * 3).fill(1), 3)); g.setAttribute('faustGlow', new THREE.Float32BufferAttribute(new Float32Array(n), 1))
+    const m = new THREE.InstancedMesh(g, F.materials.stone, 512)
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.count = 0; m.frustumCulled = false; m.castShadow = false; m.receiveShadow = true; m.userData.sewerCovers = true
+    m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(512 * 3), 3)
+    worldGroup.add(m); Z.covers = m
+  }
+  if (p.y < -1.2 || p.y > 300) { if (Z.covers.count) { Z.covers.count = 0; Z.coverStamp = '' } return }
+  const stamp = Math.floor(p.x / 32) + ' ' + Math.floor(p.z / 32)
+  if (stamp === Z.coverStamp) return
+  Z.coverStamp = stamp
+  const m = Z.covers, pose = Z.pose ||= new THREE.Object3D(), col = Z.col ||= new THREE.Color(), R = K.covers
+  let n = 0
+  const put = (x, y, z, r, h, hex) => { pose.position.set(x, y, z); pose.scale.set(r, h, r); pose.updateMatrix(); m.setMatrixAt(n, pose.matrix); col.setHex(hex); m.setColorAt(n, col); n++ }
+  const ci = Math.floor(p.x / 96), cj = Math.floor(p.z / 96), c = Math.ceil(R / 96)
+  for (let i = ci - c; i <= ci + c; i++) for (let j = cj - c; j <= cj + c; j++) for (const h of plan.byCell.get(i + ' ' + j) || []) {
+    if (n >= 510 || (h.x - p.x) ** 2 + (h.z - p.z) ** 2 > R * R) continue
+    put(h.x, 0.03, h.z, 0.52, 0.05, 0x7b8086)
+    if (Z.open.has(h.id)) put(h.x, 0.052, h.z, 0.4, 0.02, 0x020304); else put(h.x, 0.05, h.z, 0.42, 0.05, 0x34383d)
+  }
+  m.count = n; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true
+}
+// the world is rebuilt: its units' bodies, looks and covers go
+function faustSewReset() {
+  const Z = faustState?.sew
+  if (!Z) return
+  for (const R of Z.units.values()) try { dropChunk(R.chunk) } catch (e) {}
+  for (const k of [...Z.pending]) background.cancel('sewer:' + k)
+  for (const k of [...Z.drawn.keys()]) faustSewUndraw(Z, k)
+  if (Z.covers) { Z.covers.parent?.remove(Z.covers); Z.covers.geometry.dispose(); Z.covers.dispose() }
+  faustState.sew = null
+}
+// the sewers' API: the plan, a manhole near a point, the units built and drawn, the counters
+FAUSTLAND_API.sewers = { config: FAUST_SEW, plan: () => faustState && faustSewers(faustState.seed, faustState.S),
+  near: (x, z, r = 2) => { const F = faustState; return F ? faustSewNear(faustSewers(F.seed, F.S), x, z, r) : null },
+  unit: (kind, k) => { const F = faustState; return F ? faustSewUnit(faustSewers(F.seed, F.S), kind, k) : null },
+  get built() { return [...faustState?.sew?.units.keys() || []] }, get drawn() { return [...faustState?.sew?.drawn.keys() || []] }, get stats() { return { ...faustState?.sew?.stats } },
+  get deep() { return !!faustState?.sew?.deep }, get programs() { return renderer?.info.programs?.length }, get covers() { const m = faustState?.sew?.covers; return m && { count: m.count, visible: m.visible, parented: !!m.parent, stamp: faustState.sew.coverStamp } }, use: c => faustSewUse(c),
+  // the physics floor under (x, z): the highest static body top below y 4, or null (tests); a crater by hand (host; tests)
+  floorAt: (x, z) => { if (!world) return null; const f = castRay(x, 4, z, 0, -1, 0, 12, G_STATIC); return f < 1 ? Math.round((4 - f * 12) * 1000) / 1000 : null },
+  crater: (x, z, r, y = 0) => isHost && addCrater(x, z, r, y) }
+// ---- the water: it rises with the rain (the weather's wet, #85): up to 40 cm, just under the walkway's edge
+const faustSewLevel = () => Math.round((typeof weather === 'object' && weather ? Math.min(1, Math.max(0, weather.wet || 0)) : 0) * 0.4 * 50) / 50
+function faustSewWaterSet(Z, group, level) {
+  const m = group.userData.water
+  if (!m || m.userData.level === level) return
+  m.userData.level = level; m.position.y = level; m.updateMatrix(); m.matrixWorld.copy(m.matrix)
+}
+// ---- the way for a bot: down by the nearest manhole to it (E at the cover), along the tunnels by their graph, up by the manhole nearest its
+// target. A corner at a time, as the interiors' (faustInNav): { corner: { x, y, z } | null, there, pad: null, use? }; null when neither it nor its
+// target is under the street
+// the unit a point under the street is in: { kind: 'n', k } (a chamber) | { kind: 'e', k } (a tunnel) | null
+function faustSewLocate(plan, x, z) {
+  const H = plan.S / 2, N = plan.S + 1, CO = FAUST_SEW.chamber + FAUST_SEW.wall, i = Math.round(x / 96), j = Math.round(z / 96)
+  if (i >= -H && i <= H && j >= -H && j <= H && Math.abs(x - 96 * i) < CO && Math.abs(z - 96 * j) < CO) return { kind: 'n', k: (i + H) * N + (j + H) }
+  if (j >= -H && j <= H && Math.abs(z - 96 * j) < 3.6) { const k = plan.edgeAt.get('0:' + Math.floor(x / 96) + ':' + j); if (k !== undefined) return { kind: 'e', k } }
+  if (i >= -H && i <= H && Math.abs(x - 96 * i) < 3.6) { const k = plan.edgeAt.get('1:' + i + ':' + Math.floor(z / 96)); if (k !== undefined) return { kind: 'e', k } }
+  return null
+}
+// nodes' distances (in hops) from node s, and each's parent
+function faustSewHops(plan, s) {
+  const dist = new Int16Array(plan.nodes.length).fill(-1), up = new Int32Array(plan.nodes.length).fill(-1), q = [s]
+  dist[s] = 0
+  for (let h = 0; h < q.length; h++) for (const ei of plan.nodes[q[h]].edges) { const e = plan.edges[ei], o = e.a === q[h] ? e.b : e.a; if (dist[o] < 0) { dist[o] = dist[q[h]] + 1; up[o] = q[h]; q.push(o) } }
+  return { dist, up }
+}
+// the walkway point d m from node n along the edge ei, on its +v side (the one a body walks, level with the chamber's floor): 4 m is in the chamber
+// (the way in), 6.5 m is in the tunnel (the way out)
+function faustSewArm(plan, n, ei, d) {
+  const e = plan.edges[ei], N = plan.nodes[n], o = plan.nodes[e.a === n ? e.b : e.a], dx = Math.sign(o.x - N.x), dz = Math.sign(o.z - N.z)
+  return { x: N.x + dx * d + (e.axis ? 1.75 : 0), y: FAUST_SEW.floor, z: N.z + dz * d + (e.axis ? 0 : 1.75) }
+}
+function faustSewNav(at, target) {
+  const F = faustState
+  if (!F || !LV.faust) return null
+  const feet = c => c.y - (c.h || 0) - (c.r || 0), aDeep = feet(at) < -3, tDeep = feet(target) < -3
+  if (!aDeep && !tDeep) return null
+  if (target.id === -5 && !aDeep) return null      // #14's place he was last seen (a fake target): an enforcer on the street mills about there, it does not go down
+  const plan = faustSewers(F.seed, F.S), K = FAUST_SEW
+  let goal = target, mouth = null
+  if (aDeep !== tDeep) {
+    mouth = aDeep ? faustSewNear(plan, target.x, target.z, 200) || faustSewNear(plan, at.x, at.z, 240) : faustSewNear(plan, at.x, at.z, 150)
+    if (!mouth) return null
+    if (Math.hypot(mouth.x - at.x, mouth.z - at.z) < 1.3) return { corner: { x: mouth.x, y: aDeep ? K.floor : 0, z: mouth.z }, there: true, pad: null, use: true }
+    if (!aDeep) { const t = { x: mouth.x, y: 0, z: mouth.z }; return { ...faustNav(at, t), pad: null, there: false } }
+    goal = { x: mouth.x, y: K.floor, z: mouth.z }
+  }
+  const A = faustSewLocate(plan, at.x, at.z), B = faustSewLocate(plan, goal.x, goal.z)
+  if (!A || !B) return null
+  const direct = goal === target ? null : { x: goal.x, y: goal.y, z: goal.z }
+  if (A.kind === B.kind && A.k === B.k) return { corner: direct, there: true, pad: null }
+  const ends = u => u.kind === 'n' ? [u.k] : [plan.edges[u.k].a, plan.edges[u.k].b]
+  const goals = ends(B)
+  // from a chamber: along the first edge of the shortest way to the goal (into the goal's own edge when it stands in one of its ends)
+  const hop = (n) => {
+    if (B.kind === 'e' && goals.includes(n)) return plan.nodes[n].edges.includes(B.k) ? B.k : null
+    const H = faustSewHops(plan, n); let best = -1
+    for (const g of goals) if (H.dist[g] >= 0 && (best < 0 || H.dist[g] < H.dist[best])) best = g
+    if (best < 0) return null
+    let v = best; while (H.up[v] !== n && H.up[v] >= 0) v = H.up[v]
+    return plan.nodes[n].edges.find(ei => { const e = plan.edges[ei]; return (e.a === n ? e.b : e.a) === v })
+  }
+  if (A.kind === 'n') {
+    const ei = hop(A.k)
+    if (ei === null || ei === undefined) return null
+    // lined up on the arm's walkway (3 m out, within 60 cm of its line) it goes out along it; else it lines up first, at 4 m
+    const e = plan.edges[ei], N = plan.nodes[A.k], o = plan.nodes[e.a === A.k ? e.b : e.a], u = (at.x - N.x) * Math.sign(o.x - N.x) + (at.z - N.z) * Math.sign(o.z - N.z), v = (e.axis ? at.x - N.x : at.z - N.z) - 1.75
+    return { corner: faustSewArm(plan, A.k, ei, u >= 3 && Math.abs(v) < 0.6 ? 6.5 : 4), there: true, pad: null }
+  }
+  // in a tunnel: to the end (chamber) nearer the goal
+  const e = plan.edges[A.k]
+  let n = e.a
+  if (B.kind === 'n' && (B.k === e.a || B.k === e.b)) n = B.k
+  else { const da = Math.min(...goals.map(g => faustSewHops(plan, e.a).dist[g] ?? 1e9)), db = Math.min(...goals.map(g => faustSewHops(plan, e.b).dist[g] ?? 1e9)); n = db < da ? e.b : e.a }
+  return { corner: faustSewArm(plan, n, A.k, 4), there: true, pad: null }
+}
+// ---- the map (#68): the tunnels while he is under the street (all within 500 m), and the manholes he has been within 30 m of
+function faustSewMapLayer() {
+  GAME.map?.layer?.('sewers', { dynamic(g, c) {
+    const F = faustState, Z = F?.sew, me = typeof selfChar === 'function' ? selfChar() : null
+    if (!Z || !me) return
+    const plan = faustSewers(F.seed, F.S), deep = Z.deep || me.y - (me.h || 0) - (me.r || 0) < -3
+    g.save()
+    if (deep) {
+      g.lineCap = 'butt'; g.strokeStyle = 'rgba(80,150,140,0.85)'; g.lineWidth = Math.max(1.4, 5 * c.k)
+      for (const e of plan.edges) {
+        const a = plan.nodes[e.a], b = plan.nodes[e.b]
+        if (Math.abs(a.x - me.x) > 520 && Math.abs(b.x - me.x) > 520 || Math.abs(a.z - me.z) > 520 && Math.abs(b.z - me.z) > 520) continue
+        const [x0, y0] = c.xy(a.x, a.z), [x1, y1] = c.xy(b.x, b.z); g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke()
+      }
+      g.fillStyle = 'rgba(120,190,180,0.9)'
+      for (const n of plan.nodes) if (n.deg && Math.abs(n.x - me.x) < 520 && Math.abs(n.z - me.z) < 520) { const [x, y] = c.xy(n.x, n.z), r = Math.max(2, 5 * c.k); g.fillRect(x - r, y - r, 2 * r, 2 * r) }
+    }
+    g.fillStyle = '#c9a45c'; g.strokeStyle = '#0b0d10'; g.lineWidth = 1
+    for (const m of plan.manholes) if (deep || Z.found.has(m.id)) { const [x, y] = c.xy(m.x, m.z); g.beginPath(); g.arc(x, y, Math.max(2, 1.6 * c.k * 3), 0, 6.2832); g.fill(); g.stroke() }
+    g.restore()
+  } })
+}
+// ---------------------------------------------------------------- card #84, the covers as props
+// A cover is a part of the city (a destruction record of kind 84, #46/#55: synced to every guest and the late joiner, saved with the city) until
+// someone rips it off: then it is the 'Manhole cover' object (a thin hull, 1.6 mass: lifted, thrown, punted like a door; #87 makes it a
+// frisbee) and the manhole is open for good: a hole in the street (a black disc), still a way down by E, and anyone who walks onto it falls in.
+// A tap on E at a closed cover opens it and climbs down (for the Maniak, whose E also grabs and pulls: on the release of a short press); E held
+// 0.3 s pulls the cover off (#55's pull: `Manhole cover in its ring`, its adapter's detach is the record).
+// A manhole's key: 84 * 2^32 + chunk * 1024 + its index in its cell's list (the plan's order); chunk is the city cell's (ci * S + cj)
+const FAUST_SEW_KIND = 84
+function faustSewKeyOf(plan, m) {
+  const gx = Math.floor(m.x / 96), gz = Math.floor(m.z / 96), H = plan.S / 2
+  return FAUST_SEW_KIND * 4294967296 + ((gx + H) * plan.S + (gz + H)) * 1024 + plan.byCell.get(gx + ' ' + gz).indexOf(m)
+}
+function faustSewOfKey(plan, key) {
+  const k = key - FAUST_SEW_KIND * 4294967296, S = plan.S, chunk = Math.floor(k / 1024), place = k % 1024, list = plan.byCell.get((Math.floor(chunk / S) - S / 2) + ' ' + (chunk % S - S / 2))
+  return list?.[place] || null
+}
+// the covers that are off: Z.open, a Set of manhole ids, by the records
+function faustSewOpen(m, on) {
+  const F = faustState; if (!F) return
+  const Z = faustSewState(F)
+  if (on) Z.open.add(m.id); else Z.open.delete(m.id)
+  Z.coverStamp = ''
+  faustSewUndraw(Z, (m.kind === 'n' ? 'n' : 'e') + m.ref)      // its unit is drawn again, with or without the shaft
+}
+function faustSewKinds() {
+  const F = faustState, Z = F && faustSewState(F)
+  if (!Z || Z.kinds || !GAME.destruction?.kind || !GAME.parts?.kind) return
+  Z.kinds = true
+  GAME.destruction.kind(FAUST_SEW_KIND, {
+    record(key) { const f = faustState, m = f && faustSewOfKey(faustSewers(f.seed, f.S), key); return m ? { chunk: Math.floor(m.x / 96 + f.S / 2) * f.S + Math.floor(m.z / 96 + f.S / 2), at: [m.x, 0, m.z], m } : null },
+    apply(rec) { faustSewOpen(rec.p.m, true) },
+    undo(rec) { faustSewOpen(rec.p.m, false) },
+  })
+  GAME.parts.kind('Manhole cover', { of: 'object', mass: 1.6, grab: { grip: 'overhead' }, throw: {}, punt: {} })
+  GAME.parts.kind('Manhole cover in its ring', { of: 'attached', mass: 1.6, rip: { pull: 0.45, gives: 'Manhole cover' } }, {
+    near: (c, reach) => {
+      const f = faustState, plan = faustSewers(f.seed, f.S), Q = faustSewState(f), out = [], feet = c.y - c.h - c.r
+      if (feet < -1 || feet > 1.5) return out
+      for (let i = Math.floor(c.x / 96) - 1; i <= Math.floor(c.x / 96) + 1; i++) for (let j = Math.floor(c.z / 96) - 1; j <= Math.floor(c.z / 96) + 1; j++)
+        for (const m of plan.byCell.get(i + ' ' + j) || []) {
+          const gap = Math.hypot(m.x - c.x, m.z - c.z) - c.r - 0.46
+          if (gap <= reach && !Q.open.has(m.id)) out.push({ ref: m, at: [m.x, 0.06, m.z], gap: Math.max(0, gap), R: 0.5, mass: 1.6 })
+        }
+      return out
+    },
+    detach: inst => {
+      const f = faustState, plan = faustSewers(f.seed, f.S), m = inst.ref
+      if (faustSewState(f).open.has(m.id) || !GAME.destruction.breakKind(FAUST_SEW_KIND, faustSewKeyOf(plan, m), 0)) return false
+      return [m.x, 0.3, m.z]
+    },
+  })
+}
+// a cover, torn off: lying flat as it lay in its ring
+// a character at a manhole's mouth, closed or open: down. `tap`: the Maniak's release of a short E (his press waits, for the pull)
+function faustSewDown(c, tap) {
+  const F = faustState
+  if (!F || !LV.faust || !world || !c || c.dead > 0 || !(c.x === c.x) || c.seat) return false
+  const K = FAUST_SEW, plan = faustSewers(F.seed, F.S), Z = faustSewState(F), feet = c.y - (c.h || 0) - (c.r || 0)
+  if (feet > 1.3 || feet < -1.2) return false
+  const m = faustSewNear(plan, c.x, c.z, 1.7)
+  if (!m) return false
+  const open = Z.open.has(m.id)
+  if (!tap && !open && !c.bot && GAME.participantOf(c)?.grab) return false      // his press waits: a tap goes down, a hold pulls the cover off
+  faustSewBuild(F, plan, m.kind === 'n' ? 'n' : 'e', m.ref)
+  for (const [d, k2, k] of faustSewUnitsNear(plan, m.x, m.z, 12)) if (d < 6) faustSewBuild(F, plan, k2, k)
+  if (!open) faustSewState(F).stats.uses++
+  setCharPos(c, m.x, K.floor + (c.h || 0) + (c.r || 0) + 0.06, m.z)
+  c.sewT = performance.now()
+  if (c === (isHost ? players.get(0) : predicted) && typeof faustIn === 'object') faustIn.fade = performance.now()
+  return true
+}
+const faustSewTap = c => faustSewDown(c, true)
+// out of an open manhole 1.2 m clear of the hole (a walk away from it, not a fall back in)
+function faustSewOut(plan, m) {
+  if (m.kind === 'e') return plan.edges[m.ref].axis ? [Math.sign(m.edge[1]), 0] : [0, Math.sign(m.edge[1])]
+  return m.wall[0] ? [0, m.wall[1]] : [m.wall[1], 0]
+}
+// each tick: whoever stands on an open manhole falls in (the host's characters, a guest's own prediction)
+function faustSewFalls(plan, Z, participants) {
+  if (!Z.open.size) return
+  const now_ = performance.now()
+  for (const c of participants) {
+    if (!c || !(c.x === c.x) || c.dead > 0 || c.seat || now_ - (c.sewT || 0) < 1500) continue
+    const feet = c.y - (c.h || 0) - (c.r || 0)
+    if (feet > 0.7 || feet < -0.5) continue
+    const m = faustSewNear(plan, c.x, c.z, 0.42)
+    if (!m || !Z.open.has(m.id)) continue
+    faustSewDown(c, true)
+    if (isHost && !c.bot) tell(c.id, '§7You fell down a manhole.')
+  }
+}
+// for #88/#87 (the frisbee): the cover in reach of (x, z) as { id, x, y, z, r, open }, and lift(id) (host): rips it off (the record, synced), returns
+// where the object should start, [x, y, z], or false
+Object.assign(FAUSTLAND_API.sewers, {
+  cover: (x, z, reach = 1.7) => { const F = faustState; if (!F) return null; const m = faustSewNear(faustSewers(F.seed, F.S), x, z, reach); return m && { id: m.id, x: m.x, y: 0.06, z: m.z, r: 0.46, open: faustSewState(F).open.has(m.id) } },
+  lift: id => { const F = faustState; if (!F || !isHost) return false; faustSewKinds(); const plan = faustSewers(F.seed, F.S), m = plan.manholes.find(q => q.id === id)
+    return !!m && !faustSewState(F).open.has(id) && GAME.destruction.breakKind(FAUST_SEW_KIND, faustSewKeyOf(plan, m), 0) && [m.x, 0.3, m.z] },
+  isOpen: id => !!faustState && faustSewState(faustState).open.has(id),
+})
+PROP_MODELS['Manhole cover'] = k => {
+  k.add({ g: ['cylinder', 0.46, 0.46, 0.07, 18], m: 'dark', tag: 'lid' })
+  k.add({ g: ['cylinder', 0.4, 0.4, 0.074, 18], m: 'accent', tag: 'face' })
+  for (let i = 0; i < 3; i++) k.box('dark', [0.8, 0.012, 0.035], [0, 0.04, 0], 'rib', [0, i * Math.PI / 3, 0])
+}
 // ---- route: bots in or bound for a building follow its storeys' graphs from the street door
 function faustInNav(at, target) {
   if (!faustIn.open.size && !faustIn.plans.size) return null
@@ -10390,7 +11140,7 @@ function faustInteriorFrame(cam) {
     }
     inDoorsFrame(); if (faustIn.broken.size || faustIn.plugs?.count) inPlugsFrame()
     // from the third storey up (12 m) the street below is the skyline's dark ground; lower, the windows show the street itself
-    const mode = faustIn.camera && faustIn.camera.k >= 3 && faustIn.camera.inside ? 1 : 0
+    const mode = faustIn.camera && faustIn.camera.k >= 3 && faustIn.camera.inside || cam.position.y < -1.2 ? 1 : 0      // card #84: under the street the city is hidden too
     if (mode !== faustIn.mode) {
       faustIn.mode = mode
       // the skyline stands in for the near chunks while they are hidden (and back out after)
@@ -12392,7 +13142,7 @@ function padBelow(b) {
 const feetOf = c => { const [x, y, z] = axisOf(c), k = c.h + c.r; return { x: c.x - x * k, y: c.y - y * k, z: c.z - z * k } }
 // next corner, re-asked about every metre; null = straight; no way up: the way to a pad; a car: its own way
 function navPlan(b, tgt, dt, car) {
-  if (LV.faust) return !car && faustInNav(b, tgt) || faustNav(car || b, tgt)
+  if (LV.faust) return !car && (faustSewNav(b, tgt) || faustInNav(b, tgt)) || faustNav(car || b, tgt)      // card #84: the sewers' way first
   if (!navWorker) startNav()
   if (!navUp) return null
   const ai = b.ai
@@ -12821,7 +13571,7 @@ function botThink(b, all, dt) {
     j: sj ?? (air ? ai.hop || (flier ? !b.flying || b.y < wantY - 0.5 : b.y + rise(b.vy, jetOf(b).grav || 1) < wantY)
        : ai.hop && !(b.wall > 0) || (charging || pace < 1 || b.wall > 0 || POWERS[tgt.mark - 1]?.move === 0 ? false : (ai.tgt < 0 || sd > HOP_CLEAR) && !all.some(o => o !== b && !(o.dead > 0) && Math.hypot(o.x - b.x, o.z - b.z) < HOP_ROOM) && Math.random() < spec.jumpy * dt)),   // wall: climbs on; held target: on foot
     descend: flier && b.flying && !ai.hop && b.y > wantY + 0.5 || _doZip,
-    fire: fire && !sig && !_wrForward, alt: fire && sig && !_wrForward || dashWant(b, tgt, dist, los, onTarget, dt, all), use: !!prey && objGap(b, prey) <= (H.reach ?? 1.5) || !!car?.use, sprint: !((jetOf(b)?.sprint && b.flying) || prey || ai.walk),
+    fire: fire && !sig && !_wrForward, alt: fire && sig && !_wrForward || dashWant(b, tgt, dist, los, onTarget, dt, all), use: !!prey && objGap(b, prey) <= (H.reach ?? 1.5) || !!car?.use || !!plan?.use, sprint: !((jetOf(b)?.sprint && b.flying) || prey || ai.walk),
     yaw: yaw + sy, pitch: sp ?? pitch,
   }
 }
@@ -13569,6 +14319,14 @@ function addChunk(boxes, cell, tris = [], slim, solid, crowns = []) {
   }
   for (const b of boxes) {
     if (slim?.has(b) || b.paint) continue
+    if (LV.faust && !b.mark && !b.plane && b.ex >= ARENA && b.ez >= ARENA && b.cy + b.ey <= 0) {      // card #84: tiles, not a half-space plane
+      const T = 192, tv = new A.btVector3(0, 0, 0)
+      for (let x = b.cx - b.ex; x < b.cx + b.ex - 1e-6; x += T) for (let z = b.cz - b.ez; z < b.cz + b.ez - 1e-6; z += T) {
+        const x1 = Math.min(x + T, b.cx + b.ex), z1 = Math.min(z + T, b.cz + b.ez); tv.setValue((x1 - x) / 2 + 0.05, b.ey, (z1 - z) / 2 + 0.05)
+        const TB = makeBody(new A.btBoxShape(tv), 0, (x + x1) / 2, b.cy, (z + z1) / 2); TB.body.setFriction(0.9); world.addRigidBody(TB.body, ...COLLIDE.static); bodies.push(TB)
+      }
+      A.destroy(tv); continue
+    }
     const up = b.mark ? PAD_REACH / 2 : 0      // pad trigger reaches over its top
     // arena-wide floor = plane: Bullet's contacts against a box that wide go astray
     const flat = !b.mark && b.ex >= ARENA && b.ez >= ARENA && b.cy + b.ey <= 0, v = new A.btVector3(...b.plane ? b.plane.slice(0, 3) : flat ? [0, 1, 0] : [b.ex, b.ey + up, b.ez])
@@ -14086,7 +14844,7 @@ function carryStep(c, inp, dt) {
   if (o && !o.K.carry && !(o.K.mass <= liftOf(c))) return release(c, o, 0)
   if (o && inp.fire && c.useT <= 0) { c.threw = true; return o.K.carry ? release(c, o, o.K.carry.throw) : release(c, o, hurlOf(c)?.speed ?? 8) }
   if (o || !inp.use || c.useT > 0 || c.dead > 0) return
-  if (LV.faust && faustInLift(c)) { c.useT = USE_S; return }
+  if (LV.faust && (faustInLift(c) || faustSewUse(c))) { c.useT = USE_S; return }
   let best = null
   for (const p of objs) if (takeable(c, p) && (!best || objGap(c, p) < objGap(c, best))) best = p
   if (best) { c.useT = USE_S; best.V && !canLift(c, best) ? sit(c, best, best.riders.findIndex((r, i) => r === undefined && fits(c, best, i))) : liftUp(best, c) }
@@ -17959,6 +18717,7 @@ function interiorWarmProbe() {
   const g = new THREE.BufferGeometry(); interiorProbe = new THREE.Group(); interiorProbe.name = 'interiors'
   for (const [k, n] of [['position', 3], ['normal', 3], ['color', 3], ['inLight', 3], ['uv', 2]]) g.setAttribute(k, new THREE.Float32BufferAttribute(new Float32Array(3 * n), n))
   for (const m of inMaterials()) interiorProbe.add(new THREE.Mesh(g, m))
+  if (typeof faustSewMats === 'function') interiorProbe.add(new THREE.Mesh(g, faustSewMats().brick))      // card #84
   return interiorProbe
 }
 const lookKey = name => [name, settings.quality, settings.shadows, innerWidth, innerHeight, devicePixelRatio, graphics.lost].join('/')
@@ -20121,6 +20880,7 @@ function cullView(cam) {
   try { teleFrame() } catch (e) { frameFailed('telescreens', e) }      // card #9: the shared screen texture's frame
   if (screensDirty) try { screensDraw() } catch (e) { frameFailed('screens', e) }      // what drawSeen placed shows its screens now
   if (LV.faust) try { faustInteriorFrame(cam) } catch (e) { frameFailed('interiors', e) }
+  if (LV.faust) try { faustSewFrame(cam) } catch (e) { frameFailed('sewers', e) }      // card #84
   if (!culling) return
   const { v, s, b } = cullT, lit = renderer.shadowMap.enabled && sunLight.castShadow
   const hide = (o, x, test = x.isBox3 ? 'intersectsBox' : 'intersectsSphere') => { if (!v[test](x) && !(lit && s[test](x))) { o.visible = false; culled.push(o) } }
@@ -29776,7 +30536,7 @@ const PARTS = {
 }
 const PART_ADAPTERS = {}, partsHeard = { grab: [], rip: [], throw: [], punt: [], land: [] }
 // what E uses before it grabs (fix 55a): each fn(c) returns true when it took the press. #38's express lift first
-const partsUses = [c => LV.faust && typeof faustInLift === 'function' && faustInLift(c)]
+const partsUses = [c => LV.faust && typeof faustInLift === 'function' && faustInLift(c), c => LV.faust && typeof faustSewUse === 'function' && faustSewUse(c)]      // card #84: a manhole, a ladder
 const partsEmit = (type, ...a) => { for (const fn of partsHeard[type] || []) try { fn(...a) } catch (e) { console.warn('parts listener', e) } }
 const PUNT_G = () => gunNamed('Punt'), FLUNG_G = () => gunNamed('Flung')
 // the kind of an object: its row by name, a vehicle (or its wreck), else `object`; null if he can't lift it
@@ -29916,7 +30676,9 @@ function partsStep(c, inp, dt) {
       }
       return true
     }
+    const tapped = S.press < GRAB.pull && !S.pulled
     S.press = -1; S.pulled = false
+    if (tapped && !S.car && typeof faustSewTap === 'function' && faustSewTap(c)) { c.useT = USE_S; return true }      // card #84: a tap at a manhole's cover opens it and climbs down
     if (S.car && objs.includes(S.car) && seat(S.car)) { c.useT = USE_S; sit(c, S.car, S.car.riders.findIndex((r, i) => r === undefined && fits(c, S.car, i))) }
     else if (isHost && objs.some(p => p.V && p.riders.includes(undefined) && objGap(c, p) <= 1.5)) { c.useT = USE_S; tell(c.id, '§7' + enemyName(GAME.participant(c.id, c.cid).name) + " doesn't fit") }
     return true
