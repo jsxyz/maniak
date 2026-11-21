@@ -30261,7 +30261,40 @@ function motionResult(J, err) {
     frames: { cols: ['i', 't', 'dt', 'ticks', 'alpha', 'drawnT', 'tickAt', 'camx', 'camy', 'camz'], rows: J.frames },
     flagged: objects.flatMap(o => o.flagged).sort((a, b) => a.i - b.i), objects, watched, series, seriesCols: ['i', 't', 'dx', 'dy', 'dz', 'px', 'py', 'pz', 'vx', 'vy', 'vz', 'flags', 'contacts'] }
 }
+// a host-only test tool: every program three holds (renderer.info.programs: three keeps a program whose link failed until its material is released), asked
+// for its real LINK_STATUS and each attached shader's COMPILE_STATUS, when called and never per draw. Play runs with renderer.debug.checkShaderErrors off, so
+// a program that fails to link is otherwise silent. Returns { ok: true, programs } or { ok: false, programs, failed, failures: [{ name, type, id, cacheKey,
+// linked, log, shaders: [{ stage, log }], materials }] } (materials: the scene's materials using it, by name and mesh); { ok: false, error } if it can't ask
+function shaderCheck() {
+  if (!isHost || serving) return { ok: false, error: 'host only' }
+  if (!renderer) return { ok: false, error: 'no renderer yet' }
+  const gl = renderer.getContext()
+  if (gl.isContextLost()) return { ok: false, error: 'the GL context is lost' }
+  const programs = renderer.info.programs || [], owners = new Map(), stage = { [gl.VERTEX_SHADER]: 'vertex', [gl.FRAGMENT_SHADER]: 'fragment' }, failures = []
+  try {
+    scene?.traverse(o => {
+      for (const m of Array.isArray(o.material) ? o.material : o.material ? [o.material] : []) for (const p of renderer.properties.get(m).programs?.values() || []) {
+        const L = owners.get(p) || owners.set(p, []).get(p), n = (m.name || m.type) + (o.name ? ' on ' + o.name : '')
+        if (L.length < 4 && !L.includes(n)) L.push(n)
+      }
+    })
+  } catch (e) {}
+  for (const p of programs) {
+    if (!p.program) continue
+    const shaders = []
+    let linked = true, log = ''
+    try {
+      linked = !!gl.getProgramParameter(p.program, gl.LINK_STATUS)
+      for (const s of gl.getAttachedShaders(p.program) || []) if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) shaders.push({ stage: stage[gl.getShaderParameter(s, gl.SHADER_TYPE)] || 'shader', log: String(gl.getShaderInfoLog(s) || '').slice(0, 2000) })
+      if (!linked) log = String(gl.getProgramInfoLog(p.program) || '').slice(0, 2000)
+    } catch (e) { shaders.push({ stage: 'query', log: String(e) }) }
+    if (!linked || shaders.length) failures.push({ name: p.name, type: p.type, id: p.id, cacheKey: String(p.cacheKey).slice(0, 160), linked, log, shaders, materials: owners.get(p) || [] })
+  }
+  return failures.length ? { ok: false, programs: programs.length, failed: failures.length, failures } : { ok: true, programs: programs.length }
+}
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
+  // test tool (host): await-free; { ok, programs } or the failed programs with their GL logs: what three's checkShaderErrors would say, on demand
+  shaderCheck,
   // card #75: a sequence of frames and their debug rows in one call (a promise): { n, every, width, quality }
   capture: captureFrames,
   // card #63, a test tool (host): a car of `kind` dropped h m above the roof of the vehicle standing within 2 m of (x, z), else
@@ -39539,6 +39572,12 @@ Object.assign(GAME.commands, { sprint: { args: 'first|A|B|C|live', help: 'his ru
   sysMsg(gaitPick(key) ? '§7Run and sprint: §f' + key : '§cUsage: §f/sprint first|A|B|C|live')
 } } })
 Object.assign(GAME.commands, { motion: { args: '[seconds] [radius]', help: 'host only, test tooling: record every frame and list the glitched ones (jumps, velocity flips, motion at rest)', run: motionCommand } })
+Object.assign(GAME.commands, { shadercheck: { args: '', help: 'host only, test: ask GL for every compiled program\'s link and shader status (play hides failures)', run: () => {
+  const r = shaderCheck()
+  if (!r.ok) console.warn('shaderCheck', r)
+  sysMsg(r.ok ? '§7Shaders: §fall ' + r.programs + ' programs linked and compiled' : r.error ? '§c' + esc(r.error) : '§c' + r.failed + ' of ' + r.programs + ' programs failed: §f' + r.failures.slice(0, 3).map(f =>
+    esc(f.name || f.type || 'program') + (f.materials[0] ? ' (' + esc(f.materials[0]) + ')' : '') + ' §7' + esc((f.shaders[0]?.log || f.log).split('\n').find(l => /ERROR/.test(l)) || (f.shaders[0]?.log || f.log).slice(0, 120))).join(' §c| §f') + ' §7(full list in the console)')
+} } })
 // card #75: /go <x> <z> | <thing> [walk|run|sprint], on foot by the bots' way; any real key or click stops it
 const goCommand = a => {
   if (!isHost || serving || !selfChar()) return sysMsg('§cOnly the host, with a character.')
