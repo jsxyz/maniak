@@ -4103,7 +4103,11 @@ function inWindows(B, k) {
     const d0 = D.x - D.w / 2, d1 = D.x + D.w / 2
     shop(0, z1, (x0 + d0) / 2, (d0 - x0) / 2); shop(0, z1, (d1 + x1) / 2, (x1 - d1) / 2)
     shop(1, z0, B.x, B.w + 0.25)
-    shop(2, x1, B.z, (z1 - z0) / 2 - t); shop(3, x0, B.z, (z1 - z0) / 2 - t)
+    const sideShop = (face, plane, out) => { let c = z0 + t       // card #78: faustRing's side() pieces, split by this lot's alley back doors
+      const ends = (B.backDoors || []).filter(q => q.out[0] === out && !(B.club?.back && q.x === B.club.back[0] && q.z === B.club.back[1])).map(q => q.z).sort((p, q) => p - q)
+      for (const u of ends) { if (u - 0.85 - c > 0.005) shop(face, plane, (c + u - 0.85) / 2, (u - 0.85 - c) / 2); c = u + 0.85 }
+      if (z1 - t - c > 0.005) shop(face, plane, (c + z1 - t) / 2, (z1 - t - c) / 2) }
+    sideShop(2, x1, 1); sideShop(3, x0, -1)
     return out
   }
   const m = B.masses[s.mass], y0 = s.y
@@ -8374,6 +8378,43 @@ function faustShopfronts(batch, lot) {
   }
 }
 // ---------------------------------------------------------------- city variation (card #82): street level
+// card #78: every ground-storey opening the interior has (inWindows(B, 0): realShop's bays on all four faces of the podium) shows glass outside in Plain and Ink:
+// a panel 0.04 m proud of the podium's face (dark glass; a lit one a dim warm or cool light inside a dark frame) (behind faustShopfronts' own windows, which stay on top), lit warm or cool (or dark) by the opening's seed, in
+// faustShopfronts' tints (a look that draws shopfronts of its own, Realistic, drops them and draws realShop's glass on the same bays). V: each panel's
+// vertices in the batch by the window's key, for a break to take it out; a window already broken is left out.
+const FAUST_GLASS_STATS = []      // per cell built: { ci, cj, lots, vertsBefore, vertsAfter, skipped: [lot index] }
+function faustShopGlass(batch, B, V) {
+  const S = FAUST_NIGHT.shops
+  for (const w of inWindows(B, 0)) {
+    if (typeof dsState === 'object' && dsState?.all?.has(w.key)) continue
+    const h = cityHash(B.seed ^ Math.imul(w.face * 32 + w.bay + 7, 0x85ebca6b)), lit = h % 100 < S.lit * 100, cool = (h >>> 8 & 1) === 1, blinds = (h >>> 10) % 100 < 55 ? 1 : 0.55
+    const a = Math.round(batch.count * 3), sg = w.face === 0 || w.face === 2 ? 1 : -1, fwd = w.face === 0 || w.face === 3
+    // a quad on the opening's plane, u0..u1 along the wall, y0..y1 up, off m out of the wall; glow gb at its foot, gt at its top (per vertex: a soft fall-off)
+    const quad = (u0, u1, y0, y1, off, tint, gb, gt) => {
+      const P = (u, y) => w.face < 2 ? [u, y, w.plane + sg * off] : [w.plane + sg * off, y, u]
+      const q = fwd ? [P(u0, y0), P(u1, y0), P(u1, y1), P(u0, y1)] : [P(u1, y0), P(u0, y0), P(u0, y1), P(u1, y1)]
+      batch.tri(q[0], q[1], q[2], tint, null, [gb, gb, gt]); batch.tri(q[0], q[2], q[3], tint, null, [gb, gt, gt])
+    }
+    quad(w.a0, w.a1, w.y0, w.y1, 0.012, S.dark, 0, 0)       // the glass: dark, the whole opening
+    if (lit) {
+      // the room's light behind it: in 2 or 3 panes (mullions between), brighter toward the ceiling lamp than at the sill, a warm or a dim cool (a screen's)
+      const u0 = w.a0 + 0.12, u1 = w.a1 - 0.12, y0 = w.y0 + 0.12, y1 = w.y1 - 0.12, np = u1 - u0 > 4.2 ? 3 : 2, gt = cool ? 0.2 : 0.5, tint = S.windows[cool ? 1 : 0]
+      for (let i = 0; i < np; i++) quad(u0 + (u1 - u0) * i / np + 0.05, u0 + (u1 - u0) * (i + 1) / np - 0.05, y0, y1, 0.024, tint, gt * 0.35, gt)
+      // venetian blinds: dark slats down from the top, over the whole width, most of the way down or a little over half
+      const pitch = 0.26, n = Math.floor((y1 - y0) * blinds / pitch)
+      for (let k = 0; k < n; k++) quad(u0, u1, y1 - (k + 1) * pitch + 0.09, y1 - k * pitch, 0.034, S.dark, 0, 0)
+    }
+  V.set(w.key, [a, Math.round(batch.count * 3)])
+  }
+}
+// a broken pane's panel leaves the drawn batch (its vertices dropped under the street, as a broken prop's are)
+function dsGlassOut(rec) {
+  const c = faustState?.chunks.get(faustKey(rec.p.ci, rec.p.cj)), v = c?.plan?.glassV?.get(rec.key), mesh = c?.visual?.children.find(m => m.isMesh && m.material === faustState.materials?.stone)
+  if (!v || !mesh) return
+  const pos = mesh.geometry.attributes.position, A = pos.array
+  for (let k = v[0]; k < v[1]; k++) A[k * 3 + 1] = -50
+  pos.addUpdateRange(v[0] * 3, (v[1] - v[0]) * 3); pos.needsUpdate = true
+}
 // Shopfront kinds: faustShopfronts draws a lit or dark window either side of each street door; this gives each of those windows a kind
 // by the lot's seed and district: a striped awning, a blade sign, a neon outline, a closed roller shutter, a boarded-up front, or the plain
 // window. Pure in the lot (the plan is unchanged). All of it above 2.2 m or flush with the wall inside the front's 1.3 m of entrance depth.
@@ -9621,7 +9662,7 @@ function* faustVisualSteps(c) {
   // card #103: the sign letters' faces, fetched at page start: a cell waits for them at most 1.5 s, else it is drawn with the pixel letters and again when they arrive
   for (let w = 0, t0 = performance.now(); FAUST_FACES.promise && !FAUST_FACES.settled && w < 600 && performance.now() - t0 < 1500; w++) yield 'frame'
   c.signFace = !!FAUST_FACES.set
-  const facade = faustBatch(3072), ornament = faustBatch(65536), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
+  const glassLots = [], facade = faustBatch(3072), ornament = faustBatch(65536), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
   if (P.chan) faustChanCellLook(ornament, P.chan.axis, X, Z, P.diagonal)      // card #83: only the strips beyond the lip
   else ornament.box(faustBox(X + 48, -0.08, Z + 48, 48, 0.08, 48), 0x242a33)
@@ -9664,6 +9705,7 @@ function* faustVisualSteps(c) {
     // Heavy street podiums and industrial sheds anchor the building at pedestrian scale.
     faustRing(ornament, faustBox(x, 2, z, w + 0.25, 2, d + 0.25), 0x343d4b, 0.95, B.door, false, lot.backDoors)
     faustShopfronts(ornament, lot)
+    glassLots.push(lot, B)      // card #78: glass at every opening the interior has, in a last pass
     if (ornament.room === undefined || ornament.room > 1200) faustShopTypes(ornament, lot)      // card #82
     if (district === 'industrial') {
       for (const y of [H + 9, H + 24, H + 35]) ornament.box(faustBox(x - w * 0.6, y, z - d * 0.6, 1.75, 0.5, 1.75), 0x969b9e)
@@ -9765,6 +9807,10 @@ function* faustVisualSteps(c) {
   faustPropsDraw(ornament, P)      // card #69
   const teles = []      // card #9: this cell's telescreens, framed here, their panels one mesh below
   for (const s of faustTelescreens(P)) { if (ornament.room < 1000) break; faustTeleFrame(ornament, s); teles.push(s) }
+  { const skipped = [], before = Math.round(ornament.count * 3), V = P.glassV = new Map()      // card #78: each lot's glass whole, if the batch has room for it, else none on any wall
+    for (let i = 0; i < glassLots.length; i += 2) { const B = glassLots[i + 1], n = inWindows(B, 0).length
+      if (ornament.room < n * 100 + 64) skipped.push(P.lots.indexOf(glassLots[i])); else faustShopGlass(ornament, B, V) }
+    if (FAUST_GLASS_STATS.length < 400) FAUST_GLASS_STATS.push({ ci: c.ci, cj: c.cj, lots: glassLots.length / 2, vertsBefore: before, vertsAfter: Math.round(ornament.count * 3), skipped }) }
   const root = new THREE.Group()
   for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
     // Building masses cast the local shadow; small trim receives it without duplicating its many triangles.
@@ -36777,7 +36823,7 @@ function dsAdd(rec) {
   if (!ch) st.chunks.set(rec.chunk, ch = { v: st.chunkV?.get(rec.chunk) || 0, recs: new Map(), changed: 0 })
   ch.recs.set(rec.key, rec); ch.v++; ch.changed = dsNow()
   st.stats.applied++
-  if (rec.kind === DS_KIND.pane) { st.tableDirty = true; st.buildings.add(rec.p.ci + ' ' + rec.p.cj + ' ' + rec.p.slot) }
+  if (rec.kind === DS_KIND.pane) { st.tableDirty = true; st.buildings.add(rec.p.ci + ' ' + rec.p.cj + ' ' + rec.p.slot); dsGlassOut(rec) }
   else if (rec.kind === DS_KIND.lamp) dsLampOut(rec)
   else if (rec.kind === DS_KIND.post) { dsLampOut(rec); dsPostPhysics(rec); st.fallenDirty = true }
   else if (dsKinds.has(rec.kind)) dsKindCall(rec, 'apply')
@@ -36789,7 +36835,7 @@ function dsRemove(key) {
   const st = dsState, rec = st.all.get(key)
   if (!rec) return
   st.all.delete(key); const ch = st.chunks.get(rec.chunk); ch.recs.delete(key); ch.v++
-  if (rec.kind === DS_KIND.pane) { st.tableDirty = true; st.buildings.add(rec.p.ci + ' ' + rec.p.cj + ' ' + rec.p.slot) }
+  if (rec.kind === DS_KIND.pane) { st.tableDirty = true; st.buildings.add(rec.p.ci + ' ' + rec.p.cj + ' ' + rec.p.slot); { const c = faustState?.chunks.get(faustKey(rec.p.ci, rec.p.cj)); if (c?.plan?.glassV?.has(rec.key) && c.visual) dsRelight(c) } }
   else if (dsKinds.has(rec.kind)) dsKindCall(rec, 'undo')
   else if (rec.kind === DS_KIND.lamp || rec.kind === DS_KIND.post) { const c = faustState.chunks.get(faustKey(rec.p.ci, rec.p.cj)); if (c?.visual) dsRelight(c); if (typeof faustLamp === 'object') { faustLamp.sites.delete(faustKey(rec.p.ci, rec.p.cj)); faustLamp.built = false } st.fallenDirty = true }
 }
