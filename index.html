@@ -36734,14 +36734,14 @@ function dsPropFresh(rec) {
   } catch (e) {}
   if (f.k === 'hydrant') dsPropJet(f.x, f.z, rec.key)
 }
-// ---- a broken hydrant's geyser: a column that rises to about 4.6 m in about 0.3 s, blooms at the top into a crown, and falls back all round
+// ---- a broken hydrant's geyser (card #81 fix-forward 1): a column that rises to about 4.6 m in about 0.3 s, blooms at the top into a crown, and falls back all round
 // in an umbrella of streaked spray, with a mist at the crown and a splash ring at the foot, held `hold` s and tapering over `taper`; and a
 // dark wet patch spreading on the pavement and drying slowly. The column is a tube (thick at its foot, wobbling, a flared ragged crown, its
 // ripples travelling up); the spray is soft-edged billboards stretched along their velocity (one instanced mesh); the mist is a second one
 // of a few big, very faint ones; a few opaque hard-edged discs (Ink only) carry Ink's dark rim. Soft things write no depth, so Ink's
 // outline pass leaves them white; the column and the discs are opaque in Ink, so it strokes them. Two small programs (an unlit textured
 // quad, and its alpha-tested twin) are compiled when the destruction's frame first runs, before anything breaks. Stepped by the frame's own time
-const DS_GEY = { cap: { low: 500, medium: 900, high: 1400 }, mist: 70, hold: 3.5, taper: 3, height: 4.6, rise: 0.09, g: 9.8, floor: 0.06, wetLife: 36, wobble: 0.13 }
+const DS_GEY = { cap: { low: 500, medium: 900, high: 1400 }, mist: 120, hold: 30, taper: 3, height: 4.6, rise: 0.09, g: 9.8, floor: 0.06, wetLife: 75, wobble: 0.13 }
 let dsGey = null
 const dsJets = []
 function dsSoftTex(hard) {
@@ -36780,8 +36780,10 @@ function dsWetMesh(x, z) {
 // the column: a tube (10 sides, 8 rings) from the stub up; its vertices are set each frame from its height, the wobble, the ripples and the crown
 function dsCoreMesh(x, z) {
   const g = new THREE.CylinderGeometry(1, 1, 1, 10, 8, true).translate(0, 0.5, 0), base = g.attributes.position.array.slice()
-  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xd6ecff, roughness: 0.2, metalness: 0, side: THREE.DoubleSide, emissive: 0x2a4c70, transparent: true, opacity: 0.6, depthWrite: false }))
+  const mat = op => new THREE.MeshStandardMaterial({ color: 0xd6ecff, roughness: 0.2, metalness: 0, side: THREE.DoubleSide, emissive: 0x2a4c70, transparent: true, opacity: op, depthWrite: false })
+  const m = new THREE.Mesh(g, mat(0.14))
   m.position.set(x, 0.28, z); m.frustumCulled = false; m.renderOrder = 2; m.name = 'hydrant-core'; m.userData.base = base
+  m.userData.shells = [[0.8, 0.2, 2.1], [0.6, 0.3, 2.2]].map(([k, op, ro]) => { const q = new THREE.Mesh(g, mat(op)); q.position.copy(m.position); q.scale.set(k, 1, k); q.frustumCulled = false; q.renderOrder = ro; q.name = 'hydrant-core-shell'; scene.add(q); if (typeof inkPrepare === 'function') inkPrepare(q); return q })
   scene.add(m)
   if (typeof inkPrepare === 'function') inkPrepare(m)
   return m
@@ -36790,7 +36792,7 @@ function dsCoreShape(m, h, age) {
   const P = m.geometry.attributes.position, A = P.array, B = m.userData.base
   for (let i = 0; i < P.count; i++) {
     const u = B[i * 3 + 1], bx = B[i * 3], bz = B[i * 3 + 2], th = Math.atan2(bz, bx), w = DS_GEY.wobble * u * u
-    const crown = Math.max(0, (u - 0.8) / 0.2), r = 0.15 + 0.1 * u + 0.018 * Math.sin(age * 21 + u * 9) + 0.025 * Math.sin(th * 5 + age * 3 + h * u * 6 - age * 24) + crown * (0.28 + 0.1 * Math.sin(age * 31 + i * 2.3))
+    const crown = Math.max(0, (u - 0.75) / 0.25), r = 0.15 + 0.1 * u + 0.018 * Math.sin(age * 21 + u * 9) + 0.025 * Math.sin(th * 5 + age * 3 + h * u * 6 - age * 24) + crown * (0.42 + 0.12 * Math.sin(age * 31 + i * 2.3))
     A[i * 3] = bx * r + Math.sin(age * 13 + u * 6) * w; A[i * 3 + 1] = u * h + crown * 0.14 * Math.sin(age * 27 + i * 1.7); A[i * 3 + 2] = bz * r + Math.cos(age * 11 + u * 5 + 1) * w
   }
   P.needsUpdate = true; m.geometry.computeBoundingSphere()
@@ -36822,7 +36824,7 @@ function dsPropJet(x, z, seed) {
   if (dsJets.length >= 6) dsJetEnd(dsJets.shift())
   dsJets.push({ x, z, age: 0, acc: 0, macc: 0, rng: genRng(dsHash(seed >>> 0)), wet: dsWetMesh(x, z), core: dsCoreMesh(x, z) })
 }
-function dsJetEnd(J) { scene.remove(J.wet); J.wet.material.dispose(); scene.remove(J.core); J.core.geometry.dispose(); J.core.material.dispose() }
+function dsJetEnd(J) { scene.remove(J.wet); J.wet.material.dispose(); for (const q of J.core.userData.shells) { scene.remove(q); q.material.dispose() } scene.remove(J.core); J.core.geometry.dispose(); J.core.material.dispose() }
 // the geyser and its patch advance dt s (the frame's own step)
 function dsPropJetStep(dt) {
   const K = dsGey
@@ -36833,18 +36835,20 @@ function dsPropJetStep(dt) {
     J.age += dt
     const s = J.age < DS_GEY.hold ? 1 : Math.max(0, 1 - (J.age - DS_GEY.hold) / DS_GEY.taper), h = DS_GEY.height * Math.pow(s, 0.6) * (1 - Math.exp(-J.age / DS_GEY.rise))
     if (s > 0) {
-      for (J.acc += K.rate * s * dt; J.acc >= 1; J.acc--) {
+      for (J.acc += K.rate * s * dt * (J.age < 0.4 ? 2 : 1); J.acc >= 1; J.acc--) {
         if (K.live >= K.cap) { J.acc = 0; break }
-        dsJetDrop(J, K, s, h, h > 1 && J.rng() < 0.85)
+        dsJetDrop(J, K, s, h, h > 0.3 && J.rng() < 0.85)
       }
-      for (J.macc += 30 * s * dt; J.macc >= 1; J.macc--) dsJetMist(J, K, 0, J.x + (J.rng() - 0.5) * 0.4, 0.28 + h * 0.95, J.z + (J.rng() - 0.5) * 0.4)
+      for (J.macc += (55 + (J.age > 0.3 ? 25 : 0)) * s * dt; J.macc >= 1; J.macc--) { if (J.rng() < 0.33 && J.age > 0.3) { const a = J.rng() * 6.2832, r = 0.5 + J.rng() * 1.6; dsJetMist(J, K, 1, J.x + Math.cos(a) * r, 0.12, J.z + Math.sin(a) * r) } else dsJetMist(J, K, 0, J.x + (J.rng() - 0.5) * 0.5, 0.28 + h * 0.95, J.z + (J.rng() - 0.5) * 0.5) }
     }
     const c = J.core
     c.visible = s > 0 && h > 0.05
-    if (c.visible) { dsCoreShape(c, h, J.age); c.material.transparent = !ink; c.material.opacity = ink ? 1 : 0.6; c.material.depthWrite = ink }
+    for (const q of c.userData.shells) q.visible = c.visible && !ink
+    if (c.visible) { dsCoreShape(c, h, J.age); c.material.transparent = !ink; c.material.opacity = ink ? 1 : 0.14; c.material.depthWrite = ink; for (const q of c.userData.shells) q.position.set(c.position.x, c.position.y, c.position.z) }
     const w = J.wet
-    w.scale.set(0.18 + 1.45 * (1 - Math.exp(-J.age / 2.4)), 1, 0.18 + 1.45 * (1 - Math.exp(-J.age / 2.4)))
-    w.material.opacity = 0.55 * Math.min(1, J.age / 0.5) * (J.age > 26 ? Math.max(0, 1 - (J.age - 26) / 10) : 1)
+    const wr = 0.18 + 1.45 * (1 - Math.exp(-J.age / 2.4)) + 1.0 * (1 - Math.exp(-J.age / 14))      // the patch keeps spreading while it gushes
+    w.scale.set(wr, 1, wr)
+    w.material.opacity = 0.55 * Math.min(1, J.age / 0.5) * (J.age > DS_GEY.wetLife - 12 ? Math.max(0, 1 - (J.age - (DS_GEY.wetLife - 12)) / 12) : 1)      // and dries over the last 12 s
     if (J.age > DS_GEY.wetLife) { dsJetEnd(J); dsJets.splice(i, 1) }
   }
   // the spray: each drop a camera-facing quad stretched along its velocity as the camera sees it (its screen heading)
@@ -36854,7 +36858,7 @@ function dsPropJetStep(dt) {
     S[o + 6] += dt; S[o + 4] -= DS_GEY.g * dt
     S[o] += S[o + 3] * dt; S[o + 1] += S[o + 4] * dt; S[o + 2] += S[o + 5] * dt
     if (S[o + 1] < DS_GEY.floor || S[o + 6] > S[o + 7]) {
-      if (S[o + 1] < DS_GEY.floor && S[o + 3] * S[o + 3] + S[o + 5] * S[o + 5] > 0.8 && dsJets[0] && dsJets[0].rng() < 0.12) dsJetMist(dsJets[0], K, 1, S[o], 0.12, S[o + 2])
+      if (S[o + 1] < DS_GEY.floor && S[o + 3] * S[o + 3] + S[o + 5] * S[o + 5] > 0.8 && dsJets[0] && dsJets[0].rng() < 0.25) dsJetMist(dsJets[0], K, 1, S[o], 0.12, S[o + 2])
       const last = --K.live; if (d !== last) S.copyWithin(o, last * 9, last * 9 + 9); d--; continue
     }
     const vx = S[o + 3], vy = S[o + 4], vz = S[o + 5], k = S[o + 8], sp = Math.hypot(vx, vy, vz)
@@ -36875,7 +36879,7 @@ function dsPropJetStep(dt) {
     M.position.set(Mi[o], Mi[o + 1], Mi[o + 2]); M.quaternion.copy(camera.quaternion); M.scale.set(size, size, 1); M.updateMatrix()
     K.mist.setMatrixAt(nm++, M.matrix)
   }
-  K.mist.count = nm; K.mist.instanceMatrix.needsUpdate = true
+  K.mist.count = nm; K.mist.instanceMatrix.needsUpdate = true; K.mist.visible = !ink      // Ink's spray is white shapes and lines: its haze read as grey smudges, so it is left out there
 }
 // a loose prop's look: its own shape (not a crate), one colour: the hydrant's body, domed cap and nozzles, the mailbox's box and lid,
 // the meter's pole and head, merged into one geometry for the row's instanced mesh
@@ -37985,12 +37989,13 @@ const testTools = (() => {
       const cx = lx0 + K.lift / 2          // the door's centre line: 0.2 m clear of a jamb each side, so in by it, then across to the UP half
       q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B, radius: 0.5, via: [{ x: cx, z: C.z1 + 1.5, r: 0.35 }, { x: cx, z: C.z1 - 0.15, r: 0.35 }, { x: cx, z: q.z }] } } })),
     window: c => windowsNear(c, false), brokenwindow: c => windowsNear(c, true),             // intact panes a punch reaches (#77); #46's breaches
-    prop: c => {                                                                 // card #81: the unbroken street props round him
+    hydrant: c => NEAR.prop(c, 'hydrant'), mailbox: c => NEAR.prop(c, 'mailbox'), meter: c => NEAR.prop(c, 'meter'),
+    prop: (c, only) => {                                                         // card #81: the unbroken street props round him (only: one kind)
       const out = [], F = faustState
       if (!LV.faust || !F || !dsCheck()) return out
       const ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96)
-      for (let i = Math.max(0, ci - 1); i <= Math.min(F.S - 1, ci + 1); i++) for (let j = Math.max(0, cj - 1); j <= Math.min(F.S - 1, cj + 1); j++)
-        for (const s of dsPropSites(dsPlan(i, j))) if (!dsState.all.has(dsPropKey(i * F.S + j, s.i))) out.push({ x: s.f.x, z: s.f.z, y0: 0, what: 'intact ' + s.f.k + (s.hard > 2 ? ' (a blast or a car breaks it)' : s.hard > 1 ? ' (a haymaker or a sprint breaks it; hold E to rip it off)' : ' (a punch breaks it; hold E to rip it off)') })
+      for (let r = 1; r <= 3 && !out.length; r++) for (let i = Math.max(0, ci - r); i <= Math.min(F.S - 1, ci + r); i++) for (let j = Math.max(0, cj - r); j <= Math.min(F.S - 1, cj + r); j++)
+        for (const s of dsPropSites(dsPlan(i, j))) if ((!only || s.f.k === only) && !dsState.all.has(dsPropKey(i * F.S + j, s.i))) out.push({ x: s.f.x, z: s.f.z, y0: 0, what: 'intact ' + s.f.k + (s.hard > 2 ? ' (a blast or a car breaks it)' : s.hard > 1 ? ' (a haymaker or a sprint breaks it; hold E to rip it off)' : ' (a punch breaks it; hold E to rip it off)') })
       return out },
     performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk && !b.deal), enforcer: bots(b => b.enforcer),
     dealer: bots(b => b.deal && !b.deal.lookout), lookout: bots(b => b.deal?.lookout),      // card #97
@@ -38053,7 +38058,7 @@ const testTools = (() => {
     }
     return out
   }
-  const ALIAS = { props: 'prop', hydrant: 'prop', mailbox: 'prop', meter: 'prop', highways: 'highway', viaduct: 'highway', motorway: 'highway', overpass: 'interchange', junction: 'interchange', stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
+  const ALIAS = { props: 'prop', highways: 'highway', viaduct: 'highway', motorway: 'highway', overpass: 'interchange', junction: 'interchange', stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
   // card #84: the manholes of the cells round c, each with a spot 3.2 m south of it facing it; E there climbs down, E held rips the cover off
   NEAR.manhole = c => { const F = faustState; if (!F) return []; const plan = faustSewers(F.seed, F.S), out = [], ci = Math.floor(c.x / 96), cj = Math.floor(c.z / 96)
     for (let i = ci - 3; i <= ci + 3; i++) for (let j = cj - 3; j <= cj + 3; j++) for (const m of plan.byCell.get(i + ' ' + j) || [])
