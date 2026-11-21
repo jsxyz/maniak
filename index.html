@@ -823,6 +823,8 @@ const SOUNDS = {
   Shank: { say: 'a quick jab of a crude blade: a short scuff of cloth and a wet stab', seed: 0, file: null, synth: null },   // the performer's shank
   'Tin cup': { say: 'a tin cup shaken at a passer-by: coins rattled hard once', seed: 0, file: null, synth: null },          // the performer's cup, when its gun fires
   'Coin rattle': { say: 'a few coins jiggled in a tin cup', seed: 0, file: null, synth: 'coins', vol: 1, reach: 0.8 },                    // the performer's cup, shaken when he demands and when he dances near you
+  // card #9, the telescreens
+  Telescreen: { say: 'a public-address chime from a speaker: two soft brass notes with a crackle of static and a low mains hum', seed: 0, file: null, synth: 'telescreen', vol: 0.5, reach: 1.6 },   // the propaganda card's chime, from the nearest screen, every 6 s
   'Street performer demand': { say: 'a hoarse, wheedling street voice demanding money, and coins rattled in a tin cup', seed: 0, file: null, synth: null },   // not played: his lines are heard through VOICES below ('Street performer'/demand)
 
   Punt: { say: 'a big boot punting something heavy: a deep leathery thump and a rush of air after it', seed: 0, file: null, synth: null },   // punting a carried thing
@@ -3149,6 +3151,51 @@ function faustPosters(P) {
     out.push({ k: 'poster', x: lot.x + side * (lot.w + 0.03), z, y: 11.2, s: 1, q: side > 0 ? 1 : 3, h: rng() * 4 | 0 })
   }
   return out
+}
+// card #9: a lot's telescreen. Pure in the lot, as faustPosters is (no plan entry, no collider, nothing in the plan's hash): about one
+// non-Gothic core tower in five (in three if its base is 40 m or more) shows one on the front (+z) or back (-z) face of its base mass,
+// in the gap between two of its piers, on the bays inFace lays out (so a pane is never cut in half by the frame): the bays that lie
+// wholly in the gap, trimmed to at most 20 m and to what fits between the belt course and the cornice, 16:9, its foot 7 m up (three in ten higher, in the middle of the base). { x, y, z, w, h, yaw,
+// sgn, li, framed }: z is the panel's plane, 0.2 m proud of the wall
+function faustTelescreens(P) {
+  const out = []
+  P.lots.forEach((lot, li) => {
+    if (lot.stop || lot.gothic || lot.landmark || lot.district !== 'core') return
+    const m = lot.mass[0], top = m.cy + m.ey, rng = genRng(lot.seed ^ 0x74656c65), roll = rng(), back = rng() < 0.4, side = rng() < 0.5 ? 1 : -1, mid = rng() < 0.3
+    if (top < 24 || roll > (top >= 40 ? 0.5 : 0.3)) return
+    const face = inFace(m, back ? 1 : 0, true), g0 = 0.6, g1 = 0.86 * face.hw - 0.6, room = top - 1.6 - 7
+    let bays = face.bays.filter(([a, b]) => side > 0 ? a >= g0 - 0.02 && b <= g1 + 0.02 : b <= -g0 + 0.02 && a >= -g1 - 0.02)
+    const wide = () => bays.length ? bays.at(-1)[1] - bays[0][0] : 0
+    for (let k = 0; bays.length && (wide() > 20 || wide() * 9 / 16 > room); k++) bays = k & 1 ? bays.slice(0, -1) : bays.slice(1)
+    if (bays.length < 2 || wide() < 5.5) return
+    const w = wide(), h = w * 9 / 16, sgn = back ? -1 : 1
+    out.push({ x: inCm(face.c + (bays[0][0] + bays.at(-1)[1]) / 2), y: inCm(Math.max(7 + h / 2, mid ? Math.min(top - 1.6 - h / 2, top * 0.45) : 0)), z: inCm(face.plane + sgn * 0.2), w: inCm(w), h: inCm(h),
+      yaw: back ? Math.PI : 0, sgn, li, framed: true })
+  })
+  return out
+}
+// an Art Deco frame round a screen, in the stone material's batch: a bronze bezel with a gold lip, a stepped crown with a fin and a
+// red tally lamp, and a pylon either side topped with gold
+function faustTeleFrame(g, s) {
+  const W = s.w / 2, H = s.h / 2, o = s.sgn, zp = s.z - o * 0.2, z = zp + o * 0.2, bz = 0.2, bronze = 0x2b2f38, gold = 0xc9a85a, dark = 0x3a3f49
+  const B = (cx, cy, dz, ex, ey, ez, t, l = 0) => g.box(faustBox(cx, cy, z + o * dz, ex, ey, ez), t, l)
+  B(s.x, s.y + H + 0.225, 0, W + 0.45, 0.225, bz, bronze); B(s.x, s.y - H - 0.225, 0, W + 0.45, 0.225, bz, bronze)
+  B(s.x - W - 0.225, s.y, 0, 0.225, H, bz, bronze); B(s.x + W + 0.225, s.y, 0, 0.225, H, bz, bronze)
+  B(s.x, s.y + H + 0.05, 0.12, W, 0.05, 0.1, gold, 0.25); B(s.x, s.y - H - 0.05, 0.12, W, 0.05, 0.1, gold, 0.25)
+  // the crown: three gold-trimmed tiers, each 0.5 m tall and stepping in, 1.5 m above the bezel, a fin 1 m taller: a stepped silhouette that reads from below
+  const crown = 0xb8975a
+  for (const [k, w, h] of [[0, W + 0.9, 0.25], [1, W * 0.7, 0.25], [2, W * 0.4, 0.25]]) {
+    const cy = s.y + H + 0.45 + 0.5 * k + 0.25
+    B(s.x, cy, 0.05, w, h, 0.34, dark); B(s.x, cy + h, 0.1, w, 0.05, 0.36, crown, 0.4); B(s.x - w + 0.04, cy, 0.14, 0.04, h, 0.36, crown, 0.3); B(s.x + w - 0.04, cy, 0.14, 0.04, h, 0.36, crown, 0.3)
+  }
+  B(s.x, s.y + H + 2.5, 0.1, 0.16, 0.6, 0.14, gold, 0.5)
+  B(s.x, s.y + H + 0.3, 0.26, 0.45, 0.1, 0.06, 0xff3322, 1.5)      // the tally lamp, on the bezel
+  for (const a of [-1, 1]) {
+    B(s.x + a * (W + 1.0), s.y + 0.4, 0.05, 0.38, H + 1.4, 0.3, 0x343942)
+    B(s.x + a * (W + 1.0), s.y + H + 1.95, 0.05, 0.5, 0.12, 0.38, gold, 0.5)
+    B(s.x + a * (W + 1.0), s.y + H + 2.25, 0.05, 0.2, 0.2, 0.2, gold, 0.5)
+  }
+  B(s.x, s.y - H - 0.55, 0.15, W * 0.9, 0.04, 0.05, 0xdfe8ff, 0.6)       // its light on the sill
 }
 function faustPropsDraw(g, P) {
   const posters = faustPosters(P)
@@ -7454,6 +7501,8 @@ function* faustVisualSteps(c) {
   // and every road's other lamps (faustLampSites)
   for (const s of faustLampSites(P)) if (!s.own) faustLampDraw(ornament, s)
   faustPropsDraw(ornament, P)      // card #69
+  const teles = []      // card #9: this cell's telescreens, framed here, their panels one mesh below
+  for (const s of faustTelescreens(P)) { if (ornament.room < 1000) break; faustTeleFrame(ornament, s); teles.push(s) }
   const root = new THREE.Group()
   for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
     // Building masses cast the local shadow; small trim receives it without duplicating its many triangles.
@@ -7468,6 +7517,7 @@ function* faustVisualSteps(c) {
   }
   { const bytes = geometryBytes(root); while (!background.uploadSlot(bytes)) yield 'frame' }      // card #53: a frame's uploads bounded
   background.gpu('cell')
+  if (teles.length) { root.userData.screens = teles; root.add(screenMeshes(teles)) }
   root.userData.cell = [c.ci, c.cj]; c.visual = root; worldGroup.add(root); still(root)
   faustSkyCell(c, false)
   craterRegrow({ a0: X, a1: X + 96, b0: Z, b1: Z + 96 })
@@ -15259,42 +15309,201 @@ const CITY_PALETTE = [0xa4adb0, 0xc1aa91, 0x8399a0, 0xb6b2a3]
 let cityMap = null
 // ---- screens: where a broadcast shows. A level's panels are one mesh with one material, its idle look or the
 // broadcast's frames; the frames and posts no painted level box draws, one more
-let screenFeed = null, screenMat = null, screenRim = null, screenGroup = null, screensDirty = false, screenFrustum = null
-const SCREEN_IDLE = 0x161b24, screenSpots = []      // the level's screens, as drawn, for the nearest one's sound
-// the panels' material, made with each level as its others are; the picture carries over
-// a feed shows once its first frame is drawn: until then, as with none, the screens keep their idle look
-const screenShown = () => !!screenFeed?.userData.shown
-const screenMaterial = () => screenMat ||= new THREE.MeshBasicMaterial({ color: screenShown() ? 0xffffff : SCREEN_IDLE, map: screenShown() ? screenFeed : null })
-function screenLook() { if (!screenMat) return; const on = screenShown(); screenMat.map = on ? screenFeed : null; screenMat.color.setHex(on ? 0xffffff : SCREEN_IDLE); screenMat.needsUpdate = true }
+let screenMat = null, screenRim = null, screenGroup = null, screensDirty = false, screenFrustum = null
+const SCREEN_IDLE = 0x161b24, screenSpots = []      // a level's own screens, as drawn; a Faustland cell's are its visual's userData.screens (teleSpots)
+// ---- telescreens (card #9). Every screen is one mesh with ONE material over ONE 512 x 288 canvas texture; no screen has a video of
+// its own. The canvas shows, in this order: the pictures of a framing page (the receiver below), else this page's own stream (a
+// video drawn onto it by bcastPlay), else Faust's propaganda card, painted here, so the texture is never blank. Each picture is fitted
+// at its own shape (letterboxed or pillarboxed in the idle colour) and given the period treatment: scanlines, a vignette and a slow
+// roll bar painted on it, a warm tint (a little over 1: a screen is the brightest thing on its facade) and a flicker on the material. One upload of it a frame at most, none in a rest frame
+// (background.gpuLast: the frame before linked programs or sent a big upload), and none unless a screen is in view.
+const TELE_W = 512, TELE_H = 288, TELE_HZ = 15, TELE_MIN_MS = 1000 / (TELE_HZ * 1.25), TELE_WAIT_MS = 2000, TELE_CARD_MS = 125, TELE_LOOP_S = 12
+const TELE_LONG = 1920, TELE_SHORT = 1080, TELE_REST_KB = 4096, TELE_TINT = [1.22, 1.14, 0.98], TELE_TINT_REAL = [1.0, 0.94, 0.82]
+const TELE_SLOGANS = ['FAUST KNOWS BEST', 'OBEY. WORK. SMILE.', 'REPORT ALL CAPES', 'SICKOS AROUND EVERY CORNER.', 'MOST OF THEM ARE IN CHARGE OF SOMETHING.', 'THE CITY SLEEPS BECAUSE FAUST DOES NOT']
+// a page that frames this one and plays the room's stream itself can feed the screens its pictures: asked of it by
+// stream-frame-want, taken by teleTake (only from window.parent). fed: whether its pictures are on the screens, when the last came,
+// and when the want last became non-zero; ownLatch: this page may play the stream itself (2 s of the want without a picture)
+const teleFramed = (() => { try { return !!window.parent && window.parent !== window } catch (e) { return true } })()
+const tele = { cv: null, g: null, over: null, tex: null, src: 'card', video: null, want: 0, fed: { on: false, at: 0, since: 0 }, ownLatch: false,
+  pending: null, pendingAt: 0, takenAt: -1e9, recent: [], refused: {}, closed: 0, dropped: 0, lost: 0, w: TELE_W, h: TELE_H, frame: 0, vAt: 0, vTime: -1, cardAt: -1e9,
+  card0: 0, chimeAt: -1e9, uploads: [], uploadN: 0, wants: [], spots: [], spotsAt: -1e9, restSkips: 0 }
+const teleClose = b => { try { b.close() } catch (e) {} tele.closed++ }
+const teleCss = c => '#' + c.toString(16).padStart(6, '0')
+// the canvas, its treatment layer and the texture, made once and kept across levels
+function teleMake() {
+  if (tele.tex) return tele.tex
+  const cv = tele.cv = Object.assign(document.createElement('canvas'), { width: TELE_W, height: TELE_H }), g = tele.g = cv.getContext('2d')
+  const over = tele.over = Object.assign(document.createElement('canvas'), { width: TELE_W, height: TELE_H }), o = over.getContext('2d')
+  o.fillStyle = 'rgba(0,0,0,0.4)'
+  for (let y = 0; y < TELE_H; y += 6) o.fillRect(0, y, TELE_W, 2)       // a dark line in six rows, two thick: it shows at 8 m and averages out far off
+  const v = o.createRadialGradient(TELE_W / 2, TELE_H / 2, TELE_H * 0.3, TELE_W / 2, TELE_H / 2, TELE_W * 0.62)
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.6)')
+  o.fillStyle = v; o.fillRect(0, 0, TELE_W, TELE_H)
+  teleCard(0); teleTreat(0)
+  const t = tele.tex = new THREE.CanvasTexture(cv)
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4
+  return t
+}
+const screenMaterial = () => screenMat ||= new THREE.MeshBasicMaterial({ color: new THREE.Color(...TELE_TINT), map: teleMake() })
+// Faust's propaganda card at s seconds into its 12 s loop: his dark silhouette and a bar of red light for eyes (as the wall posters
+// draw him) on a red, cream or gold field, one slogan every 2 s, a bar filling as it goes
+function teleCard(sec) {
+  const g = tele.g, i = Math.floor(sec / (TELE_LOOP_S / TELE_SLOGANS.length)) % TELE_SLOGANS.length, p = (sec % 2) / 2, [field, ink] = FAUST_POSTERS[i % 3]
+  g.fillStyle = teleCss(field); g.fillRect(0, 0, TELE_W, TELE_H)
+  g.fillStyle = 'rgba(255,255,255,0.07)'
+  for (let k = 0; k < 9; k++) { const a = (k / 9 + sec / TELE_LOOP_S / 6) * Math.PI * 2; g.beginPath(); g.moveTo(130, 150); g.lineTo(130 + Math.cos(a) * 700, 150 + Math.sin(a) * 700); g.lineTo(130 + Math.cos(a + 0.12) * 700, 150 + Math.sin(a + 0.12) * 700); g.fill() }
+  const x0 = 130, y0 = 175, sx = 105, sy = 135
+  g.fillStyle = '#0d0f14'; g.beginPath()
+  FAUST_POSTER_HEAD.forEach(([a, b], k) => k ? g.lineTo(x0 + a * sx, y0 - b * sy) : g.moveTo(x0 + a * sx, y0 - b * sy))
+  g.fill()
+  g.fillStyle = 'rgba(255,51,34,' + (0.75 + 0.25 * Math.sin(sec * 5)).toFixed(2) + ')'; g.fillRect(x0 - 0.3 * sx, y0 - 0.42 * sy - 0.04 * sy, 0.6 * sx, 0.08 * sy)
+  g.fillStyle = '#c9a85a'; g.fillRect(0, 0, TELE_W, 8); g.fillRect(0, TELE_H - 8, TELE_W, 8)
+  g.font = 'bold 34px "Maniak Display", Impact, "Arial Black", sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle'
+  const lines = []
+  for (const word of TELE_SLOGANS[i].split(' ')) { const last = lines.length - 1; if (last >= 0 && g.measureText(lines[last] + ' ' + word).width < 235) lines[last] += ' ' + word; else lines.push(word) }
+  g.fillStyle = teleCss(ink); g.globalAlpha = Math.min(1, p * 8)
+  lines.forEach((l, k) => g.fillText(l, 268, 144 + (k - (lines.length - 1) / 2) * 40))
+  g.globalAlpha = 1
+  g.fillStyle = teleCss(ink); g.fillRect(268, 236, 220 * p, 5)
+  g.font = 'bold 15px Impact, "Arial Black", sans-serif'; g.fillText('FAUST 1', 430, 266)
+}
+// the period treatment on the canvas as drawn: scanlines and a vignette, a slow bright roll bar
+function teleTreat(t = now()) {
+  const g = tele.g, y = (t / 22 % (TELE_H + 90)) - 45, r = g.createLinearGradient(0, y - 20, 0, y + 20)
+  g.drawImage(tele.over, 0, 0)
+  r.addColorStop(0, 'rgba(255,255,255,0)'); r.addColorStop(0.5, 'rgba(255,255,255,0.07)'); r.addColorStop(1, 'rgba(255,255,255,0)')
+  g.fillStyle = r; g.fillRect(0, y - 20, TELE_W, 40)
+}
+// a picture (a bitmap or a video) at its own shape in the canvas, the rest in the idle colour: any orientation plays
+function teleDraw(src, w, h) {
+  const g = tele.g, k = Math.min(TELE_W / w, TELE_H / h), dw = Math.max(1, Math.round(w * k)), dh = Math.max(1, Math.round(h * k)), x = (TELE_W - dw) >> 1, y = (TELE_H - dh) >> 1
+  if (dw < TELE_W || dh < TELE_H) { g.fillStyle = teleCss(SCREEN_IDLE); g.fillRect(0, 0, TELE_W, TELE_H) }
+  g.drawImage(src, x, y, dw, dh)
+  teleTreat(); tele.w = w; tele.h = h
+}
+// the screens in the world: a level's own, and those of every Faustland cell drawn
+function teleSpots() {
+  const n = now()
+  if (n - tele.spotsAt < 100) return tele.spots
+  tele.spotsAt = n
+  const out = screenSpots.slice()
+  if (typeof faustState !== 'undefined' && faustState?.chunks) for (const c of faustState.chunks.values()) if (c.visual?.userData.screens) out.push(...c.visual.userData.screens)
+  return tele.spots = out
+}
 // whether the camera, as last drawn, takes in a screen
 function screenInView() {
   if (!camera) return false
+  const spots = teleSpots()
+  if (!spots.length) return false
   const f = screenFrustum ||= { v: new THREE.Frustum(), m: new THREE.Matrix4(), s: new THREE.Sphere() }
   f.v.setFromProjectionMatrix(f.m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
-  return screenSpots.some(p => (f.s.center.set(p.x, p.y, p.z), f.s.radius = Math.hypot(p.w, p.h) / 2, f.v.intersectsSphere(f.s)))
+  return spots.some(p => (f.s.center.set(p.x, p.y, p.z), f.s.radius = Math.hypot(p.w, p.h) / 2, f.v.intersectsSphere(f.s)))
 }
-// the panels' picture: a playing video drawn down to BCAST_W x BCAST_H on its new frames, at most BCAST_HZ a second
-// and only while a screen is in view (cheaper than a full frame going up); none: the idle look
-function bcastFeed(v) {
-  screenFeed?.dispose()
-  screenFeed = null
-  if (v) {
-    const cv = Object.assign(document.createElement('canvas'), { width: BCAST_W, height: BCAST_H }), g = cv.getContext('2d')
-    const t = screenFeed = new THREE.CanvasTexture(cv)
-    t.colorSpace = THREE.SRGBColorSpace; t.minFilter = THREE.LinearFilter; t.generateMipmaps = false
-    let at = -Infinity, shown = -1
-    const frame = () => {
-      if (screenFeed !== t) return                    // another picture took over
-      const n = now()
-      if (n - at >= 1000 / BCAST_HZ - 1 && v.currentTime !== shown && v.readyState >= 2 && screenInView()) {
-        at = n; shown = v.currentTime; g.drawImage(v, 0, 0, BCAST_W, BCAST_H); t.needsUpdate = true
-        if (!t.userData.shown) { t.userData.shown = true; screenLook() }
-      }
-      if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(frame); else setTimeout(frame, 500 / BCAST_HZ)
-    }
-    frame()
+// the frame's work, once (the look's passes draw the scene more than once): paint what is due onto the canvas and send it up
+function teleFrame() {
+  if (renderHeadless || !tele.tex || !screenMat) return
+  const i = (background.frames(1)[0]?.i || 0) + 1
+  if (tele.frame === i) return
+  tele.frame = i
+  const n = now(), view = screenInView(), b = tele.pending
+  if (b && !view) { tele.pending = null; teleClose(b) }
+  if (!view) return
+  // the unlit panel flickers a little, now and then dips
+  const f = 0.96 + Math.sin(n / 37) * 0.012 + Math.sin(n / 11) * 0.012 - (cityHash(Math.floor(n / 90)) % 97 === 0 ? 0.18 : 0)
+  const T = typeof activeLook !== 'undefined' && activeLook === 'realistic' ? TELE_TINT_REAL : TELE_TINT      // Realistic blooms above its 0.9 threshold: its output tops out at 1.0
+  screenMat.color.setRGB(T[0] * f, T[1] * f, T[2] * f)
+  const bg = background.gpuLast, v = tele.video
+  if (bg.links > 0 || bg.upKB > TELE_REST_KB) { tele.restSkips++; return }       // a rest frame: nothing goes up
+  let did = '', age = 0
+  if (tele.pending) {
+    const p = tele.pending; tele.pending = null; age = Math.round(n - tele.pendingAt)
+    try { teleDraw(p, p.width, p.height); did = tele.src = 'parent' } finally { teleClose(p) }
+  } else if (tele.fed.on) { /* its next picture is due: this one stays */ }
+  else if (v && v.readyState >= 2 && v.currentTime !== tele.vTime && n - tele.vAt >= 1000 / TELE_HZ - 1) {
+    tele.vAt = n; tele.vTime = v.currentTime; teleDraw(v, v.videoWidth || TELE_W, v.videoHeight || TELE_H); did = tele.src = 'own'
+  } else if (tele.src === 'card' && n - tele.cardAt >= TELE_CARD_MS) {
+    if (!tele.card0) tele.card0 = n
+    tele.cardAt = n; teleCard((n - tele.card0) / 1000 % TELE_LOOP_S); teleTreat(n); tele.w = TELE_W; tele.h = TELE_H; did = 'card'
   }
-  screenLook()
+  if (did) {
+    tele.tex.needsUpdate = true; tele.uploadN++
+    tele.uploads.push({ i, t: Math.round(n), src: did, w: tele.w, h: tele.h, age }); if (tele.uploads.length > 600) tele.uploads.shift()
+  }
+}
+// a video (or none) the canvas shows when no framing page's pictures do; none: the card again
+function bcastFeed(v) {
+  tele.video = v || null; tele.vTime = -1
+  if (!v && tele.src === 'own') { tele.src = 'card'; tele.cardAt = -1e9 }
+}
+// ---- the framing page's pictures (card #9): stream-frame-want to window.parent while a screen is in view, 0 when none is or the
+// tab is hidden; stream-frame accepted only from window.parent, its shape checked (never an origin or a host)
+const teleWanted = () => teleFramed && phase === 'playing' && !serving && !!LV.faust && settings.bcast && !document.hidden && screenInView()
+function teleWant() {
+  const fps = teleWanted() ? TELE_HZ : 0
+  if (fps === tele.want) return
+  tele.want = fps
+  if (fps) { tele.fed.since = now(); tele.ownLatch = false }
+  else if (tele.pending) { teleClose(tele.pending); tele.pending = null }
+  tele.wants.push({ t: Math.round(now()), fps, hidden: document.hidden }); if (tele.wants.length > 60) tele.wants.shift()
+  try { window.parent.postMessage({ type: 'stream-frame-want', v: 1, w: TELE_W, h: TELE_H, fps }, '*') } catch (e) {}
+}
+// the stream this page may play itself: when nothing frames it, or its parent has sent no picture for 2 s of a want (never while
+// the want is 0: a hidden tab is the framing page's to play, its audio too)
+const teleOwnOk = () => !teleFramed || tele.ownLatch && !tele.fed.on
+function teleTick() {
+  if (renderHeadless) return
+  const n = now()
+  tele.recent = tele.recent.filter(t => n - t < 1000)
+  teleWant()
+  if (tele.want > 0 && tele.fed.on && n - Math.max(tele.fed.at, tele.fed.since) > TELE_WAIT_MS) {
+    tele.fed.on = false; tele.lost++; tele.src = tele.video && tele.vTime >= 0 ? 'own' : 'card'; tele.cardAt = -1e9
+  }
+  if (teleFramed && tele.want > 0 && !tele.fed.on && n - tele.fed.since >= TELE_WAIT_MS) tele.ownLatch = true
+  bcastPlay(); teleSound()
+}
+// the card's own sound (#76's SOUNDS row 'Telescreen'): a chime from the nearest screen every 6 s while the card shows, falling off with
+// the distance, none past 60 m; silent while the page is hidden. When a stream shows instead, its sound is the framing page's, or bcastSound's
+function teleSound() {
+  const n = now()
+  if (typeof actx === 'undefined' || !actx || document.hidden || !settings.sound || serving || phase !== 'playing' || tele.src !== 'card' || n - tele.chimeAt < 6000) return
+  const near = teleSpots().reduce((a, s) => !a || Math.hypot(s.x - sfxEar.x, s.z - sfxEar.z) < Math.hypot(a.x - sfxEar.x, a.z - sfxEar.z) ? s : a, null)
+  if (!near || Math.hypot(near.x - sfxEar.x, near.z - sfxEar.z) > 60) return
+  tele.chimeAt = n; sfxPlay('Telescreen', { x: near.x, y: near.y, z: near.z }, 'world')
+}
+function teleTake(e, d, b) {
+  let kept = false
+  try {
+    const n = now(), w = b.width, h = b.height
+    const why = !teleFramed || e.source !== window.parent ? 'source' : d.v !== 1 ? 'version' : !(tele.want > 0) || document.hidden ? 'unwanted'
+      : !(w > 0 && h > 0) || Math.max(w, h) > TELE_LONG || Math.min(w, h) > TELE_SHORT ? 'size' : n - tele.takenAt < TELE_MIN_MS ? 'rate' : ''
+    if (why) { tele.refused[why] = (tele.refused[why] || 0) + 1; return }
+    tele.takenAt = n; tele.fed.at = n; tele.recent.push(n)
+    if (tele.pending) { teleClose(tele.pending); tele.dropped++ }
+    tele.pending = b; tele.pendingAt = n; kept = true
+    if (!tele.fed.on) { tele.fed.on = true; tele.ownLatch = false; bcastPlay() }
+  } finally { if (!kept) teleClose(b) }
+}
+addEventListener('message', e => {
+  const d = e.data, I = globalThis.ImageBitmap
+  if (!d || typeof d !== 'object' || d.type !== 'stream-frame') return
+  if (!(I && d.bitmap instanceof I)) { tele.refused.shape = (tele.refused.shape || 0) + 1; return }
+  teleTake(e, d, d.bitmap)
+})
+// the want follows the tab at once: hidden, none; shown again, the want anew
+document.addEventListener('visibilitychange', () => { try { teleWant() } catch (err) {} })
+setInterval(teleTick, 250)
+// the session's end: no picture kept, none wanted
+function teleReset() {
+  if (tele.pending) { teleClose(tele.pending); tele.pending = null }
+  tele.fed.on = false; tele.ownLatch = false; tele.src = tele.video && tele.vTime >= 0 ? 'own' : 'card'
+  teleWant()
+}
+// a read of the state, for the debug panel and gameHooks.telescreen: frame by frame, every upload's frame and time
+function teleState(n = 120) {
+  const t = now(), spots = teleSpots(), near = spots.reduce((a, s) => !a || Math.hypot(s.x - sfxEar.x, s.z - sfxEar.z) < Math.hypot(a.x - sfxEar.x, a.z - sfxEar.z) ? s : a, null)
+  return { framed: teleFramed, src: tele.src, w: tele.w, h: tele.h, want: tele.want, fedOn: tele.fed.on, ownLatch: tele.ownLatch, screens: spots.length, nearest: near && { x: near.x, y: near.y, z: near.z, w: near.w },
+    lastAgeMs: tele.fed.at ? Math.round(t - tele.fed.at) : null, recvPerSec: tele.recent.filter(x => t - x < 1000).length, refused: { ...tele.refused }, closed: tele.closed, dropped: tele.dropped,
+    lost: tele.lost, restSkips: tele.restSkips, pending: !!tele.pending, uploadN: tele.uploadN, uploads: tele.uploads.slice(-n), wants: tele.wants.slice(), own: bc.video ? { w: bc.video.videoWidth, h: bc.video.videoHeight } : null }
 }
 // screens, { x, y, z, w, h, yaw, ground, framed }: the panels one mesh; the frames and a board's posts of those the
 // level's boxes do not frame, another. None is a body
@@ -17761,6 +17970,7 @@ function cullView(cam) {
   for (const o of culled.splice(0)) o.visible = true
   cullFrom(cam)
   drawSeen()
+  try { teleFrame() } catch (e) { frameFailed('telescreens', e) }      // card #9: the shared screen texture's frame
   if (screensDirty) try { screensDraw() } catch (e) { frameFailed('screens', e) }      // what drawSeen placed shows its screens now
   if (LV.faust) try { faustInteriorFrame(cam) } catch (e) { frameFailed('interiors', e) }
   if (!culling) return
@@ -23079,6 +23289,7 @@ function drawDebug(me, fps) {
     row('display', p(innerWidth, 4) + 'x' + p(innerHeight, 4) + ' @' + f(renderer.getPixelRatio(), 4, 2) +
         '  touch ' + String(IS_TOUCH).padEnd(5) + ' shadows ' + String(renderer.shadowMap.enabled).padEnd(5)) +
     row('look', LOOKS[settings.look].label + '  post ' + lookStats.passes + '  targets ' + (lookStats.targetBytes / 1048576).toFixed(1) + ' MiB') +
+    row('screens', (() => { const T = teleState(0), o = T.own; return v(T.src) + ' ' + T.w + 'x' + T.h + '  ' + (T.framed ? 'framed' : 'alone') + ' want ' + T.want + '  recv ' + v(T.recvPerSec) + '/s  last ' + v(T.lastAgeMs == null ? '-' : T.lastAgeMs + 'ms') + '  up ' + T.uploadN + '  refused ' + v(Object.entries(T.refused).map(([k, n]) => k + ' ' + n).join(' ') || 0) + '  screens ' + T.screens + (o ? '\n' + ''.padEnd(9) + 'own ' + o.w + 'x' + o.h + ' buf ' + (bc.video.buffered.length ? (bc.video.buffered.end(bc.video.buffered.length - 1) - bc.video.currentTime).toFixed(1) : '-') + 's lat ' + (bc.hls?.latency != null ? bc.hls.latency.toFixed(1) + 's' : '-') + ' retries ' + bc.retries + (bcastUrl || bc.url ? '  ' + esc(bcastOrigin(isHost ? bcastUrl : bc.url)) : '') : '') })()) +
     row('weather', weather.kind + '  rain ' + weather.rain.toFixed(2) + '  fog ' + weather.fog.toFixed(2) + '  wind ' + weather.wind.toFixed(2) + '  storm ' + weather.storm.toFixed(2) + '  wet ' + weather.wet.toFixed(2) + (weather.override ? '  (host: ' + weather.override.kind + ')' : '')) +
     row('cost', 'sim ' + v(f(msSim, 5, 2)) + 'ms  phys ' + v(f(msPhys, 5, 2)) +
         'ms  draw ' + v(f(msDraw, 5, 2)) + 'ms  steps ' + p(lastSteps, 2)) +
@@ -23601,6 +23812,24 @@ const SYNTH = {
     const srcs = [], end = coinRattle(out, t + 0.01, srcs)
     return { srcs, len: end - t + 0.1 }
   },
+  // card #9: a public-address chime, two soft notes down a third through a speaker's band, static at its start, a mains hum under it
+  telescreen(out, t) {
+    const srcs = [], bp = actx.createBiquadFilter(), g0 = actx.createGain()
+    bp.type = 'bandpass'; bp.frequency.value = 1400; bp.Q.value = 0.7; g0.gain.value = 1; bp.connect(g0); g0.connect(out)
+    for (const [f, d] of [[659.3, 0], [523.3, 0.42]]) {
+      const o = actx.createOscillator(), g = actx.createGain()
+      o.type = 'triangle'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t + d); g.gain.linearRampToValueAtTime(0.5, t + d + 0.02); g.gain.exponentialRampToValueAtTime(0.0008, t + d + 0.8)
+      o.connect(g); g.connect(bp); o.start(t + d); o.stop(t + d + 0.85); srcs.push(o)
+    }
+    const hum = actx.createOscillator(), hg = actx.createGain()
+    hum.type = 'sine'; hum.frequency.value = 100; hg.gain.setValueAtTime(0.0001, t); hg.gain.linearRampToValueAtTime(0.12, t + 0.05); hg.gain.exponentialRampToValueAtTime(0.0005, t + 1.2)
+    hum.connect(hg); hg.connect(out); hum.start(t); hum.stop(t + 1.25); srcs.push(hum)
+    if (!soundNoise) { soundNoise = actx.createBuffer(1, actx.sampleRate / 4, actx.sampleRate); const c = soundNoise.getChannelData(0); for (let i = 0; i < c.length; i++) c[i] = Math.random() * 2 - 1 }
+    const ns = actx.createBufferSource(), hp = actx.createBiquadFilter(), ng = actx.createGain()
+    ns.buffer = soundNoise; hp.type = 'highpass'; hp.frequency.value = 2500; ng.gain.setValueAtTime(0.14, t); ng.gain.linearRampToValueAtTime(0, t + 0.22)
+    ns.connect(hp); hp.connect(ng); ng.connect(out); ns.start(t); ns.stop(t + 0.24); srcs.push(ns)
+    return { srcs, len: 1.3 }
+  },
   // card #59: the performer's hoarse mumble, a syllable a few letters, through two formant filters, then coins rattled in the tin
   perfVoice(out, t, span, o) {
     const t0 = t + 0.03, rnd = genRng((o.line | 0) * 7919 + 17), srcs = []
@@ -23915,7 +24144,7 @@ function bcastSound() {
     A.cut.connect(A.pan).connect(A.gain).connect(sfxOut)
   }
   if (!A.v) { A.src = actx.createMediaElementSource(v); A.src.connect(A.cut); A.v = v; v.muted = false }
-  const s = screenSpots.reduce((a, s) => !a || (s.x - sfxEar.x) ** 2 + (s.z - sfxEar.z) ** 2 < (a.x - sfxEar.x) ** 2 + (a.z - sfxEar.z) ** 2 ? s : a, null)
+  const s = teleSpots().reduce((a, s) => !a || (s.x - sfxEar.x) ** 2 + (s.z - sfxEar.z) ** 2 < (a.x - sfxEar.x) ** 2 + (a.z - sfxEar.z) ** 2 ? s : a, null)
   const at = s ? sfxPlace(s.x, s.y, s.z, BCAST_REACH) : { gain: 0, pan: 0, cut: 20000 }, t = actx.currentTime
   A.gain.gain.setTargetAtTime(settings.bvol * at.gain, t, 0.1); A.pan.pan.setTargetAtTime(at.pan, t, 0.1); A.cut.frequency.setTargetAtTime(at.cut, t, 0.1)
 }
@@ -25495,6 +25724,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
   // frames: the last n frames, each {i, t, ms, draw, phase, steps, programs} (frame by frame; no aggregate)
   fps(n) { if (n !== undefined) fpsCap = +n >= 5 && +n <= 240 ? +n : 0; return fpsCap },
+  // card #9: the telescreens' state, frame by frame: the want, the picture's source and size, and the frames that carried an upload
+  telescreen: (n = 120) => teleState(n),
   background: (n = 300) => ({ fps: fpsCap, origin: performance.timeOrigin, seconds: GAME.background.seconds(), gate: GAME.background.gate, gated: GAME.background.stats.gated || 0, frames: GAME.background.frames(n), gpu: GAME.background.gpuEvents(), rests: GAME.background.stats.rests || 0, jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
     phase, startingGame, worldPreparing, guestLoading: !!guestLoading, look: activeLook, wanted: settings.look }),
   room() {
@@ -26571,7 +26802,7 @@ const BCAST_BEHIND_S = 10, BCAST_RETRY_MS = 5000, BCAST_RETRY_MAX_MS = 60000
 // the host's: what it names, its changes counted. bc: this page's, as heard and as played
 let bcastUrl = '', bcastN = 0, bcastSaidAt = 0, bcastTimer = 0
 const bc = { url: '', n: -1, heard: 0, tokens: BCAST_BURST, refill: 0, playing: '', video: null, hls: null, told: '',
-             last: '', retries: 0, retryAt: 0 }
+             last: '', retries: 0, retryAt: 0, played: false }
 
 // an https URL with no credentials in it, at most BCAST_URL_MAX characters; '' is none
 function bcastOk(u) {
@@ -26622,26 +26853,30 @@ function bcastTick() {
   if (bc.retryAt && now() >= bc.retryAt) { bc.retryAt = 0; bc.playing = '' }
   bcastPlay(); bcastSound(); bcastRun()
 }
-// what this page plays: a viewer's, never a server's, and only while playing a level with screens, broadcasts shown
+// what this page plays: a viewer's, never a server's, and only while playing a level with screens, broadcasts shown, and when no
+// framing page's pictures are on the screens (card #9: teleOwnOk)
+const bcastWanted = () => phase === 'playing' && settings.bcast && !serving && (LV.faust || LV.screens?.length || LV.screenRule)
 function bcastPlay() {
-  const u = phase === 'playing' && settings.bcast && !serving && (LV.screens?.length || LV.screenRule) ? isHost ? bcastUrl : bc.url : ''
+  const u = bcastWanted() && teleOwnOk() ? isHost ? bcastUrl : bc.url : ''
   if (u === bc.playing) return
   bcastQuit(); bc.playing = u
-  if (u !== bc.last) Object.assign(bc, { last: u, retries: 0, retryAt: 0 })
+  if (u !== bc.last) Object.assign(bc, { last: u, retries: 0, retryAt: 0, played: false })
   if (!u) return
   const v = bc.video = Object.assign(document.createElement('video'), { crossOrigin: 'anonymous', playsInline: true, muted: true, preload: 'auto' })
   const fail = (why, final) => { if (bc.video === v) bcastFail(u, why, final) }
   v.onerror = () => fail('its server does not let this game play it (CORS), or the browser cannot')
-  v.onloadedmetadata = () => { if (v.videoWidth > BCAST_MAX_W || v.videoHeight > BCAST_MAX_H) fail('it is larger than 1920x1080', true) }
-  v.onplaying = () => { bc.retries = 0 }
+  // larger than the budget either way round: refused, and tried again on the backoff, as a stream can change its size
+  v.onloadedmetadata = v.onresize = () => { if (Math.max(v.videoWidth, v.videoHeight) > BCAST_MAX_W || Math.min(v.videoWidth, v.videoHeight) > BCAST_MAX_H) fail('it is larger than 1920x1080 either way round') }
+  v.onplaying = () => { bc.retries = 0; bc.played = true }
   if (/\.m3u8$/i.test(new URL(u).pathname)) withLib(LIBS.hls, () => {
     const H = window.Hls
     if (bc.video !== v) return
     if (!H.isSupported()) return v.canPlayType('application/vnd.apple.mpegurl') ? void (v.src = u, v.play().catch(() => {})) : fail('this browser cannot play HLS', true)
     const h = bc.hls = new H({ lowLatencyMode: true, maxBufferLength: 8, backBufferLength: 4 })
-    // the best rendition at or under the cap, else the smallest: none is refused for its size alone
-    h.on(H.Events.MANIFEST_PARSED, (e, d) => { const L = d.levels, under = L.map((l, i) => i).filter(i => (L[i].height || 0) <= BCAST_H)
-      h.autoLevelCapping = under.length ? under.reduce((a, i) => L[i].height >= L[a].height ? i : a) : L.reduce((a, l, i) => (l.height || 0) < (L[a].height || 0) ? i : a, 0) })
+    // the best rendition whose shorter side is at or under the cap, else the smallest: none is refused for its size alone
+    h.on(H.Events.MANIFEST_PARSED, (e, d) => { const L = d.levels, side = i => Math.min(L[i].width || L[i].height || 0, L[i].height || L[i].width || 0)
+      const under = L.map((l, i) => i).filter(i => side(i) <= BCAST_H)
+      h.autoLevelCapping = under.length ? under.reduce((a, i) => side(i) >= side(a) ? i : a) : L.reduce((a, l, i) => side(i) < side(a) ? i : a, 0) })
     h.on(H.Events.ERROR, (e, d) => { if (d.fatal) fail(d.type === H.ErrorTypes.NETWORK_ERROR ? 'its server does not let this game load it (CORS), or it is not there' : 'it could not be played') })
     h.loadSource(u); h.attachMedia(v); v.play().catch(() => {})
   }, () => fail('the HLS player did not load'))
@@ -26653,7 +26888,8 @@ function bcastPlay() {
 function bcastFail(u, why, final) {
   if (bc.told !== u) { bc.told = u; sysMsg('§7The broadcast from ' + bcastOrigin(u) + ' cannot show here: ' + why + '.') }
   bcastQuit()
-  if (!final) bc.retryAt = now() + Math.min(BCAST_RETRY_MS * 2 ** bc.retries++, BCAST_RETRY_MAX_MS)
+  if (!final) bc.retryAt = now() + (bc.played ? 0 : Math.min(BCAST_RETRY_MS * 2 ** bc.retries++, BCAST_RETRY_MAX_MS))
+  bc.played = false
 }
 // stops what plays, and the screens take their idle look again; bc.playing stays, so a failed one waits for its retry
 function bcastQuit() {
@@ -26661,14 +26897,15 @@ function bcastQuit() {
   if (!v) return
   bc.video = null
   if (bc.hls) { try { bc.hls.destroy() } catch (e) {} bc.hls = null }
-  v.onerror = v.onloadedmetadata = v.onplaying = null; v.pause(); v.removeAttribute('src'); v.load()
+  v.onerror = v.onloadedmetadata = v.onresize = v.onplaying = null; v.pause(); v.removeAttribute('src'); v.load()
   bcastFeed(null); bcastSound()
 }
 // the session's end: nothing named, heard or played
 function bcastEnd() {
   bcastQuit()
   if (bcastTimer) { clearInterval(bcastTimer); bcastTimer = 0 }
-  bcastUrl = ''; Object.assign(bc, { url: '', n: -1, heard: 0, tokens: BCAST_BURST, refill: 0, playing: '', told: '', last: '', retries: 0, retryAt: 0 })
+  bcastUrl = ''; Object.assign(bc, { url: '', n: -1, heard: 0, tokens: BCAST_BURST, refill: 0, playing: '', told: '', last: '', retries: 0, retryAt: 0, played: false })
+  teleReset()
 }
 // back in view: a live one the browser held while the tab was hidden goes to its live edge
 document.addEventListener('visibilitychange', () => {
