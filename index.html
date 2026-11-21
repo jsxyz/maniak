@@ -9852,7 +9852,7 @@ function chainClear(c) {
 }
 function moveReset(c) {
   chainClear(c)
-  c.smashCam = c.springT = c.leap = c.leapAir = c.hop = c.hopAir = c.hayT = c.hayReady = c.hayAge = 0
+  c.smashCam = c.springT = c.leap = c.leapAir = c.hop = c.hopAir = c.hayT = c.hayReady = c.hayAge = c.water = 0
   c.chainLock = false; c.blockKills = []
 }
 function leapStart(c, inp, q) {
@@ -10283,6 +10283,50 @@ function insideObject(c) {
   inHit = false; world.contactTest(c.body, inCb)
   return inHit
 }
+// ---------------------------------------------------------------- card #94: swimming and diving
+// A character in deep water swims: a movement mode of applyIntent, as the flung and cling ones are. Players stay instant (no ramp).
+// GAME.faustland.water.at(x, z, out) (card #92) is null on dry land, else { y: surface, floor: bed, flow: [fx, fz], bank: { x, z, y, kind } }
+// with the nearest exit: 'stairs' and the shallows walk out by themselves; 'low' and 'ladder' banks are climbed at, 'high' ones not.
+// c.water: 0 none, 1 at the surface, 2 under (his head beneath it); also what the wire carries (column swim). In water shallower
+// than SWIM.deep he wades (the speed eases to SWIM.k as it deepens). Without #92's water every term here is a no-op.
+// Per tick it leaves: c.swK (speed factor), c.swFx, c.swFz (the current), c.swVy (his vertical speed), c.swWx, c.swWz (a bot's way to the bank)
+const SWIM = { deep: 1.4, wet: 0.2, float: 0.2, under: 0.15, k: 0.5, drag: 6, spring: 6, riseV: 3.2, diveV: 3.2, kickV: 6, steerV: 3, lift: 0.8, pitchDive: -0.45,
+  climbV: 5.5, reach: 1.7, climbUp: 1.8, ladderUp: 14, slow: 1.4 }
+const swimOut = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0], bank: null }
+const waterOf = (x, z) => GAME.faustland.water?.at?.(x, z, swimOut) ?? null
+function swimTick(c, inp, wx, wz, dt, J) {
+  const was = c.water | 0
+  c.swK = 1; c.swFx = c.swFz = 0; c.swWx = c.swWz = undefined; c.water = 0
+  if (J || c.tie || c.zip || c.wallRun || c.ceil || c.flyTurn || !c.body || seatOf(c)) return false
+  const W = waterOf(c.x, c.z)
+  if (!W) return false
+  const s = W.y, feet = c.y - c.h - c.r, head = c.y + c.h + c.r, depth = s - feet, D = s - W.floor
+  let B = W.bank
+  // a bot in water heads for an exit it can use: its stick is set to the bank
+  if (c.bot && depth > SWIM.wet && D >= SWIM.deep) {
+    if (!B || B.kind === 'high') B = GAME.faustland.water.exit?.(c.x, c.z) ?? B
+    if (B) { const dx = B.x - c.x, dz = B.z - c.z, d = Math.hypot(dx, dz) || 1; wx = c.swWx = dx / d; wz = c.swWz = dz / d }
+  }
+  const f = Math.hypot(wx, wz)
+  // climbing out: pressed at a bank he can get up (a latch: once he is up the wall he keeps going till his feet are on top)
+  if (B && B.kind !== 'high' && B.kind !== 'stairs' && feet < B.y - 0.02 && B.y - s <= (B.kind === 'ladder' ? SWIM.ladderUp : SWIM.climbUp) && (was || depth > SWIM.wet)) {
+    const dx = B.x - c.x, dz = B.z - c.z, d = Math.hypot(dx, dz)
+    if (d < SWIM.reach && f > 0.3 && (wx * dx + wz * dz) / (f * (d || 1)) > 0.5) { c.water = 1; c.swVy = SWIM.climbV; return true }
+  }
+  if (!(depth > SWIM.wet)) return false
+  if (D < SWIM.deep) { c.swK = 1 - (1 - SWIM.k) * clamp((D - 0.3) / (SWIM.deep - 0.3), 0, 1); return false }      // wading
+  c.water = was === 2 ? (head < s ? 2 : 1) : head < s - SWIM.under ? 2 : 1
+  c.swK = SWIM.k; c.swFx = W.flow[0]; c.swFz = W.flow[1]
+  if (!was) { c.leap = 0; c.leapAir = false; c.dove = false; c.hop = 0; c.hopAir = false; c.springT = 0; c.flung = false }      // into the water: no leap, dive or hop carries on
+  const yS = s - SWIM.float
+  let want
+  if (inp.descend) want = -SWIM.diveV
+  else if (c.water === 2) want = inp.j ? SWIM.riseV : inp.f * Math.sin(inp.pitch) * SWIM.steerV + (f < 0.1 ? SWIM.lift : 0)
+  else if (inp.j && !c.jLock) { c.swVy = Math.max(c.vy, SWIM.kickV); return true }      // a stroke up out of the water, once a press
+  else want = f > 0.3 && inp.f > 0.3 && inp.pitch < SWIM.pitchDive ? -SWIM.diveV : clamp((yS - c.y) * SWIM.spring, -SWIM.riseV, SWIM.riseV)
+  c.swVy = want + (c.vy - want) * Math.exp(-SWIM.drag * dt)
+  return true
+}
 function applyIntent(c, inp, dt) {
   if (!c.body) attachBody(c)
   // held, a dash row runs him along the aim at its speed, and on while he is still inside an object (DASH_RUN ticks at most);
@@ -10330,18 +10374,21 @@ function applyIntent(c, inp, dt) {
   if (c.dove && !c.leap && !c.bot && !(c.dove === primaryId(c) ? inp.alt : inp.fire && c.gun === c.dove)) c.dove = false
   let vy = c.vy
   const tank = tankOf(c), J = tank > 0 && jetOf(c)
+  const SW = swimTick(c, inp, wx, wz, dt, J)           // card #94: in deep water he swims; the jump, wall and web code below stands aside
+  if (SW && c.swWx !== undefined) { wx = c.swWx; wz = c.swWz }
   const wasWall = c.wall
-  c.wall = !J && GAME.participantOf(c)?.climb && m > 0.5 ? wallPush(c, wx, wz) : 0
-  if (!c.wall && wasWall && !c.grounded && !inp.j && !c.bot) c.wall = wallPush(c, -c.wnx, -c.wnz)
+  c.wall = !J && !SW && GAME.participantOf(c)?.climb && m > 0.5 ? wallPush(c, wx, wz) : 0
+  if (!c.wall && wasWall && !c.grounded && !inp.j && !c.bot && !SW) c.wall = wallPush(c, -c.wnx, -c.wnz)
   if ((c.grounded || c.wall) && !chainSpec(c)) untie(c)
   if (c.grounded || c.wall || c.tie) c.flung = false
-  if (!c.ceil) { if (!J && !c.bot && GAME.participantOf(c)?.climb && !c.grounded && !inp.j && (c.wall > 0 || c.vy >= 0) && ceilAbove(c.x, c.y + c.h, c.z, c.r)) ceilTurn(c, true, inp.yaw) }
+  if (!c.ceil) { if (!J && !SW && !c.bot && GAME.participantOf(c)?.climb && !c.grounded && !inp.j && (c.wall > 0 || c.vy >= 0) && ceilAbove(c.x, c.y + c.h, c.z, c.r)) ceilTurn(c, true, inp.yaw) }
   else if (inp.j || !ceilAbove(c.x, c.y, c.z, c.r)) { if (inp.j) c.jLock = true; ceilTurn(c, false, c.yaw) }     // latched: no web
   else if (inp.yaw !== c.yaw) { c.yaw = inp.yaw; teleportBody(c.body, c.x, c.y, c.z, turnOf(c)) }
   if (c.ceil) c.wall = 0
   const up = c.wall && !inp.j ? -GAME.participantOf(c).climb * (wx * c.wnx + wz * c.wnz) : 0
   const cling = !!c.wall && !inp.j && c.vy <= 1.25 * GAME.participantOf(c).climb
-  if (J) {
+  if (SW) { vy = c.swVy; c.jLock = !!inp.j; c.zLock = !!inp.descend; c.grounded = false; c.air = false; c.flying = false }
+  else if (J) {
     if (J.flier) {
       if (c.grounded) c.flying = false
       const P = (!c.bot || c.ai?.doCharge) && !seatOf(c) && GAME.participantOf(c)?.spring
@@ -10406,7 +10453,7 @@ function applyIntent(c, inp, dt) {
   const S = GAME.participantOf(c)?.shove, ram = S && (!S.sprint || inp.sprint), M = ram ? S.mass : 1
   if (c.ramM !== M) { c.ramM = M; c.body.setMassProps(M, zeroVec) }
   if (ram) c.vehT = 0
-  let mx = wx * spd, mz = wz * spd
+  let mx = wx * spd * c.swK + c.swFx, mz = wz * spd * c.swK + c.swFz        // card #94: wading and swimming are slower; the current carries
   // a vehicle in this tick's sweep is closed on at most cap m/s faster than it moves away: deeper in its hull in one tick, Bullet flips it
   const sm = Math.hypot(mx, mz)
   if (ram && S.cap && !c.dashing && sm > 0.1) {
@@ -10507,7 +10554,7 @@ function applyIntent(c, inp, dt) {
     forceVec.setValue(0, -GRAV * (J ? J.flier ? (c.flying ? 1 : 0) : 1 - J.grav : 1) * M, 0)
     c.body.applyCentralForce(forceVec)
   }
-  if (c.ceil || c.wallRun && !c.slide) { forceVec.setValue(0, -GRAV * M, 0); c.body.applyCentralForce(forceVec) }      // none on a surface it runs or crawls
+  if (c.ceil || c.wallRun && !c.slide || SW) { forceVec.setValue(0, -GRAV * M, 0); c.body.applyCentralForce(forceVec) }      // none on a surface it runs or crawls
   c.body.activate()
   c.yaw = inp.yaw
   // NaN fails it too
@@ -12828,12 +12875,34 @@ function postTick(list) {
 // postTick; returns the step's ms
 // the tick's list, in place, with only those still in the game: a removal mid-tick leaves no body-less one for later steps
 const present = list => { let n = 0; for (const c of list) if (players.get(c.id) === c) list[n++] = c; list.length = n }
+// card #94 (interim; card #93's waterTick/floatStep takes this call's place): a vehicle in water floats on the surface for CAR_WET.float s,
+// then floods over CAR_WET.sink s and goes down. The driver can leave (E) and the ejector fires throughout; its engine is off in the water.
+// o.floodT: the clock's second it first took water (the host sets it; a guest's own prediction takes it from its own first sight)
+const CAR_WET = { float: 1.5, sink: 3, buoy: 1.6, flooded: 0.6, drag: 1.4, dragV: 5, spin: 0.97, draft: 1.2 }
+function carWater(dt, t) {
+  const T = (t ?? tickAt) / 1000
+  for (const o of objs) {
+    if (!o.V || o.V.fly || o.parked && !o.body.isActive() || o.heldBy !== undefined) continue
+    const W = waterOf(o.x, o.z)
+    if (!W) { if (o.floodT !== undefined && o.y > o.floodY + 2) o.floodT = undefined; continue }
+    const low = o.y + (o.low ?? -0.8), sub = clamp((W.y - low) / CAR_WET.draft, 0, 1)
+    if (sub <= 0) continue
+    if (o.floodT === undefined) { o.floodT = T; o.floodY = W.y }
+    const flood = clamp((T - o.floodT - CAR_WET.float) / CAR_WET.sink, 0, 1), m = o.K.mass, v = o.body.getLinearVelocity()
+    const k = CAR_WET.buoy + (CAR_WET.flooded - CAR_WET.buoy) * flood
+    forceVec.setValue((W.flow[0] - v.x()) * m * CAR_WET.drag * sub, -GRAV * m * k * sub - v.y() * m * CAR_WET.dragV * sub, (W.flow[1] - v.z()) * m * CAR_WET.drag * sub)
+    o.body.applyCentralForce(forceVec); o.body.activate()
+    const w = o.body.getAngularVelocity(); velVec.setValue(w.x() * CAR_WET.spin, w.y() * CAR_WET.spin, w.z() * CAR_WET.spin); o.body.setAngularVelocity(velVec)
+    if (o.car) o.V.wheels.at.forEach((w, i) => o.car.applyEngineForce(0, i))
+  }
+}
 function tickChars(list, inputFor, dt, P, t) {
   carrierPlace()
   if (P) P.beforeIntent(t)
   preTick(list, inputFor, dt)
   if (P) present(list)
   for (const c of list) { carryStep(c, inputFor(c), dt); driveStep(c, inputFor(c)) }
+  carWater(dt, t)
   planesTick(list, inputFor, dt)
   if (P) P.beforePhysics(t)
   if (P) present(list)
@@ -13789,7 +13858,7 @@ function fireHitscan(shooter, targets, onKill, viewT) {
   if (G.windup && (shooter.charge || 0) < G.windup || G.gate && !(stat(shooter, G.gate) > 0)) return []
   shooter.charge = 0
   shooter.cool = stat(shooter, 'rate', (G.rate + (G.burst > 1 ? (G.burst - 1) * G.burstGap : 0)) *
-                 profRate(shooter, G.name))
+                 profRate(shooter, G.name) * (shooter.water ? SWIM.slow : 1))          // card #94: slower in water
   if (shooter.ammo !== Infinity) shooter.ammo--
   if (G.burst > 1) { shooter.burstLeft = G.burst - 1; shooter.burstT = G.burstGap }
 
@@ -14127,6 +14196,7 @@ function animOf(c) {
   const airborne = jetOf(c)
   if (c.wallRun) return 4
   if (c.ceil) return 4
+  if (c.water) return Math.hypot(c.vx, c.vz) > 0.8 ? 1 : 0           // card #94
   if (c.wall > 0 && !c.grounded) return 4         // climbing: a wall it pushes into (a climb row)
   if (!c.grounded) return c.dove ? 6 : c.flying ? 5 : c.overT > 0 ? 1 : c.vy > (airborne ? -3 : 0.6) ? 2 : 3
   return Math.hypot(c.vx, c.vz) > 0.8 ? 1 : 0
@@ -27309,7 +27379,7 @@ function remoteAt(t) {
     const dy = Math.atan2(Math.sin(p[F.yaw] - q[F.yaw]), Math.cos(p[F.yaw] - q[F.yaw])) || 0
     out.push({ id, x: s.x + tr.ox, y: s.y + tr.oy, z: s.z + tr.oz,
                yaw: q[F.yaw] + dy * k, vx: p[F.vx], vz: p[F.vz], hp: p[F.hp], dead: p[F.dead], cid: looksCidOf(p[F.cid], p[F.disg]), disg: p[F.disg] || 0, smk: p[F.smk] >= q[F.smk] ? lerp(q[F.smk] || 0, p[F.smk] || 0, k) : p[F.smk] || 0, kills: p[F.kills] | 0,
-               prot: p[F.prot] || 0, anim: p[F.anim] >= 0 && p[F.anim] < 7 ? p[F.anim] | 0 : 0, pow: p[F.pow] || 0, markT: p[F.markT] || 0, web: p[F.web] || 0, jl: p[F.jLock] || 0,
+               prot: p[F.prot] || 0, anim: p[F.anim] >= 0 && p[F.anim] < 7 ? p[F.anim] | 0 : 0, pow: p[F.pow] || 0, markT: p[F.markT] || 0, web: p[F.web] || 0, jl: p[F.jLock] || 0, swim: p[F.swim] | 0,
                cap: p[F.cap] || 0, gun: p[F.gun] | 0, move: p[F.move] || 0, springT: p[F.leapCharge] || 0, hayAge: p[F.hay] >= q[F.hay] ? lerp(q[F.hay] || 0, p[F.hay] || 0, k) : p[F.hay] || 0, chainNet: chainBetween(q[F.chain], p[F.chain], k),
                prof: p[F.prof] | 0, sprof: p[F.sprof] | 0, vy: p[F.vy], mark: effId(p[F.mark]), grab: p[F.grab] | 0, act: p[F.act] || 0 })
   }
@@ -27806,6 +27876,7 @@ const PLAYER_STATE = stateSchema([
   ['act', c => partsAct(c)],
   ['disg', c => c.disguised ? 1 : 0, (c, v) => { c.disguised = !!v }],
   ['smk', c => r2(c.smk || 0), (c, v) => { c.smk = Number.isFinite(v) ? clamp(v, 0, SMK_S) : 0 }],
+  ['swim', c => c.water | 0],           // card #94: 0 none, 1 at the surface, 2 under. Not taken onto the guest's own prediction (it keeps its own ticks')
 ])
 GAME.schema = PLAYER_STATE
 
@@ -29504,6 +29575,33 @@ function slStaggerPose(ag, r, t, o) {
   if (Math.hypot(Q.x - r.x1, Q.z - r.z1) > 0.02) o.yaw = Math.atan2(Q.x - r.x1, Q.z - r.z1)
   o.v = 2.2; o.mode = 0; o.s = (t - t1) / 1000 * 2.2; slClip(ag, o, t)
 }
+// card #94: a knock that lands in deep water. Pure in the record and the water plan, so the same on every machine.
+// Phases from the landing (q s): fall to the surface (tf), swim to the exit's foot (Ts) or float (7 s), climb onto the bank (0.6 s)
+const SL_SWIM = 1.3          // m/s
+function slWaterLanding(r) {
+  const Wt = GAME.faustland.water, W = Wt?.at?.(r.x1, r.z1)
+  if (!W || W.y - W.floor < SWIM.deep) return null
+  const E = Wt.exit?.(r.x1, r.z1), L = { y: W.y, fx: W.flow[0], fz: W.flow[1], stay: !E, tf: Math.sqrt(2 * Math.max(0, 0.15 - W.y) / -GRAV) }
+  if (E) { const dx = E.x - r.x1, dz = E.z - r.z1, d = Math.hypot(dx, dz), n = d || 1
+    L.xa = E.x; L.za = E.z; L.xw = E.x - dx / n * 0.7; L.zw = E.z - dz / n * 0.7; L.Ts = clamp(d / SL_SWIM, 0.5, 20); L.T = L.tf + L.Ts + 0.6; [L.x2, L.z2] = slRunTo(E.x, E.z, dx / n, dz / n, 22) }
+  else { L.xa = L.xw = r.x1; L.za = L.zw = r.z1; L.Ts = 7; L.T = L.tf + 7; L.x2 = r.x1; L.z2 = r.z1 }
+  return L
+}
+// the swimmer's pose (feet pivot: the prone body is set back along its way; a dog swims upright)
+function slSwimPose(r, wl, q, o, H, dog, face) {
+  const sw = wl.y - (dog ? 0.3 : 0.15), yaw1 = wl.stay ? face : Math.atan2(wl.xa - r.x1, wl.za - r.z1), a = clamp(q / 0.3, 0, 1)
+  const climb = wl.stay ? 0 : clamp((q - wl.tf - wl.Ts) / 0.6, 0, 1), u = clamp((q - wl.tf) / wl.Ts, 0, 1), prone = q < wl.tf + wl.Ts ? clamp(q / (wl.tf + 0.25), 0, 1) : 1 - climb
+  const yaw = face + Math.atan2(Math.sin(yaw1 - face), Math.cos(yaw1 - face)) * a, pitch = dog ? 0 : 1.3 * prone
+  let cx, cz
+  if (q < wl.tf) { cx = r.x1; cz = r.z1 }
+  else if (climb > 0) { cx = wl.xw + (wl.xa - wl.xw) * climb; cz = wl.zw + (wl.za - wl.zw) * climb }
+  else { const s = q - wl.tf; cx = r.x1 + (wl.xw - r.x1) * u + (wl.stay ? wl.fx * s : 0); cz = r.z1 + (wl.zw - r.z1) * u + (wl.stay ? wl.fz * s : 0) }
+  const back = H * 0.5 * Math.sin(pitch)
+  o.x = cx - Math.sin(yaw) * back; o.z = cz - Math.cos(yaw) * back; o.yaw = yaw; o.pitch = pitch
+  o.y = q < wl.tf ? Math.max(sw, GRAV / 2 * q * q) : sw * (1 - climb)
+  o.clip = 'idle'; o.ct = q; o.down = true
+  if (wl.stay) o.scale = 1 - clamp((q - wl.T + 0.5) / 0.5, 0, 1)
+}
 // the pose under a record
 function slDetached(ag, r, t, o) {
   if (r.kind === 8 || r.kind === 9) return partsStreetPose(ag, r, t, o)          // card #55: held, flung
@@ -29513,7 +29611,9 @@ function slDetached(ag, r, t, o) {
   if (r.kind === 1 || r.kind === 4) {
     // card #72: the tumble lasts as long as its throw needs (none: a flung body's landing, 0.55 s)
     const kd = r.kind === 1 ? Math.hypot(r.x1 - r.x, r.z1 - r.z) : 0, tb = kd >= 0.05 ? (r.tb ||= slTumble(kd)) : null
-    const k0 = r.kind === 1 ? (tb ? tb.T : S.knockS) : 0, k1 = k0 + (r.kind === 1 ? S.lieS : 0), k2 = k1 + (r.kind === 1 ? S.getupS : 0)
+    const wl = r.kind === 1 && (r.wl === undefined ? (r.wl = slWaterLanding(r)) : r.wl)          // card #94: landed in deep water
+    const k0 = r.kind === 1 ? (tb ? tb.T : S.knockS) : 0, k1 = k0 + (r.kind === 1 ? S.lieS : 0), k2 = k1 + (r.kind === 1 ? S.getupS : 0), kw = wl ? k0 + wl.T : 0
+    const X1 = wl ? wl.xa : r.x1, Z1 = wl ? wl.za : r.z1, X2 = wl ? wl.x2 : r.x2, Z2 = wl ? wl.z2 : r.z2, K2 = wl ? kw : k2
     const face = Math.atan2(r.x - r.x1, r.z - r.z1)
     if (r.kind === 1 && tau < k0) {
       // card #72: thrown, in the air (an arc as high as the throw is long), then sliding to rest (slTumble); a rider rises off
@@ -29523,17 +29623,19 @@ function slDetached(ag, r, t, o) {
       o.x = r.x + (r.x1 - r.x) * e; o.z = r.z + (r.z1 - r.z) * e; o.y = air * hh
       o.yaw = face; o.clip = dog ? 'flinch' : 'knockback'; o.ct = u * 0.8; o.down = true
       if (dog) { o.roll = u * Math.PI / 2; o.y += Math.sin(o.roll) * 0.22 }
-    } else if (tau < k1) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = dog ? 'idle' : 'death'; o.ct = 2.39; o.down = true
+    } else if (wl && tau < kw) { slSwimPose(r, wl, tau - k0, o, H, dog, face)
+    } else if (wl?.stay) { o.hidden = true; o.scale = 0
+    } else if (!wl && tau < k1) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = dog ? 'idle' : 'death'; o.ct = 2.39; o.down = true
       if (dog) { o.roll = Math.PI / 2; o.y = 0.22 } }
-    else if (tau < k2) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = dog ? 'flinch' : 'getup'; o.ct = tau - k1; o.down = true
+    else if (!wl && tau < k2) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = dog ? 'flinch' : 'getup'; o.ct = tau - k1; o.down = true
       if (dog) { const f = 1 - (tau - k1) / S.getupS; o.roll = Math.PI / 2 * f; o.y = 0.22 * Math.sin(o.roll) } }
     else {
       // card #72: after getting up they push off into the run; out of a doorway (an exit) they come already running
-      const d = Math.hypot(r.x2 - r.x1, r.z2 - r.z1), tr = tau - k2, run = r.kind === 1 ? slPushOff(tr, 0, S.run) : tr * S.run, f = d > 0.01 ? Math.min(1, run / d) : 1
-      o.x = r.x1 + (r.x2 - r.x1) * f; o.z = r.z1 + (r.z2 - r.z1) * f; o.yaw = Math.atan2(r.x2 - r.x1, r.z2 - r.z1)
+      const d = Math.hypot(X2 - X1, Z2 - Z1), tr = tau - K2, run = r.kind === 1 ? slPushOff(tr, 0, S.run) : tr * S.run, f = d > 0.01 ? Math.min(1, run / d) : 1
+      o.x = X1 + (X2 - X1) * f; o.z = Z1 + (Z2 - Z1) * f; o.yaw = Math.atan2(X2 - X1, Z2 - Z1)
       o.clip = dog ? 'run' : 'flee'; o.ct = run / (dog ? 1.55 : 3.25 * H); o.v = r.kind === 1 ? slPushV(tr, 0, S.run) : S.run
       const end = d / S.run + (r.kind === 1 ? SL_PUSH / 2 : 0)
-      if (tau - k2 > end) { const g = (tau - k2 - end) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
+      if (tau - K2 > end) { const g = (tau - K2 - end) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
     }
     if (ag.kind === SL_K.cyclist) {          // card #63: the bike falls over and slides from under him to where it lies
       const b = r.bike || [r.x1, r.z1, face], f = r.kind === 1 ? Math.min(1, tau / S.knockS) : 1, e = f * (1 + f - f * f), y0 = b[2] - (slRnd(ag.id) - 0.5)
@@ -34857,11 +34959,11 @@ const OWN_PREDICTION = (F => {
   const S = GAME.schema.step, fuelEps = S.fuel + S.fuel / 10
   if (REWIND_EPS < Math.hypot(S.x, S.y, S.z)) throw Error('REWIND_EPS is under the wire step')
   return {
-    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
+    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.wt = c.water | 0; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
       const bh = c.body?.getBroadphaseHandle(); e.dsh = [!!c.dashOn, c.dashRun || 0, c.dashHit && [...c.dashHit], bh && A.getPointer(bh) ? bh.get_m_collisionFilterMask() : null]; e.cv = c.carryV ? [...c.carryV] : null; e.cvId = c.carryId; return e },
     err: (e, a) => Math.hypot(e.x - a[F.x], e.y - a[F.y], e.z - a[F.z]),
     agrees: (e, a, web) => (e.web || 0) === web && Math.abs(e.fuel - a[F.fuel]) <= fuelEps && e.jl === !!a[F.jLock],
-    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.springT = e.sp; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace] = e.leap; [c.hop, c.hopAir] = e.hop; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
+    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.water = e.wt | 0; c.springT = e.sp; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace] = e.leap; [c.hop, c.hopAir] = e.hop; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
       c.dashOn = e.dsh[0]; c.dashRun = e.dsh[1]; c.dashMask = e.dsh[3]; c.dashHit = e.dsh[2] && new Set(e.dsh[2]); c.carryV = e.cv ? [...e.cv] : null; c.carryId = e.cvId },
     // re-tying the web its own prediction had, it keeps that prediction's reel target (off the wire); the length is the restored distance
     restore: (c, a, web) => { const [x, y, z, vx, vy, vz] = ownExact || [a[F.x], a[F.y], a[F.z], a[F.vx], a[F.vy], a[F.vz]]; restoreChar(c, x, y, z, vx, vy, vz, a[F.fuel])
