@@ -15327,7 +15327,7 @@ const SCREEN_IDLE = 0x161b24, screenSpots = []      // a level's own screens, as
 // at its own shape (letterboxed or pillarboxed in the idle colour) and given the period treatment: scanlines, a vignette and a slow
 // roll bar painted on it, a warm tint (a little over 1: a screen is the brightest thing on its facade) and a flicker on the material. One upload of it a frame at most, none in a rest frame
 // (background.gpuLast: the frame before linked programs or sent a big upload), and none unless a screen is in view.
-const TELE_W = 512, TELE_H = 288, TELE_HZ = 15, TELE_MIN_MS = 1000 / (TELE_HZ * 1.25), TELE_WAIT_MS = 2000, TELE_CARD_MS = 125, TELE_LOOP_S = 12
+const TELE_W = 512, TELE_H = 288, TELE_HZ = 15, TELE_MAX_HZ = 30, TELE_WAIT_MS = 2000, TELE_CARD_MS = 125, TELE_LOOP_S = 12
 const TELE_LONG = 1920, TELE_SHORT = 1080, TELE_REST_KB = 4096, TELE_TINT = [1.22, 1.14, 0.98], TELE_TINT_REAL = [1.0, 0.94, 0.82]
 const TELE_SLOGANS = ['FAUST KNOWS BEST', 'OBEY. WORK. SMILE.', 'REPORT ALL CAPES', 'SICKOS AROUND EVERY CORNER.', 'MOST OF THEM ARE IN CHARGE OF SOMETHING.', 'THE CITY SLEEPS BECAUSE FAUST DOES NOT']
 // a page that frames this one and plays the room's stream itself can feed the screens its pictures: asked of it by
@@ -15485,7 +15485,7 @@ function teleTake(e, d, b) {
   try {
     const n = now(), w = b.width, h = b.height
     const why = !teleFramed || e.source !== window.parent ? 'source' : d.v !== 1 ? 'version' : !(tele.want > 0) || document.hidden ? 'unwanted'
-      : !(w > 0 && h > 0) || Math.max(w, h) > TELE_LONG || Math.min(w, h) > TELE_SHORT ? 'size' : n - tele.takenAt < TELE_MIN_MS ? 'rate' : ''
+      : !(w > 0 && h > 0) || Math.max(w, h) > TELE_LONG || Math.min(w, h) > TELE_SHORT ? 'size' : tele.recent.filter(t => n - t < 1000).length >= TELE_MAX_HZ ? 'rate' : ''
     if (why) { tele.refused[why] = (tele.refused[why] || 0) + 1; return }
     tele.takenAt = n; tele.fed.at = n; tele.recent.push(n)
     if (tele.pending) { teleClose(tele.pending); tele.dropped++ }
