@@ -14999,7 +14999,7 @@ function trafficAttach(o, edge, route = null) {
   return a
 }
 function trafficDriveTo(vehicle, point, options = {}) {
-  if (!isHost || !LV.faust || !point || !Number.isFinite(point.x) || !Number.isFinite(point.z) || Math.abs(point.x) > ARENA || Math.abs(point.z) > ARENA) return false
+  if (!isHost || !LV.faust || !point || !Number.isFinite(point.x) || !Number.isFinite(point.z) || Math.abs(point.x) > WORLD || Math.abs(point.z) > WORLD) return false
   const o = typeof vehicle === 'number' ? objs.find(v => v.id === vehicle) : vehicle
   if (!o?.V || !objs.includes(o) || !TRAFFIC.fleet.includes(o.V.name) || !o.car || o.heldBy !== undefined || o.riders.some(v => v !== undefined)) return false
   trafficState ||= (trafficReset(), trafficState); trafficNear(o.x, o.z)
@@ -15375,7 +15375,7 @@ function trafficHidden(x, z, people) {
 function trafficSpawn(people) {
   const T = trafficState, count = [...T.cars.values()].filter(o => o.trafficAmbient).length
   const K = trafficK()
-  if (count >= Math.max(8, TRAFFIC.cap * K) || objs.length >= OBJ_MAX - 8 || !people.length) return
+  if (count >= Math.max(8, TRAFFIC.cap * K) || objs.length >= OBJ_MAX - 24 || !people.length) return
   const p = people[(T.serial++) % people.length], district = trafficDistrict(p)
   if (district === 'none') return
   const anchors=[];for(const c of people)if(anchors.every(a=>Math.hypot(a.x-c.x,a.z-c.z)>TRAFFIC.radius*1.5))anchors.push(c)
@@ -15692,7 +15692,7 @@ function trafficHwAdd(T, H, e, sPos, lane, exit, cruise, name, clock) {
 }
 function trafficHwSpawn(T, H, people, clock) {
   const cap = Math.max(4, Math.round(TRAFFIC_HW.cap * trafficK()))
-  if (H.cars.size >= cap || objs.length >= OBJ_MAX - 8 || !people.length) return
+  if (H.cars.size >= cap || objs.length >= OBJ_MAX - 24 || !people.length) return
   const p = people[(T.serial++) % people.length], lo = TRAFFIC_HW.nearest, hi = TRAFFIC_HW.farthest, out = trafficHwOut
   const cands = H.road.filter(e => { const d = Math.hypot(e.mx - p.x, e.mz - p.z); return d - e.length / 2 < hi && d + e.length / 2 > lo })
   for (let trial = 0; cands.length && trial < 6; trial++) {
@@ -15765,7 +15765,7 @@ function trafficTick(dt, all) {
         const due = (a.think -= dt) <= 0
         if (due || a.far) {
           const far = o.kin || trafficFar(o, a, people)
-          if ((due || !far) && (thinks < (far ? budget * 0.6 : budget) || !due)) {
+          if ((due || !far) && (a.urgent || thinks < (far ? budget * 0.6 : budget) || !due)) {
             const step = far ? TRAFFIC.thinkFar * (1 + 0.3 * ((o.id * 0.6180339) % 1)) : thinkStep; thinks++
             a.far = far; const t0 = performance.now(), r = trafficThink(o, step, all); thinkMs += performance.now() - t0; if (o.kin) a.kd = r.d; else a.input = r; a.think = (a.think <= 0 ? a.think : 0) + step
           }
@@ -40506,7 +40506,7 @@ function mcWhistle(c) {
   if (o && (o.riders.includes(c.id) || o.heldBy !== undefined)) return
   if (o && (Math.hypot(o.x - c.x, o.z - c.z) > MCAR.come.far || upOf(o) < 0.4)) { mcLetGo(o); o = null }
   if (o) return mcSend(o, c, st, T)
-  st.car = undefined; st.mode = 'spawn'; st.since = T
+  st.car = undefined; st.mode = 'spawn'; st.since = T; st.nextTry = 0
 }
 function mcLetGo(o) {
   if (o.traffic) GAME.traffic.cancel(o.id)
@@ -40517,21 +40517,48 @@ function mcRemove(o) {
   const T = trafficState
   trafficDetach(o, false); dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({ id: o.id, until: trafficClock() + 12 })
   for (const sent of objSent.values()) sent.delete(o.id)
+  T.hw?.cars?.delete(o.id)
   mcCars.delete(o.id); mcEjects.delete(o.id)
 }
 
+function mcFail(c, st, why) {
+  st.mode = ''; tell(c.id, '§7' + why)
+}
+function mcRoom(people) {
+  if (objs.length < OBJ_MAX - 8) return true
+  const cars = objs.filter(o => o.V && o.trafficAmbient && !mcCars.has(o.id) && !squadIds.has(o.id) &&
+    !o.riders.some(r => r !== undefined) && o.heldBy === undefined && o.thrownBy === undefined && o.launchBy === undefined && o.fuse === undefined)
+    .map(o => ({ o, d: Math.min(...people.map(p => Math.hypot(o.x - p.x, o.z - p.z))) })).sort((a, b) => b.d - a.d)
+  for (const { o } of cars) {
+    if (!trafficHidden(o.x, o.z, people)) continue
+    mcRemove(o); trafficState.stats.retired++
+    if (objs.length < OBJ_MAX - 8) return true
+  }
+  return false
+}
+function mcNearRoads(x, z, radius) {
+  trafficNear(x, z, Math.ceil(radius / 96))
+  if (Math.max(Math.abs(x), Math.abs(z)) + radius < ARENA) return
+  const C = FAUST_RINGS.cell
+  for (let i = Math.floor((x - radius) / C); i <= Math.floor((x + radius) / C); i++)
+    for (let j = Math.floor((z - radius) / C); j <= Math.floor((z + radius) / C); j++) trafficRingCell(i, j)
+}
 function mcPlan(c) {
   if (!trafficState) trafficReset()
-  trafficNear(c.x, c.z, 1)
+  mcNearRoads(c.x, c.z, 96)
   const V = MC_V, w = V.w, seatZ = V.seats[0][2]
-  let near = []
-  for (const e of trafficState.edges) {
-    const len = e.length || 96, s = (c.x - e.from.x - e.ox) * e.dx + (c.z - e.from.z - e.oz) * e.dz
-    if (s < -30 || s > len + 30) continue
-    const p = trafficPoint(e, clamp(s, 0, len)), side = (c.x - p.x) * e.dz - (c.z - p.z) * e.dx, d = Math.hypot(c.x - p.x, c.z - p.z)
-    near.push({ e, s, side, d, p })
+  const nearby = () => {
+    const rows = []
+    for (const e of trafficState.edges) {
+      if (!trafficFits(e, V)) continue
+      const len = e.length || 96, s = (c.x - e.from.x - e.ox) * e.dx + (c.z - e.from.z - e.oz) * e.dz
+      const p = trafficPoint(e, clamp(s, 0, len)), side = (c.x - p.x) * e.dz - (c.z - p.z) * e.dx, d = Math.hypot(c.x - p.x, c.z - p.z)
+      if (d <= TRAFFIC.radius) rows.push({ e, s, side, d, p })
+    }
+    return rows.sort((a, b) => a.d - b.d)
   }
-  near.sort((a, b) => a.d - b.d)
+  let near = nearby()
+  if (!near.length || near[0].d >= 60) { mcNearRoads(c.x, c.z, TRAFFIC.radius); near = nearby() }
   if (!near.length) return null
   if (near[0].d < 60) near = near.filter(r => r.d < 60).slice(0, 16)
   else near = near.slice(0, 1)
@@ -40559,6 +40586,7 @@ function mcPlan(c) {
   return { e, hx, hz, half, ax, az, pose: { ...P(sCar, oCar), hx, hz }, lead: P(sCar - MCAR.come.lead, oLane), him: { x: c.x, z: c.z } }
 }
 function mcRoad(e, p) {
+  if (e.ring) return { ax: e.from.x, az: e.from.z, half: e.width / 2, len: e.length }
   const [ci, cj] = FAUSTLAND_API.cellAt(p.x, p.z)
   let best = null
   for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) {
@@ -40573,9 +40601,9 @@ function mcRoad(e, p) {
   }
   return best
 }
-function mcSend(o, c, st, T, fresh = false) {
-  const P = mcPlan(c)
-  if (!P) { st.mode = ''; return }
+function mcSend(o, c, st, T, fresh = false, plan = null) {
+  const P = plan || mcPlan(c)
+  if (!P) return mcFail(c, st, "Your car can't reach a road here. Move closer to a street and whistle again.")
   st.plan = P; st.target ||= { x: 0, z: 0 }; st.target.x = P.lead.x; st.target.z = P.lead.z
   st.since = T; st.best = Infinity; st.bestAt = T; st.planAt = T
   const f = rotq(o.q, [0, 0, -1]), d = Math.hypot(o.x - P.pose.x, o.z - P.pose.z), along = f[0] * P.hx + f[2] * P.hz
@@ -40653,20 +40681,21 @@ function mcMerge(o, st, T) {
   return true
 }
 function mcSpawn(c, st, T) {
-  if (objs.length >= OBJ_MAX - 8 || !trafficState || T < (st.nextTry ?? 0)) return
+  if (T < (st.nextTry ?? 0)) return
   st.nextTry = T + 300
   if (st.since !== st.badSince) { st.bad = new Set(); st.badSince = st.since }
   const P = mcPlan(c), people = mcPeople(), [lo, hi] = MCAR.come.ring, late = T - st.since > MCAR.come.wait * 1000
-  if (!P) { if (late) st.mode = ''; return }
-  const R = Math.ceil(hi / 96)
-  trafficNear(c.x, c.z, R)
+  if (!P) return mcFail(c, st, "Your car can't reach a road here. Move closer to a street and whistle again.")
+  if (!mcRoom(people)) return mcFail(c, st, "Your car can't come while the roads are this crowded. Try again in a moment.")
+  const anchor = Math.hypot(P.pose.x - c.x, P.pose.z - c.z) > 60 ? P.pose : c
+  mcNearRoads(anchor.x, anchor.z, hi)
   const spots = []
   for (const e of trafficState.edges) {
     const len = e.length || 96
-    if (len < 30) continue
-    const q = trafficPoint(e, len / 2), d = Math.hypot(q.x - c.x, q.z - c.z)
-    if (d < lo || d > hi || e.dx * (c.x - q.x) + e.dz * (c.z - q.z) < 0) continue
-    if (Math.max(Math.abs(q.x), Math.abs(q.z)) > ARENA - 96) continue
+    if (len < 30 || !trafficFits(e, MC_V)) continue
+    const q = trafficPoint(e, len / 2), d = Math.hypot(q.x - anchor.x, q.z - anchor.z)
+    if (d < lo || d > hi || e.dx * (P.pose.x - q.x) + e.dz * (P.pose.z - q.z) < 0) continue
+    if (Math.max(Math.abs(q.x), Math.abs(q.z)) > (e.ring ? WORLD - 24 : ARENA - 96)) continue
     spots.push({ e, q, d: d + (e.dx * P.hx + e.dz * P.hz < -0.5 ? 100 : 0) })
   }
   spots.sort((a, b) => a.d - b.d)
@@ -40675,12 +40704,21 @@ function mcSpawn(c, st, T) {
     if (st.bad.has(e) || objs.some(o => Math.hypot(o.x - q.x, o.z - q.z) < 22)) continue
     if (!late && (++tried > 8 || !trafficHidden(q.x, q.z, people))) continue
     const o = mcAdd(c, st, q.x, q.z, e.dx, e.dz)
-    if (!o) return
+    if (!o) {
+      if (late) mcFail(c, st, "Your car isn't available yet. Try whistling again in a few seconds.")
+      return
+    }
     st.spawned = T
-    mcSend(o, c, st, T, true)
-    if (st.mode !== 'come') { mcRemove(o); st.car = undefined; st.mode = 'spawn'; st.bad.add(e) }
+    const since = st.since
+    mcSend(o, c, st, T, true, P)
+    if (st.mode === 'come' || st.mode === 'pull' || st.mode === 'here') {
+      if (anchor === P.pose) tell(c.id, '§7Your car is coming to the nearest street, ' + Math.round(Math.hypot(P.pose.x - c.x, P.pose.z - c.z)) + ' m away (x ' + Math.round(P.pose.x) + ', z ' + Math.round(P.pose.z) + ').')
+      return
+    }
+    mcRemove(o); st.car = undefined; st.mode = 'spawn'; st.since = since; st.bad.add(e)
     return
   }
+  if (late) mcFail(c, st, "Your car can't find a clear route here. Move along the street and whistle again.")
 }
 function mcAdd(c, st, x, z, hx, hz) {
   let id = OBJ_MAX - 1
@@ -40695,14 +40733,20 @@ function mcAdd(c, st, x, z, hx, hz) {
   return o
 }
 function mcHostTick(t) {
-  if (!LV.faust || !trafficState) return
+  if (!LV.faust) return
+  if (!trafficState) trafficReset()
   const T = mcClock(), dt = t.dt
   for (const [id, w] of mcWhistles) if (T - w > MCAR.whistle.s * 1000 + 500) mcWhistles.delete(id)
   for (const [id, e] of mcEjects) if (T - e > MCAR.eject.rearm * 1000 + 1500 || !objs.some(o => o.id === id)) mcEjects.delete(id)
   for (const [pid, st] of mcOwn) {
     const c = players.get(pid)
     if (!c) { const o = mcCarOf(st); if (o) mcLetGo(o); mcOwn.delete(pid); continue }
-    if (st.mode === 'spawn') { if (c.dead > 0 || T - st.since > 30000) st.mode = ''; else mcSpawn(c, st, T); continue }
+    if (st.mode === 'spawn') {
+      if (c.dead > 0) st.mode = ''
+      else if (T - st.since > 30000) mcFail(c, st, "Your car couldn't get through. Move along the street and whistle again.")
+      else mcSpawn(c, st, T)
+      continue
+    }
     const o = mcCarOf(st)
     if (!o) { if (st.mode) st.mode = ''; continue }
     if (o.riders.some(r => r !== undefined) || o.heldBy !== undefined) { if (st.mode) { st.mode = ''; if (o.traffic) GAME.traffic.cancel(o.id) } continue }
