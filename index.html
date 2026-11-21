@@ -8112,11 +8112,12 @@ function faustBatch(capacity = 12288) {
     p[i] = x; p[i + 1] = y; p[i + 2] = z; n[i] = nx; n[i + 1] = ny; n[i + 2] = nz
     uv[j] = u; uv[j + 1] = v; colors[i] = col.r; colors[i + 1] = col.g; colors[i + 2] = col.b; glow[count] = lit; count++
   }
-  const tri = (a, b, c, tint, coords) => {
+  const tri = (a, b, c, tint, coords, gl) => {      // card #69: gl, [g0, g1, g2], gives each vertex its own glow (a soft light)
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, length = Math.hypot(nx, ny, nz) || 1
     col.setHex(tint)
-    for (let i = 0; i < 3; i++) { const q = [a, b, c][i]; vertex(q[0], q[1], q[2], nx / length, ny / length, nz / length, coords?.[i]?.[0] || 0, coords?.[i]?.[1] || 0) }
+    for (let i = 0; i < 3; i++) { const q = [a, b, c][i]; if (gl) lit = gl[i]; vertex(q[0], q[1], q[2], nx / length, ny / length, nz / length, coords?.[i]?.[0] || 0, coords?.[i]?.[1] || 0) }
+    if (gl) lit = 0
   }
   // light: the box glows (the stone material's emission): below 0 in the lamps' colour, above 0 in its own tint.
   // Flat paint (under 3 cm tall: road markings, kerb and plaza lines) draws its top only: its centimetre-tall sides were
@@ -9062,8 +9063,19 @@ const FAUST_CIVIC_WALLS = [null, [0x7a6a52, 0x6e5f4a, 0x84735a, 0x75664f], [0x6d
 function faustDecoCivic(g, lot) {
   if (lot.district !== 'civic' || lot.landmark || lot.stop || lot.mass.length < 3) return
   const kit = faustCivicKit(lot)
+  const { x, z, w, d, height: H } = lot, D = FAUST_DECO, f = z + d + 0.25, ST = [0, 0xc4b896, 0xb4bcc6, 0x9aaca0][kit], K = 0x0b0f16, L = 0xd6d0b2
+  // floodlights: a dark fitting on the belt course in each bay between the piers, and above it a soft cone of warm light on the facade: a grid of
+  // triangles whose vertices glow brightest at the fitting and fade smoothly upward and to the sides (a per-vertex glow, to 0 at the cone's edge)
+  for (const fx of [x - w * 0.43, x + w * 0.43]) {
+    g.box(faustBox(fx, 5.18, f + 0.32, 0.22, 0.1, 0.12), 0x1a1d22)
+    const R = 4, C = 4, P = (r, c) => { const v = r / R, u = c / C * 2 - 1, hw = 0.2 + 2.0 * Math.pow(v, 0.8)
+      return [[fx + u * hw, 5.35 + v * 6.0, f + 0.04], 3.4 * Math.pow(1 - v, 1.7) * Math.pow(1 - Math.abs(u), 1.3)] }
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      const A = P(r, c), B = P(r, c + 1), D2 = P(r + 1, c), E = P(r + 1, c + 1)
+      g.tri(A[0], B[0], E[0], 0x4a2e14, null, [A[1], B[1], E[1]]); g.tri(A[0], E[0], D2[0], 0x4a2e14, null, [A[1], E[1], D2[1]])
+    }
+  }
   if (!kit) return
-  const { x, z, w, d, height: H } = lot, D = FAUST_DECO, f = z + d + 0.25, ST = [0, 0x9a8a6c, 0x8c939e, 0x72827a][kit], K = 0x0b0f16, L = 0xd6d0b2
   const arch = (cx, hw, ys, ay, zz, tint) => {            // a pointed arch band over a span of half width hw, from its spring ys to its apex ay, facing the street
     for (const sd of [-1, 1]) {
       const o = [cx + sd * (hw - 0.15), ys, zz], q = [cx + sd * (hw + 0.15), ys, zz], t0 = [cx + sd * 0.1, ay, zz], t1 = [cx + sd * 0.1, ay - 0.45, zz]
@@ -9078,16 +9090,16 @@ function faustDecoCivic(g, lot) {
       g.box(faustBox(cx, 4.75, f + 0.22, 0.12, 0.12, 0.04), D.brass, 0.6)
     }
     for (let i = 0; i < 3; i++) { const h = 0.15 * (i + 1), z0 = f + 0.84 - (i + 1) * 0.28; g.box(faustBox(x, h / 2, z0 + 0.14, 1.6, h / 2, 0.14), ST) }        // three steps, out to 0.84 m from the podium, the highest by the wall
-    for (const sd of [-1, 1]) { g.box(faustBox(x + sd * 2.9, 3.0, f + 0.14, 0.05, 0.28, 0.1), 0x252d37); g.box(faustBox(x + sd * 2.9, 3.35, f + 0.22, 0.16, 0.16, 0.16), L, 1) }
+    for (const sd of [-1, 1]) { g.box(faustBox(x + sd * 2.9, 3.0, f + 0.14, 0.05, 0.28, 0.1), 0x252d37); g.box(faustBox(x + sd * 2.9, 3.35, f + 0.22, 0.16, 0.16, 0.16), L, 1.6) }
   } else if (kit === 2) {
     for (const sd of [-1, 1]) for (const k of [0.5, 0.8]) g.box(faustBox(x + sd * w * k, 7.5, f + 0.07, 0.3, 2.9, 0.07), ST)
     for (const sd of [-1, 1]) {
-      const bx = x + sd * 3.9, A = [bx - 0.45, 8.95], B = [bx + 0.45, 8.95], C = [bx + 0.45, 5.1], E = [bx - 0.45, 5.1], P = v => [v[0], v[1], f + 0.4]
+      const bx = x + sd * 3.9, A = [bx - 0.45, 8.95], B = [bx + 0.45, 8.95], C = [bx + 0.45, 3.0], E = [bx - 0.45, 3.0], P = v => [v[0], v[1], f + 0.4]
       g.box(faustBox(bx, 9.0, f + 0.38, 0.55, 0.05, 0.05), D.brass)
       for (const o of [[A, B, C], [A, C, B], [A, C, E], [A, E, C]]) g.tri(P(o[0]), P(o[1]), P(o[2]), 0x8a1c2a)       // a red banner, drawn both ways round
-      g.box(faustBox(bx, 5.05, f + 0.4, 0.5, 0.06, 0.03), D.brass, 0.4)
+      g.box(faustBox(bx, 2.95, f + 0.4, 0.5, 0.06, 0.03), D.brass, 0.6)
     }
-    g.box(faustBox(x + 3.0, 1.6, f + 0.06, 0.28, 0.4, 0.05), 0x8a6a38)
+    g.box(faustBox(x + 3.0, 1.6, f + 0.06, 0.28, 0.4, 0.05), 0x8a6a38, 0.6)
   } else if (kit === 3) {
     for (const sd of [-1, 1]) { g.box(faustBox(x + sd * 2.0, 2.2, f + 0.55, 0.28, 2.2, 0.28), ST); g.box(faustBox(x + sd * 2.0, 4.5, f + 0.55, 0.4, 0.12, 0.4), ST); g.box(faustBox(x + sd * 2.0, 0.08, f + 0.55, 0.4, 0.08, 0.4), ST) }
     g.box(faustBox(x, 4.75, f + 0.5, 2.6, 0.15, 0.55), ST)
@@ -36504,7 +36516,19 @@ const dsCratersSave = () => dsCraterOn() && craters.length ? { v: 1, list: crate
 function dsCratersLoad(sec) {
   if (!isHost || !sec || sec.v !== 1 || !Array.isArray(sec.list)) return 0
   if (typeof GAME.crater.restore === 'function') return GAME.crater.restore(sec.list) | 0      // #52's own entry, if it has one
-  const held = new Set(craters.map(e => e.join(' '))), add = sec.list.filter(e => Array.isArray(e) && !held.has(e.join(' ')))
+  // a scar is its middle and its seed (its radius only grows, in place: #52, #64), never its whole entry or its place in a list:
+  // one held and in the save, or twice in the save, is kept once with the larger radius (its region cut again)
+  const scar = e => e[0] + ' ' + e[1] + ' ' + e[3], at = new Map(craters.map((e, i) => [scar(e), i])), saved = new Map()
+  for (const e of sec.list) if (Array.isArray(e) && e.length >= 4) { const k = scar(e), o = saved.get(k); if (!o || e[2] > o[2]) saved.set(k, e) }
+  let grew = 0
+  for (const [k, e] of saved) {
+    const i = at.get(k)
+    if (i === undefined || !(e[2] > craters[i][2])) continue
+    const bigger = craters.map(c => c.slice()); bigger[i][2] = e[2]
+    if (craterOk(bigger)) { craters = bigger; grew++ }
+  }
+  if (grew) { craterV++; lsLeft = 8; buildCrater(craters.length) }
+  const add = [...saved.values()].filter(e => !at.has(scar(e)))
   const next = [...craters, ...add].slice(0, CRATER_MAX), n = craters.length
   if (next.length === n || !craterOk(next)) return 0
   craters = next.map(e => e.slice()); craterV++; lsLeft = 8; buildCrater(n)
