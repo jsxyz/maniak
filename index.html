@@ -30220,7 +30220,9 @@ function partsRelease(r, ag, u, H, yaw, th, o) {
 const PARTS_LIE = { c: [0.1, -0.89], axis: -83 * Math.PI / 180 }
 // card #55, fix 55f (QA #62): the death clip from 1.0 s back to 0.5 s, his fall reversed: [ct, centre y, centre z, torso deg]
 // (hips-to-head midpoint and angle, from the clip's own keys)
-const PARTS_RISE = [[1.0, 0.24, -0.85, -60], [0.9, 0.475, -0.72, -27], [0.8, 0.82, -0.465, -8], [0.7, 0.96, -0.245, 5], [0.6, 1.005, -0.125, 12], [0.5, 1.025, -0.085, 15]]
+const PARTS_RISE = [[2.39, 0.10, -0.89, -83], [1.5, 0.105, -0.885, -83], [1.2, 0.095, -0.89, -88], [1.1, 0.13, -0.89, -85], [1.0, 0.24, -0.85, -60], [0.9, 0.475, -0.72, -27], [0.8, 0.82, -0.465, -8], [0.7, 0.96, -0.245, 5], [0.6, 1.005, -0.125, 12], [0.5, 1.025, -0.085, 15]]
+// card #55, fix 55g (#72): from the lying frame (2.39 s) to 1.0 s while the ease runs 0 to 0.15 (the first three frames), then on to 0.5 s
+const PARTS_RISE_K = 0.15
 function partsRiseAt(ct) {
   const T = PARTS_RISE; let i = 0
   while (i < T.length - 2 && ct < T[i + 1][0]) i++
@@ -30230,7 +30232,7 @@ function partsRiseAt(ct) {
 function partsGrabRise(ag, r, t, o) {
   const u = (t - r.t) / 1000 / PARTS_REL.T
   if (u >= 1 || u < 0 || r.what || ag.kind === SL_K.stray || o.clip !== 'death' || o.ct > 1 || !slDeathOf(ag.id, r.t)) return
-  const E = PARTS_RISE.at(-1), e = partsEase(u), w = 1 - e, ct = 1.0 - 0.5 * e, [cy, cz, ax] = partsRiseAt(ct), [ly, lz] = PARTS_LIE.c
+  const E = PARTS_RISE.at(-1), e = partsEase(u), w = 1 - e, ct = e < PARTS_RISE_K ? 2.39 - 1.39 * e / PARTS_RISE_K : 1.0 - 0.5 * (e - PARTS_RISE_K) / (1 - PARTS_RISE_K), [cy, cz, ax] = partsRiseAt(ct), [ly, lz] = PARTS_LIE.c
   const off = (yaw, A, Cy, Cz) => { const y = Cy * Math.cos(A) - Cz * Math.sin(A), z = Cy * Math.sin(A) + Cz * Math.cos(A); return [z * Math.sin(yaw), y, z * Math.cos(yaw)] }
   const P = o.pitch || 0, h = off(o.yaw, P, E[1], E[2]), l = off(r.yaw, 0, ly, lz)
   // the centre: from the lying body's to the held one's; the torso: from lying to the held slump's, the clip's own angle made up by the pitch
