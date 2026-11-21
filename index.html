@@ -9234,7 +9234,8 @@ const background = (() => {
   const gpuLog = [], gpuNone = { links: 0, shaders: 0, upKB: 0, sync: 0 }
   let gpuOpen = { ...gpuNone }, gpuLast = { ...gpuNone }, frameNo = 0
   // per second, the last 20 minutes; and the new geometry admitted to this frame's draw (uploadSlot)
-  const secLog = [], accMap = new Map(), secBy = new Map()
+  const secLog = [], accMap = new Map(), secBy = new Map(), simMap = new Map()
+  let simTicks = 0
   let secOpen = null, planKB = 0, accT = 0
   // the fence gate: the last frame with GPU work, and the last frame whose fence has signalled
   let gateFrame = 0, signaledFrame = 0, fenceOn = false, gateHeld = 0, gateAt = 0
@@ -9271,7 +9272,8 @@ const background = (() => {
   function slice(deadline) {
     // While the loading overlay is up nothing else is drawn: take 30 ms slices (each still one bounded task).
     const rush = typeof startingGame !== 'undefined' && startingGame
-    const start = realNow(), cap = rush ? 30 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
+    const hidden = typeof document !== 'undefined' && document.hidden, slow = (frameLog.at(-1)?.ms || 0) >= 40 && [...jobs.keys()].some(k => k.startsWith('rig:') || k === 'street-kit')
+    const start = realNow(), cap = rush ? 30 : hidden ? 50 : slow ? 10 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
     let steps = 0
     const soft = paceOff()
     if (!rush && !soft && (gpuLast.links || gpuLast.upKB > UPLOAD_KB)) { stats.rests = (stats.rests || 0) + 1; gpuLast = gpuNone; return }
@@ -9338,7 +9340,8 @@ const background = (() => {
       const t = performance.now()
       const ms = lastFrameT ? Math.round(t - lastFrameT) : 0
       gpuOpen.upKB = Math.round(gpuOpen.upKB)
-      frameLog.push({ i, t: Math.round(t), ms, draw: Math.round(draw), phase, q, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen })
+      const sim = [...simMap].filter(([, v]) => v >= 1).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + Math.round(v)); simMap.clear()
+      frameLog.push({ i, t: Math.round(t), ms, draw: Math.round(draw), phase, q, ticks: simTicks, sim, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen }); simTicks = 0
       if (q >= 3 && !(gpuLog.at(-1)?.kind === 'queue' && gpuLog.at(-1).q >= q)) gpuLog.push({ t: Math.round(t), i, kind: 'queue', q })
       if (ms >= 50) gpuLog.push({ t: Math.round(t), i, kind: 'frame', ms, parts: open.parts.slice(0, 4), links: gpuOpen.links, upKB: gpuOpen.upKB })
       { const s = Math.floor(t / 1000)
@@ -9361,6 +9364,7 @@ const background = (() => {
       if (gpuLog.length > 3000) gpuLog.shift()
     },
     seconds(n = 1200) { return secLog.slice(-n) },
+    simAdd(name, ms) { simMap.set(name, (simMap.get(name) || 0) + ms); if (name === 'tick') simTicks++ },
     // new geometry of `bytes` may join this frame's draw: at most UPLOAD_KB a frame, the first always (yield 'frame' while false)
     signaled(i) { fenceOn = true; if (i > signaledFrame) signaledFrame = i },
     get gate() { return { frame: gateFrame, signaled: signaledFrame, open: !fenceOn || signaledFrame >= gateFrame } },
@@ -15571,11 +15575,15 @@ function onModelLoaded(M, gltf) {
 }
 
 // gltf() may throw or reject; either keeps the capsule fallback
+// card #100: the player's own model first (seconds, not minutes, on a slow machine); the rest once it is in, or after 3 s
+const rigsLater = []
+const ownModel = () => { try { return GAME.participant(0, myCid).model || 'man' } catch (e) { return 'man' } }
 function loadModels() {
+  setTimeout(() => { const own = modelDiag.ownDone || Promise.resolve(); Promise.race([own, new Promise(r => setTimeout(r, 3000))]).then(() => { for (const [n, M] of rigsLater.splice(0)) rigLoad(n, M) }) }, 0)
   for (const name of Object.keys(MODELS)) {
     const M = MODELS[name]
     if (M.kind === 'built') continue
-    if (M.kind === 'rig') { rigLoad(name, M); continue }
+    if (M.kind === 'rig') { if (name === ownModel()) rigLoad(name, M, 3); else rigsLater.push([name, M]); continue }
     try {
       scene3d.load.gltf(M.url).then(g => onModelLoaded(M, g))
         .catch(e => console.warn('model ' + name + ' failed:', e && e.message))
@@ -15587,41 +15595,73 @@ function loadModels() {
 
 // a rig's files: from assets/ beside the page, else the published site (a page opened from a file, a host without them);
 // either failing keeps the capsule fallback. One loader for all, each file fetched once
-let rigLib = null
+let rigLib = null, rigDecoder = null
 const rigGets = new Map()
+// card #100: what became of every model, for F3's models row, gameHooks.models() and the chat
+const modelDiag = { libs: 'not started', workers: null, files: new Map(), rigs: new Map(), fails: [], told: false, slowTold: false, playAt: 0 }
+function modelFail(what, e) {
+  const reason = String(e?.message || e || 'unknown').slice(0, 120)
+  modelDiag.fails.push(what + ': ' + reason); console.warn('[maniak] model ' + what + ' failed:', reason)
+  if (!modelDiag.told && !serverPage()) { modelDiag.told = true; try { sysMsg('§cCouldn\'t load the character models (' + what + ': ' + reason + '); showing stand-ins') } catch (x) {} }
+}
+function modelSlowCheck() {
+  if (serverPage() || modelDiag.slowTold) return
+  if (typeof phase === 'undefined' || phase !== 'playing') { modelDiag.playAt = 0; return setTimeout(modelSlowCheck, 5000) }
+  modelDiag.playAt ||= Date.now()
+  if (Date.now() - modelDiag.playAt < 30000) return setTimeout(modelSlowCheck, 5000)
+  const rigs = [...modelDiag.rigs.values()], ready = rigs.filter(s => s === 'ready').length
+  modelDiag.slowTold = true
+  if (ready < rigs.length || modelDiag.libs !== 'ok') try { sysMsg('§7Models still loading after 30 s: libraries ' + modelDiag.libs + ', characters ' + ready + ' of ' + rigs.length + ' ready' +
+    ([...modelDiag.files.values()].filter(f => f.state !== 'loaded').length ? ', files waiting ' + [...modelDiag.files.entries()].filter(([, f]) => f.state !== 'loaded').slice(0, 3).map(([k, f]) => k.split('.')[0] + ' ' + f.state).join(', ') : '') + ' (F3 shows more)') } catch (x) {}
+}
 // a dedicated server draws nothing: no model is fetched there (the capsules stand in, as when one fails); the server tells
 // its page so before the page runs (MANIAK_SERVER), since the landing page prepares rows before serve()
 const serverPage = () => !!globalThis.MANIAK_SERVER || serving
 function rigFetch(file) {
   if (serverPage()) return Promise.reject(new Error('a dedicated server draws no models'))
   if (!rigGets.has(file)) rigGets.set(file, rigLib.then(loader => {
-    const at = base => new Promise((ok, no) => loader.load(base + file, ok, undefined, no))
+    const D = modelDiag.files.get(file) || modelDiag.files.set(file, { state: 'fetching', t0: Date.now() }).get(file)
+    const once = base => new Promise((ok, no) => loader.load(base + file, ok, undefined, no))
+    // a load not done in 20 s is tried again with the decoder on the main thread (a refused or broken worker never answers)
+    const at = base => new Promise((ok, no) => {
+      let done = false, retry = false
+      const win = g => { if (!done) { done = true; D.state = 'loaded'; D.ms = Date.now() - D.t0; ok(g) } }
+      const lose = (e, last) => { if (!done && (last || !retry)) { done = true; D.state = 'failed'; D.err = String(e?.message || e).slice(0, 120); no(e) } }
+      once(base).then(win, e => lose(e, false))
+      setTimeout(() => { if (done) return; D.state = 'slow'
+        if (rigDecoder && modelDiag.workers) { try { rigDecoder.useWorkers(0); modelDiag.workers = 0; modelDiag.noWorkers = 'after a 20 s load' } catch (e) {} retry = true; D.state = 'retrying without workers'; once(base).then(win, e => lose(e, true)) } }, 20000)
+    })
     return at(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? at(RIG_SITE) : Promise.reject(e))
   }))
   return rigGets.get(file)
 }
 // the one GLTFLoader, for the rigs and the sculpted Faust head, made on first use
 function rigLoader() {
+  if (!rigLib) { modelDiag.libs = 'loading'; setTimeout(modelSlowCheck, 5000) }
   return rigLib ||= (self.THREE = THREE, geoLoad(RIG_LIBS)).then(env => {
     const loader = new env.GLTF.GLTFLoader()
-    const decoder = env.Meshopt.MeshoptDecoder
-    try { decoder.useWorkers(Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 2) - 1))) }
-    catch (e) { decoder.useWorkers(0) } // sandboxed browsers may forbid workers
+    const decoder = rigDecoder = env.Meshopt.MeshoptDecoder
+    try { const n = Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 2) - 1)); decoder.useWorkers(n); modelDiag.workers = n }
+    catch (e) { decoder.useWorkers(0); modelDiag.workers = 0; modelDiag.noWorkers = String(e?.message || e).slice(0, 80) } // sandboxed browsers may forbid workers
+    modelDiag.libs = 'ok'
     loader.setMeshoptDecoder(decoder)
     loader.setCrossOrigin('anonymous')
     return loader
-  })
+  }, e => { modelDiag.libs = 'failed'; modelFail('libraries', e); throw e })
 }
-function rigLoad(name, M) {
+function rigLoad(name, M, priority = 2) {
   rigLoader()
   // anims: a clip file, or a list of them (card #7: the shared clips and the freaks' own), merged in order
   const files = [M.anims].flat().filter(f => typeof f === 'string')
-  Promise.all([rigFetch(M.file), ...files.map(rigFetch)]).then(([g, ...a]) => onRigLoaded(M, g, a.length ? { animations: a.flatMap(x => x.animations) } : null))
-    .catch(e => console.warn('model ' + name + ' failed, using capsules:', e && e.message))
+  modelDiag.rigs.set(name, 'fetching')
+  const done = Promise.all([rigFetch(M.file), ...files.map(rigFetch)]).then(([g, ...a]) => { modelDiag.rigs.set(name, 'building'); return onRigLoaded(M, g, a.length ? { animations: a.flatMap(x => x.animations) } : null, priority) })
+    .then(ok => modelDiag.rigs.set(name, ok === false ? 'cancelled' : M.proto ? 'ready' : 'no model'), e => { modelDiag.rigs.set(name, 'failed'); modelFail(name, e) })
+  if (priority > 2) modelDiag.ownDone = done
+  return done
 }
 // gltfpack keeps a LOD node's name on a parent and puts the mesh in an unnamed child: read either
 const rigLods = root => { const m = []; root.traverse(o => { const k = /_lod(\d)$/.exec(o.name) || /_lod(\d)$/.exec(o.parent?.name || ''); if (o.isSkinnedMesh && k) m[+k[1]] = o }); return m }
-function onRigLoaded(M, gltf, anims) {
+function onRigLoaded(M, gltf, anims, priority = 2) {
   return background.run('rig:' + M.file, function* () {
   const root = gltf.scene
   // card #7: the right grip's rest frame against the model, before any clip moves it (gripTurn turns a held weapon from it)
@@ -15643,7 +15683,7 @@ function onRigLoaded(M, gltf, anims) {
   yield* warmSceneSteps(activeLook || 'plain', [root])
   M.proto = root
   rebuildAvatars()
-  }, { gpu: true })
+  }, { gpu: true, priority })
 }
 
 // seeded and pure: draws alike on every screen and realm
@@ -21225,7 +21265,7 @@ function periodLoad() {
   if (periodFleet || renderHeadless || serving || !scene) return
   periodFleet = { ready: false, failed: false }
   rigLoader()
-  rigFetch(VEHICLE_FILE).then(periodSetup).catch(e => { periodFleet.failed = true; console.warn('period fleet: its models did not load, the drawn ones stay:', e && e.message) })
+  rigFetch(VEHICLE_FILE).then(periodSetup).catch(e => { periodFleet.failed = true; modelFail('cars', e) })
 }
 // a mesh's geometry in model space: float position, normal and uv, its node's transform applied
 function periodBake(mesh) {
@@ -23841,6 +23881,12 @@ function drawDebug(me, fps) {
         (startLog.warmProgs != null ? ' (in play +' + v(background.stats.lateCount) + ')' : '')) : '') +
     (rescues.n ? row('rescue', v(rescues.n) + '  last ' + esc(rescues.last.who + ' at ' + [rescues.last.x, rescues.last.y, rescues.last.z].map(Math.round).join(' ') +
         ' vy ' + Math.round(rescues.last.vy) + (rescues.last.cell ? '  cell ' + rescues.last.cell : '') + ' (' + rescues.last.cause + ')')) : '') +
+    row('models', (D => 'libs ' + esc(D.libs) + '  workers ' + v(D.workers ?? '-') + '  files ' + v([...D.files.values()].filter(f => f.state === 'loaded').length) + '/' + v(D.files.size) +
+      '  rigs ' + v([...D.rigs.values()].filter(s => s === 'ready').length) + '/' + v(D.rigs.size) + '  cars ' + esc(periodFleet ? periodFleet.failed ? 'failed' : periodFleet.ready ? 'ready' : 'loading' : '-') +
+      '  street ' + esc(slKitJob ? slKitJob.failed ? 'failed' : slKitJob.done ? 'ready' : 'loading' : '-') +
+      ([...D.files.entries()].some(([, f]) => f.state !== 'loaded') ? '  waiting ' + esc([...D.files.entries()].filter(([, f]) => f.state !== 'loaded').slice(0, 4).map(([k, f]) => k.split('.')[0] + ' ' + f.state + ' ' + Math.round((Date.now() - f.t0) / 1000) + 's').join(', ')) : '') +
+      (D.fails.length ? '  <span class="w">failed ' + esc(D.fails.slice(-3).join('; ')) + '</span>' : '') + '  gpu ' + esc(modelGpu()))(modelDiag)) +
+    ((f => f?.sim?.length ? row('sim', 'last frame ' + v(f.ms) + ' ms, ' + v(f.ticks) + ' ticks: ' + esc(f.sim.slice(0, 7).join(', '))) : '')(background.frames(1)[0])) +
     row('bg', 'jobs ' + v(background.pending.length) +
         (background.pending.length ? ' (' + esc(background.jobs.slice(0, 8).join(' ')) + (background.pending.length > 8 ? ' …' : '') + ')' : '') +
         (compileSignal.cuts ? '  compile waits cut ' + v(compileSignal.cuts) + (compileSignal.broken ? ' (no ready signal)' : '') : '') +
@@ -23884,6 +23930,13 @@ let gpuSoft = null, softTold = false
 const softGL = () => { if (gpuSoft === null) { const g = gpuName(); if (g) gpuSoft = GPU_SOFTWARE.test(g) } return !!gpuSoft }
 
 // the game's own context: a second one can make the browser drop the oldest
+// card #100: the GPU and the limits a skinned, textured model needs
+function modelGpu() {
+  try {
+    const gl = renderer?.getContext(); if (!gl) return '-'
+    return gpuName() + ' tex ' + gl.getParameter(gl.MAX_TEXTURE_SIZE) + ' vtex ' + gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) + ' vuni ' + gl.getParameter(gl.MAX_VERTEX_UNIFORM_VECTORS) + (gl.isContextLost() ? ' LOST' : '')
+  } catch (e) { return '?' }
+}
 function gpuName() {
   try {
     const gl = renderer && renderer.getContext && renderer.getContext()
@@ -26327,6 +26380,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
   // frames: the last n frames, each {i, t, ms, draw, phase, steps, programs} (frame by frame; no aggregate)
+  models: () => ({ ...modelDiag, files: Object.fromEntries(modelDiag.files), rigs: Object.fromEntries(modelDiag.rigs), cars: periodFleet && { ready: !!periodFleet.ready, failed: !!periodFleet.failed }, street: slKitJob && { done: !!slKitJob.done, failed: !!slKitJob.failed }, gpu: modelGpu() }),
   fps(n) { if (n !== undefined) fpsCap = +n >= 5 && +n <= 240 ? +n : 0; return fpsCap },
   // card #9: the telescreens' state, frame by frame: the want, the picture's source and size, and the frames that carried an upload
   telescreen: (n = 120) => teleState(n),
@@ -30063,9 +30117,9 @@ function slLoadKit() {
   const files = [RIG_FILES.anims, STREET_FILES.anims, ...STREET.bodies.map(b => RIG_FILES[b]), STREET_FILES.bike, STREET_FILES.pram, STREET_FILES.dog, STREET_FILES.pigeon]
   Promise.all(files.map(f => rigFetch(f))).then(gs => {
     slKitJob.steps = slKitSteps(gs)
-    return background.run('street-kit', slKitJob.steps, { gpu: true }).then(() => { slKitJob.steps = null })
+    return background.run('street-kit', slKitJob.steps, { gpu: true, priority: 2 }).then(() => { slKitJob.steps = null; slKitJob.done = true })
   })
-    .catch(e => { slKitJob.failed = true; console.warn('street life: its models did not load, it stays empty:', e && e.message) })
+    .catch(e => { slKitJob.failed = true; modelFail('street life', e) })
 }
 function* slKitSteps([anims, street, ...rest]) {
   const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon] = rest.slice(STREET.bodies.length)
@@ -34904,6 +34958,13 @@ function takeInput(id) {
 
 function hostTick(dt) {
   pageLife.hostAttempts++
+  // card #100: the tick's parts by name, for the frame log (the hooks wrapped once, after every module has set its own)
+  if (!hostTick.timed) { hostTick.timed = true
+    for (const [k, f] of Object.entries(GAME.host)) if (typeof f === 'function') GAME.host[k] = function (...a) { const t0 = realNow(); try { return f.apply(this, a) } finally { background.simAdd(k, realNow() - t0) } }
+    const think = GAME.think; if (typeof think === 'function') GAME.think = function (...a) { const t0 = realNow(); try { return think.apply(this, a) } finally { background.simAdd('think', realNow() - t0) } }
+  }
+  const tickT0 = realNow()
+  try {
   const t = { dt }
   GAME.host.beforeTick(t)
   const me = players.get(0)
@@ -34928,9 +34989,12 @@ function hostTick(dt) {
 
   t.all = all; t.cur = cur
   carrierT = tickAt
-  msPhys = msPhys * 0.9 + tickChars(all, c => cur.get(c.id) || IDLE_INPUT, dt, GAME.host, t) * 0.1      // the one step
+  const physMs = tickChars(all, c => cur.get(c.id) || IDLE_INPUT, dt, GAME.host, t)
+  msPhys = msPhys * 0.9 + physMs * 0.1      // the one step
+  background.simAdd('physics', physMs)
   recordHistory(tickAt, all)
   pageLife.hostTicks++
+  } finally { background.simAdd('tick', realNow() - tickT0) }
 }
 
 
