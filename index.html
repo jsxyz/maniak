@@ -35158,7 +35158,7 @@ function slHurt(ag, p, ux, uz, power, by, T, fling, dmg, gun, cause) {
   else { const n = Math.hypot(ux, uz) || 1, d = fling ?? Math.max(1, Math.min(7, 0.8 + power)); [x1, z1] = slRunTo(p.x, p.z, ux / n, uz / n, d) }
   slAddRec([SL_REC.death, ag.id, Math.round(T), slR2(x), slR2(z), slR2(x1), slR2(z1), (cause ?? (gun >= 0 ? 1 : 6)) | (p.down && !sw ? 32 : 0), gun ?? -1])
   slPanic(x, z, T, STREET.scareR * 2)
-  if (by && !by.bot && ag.kind !== SL_K.stray) heatCrime(by, ag.client && HEAT.crime.dealerKill !== undefined ? 'dealerKill' : 'kill', x, z, 1, true)          // #14
+  if (by && !by.bot && ag.kind !== SL_K.stray) heatCrime(by, ag.client && HEAT.crime.dealerKill !== undefined ? 'dealerKill' : 'kill', x, z, 1, true, ag)          // #14
   return true
 }
 function slKnock(ag, p, ux, uz, power, by, T, fling, step, hold, dmg, gun, cause) {
@@ -35180,9 +35180,9 @@ function slKnock(ag, p, ux, uz, power, by, T, fling, step, hold, dmg, gun, cause
   const [x2, z2] = slRunTo(x1, z1, ux / n + (slRnd(ag.id, T) - 0.5) * 0.8, uz / n + (slRnd(T, ag.id) - 0.5) * 0.8, 22)
   const a = [SL_REC.knock, ag.id, Math.round(T), slR2(p.x), slR2(p.z), slR2(x1), slR2(z1), slR2(x2), slR2(z2)]
   if (ag.kind === SL_K.cyclist) { const [bx, bz] = slRunTo(p.x, p.z, ux / n, uz / n, d * 0.6); a.push(slR2(bx), slR2(bz), slR2(p.yaw + (slRnd(ag.id) - 0.5))) }
-  slAddRec(a)
+  if (!slAddRec(a)) return          // card #63 (hooks3): this knock-down was made this tick (a swing's second pellet): one record, one crime
   slPanic(p.x, p.z, T)
-  if (by && !by.bot && ag.kind !== SL_K.stray) heatCrime(by, seatOf(by) ? 'ram' : 'civilian', p.x, p.z)       // card #14
+  if (by && !by.bot && ag.kind !== SL_K.stray) heatCrime(by, seatOf(by) ? 'ram' : 'civilian', p.x, p.z, 1, false, ag)       // card #14
   if (by && hooked['street.knock']) hookEmit('street.knock', { attacker: hookWho(by), kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: slR2(p.x), z: slR2(p.z) })
 }
 // The same knock-down rules apply to every street agent.
@@ -35416,6 +35416,7 @@ function slBlastStreet(x, z, B, by, T) {
   for (const [ag, p, d] of caught) {
     slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
     try { slKnock(ag, p, (p.x - x) || 0.01, p.z - z, 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }
+    slBlastHurt(ag, p, by, T)          // card #63 (hooks3): a lying one it hurt
   }
   slBirdsNear(x, z, B.radius, T, (f, i, q) => slBirdKill(f, i, by, (q.x - x) || 0.01, q.z - z, T))
   slPanic(x, z, T, STREET.scareR * 2)
@@ -38449,6 +38450,11 @@ function slPramReport(ag, T) {
 }
 // card #63: a hit on that pram alone: slPramHit with the hit's damage (none given: all of its hp), as a hit on a standing mother's
 // pram is dealt; she is not touched
+// card #63 (hooks3): someone lying (knocked down, alive) whom a blast caught, and who lived, counts as one it knocked down: the
+// same crime ('civilian', or 'ram' from a seat) for whoever set it off; one it killed is slHurt's 'kill'. p: their pose before it
+function slBlastHurt(ag, p, by, T) {
+  if (slLying(p, T) && !slDeathOf(ag.id, Math.round(T)) && by && !by.bot && ag.kind !== SL_K.stray) heatCrime(by, seatOf(by) ? 'ram' : 'civilian', p.x, p.z, 1, false, ag)
+}
 function slPramStrike(ag, p, by, T, dmg) { slHit.part = 'pram'; slHit.dmg = dmg ?? Infinity; try { slPramHit(ag, p, by, T) } finally { slHit.part = null; slHit.dmg = Infinity } }
 // a pram blows up at (x, z): its record, and its blast at the end of the tick, credited to `by` if a player set it off
 function slPramBlow(id, x, z, by, T) {
@@ -38475,11 +38481,13 @@ function slPramBlast(e, credit) {
   }
   const caught = []
   const prams = []          // card #63: a down mother's pram, alone
-  slAround(at[0], at[2], B.radius, T, (ag, p) => { const d = Math.hypot(p.x - at[0], p.z - at[2]); if (d < B.radius && !p.down) caught.push([ag, { ...p }, d]); else { const q = slPramOnly(ag, p, T), e = q && Math.hypot(q.x - at[0], q.z - at[2]); if (q && e < B.radius) prams.push([ag, { ...p }, e]) } })
+  // card #63 (hooks3): the lying (knocked down, alive) are caught too, as those standing: hurt where they lie, or killed (no new throw)
+  slAround(at[0], at[2], B.radius, T, (ag, p) => { const d = Math.hypot(p.x - at[0], p.z - at[2]); if (d < B.radius && (!p.down || slLying(p, T))) caught.push([ag, { ...p }, d]); else { const q = slPramOnly(ag, p, T), e = q && Math.hypot(q.x - at[0], q.z - at[2]); if (q && e < B.radius) prams.push([ag, { ...p }, e]) } })
   for (const [ag, p, d] of prams) slPramStrike(ag, p, by, T, B.dmg * (1 - d / B.radius))
   for (const [ag, p, d] of caught) {
     slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
     try { slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }          // card #101
+    slBlastHurt(ag, p, by, T)          // card #63 (hooks3): a lying one it hurt
   }
   slBirdsNear(at[0], at[2], B.radius, T, (f, i, q) => slBirdKill(f, i, by, q.x - at[0] || 0.01, q.z - at[2], T))          // card #101: the birds in it
   slPanic(at[0], at[2], T)
@@ -38729,9 +38737,10 @@ function heatWitnessed(x, z, T) {
 // card #63, for live QA (gameHooks.heat()): the last 64 crimes the host weighed: when, whose, what, the points it carries, whether it
 // counted (else why: 'limit', too soon after the same; 'unseen', nobody saw it), and his points and stars after. heatCrime's answer
 const heatLog = []
-function heatNote(c, kind, n, T, no) {
+function heatNote(c, kind, n, T, no, who = null) {          // card #63 (hooks3): who, the street person it was done to
   const H = heat.get(c.id)
-  heatLog.push({ t: Math.round(T), id: c.id, kind, add: (HEAT.crime[kind] ?? 1) * n, counted: !no, why: no || undefined, pts: +(H?.pts ?? 0).toFixed(2), stars: H?.stars | 0 })
+  heatLog.push({ t: Math.round(T), id: c.id, kind, add: (HEAT.crime[kind] ?? 1) * n, counted: !no, why: no || undefined, pts: +(H?.pts ?? 0).toFixed(2), stars: H?.stars | 0,
+    victim: who?.id ?? null, victimKind: who ? Object.keys(SL_K).find(k => SL_K[k] === who.kind) ?? null : null })
   if (heatLog.length > 64) heatLog.shift()
   return !no
 }
@@ -38739,11 +38748,11 @@ function heatNote(c, kind, n, T, no) {
 // rate limit; the enforcers on him stand down as heatClear has them) and the crime log emptied
 function heatReset() { heatClear(myId); const H = heat.get(myId); if (H) H.at = {}; heatLog.length = 0 }
 // sure: the crime was seen by the enforcer it was done to
-function heatCrime(c, kind, x = c?.x, z = c?.z, n = 1, sure = false) {
+function heatCrime(c, kind, x = c?.x, z = c?.z, n = 1, sure = false, who = null) {          // card #63 (hooks3): who, the street person it was done to (QA's crime log)
   if (!isHost || !LV.faust || !c || c.bot || c.id >= BOT_ID0 || c.dead > 0 || !enforcersEnabled()) return false
   const T = tickAt || now(), H = heatFor(c.id), lim = HEAT.limit[kind]
-  if (lim && T - (H.at[kind] || -1e9) < lim * 1000) return heatNote(c, kind, n, T, 'limit')          // card #63: QA's crime log
-  if (!sure && !heatWitnessed(x, z, T)) return heatNote(c, kind, n, T, 'unseen')
+  if (lim && T - (H.at[kind] || -1e9) < lim * 1000) return heatNote(c, kind, n, T, 'limit', who)          // card #63: QA's crime log
+  if (!sure && !heatWitnessed(x, z, T)) return heatNote(c, kind, n, T, 'unseen', who)
   H.at[kind] = T
   GAME.disguise?.blow?.(c, 'crime')
   const was = H.stars
@@ -38751,7 +38760,7 @@ function heatCrime(c, kind, x = c?.x, z = c?.z, n = 1, sure = false) {
   H.stars = heatStars(H.pts)
   if (H.stars) { H.state = 1; H.seenAt = T; H.last = { x: c.x, y: c.y, z: c.z }; H.left = HEAT.hide + HEAT.hideStar * H.stars }
   if (!was && H.stars) tell(c.id, TEXT.enforcersAfter)
-  return heatNote(c, kind, n, T, '')
+  return heatNote(c, kind, n, T, '', who)
 }
 // he's clear: the stars go, and the enforcers on him stand down (heatDismiss takes them away)
 function heatClear(id) {
