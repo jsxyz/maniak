@@ -32427,6 +32427,8 @@ function partsAfter(all, dt, credit) {
       if (downed(v) && credit) credit(by.id, by)(v, FG)
     }
     if (slState && LV.faust && h.y - h.h - h.r < 2.2) slAround(h.x, h.z, 2, T, (ag, p) => {
+      const pq = slPramOnly(ag, p, T)          // card #63: a down mother's pram, alone
+      if (pq) { if (!P.struck.has('s' + ag.id) && Math.hypot(pq.x - h.x, pq.z - h.z) <= h.r + 0.6) { P.struck.add('s' + ag.id); slPramStrike(ag, p, by, T, partsImpact(PARTS.person.mass, sp)) } return }
       if (p.down || P.struck.has('s' + ag.id) || Math.hypot(p.x - h.x, p.z - h.z) > h.r + 0.6) return
       P.struck.add('s' + ag.id); slKnock(ag, p, h.vx, h.vz, sp * 0.3, by, T, undefined, undefined, undefined, partsImpact(PARTS.person.mass, sp), FLUNG_G(), 3)          // card #101: as a character it meets
     })
@@ -32456,6 +32458,8 @@ function partsAfter(all, dt, credit) {
       if (r.what && GAME.streetLife?.pramBoom?.(r.id, { x: p.x, z: p.z, by: F.by })) F.boomed = true
     }
     if (p.y < 2.6) slAround(p.x, p.z, 2, T, (ag, q) => {
+      const pq = ag.id !== r.id && slPramOnly(ag, q, T)          // card #63: a down mother's pram, alone
+      if (pq) { if (!F.struck.has('s' + ag.id) && Math.hypot(pq.x - p.x, pq.z - p.z) <= 0.9) { F.struck.add('s' + ag.id); slPramStrike(ag, q, by, T, FG.dmg * clamp(sp / 25, 0.5, 1.3)) } return }
       if (ag.id === r.id || q.down || F.struck.has('s' + ag.id) || Math.hypot(q.x - p.x, q.z - p.z) > 0.9) return
       F.struck.add('s' + ag.id); slKnock(ag, q, r.vx, r.vz, sp * 0.3, by, T, undefined, undefined, undefined, FG.dmg * clamp(sp / 25, 0.5, 1.3), FLUNG_G(), 3)          // card #101: as a character it meets
     })
@@ -32494,6 +32498,8 @@ function partsSweep(all, credit) {
       if (downed(c) && credit) credit(by.id, by)(c, G)
     }
     if (slState && LV.faust && Math.min(was[1], now3[1]) < 2.6) slAround((was[0] + now3[0]) / 2, (was[2] + now3[2]) / 2, Math.hypot(now3[0] - was[0], now3[2] - was[2]) / 2 + 2, T, (ag, p) => {
+      const pq = slPramOnly(ag, p, T)          // card #63: a down mother's pram, alone
+      if (pq) { if (!o.struck.has('s' + ag.id) && partsSegDist([was[0], 0, was[2]], [now3[0], 0, now3[2]], [pq.x, 0, pq.z], [pq.x, 0, pq.z]) <= 0.45 + R) { o.struck.add('s' + ag.id); slPramStrike(ag, p, by, T, D) } return }
       if (p.down || o.struck.has('s' + ag.id)) return
       if (partsSegDist([was[0], 0, was[2]], [now3[0], 0, now3[2]], [p.x, 0, p.z], [p.x, 0, p.z]) > 0.4 + R) return
       o.struck.add('s' + ag.id); slKnock(ag, p, dir[0], dir[2], Math.max(1, D * 0.05), by, T, undefined, undefined, undefined, D, -1, 3)          // card #101: as a character it meets
@@ -34073,15 +34079,28 @@ function slVenue(cell, P, ci, cj) {
       S0 = inStorey(B, 0); spots = S0.spots || []
     } catch (e) { continue }
     const D = B.door, out = [D.out[0], D.out[2]], inn = [D.in[0], D.in[2]], plate = B.storeys[0].plate
+    // card #63: a post standing just outside the door (a lamp sited in front of it): the step out slid along the facade, 0.1 m at a
+    // time up to 0.8 m (still through the doorway), until the way through it from inside clears every post by a body's room
+    { const posts = (cell.near ||= slNear(ci, cj)).posts.filter(p => Math.abs((p[0] + p[2]) / 2 - out[0]) < 6 && Math.abs((p[1] + p[3]) / 2 - out[1]) < 6), R = SL_CLEAR.r + SL_CLEAR.gap
+      const blocked = o => { const L = Math.hypot(o[0] - inn[0], o[1] - inn[1]), n = Math.max(1, Math.ceil(L / 0.1)); for (let k = 0; k <= n; k++) { const x = inn[0] + (o[0] - inn[0]) * k / n, z = inn[1] + (o[1] - inn[1]) * k / n; if (posts.some(p => slPointGap(x, z, p) < R)) return true } return false }
+      if (posts.length && blocked(out)) { const dx = out[0] - inn[0], dz = out[1] - inn[1], L = Math.hypot(dx, dz) || 1, sx = -dz / L, sz = dx / L
+        let o = null; for (let k = 1; k <= 8 && !o; k++) for (const sg of [1, -1]) { const q = [out[0] + sx * sg * k * 0.1, out[1] + sz * sg * k * 0.1]; if (!blocked(q)) { o = q; break } }
+        if (o) { out[0] = o[0]; out[1] = o[1] } } }
     const ring = slNearestRing(cell.rings, out[0], out[1]); if (!ring || !ring.path.length) continue
     // the lot's path (a closed polyline) from the point nearest the door, once round and back to it
     const pth = ring.path, np = pth.length
-    let bi = 0, bq = null, bd = Infinity
+    // card #63: the nearest point of the ring whose straight way from the door clears every post by a body's room (a ring's
+    // detour round a post outside the door puts the plain nearest point on the post's far side); else the nearest, as before
+    const postsNear = (cell.near ||= slNear(ci, cj)).posts.filter(p => Math.abs((p[0] + p[2]) / 2 - out[0]) < 8 && Math.abs((p[1] + p[3]) / 2 - out[1]) < 8)
+    const clearTo = q => { const L = Math.hypot(q[0] - out[0], q[1] - out[1]), n = Math.ceil(L / 0.1); for (let k = 0; k <= n; k++) { const f = n ? k / n : 0, x = out[0] + (q[0] - out[0]) * f, z = out[1] + (q[1] - out[1]) * f; if (postsNear.some(p => slPointGap(x, z, p) < SL_CLEAR.r + SL_CLEAR.gap)) return false } return true }
+    let bi = 0, bq = null, bd = Infinity, ci_ = 0, cq = null, cd = Infinity
     for (let i = 0; i < np; i++) {
       const a = pth[i], c = pth[(i + 1) % np], dx = c[0] - a[0], dz = c[1] - a[1], L2 = dx * dx + dz * dz || 1
       const f = Math.max(0, Math.min(1, ((out[0] - a[0]) * dx + (out[1] - a[1]) * dz) / L2)), q = [a[0] + dx * f, a[1] + dz * f], d = Math.hypot(q[0] - out[0], q[1] - out[1])
       if (d < bd) { bd = d; bi = i; bq = q }
+      if (postsNear.length) for (let k = 0; k <= 20; k++) { const g = k / 20, p = [a[0] + dx * g, a[1] + dz * g], e = Math.hypot(p[0] - out[0], p[1] - out[1]); if (e < cd && e <= 5 && clearTo(p)) { cd = e; ci_ = i; cq = p } }
     }
+    if (postsNear.length && !clearTo(bq) && cq) { bi = ci_; bq = cq; bd = cd }
     if (bd > 5) continue
     const lap = [bq]; for (let k = 1; k <= np; k++) lap.push(pth[(bi + k) % np]); lap.push(bq)
     const door = bd < 0.6 ? [] : [out]          // the door's step out is on the path when it is within 0.6 m of it
@@ -35019,6 +35038,8 @@ function slHostTick() {
     c.slChainAt = g.p.slice()
     if (b[1] > 2.6 || sp < 3) continue
     slAround((a[0] + b[0]) / 2, (a[2] + b[2]) / 2, L / 2 + 1.5, T, (ag, p) => {
+      const pq = slPramOnly(ag, p, T)          // card #63: a down mother's pram, alone
+      if (pq) { const u = L > 1e-6 ? clamp(((pq.x - a[0]) * dx + (pq.z - a[2]) * dz) / (L * L), 0, 1) : 0; if (Math.hypot(a[0] + dx * u - pq.x, a[2] + dz * u - pq.z) < 0.9) slPramStrike(ag, p, c, T, GUNS[gunNamed('Cinderblock')]?.dmg ?? 45); return }
       if (p.down || ag.kind === SL_K.exit && p.rec?.t > T - 500) return
       const f = L > 1e-6 ? Math.max(0, Math.min(1, ((p.x - a[0]) * dx + (p.z - a[2]) * dz) / (L * L))) : 0
       let hit = Math.hypot(a[0] + dx * f - p.x, a[2] + dz * f - p.z) < 0.75
@@ -35049,6 +35070,8 @@ function slHostTick() {
     if (still) { const f = rotq(o.q, [0, 0, -1]), n = Math.hypot(f[0], f[2]) || 1; fx = f[0] / n; fz = f[2] / n }
     const hl = (o.V.l || 4.8) / 2 + 0.3, hw = (o.V.w || 1.9) / 2 + 0.3
     slAround(o.x, o.z, hl + 2, T, (ag, p) => {
+      const pq = slPramOnly(ag, p, T)          // card #63: a down mother's pram, alone: a moving car blows it, as it does hers standing
+      if (pq) { const px = pq.x - o.x, pz = pq.z - o.z; if (sp >= 1.5 && Math.abs(px * fx + pz * fz) <= hl + 0.45 && Math.abs(px * -fz + pz * fx) <= hw + 0.35) slPramStrike(ag, p, players.get(o.riders?.[0]), T); return }
       if (p.down || ag.kind === SL_K.exit && p.rec?.t > T - 500) return
       const dx = p.x - o.x, dz = p.z - o.z, al = dx * fx + dz * fz, ac = dx * -fz + dz * fx
       let hit = Math.abs(al) <= hl && Math.abs(ac) <= hw
@@ -35125,12 +35148,15 @@ function slAim(shooter, list, viewT, G) {
   if (!isHost || !slState || !shooter || shooter.bot && !shooter.bot.busk || !LV.faust) return list
   const T = viewT ?? (tickAt || now()), reach = Math.min(80, (G?.range ?? 3) * 1.6 + 2.5), add = []
   slAround(shooter.x, shooter.z, reach, T, (ag, p) => {
-    if (p.down && !slLying(p, T) || p.scale < 0.5 || Math.hypot(p.x - shooter.x, p.z - shooter.z) > reach) return          // card #101: the lying can be hit
+    // card #63: down and not a target herself (dead, held, thrown), a mother's pram still is while its baby lives (prOnly: it alone)
+    const prOnly = p.down && !slLying(p, T)
+    if (prOnly && !slPramOnly(ag, p, T) || p.scale < 0.5 || Math.hypot(p.x - shooter.x, p.z - shooter.z) > reach) return          // card #101: the lying can be hit
     const ride = ag.kind === SL_K.cyclist
-    add.push({ street: true, agent: ag, pose: { ...p }, id: -1000 - add.length, x: p.x, y: (ag.kind === SL_K.stray ? 0.35 : (ride ? 0.45 : 0) + 0.9) + p.y, z: p.z, r: ag.kind === SL_K.stray ? 0.35 : 0.3, h: ag.kind === SL_K.stray ? 0.05 : 0.6,
+    add.push({ street: true, agent: ag, pose: { ...p }, id: -1000 - add.length, prOnly, x: p.x, y: (ag.kind === SL_K.stray ? 0.35 : (ride ? 0.45 : 0) + 0.9) + p.y, z: p.z, r: ag.kind === SL_K.stray ? 0.35 : 0.3, h: ag.kind === SL_K.stray ? 0.05 : 0.6,
       hp: 1e9, dead: 0, prot: 0, axis: AXIS_UP, grounded: true, cid: 0 })
     if (ag.kind === SL_K.pram && !slPramGone(ag, T)) add.push({ ...add.at(-1), pram: true, id: -1000 - add.length,
       x: p.x + Math.sin(p.yaw) * STREET.pramBack, z: p.z + Math.cos(p.yaw) * STREET.pramBack, y: 0.55, r: 0.45, h: 0.25 })
+    if (prOnly) add.splice(add.length - 2, 1)          // card #63: her own target dropped, her pram's kept
   })
   // card #101: birds on the ground, a small sphere each (within 40 m); one hit drops one
   slBirdsNear(shooter.x, shooter.z, Math.min(reach, 40), T, (f, i, q) => add.push({ street: true, bird: true, flock: f, i, id: -1000 - add.length, x: q.x, y: 0.1, z: q.z, r: 0.14, h: 0.02,
@@ -35141,6 +35167,7 @@ function slStruck(c, h, G, ux, uy, uz) {
   if (!isHost || !slState) return
   if (h.bird) return slBirdKill(h.flock, h.i, c, ux, uz, tickAt || now())          // card #101: a bird
   const T = tickAt || now(), power = Math.max(1, (G?.knock ?? 6) * 0.35 + (G?.dmg ?? 10) * 0.03)
+  if (h.prOnly) return slPramStrike(h.agent, h.pose, c, T, slSwingDmg(c, h, G, T))          // card #63: a down mother's pram, alone
   // card #45: which part of a pram's agent was struck (its pram, or its mother), and how hard
   slHit.part = h.agent.kind === SL_K.pram ? (h.pram ? 'pram' : 'mother') : null; slHit.dmg = slSwingDmg(c, h, G, T)          // card #101: a swing is one blow
   try { slKnock(h.agent, h.pose, ux, uz, power, c, T, undefined, undefined, undefined, h.pram ? 0 : slHit.dmg, GUNS.indexOf(G), G?.kind === 'radius' ? 5 : G?.name === 'Cinderblock' ? 4 : 1) } finally { slHit.part = null; slHit.dmg = Infinity }          // card #101 (a blow on the pram: #45's pram hp, not its mother's)
@@ -35193,7 +35220,9 @@ function slDriverExit({ vehicleId, x, z, dx = 1, dz = 0, hit } = {}) {
 function slBlastStreet(x, z, B, by, T) {
   if (!isHost || !slState) return
   const caught = []
-  slAround(x, z, B.radius, T, (ag, p) => { const d = Math.hypot(p.x - x, p.z - z); if (d < B.radius && !p.dead && !p.hidden) caught.push([ag, { ...p }, d]) })
+  const prams = []          // card #63: a dead mother's pram, alone
+  slAround(x, z, B.radius, T, (ag, p) => { const d = Math.hypot(p.x - x, p.z - z); if (d < B.radius && !p.dead && !p.hidden) caught.push([ag, { ...p }, d]); else if (p.dead) { const q = slPramOnly(ag, p, T), e = q && Math.hypot(q.x - x, q.z - z); if (q && e < B.radius) prams.push([ag, { ...p }, e]) } })
+  for (const [ag, p, d] of prams) slPramStrike(ag, p, by, T, B.dmg * (1 - d / B.radius))
   for (const [ag, p, d] of caught) {
     slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
     try { slKnock(ag, p, (p.x - x) || 0.01, p.z - z, 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }
@@ -38190,6 +38219,12 @@ function slPramHit(ag, p, by, T) {
   if (h.hp <= 0) { const q = slPramAt(p, {}); return slPramBlow(ag.id, q.x, q.z, h.by, T) }
   if (!B.hurt.has(ag.id)) { B.hurt.set(ag.id, h); const q = slPramAt(p, {}); sfxPlay('burning', { x: q.x, y: 0.6, z: q.z }, 'world', 1, 0, SL_PRAM_HIT.fuse, 'Car') }
 }
+// card #63: a pram's agent whose mother is down (dead, or lying, held or thrown) and whose pram is still there: the pram's place
+// (where it is drawn: STREET.pramBack m ahead of her pose), for the rules that skip the down to test the pram alone; else null
+function slPramOnly(ag, p, T) { return ag.kind === SL_K.pram && p.down && !p.hidden && !slPramGone(ag, T) ? slPramAt(p, {}) : null }
+// card #63: a hit on that pram alone: slPramHit with the hit's damage (none given: all of its hp), as a hit on a standing mother's
+// pram is dealt; she is not touched
+function slPramStrike(ag, p, by, T, dmg) { slHit.part = 'pram'; slHit.dmg = dmg ?? Infinity; try { slPramHit(ag, p, by, T) } finally { slHit.part = null; slHit.dmg = Infinity } }
 // a pram blows up at (x, z): its record, and its blast at the end of the tick, credited to `by` if a player set it off
 function slPramBlow(id, x, z, by, T) {
   slAddRec([7, id, Math.round(T), slR2(x), slR2(z)])
@@ -38214,7 +38249,9 @@ function slPramBlast(e, credit) {
     if (d < B.radius) { o.hp -= B.dmg * (1 - d / B.radius); if (by) o.by = by.id }
   }
   const caught = []
-  slAround(at[0], at[2], B.radius, T, (ag, p) => { const d = Math.hypot(p.x - at[0], p.z - at[2]); if (d < B.radius && !p.down) caught.push([ag, { ...p }, d]) })
+  const prams = []          // card #63: a down mother's pram, alone
+  slAround(at[0], at[2], B.radius, T, (ag, p) => { const d = Math.hypot(p.x - at[0], p.z - at[2]); if (d < B.radius && !p.down) caught.push([ag, { ...p }, d]); else { const q = slPramOnly(ag, p, T), e = q && Math.hypot(q.x - at[0], q.z - at[2]); if (q && e < B.radius) prams.push([ag, { ...p }, e]) } })
+  for (const [ag, p, d] of prams) slPramStrike(ag, p, by, T, B.dmg * (1 - d / B.radius))
   for (const [ag, p, d] of caught) {
     slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
     try { slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }          // card #101
