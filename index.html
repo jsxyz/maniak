@@ -3322,7 +3322,7 @@ function faustLandmarks(seed, S) {
 // (seed, cell): the plan keeps the record (plan.alleys) and each flank lot's lot.alley { side, half }, the way to the alley and
 // half the gap, which the walkers' rings use (their edge on that side is the alley's centre line). Deterministic, the same for every
 // player; it is the plan version's, so a change here bumps the version.
-const FAUST_ALLEY = { p: { tenement: 0.4, industrial: 0.4, core: 0.3, civic: 0.12 }, w: [3, 5], pier: 1.13, flat: 0.25, door: 0.55, mouth: 1.5, stand: 0.8, light: 26, cost: 5600, tag: [0xd23b8a, 0x2bb3c9, 0xe0b52a, 0x8bd04a, 0xe6e6e6] }
+const FAUST_ALLEY = { p: { tenement: 0.4, industrial: 0.4, core: 0.3, civic: 0.12 }, w: [3, 5], pier: 1.13, flat: 0.25, door: 0.55, mouth: 1.5, stand: 0.8, light: 60, look: { plain: 1, realistic: 1, ink: 0.2 }, cost: 5600, tag: [0xd23b8a, 0x2bb3c9, 0xe0b52a, 0x8bd04a, 0xe6e6e6] }
 function faustAlleyFor(seed, S, gx, gz, c, rail) {
   const K = FAUST_ALLEY, p = K.p[c.district]
   if (!p || c.plaza || c.diagonal || c.layout === 1 || (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0) return null
@@ -7898,7 +7898,7 @@ function faustLampGrid(plans = FAUST_NIGHT.grid.plans) {
   U.faustHeroFill.value.set(hero[0].r, hero[0].g, hero[0].b, H.wrap); U.faustHeroRim.value.set(hero[1].r, hero[1].g, hero[1].b, H.rimPower)
   if (sunLight) sunLight.shadow.intensity = look.shadow
   const n = G.n, k = G.k, cell = G.cell, cx = Math.floor(camera.position.x / cell), cz = Math.floor(camera.position.z / cell)
-  if (S.city === F && S.built && Math.abs(cx - S.cx) < 2 && Math.abs(cz - S.cz) < 2) return
+  if (S.city === F && S.built && S.look === activeLook && Math.abs(cx - S.cx) < 2 && Math.abs(cz - S.cz) < 2) return      // card #96: the grid is rebuilt when the look changes (the alley bulbs' intensity is per look)
   const t = performance.now(), ox = (cx - n / 2) * cell, oz = (cz - n / 2) * cell, span = n * cell
   if (S.city !== F) { S.city = F; S.built = false; S.sites.clear(); U.faustLampArea.value.w = 0 }
   const lo = v => Math.max(0, Math.floor((v - R - 9 + ARENA) / 96)), hi = v => Math.min(F.S - 1, Math.floor((v + R + 9 + ARENA) / 96))
@@ -7921,7 +7921,7 @@ function faustLampGrid(plans = FAUST_NIGHT.grid.plans) {
   for (let ci = lo(ox); ci <= hi(ox + span); ci++) for (let cj = lo(oz); cj <= hi(oz + span); cj++) {
     const list = S.sites.get(faustKey(ci, cj))
     for (let q = 0; q < list.length; q += 4) {
-      const x = list[q], y = list[q + 1], z = list[q + 2], I = list[q + 3]
+      const x = list[q], y = list[q + 1], z = list[q + 2], I = list[q + 3] * (list[q + 3] === FAUST_ALLEY.light ? FAUST_ALLEY.look[activeLook] ?? 1 : 1)
       const i0 = Math.max(0, Math.floor((x - R - ox) / cell)), i1 = Math.min(n - 1, Math.floor((x + R - ox) / cell))
       const j0 = Math.max(0, Math.floor((z - R - oz) / cell)), j1 = Math.min(n - 1, Math.floor((z + R - oz) / cell))
       if (i0 > i1 || j0 > j1) continue
@@ -7940,7 +7940,7 @@ function faustLampGrid(plans = FAUST_NIGHT.grid.plans) {
       }
     }
   }
-  S.texture.needsUpdate = true; S.built = true; S.cx = cx; S.cz = cz
+  S.texture.needsUpdate = true; S.built = true; S.cx = cx; S.cz = cz; S.look = activeLook
   U.faustLampGrid.value = S.texture; U.faustLampArea.value.set(ox, oz, 1 / cell, n); U.faustLampFade.value.x = G.fade[0]; U.faustLampFade.value.y = G.fade[1]
   Object.assign(S.stats, { builds: S.stats.builds + 1, lamps, cellMax, cut, ms: +(performance.now() - t).toFixed(2) })
 }
