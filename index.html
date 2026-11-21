@@ -33885,9 +33885,9 @@ function slVenue(cell, P, ci, cj) {
       }
       // the dancers: one on the stage and one at each pole (up to three), a dance each from the CMU set (the street performer's clips),
       // in a bright pink, gold, silver or ruby dress, facing the room (toward the club room's middle, whichever way the kit's spot face points); ag.y lifts them to the stage's top
-      const croom = S0.rooms.find(q => q.kind === 'club'), dances = ['dance_charleston', 'dance_charleston_fancy', 'dance_lindy'], dress = [[1.55, 1.6, 2.0], [1.8, 1.55, 0.45], [1.95, 1.9, 1.75]]
+      const croom = S0.rooms.find(q => q.kind === 'club'), dances = ['dance_charleston', 'dance_charleston_fancy', 'dance_lindy'], dress = [[0.25, 1.5, 1.0], [1.9, 1.5, 0.3], [1.9, 1.95, 2.2]]
       ;[stage, ...spots.filter(s => s.kind === 'pole')].filter(Boolean).slice(0, 3).forEach((s, k) => {
-        const ag = stand(13 + k, s, { face: [croom ? Math.sign((croom.x0 + croom.x1) / 2 - s.x) || 1 : 1, 0], body: 3, tint: dress[k % dress.length], clip: dances[slHash(base + 13 + k, 6) % 3], role: 'dancer' })
+        const ag = stand(13 + k, s, { face: [croom ? Math.sign((croom.x0 + croom.x1) / 2 - s.x) || 1 : 1, 0], body: 5, tint: dress[k % dress.length], clip: dances[slHash(base + 13 + k, 6) % 3], role: 'dancer' })
         if (ag) { ag.y = Math.max(0, s.y - 0.06); ag.plume = true; ag.shimmer = true }
       })
       continue
@@ -34997,6 +34997,13 @@ function slSkinPatch(tex, blend) {
   return shader => {
     faustLampHook(shader)      // the street lamps' light, as every lit material takes it (card #28)
     shader.uniforms.slAnim = { value: tex }
+    // card #98: a dancer (an instance colour channel over 1.4) is tinted on her dress only: a texel's saturation (max - min over max, linear) sets how much of
+    // the tint it takes, so the grey fabric and lining and the black shoes are tinted and skin, lips, hair and iris keep their own colour
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\n#ifdef USE_COLOR\n vec3 slTex = diffuseColor.rgb;\n#endif')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+#ifdef USE_COLOR
+  if (max(vColor.r, max(vColor.g, vColor.b)) > 1.4) { float slMx = max(slTex.r, max(slTex.g, slTex.b)), slSat = slMx > 0.0001 ? (slMx - min(slTex.r, min(slTex.g, slTex.b))) / slMx : 0.0; diffuseColor.rgb = mix(slTex, slTex * vColor, 1.0 - smoothstep(0.04, 0.12, slSat)); }
+#endif`)
     shader.vertexShader = shader.vertexShader
       .replace('#include <skinning_pars_vertex>', `uniform highp sampler2D slAnim;
 attribute vec4 slFrame;
@@ -35010,7 +35017,7 @@ mat4 slSkin(float f) { return slBone(skinIndex.x, f) * skinWeight.x + slBone(ski
   }
 }
 // one skinned model: its LODs as instanced meshes over one baked texture; clips: Map(name -> { row, n, dur, loop })
-function* slSkinnedSteps(g, clipSrc, want, cap, tag, out) {
+function* slSkinnedSteps(g, clipSrc, want, cap, tag, out, mapImage) {
   const root = cloneSkinned(g.scene); root.updateMatrixWorld(true)
   const lods = rigLods(root).filter(Boolean); if (!lods.length) lods.push(root.getObjectByProperty('isSkinnedMesh', true))
   const m0 = lods[0], skel = m0.skeleton, nb = skel.bones.length, W = nb * 3, mixer = new THREE.AnimationMixer(root), hb = skel.bones.findIndex(b => b.name === 'Head')
@@ -35051,6 +35058,7 @@ function* slSkinnedSteps(g, clipSrc, want, cap, tag, out) {
     for (const name of Object.keys(geo.attributes)) if (!['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'color'].includes(name)) geo.deleteAttribute(name)
     const frame = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4); frame.setUsage(THREE.DynamicDrawUsage); geo.setAttribute('slFrame', frame)
     const mat = m.material.clone(), blend = k === 0
+    if (mapImage && mat.map) { const T = mat.map.clone(); T.source = new THREE.Source(mapImage); T.needsUpdate = true; mat.map = T }          // card #98: the same map settings, another image
     mat.defines = { ...mat.defines, USE_SKINNING: '' }; mat.onBeforeCompile = slSkinPatch(tex, blend); mat.customProgramCacheKey = () => 'sl-skin' + (blend ? '-b' : '')
     const im = new THREE.InstancedMesh(geo, mat, cap); im.count = 0; im.frustumCulled = false; im.castShadow = k === 0; im.receiveShadow = true
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.setColorAt(0, new THREE.Color(1, 1, 1)); im.instanceColor.setUsage(THREE.DynamicDrawUsage)
@@ -35092,21 +35100,27 @@ function slLoadKit() {
   slKitJob = { steps: null, failed: false }
   rigLoader()
   const files = [RIG_FILES.anims, STREET_FILES.anims, ...STREET.bodies.map(b => RIG_FILES[b]), STREET_FILES.bike, STREET_FILES.pram, STREET_FILES.dog, STREET_FILES.pigeon, STREET_FILES.stagger, RIG_FILES.performer_anims]
-  Promise.all(files.map(f => rigFetch(f).catch(e => { if (f === STREET_FILES.stagger) return null; throw e }))).then(gs => {
+  Promise.all([...files.map(f => rigFetch(f).catch(e => { if (f === STREET_FILES.stagger) return null; throw e })), slDancerMap()]).then(gs => {
     slKitJob.steps = slKitSteps(gs)
     return background.run('street-kit', slKitJob.steps, { gpu: true, priority: 2 }).then(() => { slKitJob.steps = null; slKitJob.done = true })
   })
     .catch(e => { slKitJob.failed = true; modelFail('street life', e) })
 }
+// card #98: the dancers' colour map as an image (null when it will not load: the dancers then wear the dress body as it is)
+const SL_DANCER_MAP = 'dancer_dress.3c267a1c.webp'
+function slDancerMap() {
+  return new Promise(ok => { const img = new Image(); img.crossOrigin = 'anonymous'; img.onload = () => ok(img); img.onerror = () => ok(null); img.src = RIG_BASE + SL_DANCER_MAP })
+}
 function* slKitSteps([anims, street, ...rest]) {
-  const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon, stag, perf] = rest.slice(STREET.bodies.length)
+  const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon, stag, perf, dmap] = rest.slice(STREET.bodies.length)
   const root = new THREE.Group(); root.name = 'street life'
   const kit = { root, bodies: [], parts: {} }
   const clips = [...anims.animations, ...street.animations, ...(stag ? stag.animations : []), ...(perf ? perf.animations : [])]
   for (const [i, g] of bodies.entries()) {
-    const b = {}; yield* slSkinnedSteps(g, clips, i < 3 ? SL_CLIPS.civ : SL_CLIPS.civ.concat(SL_CLIPS.dance), i < 3 ? 110 : 80, STREET.bodies[i].replace('civ_', ''), b)
+    const b = {}; yield* slSkinnedSteps(g, clips, dmap ? SL_CLIPS.civ : i < 3 ? SL_CLIPS.civ : SL_CLIPS.civ.concat(SL_CLIPS.dance), i < 3 ? 110 : 80, STREET.bodies[i].replace('civ_', ''), b)
     kit.bodies.push(b); for (const im of b.ims) root.add(im)
   }
+  if (dmap) { const b = {}; yield* slSkinnedSteps(bodies[3], clips, SL_CLIPS.civ.concat(SL_CLIPS.dance), 80, 'f_dress', b, dmap); kit.bodies.push(b); for (const im of b.ims) root.add(im) }          // card #98: body 5, the dancers'
   kit.dog = {}; yield* slSkinnedSteps(dog, dog.animations, SL_CLIPS.dog, 48, '', kit.dog); for (const im of kit.dog.ims) root.add(im)
   kit.pigeon = {}; yield* slSkinnedSteps(pigeon, pigeon.animations, SL_CLIPS.pigeon, 320, '', kit.pigeon); for (const im of kit.pigeon.ims) root.add(im)
   for (const [name, cap] of [['bike_frame', 40], ['bike_wheel', 80], ['bike_crank', 40], ['bike_pedal', 80], ['pram_body', 48], ['pram_wheel_f', 96], ['pram_wheel_r', 96]])
@@ -35140,7 +35154,7 @@ function slShimmer(ag, T) {
   return slShim
 }
 function slPlume(kit, ag, p) {
-  const K = kit.bodies[ag.body], C = K && K.clips.get(p.clip), im = kit.plume
+  const K = kit.bodies[ag.body] || kit.bodies[3], C = K && K.clips.get(p.clip), im = kit.plume
   if (!C || !C.head || !im || im.count >= im.instanceMatrix.count) return
   const f = (p.ct / C.dur - Math.floor(p.ct / C.dur)) * C.n, a = Math.floor(f) % C.n, b = (a + 1) % C.n, w = f - Math.floor(f), H = C.head
   for (let i = 0; i < 6; i++) slPH[i] = H[a * 6 + i] + (H[b * 6 + i] - H[a * 6 + i]) * w
@@ -35404,7 +35418,7 @@ function slFrame(t, dt, obl) {
       const d = Math.hypot(p.x - cx, p.z - cz)
       slFadeSet(ag, T, p, d)
       if (ag.kind === SL_K.stray) { if (d < D.dog) slDrawSkinned(kit.dog, p, d, ag.tint, ag.companion ? 0.9 : 0.95); continue }
-      slDrawSkinned(kit.bodies[ag.body], p, d, ag.shimmer ? slShimmer(ag, T) : ag.tint); people++
+      slDrawSkinned(kit.bodies[ag.body] || kit.bodies[3], p, d, ag.shimmer ? slShimmer(ag, T) : ag.tint); people++
       if (ag.plume && d < D.ped * 0.5) slPlume(kit, ag, p)
       if (ag.kind === SL_K.pram && d < D.pram && !slPramGone(ag, T) && !partsPram(kit, ag, p, d, T)) {
         const lod = d < 18 ? '' : '_lod1', s = p.scale, f = STREET.pramBack, x = p.x + Math.sin(p.yaw) * f * s, z = p.z + Math.cos(p.yaw) * f * s
