@@ -1040,7 +1040,7 @@ const PARTICLES = {
   dust: { n: 6, life: [0.45, 0.85], speed: [0.6, 1.8], size: [0.22, 0.36], cone: 1.2, fall: -0.4, grow: 2.6, cell: 0, color: 0xc9c0ae },
   claw: { n: 9, life: [0.12, 0.26], speed: [6, 11], size: [0.06, 0.1], cone: 0.35, fall: 6, grow: 0.3, add: true, cell: 0, stretch: 0.12, hot: 0.4 },
   // card #16: the pipe's smoke: thin, pale, rising slowly as it swells, in the air for seconds
-  smoke: { n: 2, life: [1.8, 3.4], speed: [0.25, 0.8], size: [0.1, 0.17], cone: 0.7, fall: -0.32, grow: 5, cell: 0, color: 0xc9ced2 },
+  pipeSmoke: { n: 3, life: [2.4, 3.8], speed: [0.2, 0.6], size: [0.22, 0.36], cone: 0.5, fall: -0.18, grow: 4.2, cell: 0, color: 0xcfd3d7 },
 }
 const GUN_ROW = { ammo: Infinity, drop: false, pellets: 1, spread: 0 }      // what a GUNS row is unless it says otherwise
 const GUNS = [
@@ -21130,16 +21130,18 @@ function rigMovePose(a, R, want, t) {
     // held there, then lowered as the smoke goes out (head up, chest opening). He stands: his legs keep the idle clip
     const P = S.p ||= [new THREE.Vector3(), new THREE.Vector3()], sm = THREE.MathUtils.smoothstep
     const raise = sm(smk, 0, 0.7) * (1 - sm(smk, 3.5, 4.2)), inhale = sm(smk, 0.9, 1.5) * (1 - sm(smk, 2.7, 3.1))
-    const out = sm(smk, 2.9, 3.3) * (1 - sm(smk, 3.9, 4.4)), lit = sm(smk, 0.2, 0.5) * (1 - sm(smk, 1.0, 1.4))
-    turn('spine_02', [1, 0, 0], 0.05 * raise); turn('Head', [1, 0, 0], 0.04 * raise - 0.2 * inhale - 0.32 * out); turn('spine_03', [1, 0, 0], -0.07 * out)
+    const out = sm(smk, 2.9, 3.3) * (1 - sm(smk, 3.9, 4.4)), lit = sm(smk, 0.15, 0.5) * (1 - sm(smk, 1.45, 1.85))
+    turn('spine_02', [1, 0, 0], 0.05 * raise); turn('Head', [1, 0, 0], 0.04 * raise - 0.3 * inhale - 0.34 * out); turn('spine_03', [1, 0, 0], -0.07 * out - 0.05 * inhale)
     R.inst.updateMatrixWorld(true); R.inst.getWorldQuaternion(rootQ)
     const keep = ['upperarm_r', 'lowerarm_r', 'hand_r', 'upperarm_l', 'lowerarm_l', 'hand_l'].map(n => R.bones.get(n)).filter(Boolean), was = keep.map(b => b.quaternion.clone())
     const head = R.bones.get('Head')
     if (head) {
       head.getWorldPosition(P[0]); R.inst.worldToLocal(P[0])
       const mx = P[0].x, my = P[0].y + 0.05, mz = P[0].z + 0.1                       // his lips, in the body's own frame
-      arm('r', [mx - 0.015, my - 0.02, mz + 0.03], [mx - 0.5, my - 0.4, mz - 0.1])
-      if (lit > 0.01) arm('l', [mx + 0.1, my - 0.1, mz + 0.14], [mx + 0.5, my - 0.4, mz - 0.1])
+      // both elbows out wide and up, so the forearms clear his shoulders and show from behind: the pipe hand at his lips, the
+      // lighter's hand at the bowl (up and to his left of his face, where the pipe's stem points)
+      arm('r', [mx - 0.015, my - 0.02, mz + 0.03], [mx - 0.85, my + 0.08, mz - 0.1])
+      if (lit > 0.01) arm('l', [mx + 0.125, my + 0.08, mz + 0.13], [mx + 0.85, my + 0.08, mz - 0.1])
     }
     keep.forEach((b, i) => b.quaternion.copy(was[i].slerp(b.quaternion, i < 3 ? raise : lit)))
   } else if (chg >= 0 && chg < 1) {
@@ -29817,35 +29819,47 @@ function bodyState(id, st, t) {
     if (id === myId) kick(0.04, p.x, p.y, p.z, 9, 160)
   }
 }
-// the glass pipe and the lighter's flame, at his hand while he smokes (a first-person view holds it low right on the screen)
+// the glass pipe and the lighter's flame, at his hands while he smokes (a first-person view holds them low right on the screen).
+// Drawn a little oversize, so a pipe reads from the game camera 4 m behind him
 function makePipe() {
   const g = new THREE.Group()
-  const glass = new THREE.MeshStandardMaterial({ color: 0xd6ecf2, transparent: true, opacity: 0.5, roughness: 0.05, metalness: 0.05, depthWrite: false })
+  const glass = new THREE.MeshStandardMaterial({ color: 0xe6f4f8, emissive: 0x2c3c44, transparent: true, opacity: 0.62, roughness: 0.05, metalness: 0.05, depthWrite: false })
   const part = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m }
-  part(new THREE.CylinderGeometry(0.0085, 0.0085, 0.17, 10), glass, 0, 0.085, 0)             // the stem, mouthpiece at the origin
-  part(new THREE.CylinderGeometry(0.014, 0.0085, 0.02, 10), glass, 0, 0.005, 0)              // the mouthpiece's flare
-  const bowl = part(new THREE.SphereGeometry(0.028, 14, 10), glass, 0, 0.19, 0)             // the bulb
-  part(new THREE.SphereGeometry(0.0095, 8, 6), glass, 0.02, 0.15, 0)                         // the carb on its side
-  const ember = part(new THREE.SphereGeometry(0.014, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff7a2a }), 0, 0.185, 0)
-  const flame = new THREE.Group()
-  flame.add(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.045, 0.012), new THREE.MeshStandardMaterial({ color: 0x9aa0a8, metalness: 0.9, roughness: 0.35 })))
-  const tongue = new THREE.Mesh(new THREE.ConeGeometry(0.011, 0.045, 8), new THREE.MeshBasicMaterial({ color: 0xffc766 }))
-  tongue.position.y = 0.045
-  flame.add(tongue)
-  flame.position.set(0.035, 0.12, 0.02)
-  g.add(flame)
-  g.userData = { ember, flame, bowl }
+  part(new THREE.CylinderGeometry(0.012, 0.012, 0.22, 10), glass, 0, 0.11, 0)               // the stem, mouthpiece at the origin
+  part(new THREE.CylinderGeometry(0.02, 0.012, 0.026, 10), glass, 0, 0.006, 0)               // the mouthpiece's flare
+  const bowl = part(new THREE.SphereGeometry(0.04, 14, 10), glass, 0, 0.245, 0)             // the bulb
+  part(new THREE.SphereGeometry(0.013, 8, 6), glass, 0.028, 0.19, 0)                         // the carb on its side
+  const ember = part(new THREE.SphereGeometry(0.021, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff7a2a }), 0, 0.24, 0)
+  g.userData = { ember, bowl }
+  // the lighter, in the other hand: a steel body and its flame
+  const lighter = new THREE.Group()
+  lighter.add(new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.055, 0.015), new THREE.MeshStandardMaterial({ color: 0x9aa0a8, metalness: 0.9, roughness: 0.35 })))
+  const tongue = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.06, 8), new THREE.MeshBasicMaterial({ color: 0xffc766 }))
+  tongue.position.y = 0.055
+  lighter.add(tongue)
+  g.userData.flame = lighter; g.userData.tongue = tongue
   g.traverse(m => { if (m.isMesh) m.frustumCulled = false })
+  lighter.traverse(m => { if (m.isMesh) m.frustumCulled = false })
   return g
 }
 const bodyPipes = new Map()       // each player's pipe prop, by id (not on the avatar, which a change of coat replaces)
-const pipeQ = new THREE.Quaternion(), pipeV = new THREE.Vector3(), pipeM = new THREE.Vector3(), pipeC = new THREE.Color()
+const pipeQ = new THREE.Quaternion(), pipeV = new THREE.Vector3(), pipeM = new THREE.Vector3(), pipeC = new THREE.Color(), pipeL = new THREE.Vector3(), pipeB = new THREE.Vector3()
+const WARM = new THREE.Color(1.0, 0.42, 0.1)
+// the lighter's and the ember's warm light on him: the lamp grid can't take a lamp that comes and goes and a new light would
+// recompile every program, so his own materials take a little warm glow (emissive, kept apart from what they had), and the flame
+// and the bowl each get a glow sprite
+function bodyWarm(a, k) {
+  if (!a.warm && !(k > 0)) return
+  const mats = a.warm ||= (() => { const out = new Set(); a.mesh.traverse(n => { if (n.isMesh && n.material?.emissive) { const m = n.material; m.userData.emis0 ||= m.emissive.clone(); out.add(m) } }); return [...out] })()
+  for (const m of mats) { const e = m.userData.emis0; m.emissive.setRGB(e.r + WARM.r * k * 0.28, e.g + WARM.g * k * 0.28, e.b + WARM.b * k * 0.28) }
+  if (!(k > 0)) a.warm = null
+}
 function bodyDraw(id, st, t, dt, view = null, fade = 1) {
   const a = avatars.get(id)
   if (!a) return
   const s = a.smk || 0
   let P = bodyPipes.get(id)
-  if (s <= 0) { if (P) P.visible = false; a.smkStage = 0; return }
+  if (s <= 0) { if (P) { P.visible = false; P.userData.flame.visible = false }; a.smkStage = 0; bodyWarm(a, 0); return }
   const at = id === myId ? null : a.mesh.position
   // the sounds, each once from its moment: the lighter's flick, the sizzle of the draw, the long exhale
   const stage = s < 0.12 ? 0 : s < 0.9 ? 1 : s < 2.9 ? 2 : 3
@@ -29853,40 +29867,56 @@ function bodyDraw(id, st, t, dt, view = null, fade = 1) {
     a.smkStage = (a.smkStage || 0) + 1
     sfxPlay(['', 'Pipe flick', 'Pipe sizzle', 'Pipe exhale'][a.smkStage], at && { x: at.x, y: at.y + 1, z: at.z }, 'world', 0.8)
   }
-  if (!P) { P = makePipe(); avatarGroup.add(P); bodyPipes.set(id, P) }
-  const U = P.userData
-  const raise = smoothS(s, 0, 0.7) * (1 - smoothS(s, 3.5, 4.2)), flameOn = s > 0.15 && s < 1.15
+  if (!P) { P = makePipe(); avatarGroup.add(P, P.userData.flame); bodyPipes.set(id, P) }
+  const U = P.userData, L = U.flame
+  const raise = smoothS(s, 0, 0.7) * (1 - smoothS(s, 3.5, 4.2)), flameOn = s > 0.3 && s < 1.5
   const inhale = smoothS(s, 0.9, 1.5) * (1 - smoothS(s, 2.7, 3.1)), exhale = s > 2.9 && s < 4.3
-  P.visible = fade > 0.05
-  U.flame.visible = flameOn
-  U.flame.children[1].scale.y = 0.85 + 0.3 * Math.sin(t * 0.04)
-  U.ember.visible = s > 0.8 && s < 3.2
-  U.ember.material.color.setHex(0xff5a1a).lerp(pipeC.setRGB(1, 0.85, 0.45), 0.5 * inhale * (0.6 + 0.4 * Math.sin(t * 0.03)))
-  U.ember.scale.setScalar(0.7 + 0.8 * inhale)
-  const mouth = pipeV
+  const flick = 0.85 + 0.15 * Math.sin(t * 0.045)
+  P.visible = fade > 0.05; L.visible = flameOn && fade > 0.05
+  U.tongue.scale.set(flick, 0.8 + 0.4 * Math.sin(t * 0.06 + 1), flick)
+  U.ember.visible = s > 0.8 && s < 3.4
+  U.ember.material.color.setHex(0xff5a1a).lerp(pipeC.setRGB(1, 0.9, 0.5), 0.55 * inhale * (0.6 + 0.4 * Math.sin(t * 0.03)))
+  U.ember.scale.setScalar(0.8 + 1.1 * inhale)
+  const mouth = pipeV, lamp = pipeL, bowl = pipeB
   if (view) {
     view.updateWorldMatrix(true, false)
     P.position.set(THREE.MathUtils.lerp(0.26, 0.05, raise), THREE.MathUtils.lerp(-0.34, -0.14, raise), THREE.MathUtils.lerp(-0.5, -0.34, raise)).applyMatrix4(view.matrixWorld)
     P.quaternion.copy(view.getWorldQuaternion(pipeQ))
     P.rotateX(0.9 - 0.25 * raise).rotateZ(0.5 * (1 - raise) - 0.15)
     P.scale.setScalar(1.3)
+    L.position.set(THREE.MathUtils.lerp(0.4, 0.17, raise), THREE.MathUtils.lerp(-0.4, -0.1, raise), THREE.MathUtils.lerp(-0.5, -0.36, raise)).applyMatrix4(view.matrixWorld)
+    L.quaternion.copy(P.quaternion); L.scale.setScalar(1.3)
     mouth.set(0, -0.13, -0.3).applyMatrix4(view.matrixWorld)
   } else {
-    handAt(a, P.position)
-    // the stem points up and forward of him from the fist, the bowl away from his face, whatever the arm does
-    P.rotation.set(-0.65, a.mesh.rotation.y, -0.25, 'YXZ')
-    P.scale.setScalar(Math.min(1.1, Math.max(0.65, (a.spec.h + a.spec.r) / 0.9)) * 1.25)
+    // the pipe's hand at his lips, its stem up and outward to his left (the bowl clear of his head, so it shows from behind); the
+    // lighter's hand (his left) at the bowl, its flame up
+    const ry = a.mesh.rotation.y, sc = Math.min(1.1, Math.max(0.65, (a.spec.h + a.spec.r) / 0.9)) * 1.3
+    handAt(a, P.position); handAt(a, L.position, true)
+    P.rotation.set(-0.3, ry, 0.75, 'YXZ'); P.scale.setScalar(sc)
+    L.rotation.set(0, ry, 0); L.scale.setScalar(sc * 1.15)
     const head = a.rig?.bones.get('Head')
-    if (head) { head.getWorldPosition(mouth); mouth.y += 0.02 * P.scale.x } else mouth.copy(a.mesh.position).setY(a.mesh.position.y + 0.7)
-    mouth.x -= Math.sin(a.mesh.rotation.y) * 0.12; mouth.z -= Math.cos(a.mesh.rotation.y) * 0.12
+    if (head) { head.getWorldPosition(mouth); mouth.y += 0.02 * sc } else mouth.copy(a.mesh.position).setY(a.mesh.position.y + 0.7)
+    mouth.x -= Math.sin(ry) * 0.12; mouth.z -= Math.cos(ry) * 0.12
   }
-  // the smoke: a thin wisp off the bowl while he draws, then the long cloud out of his mouth, drifting up and fading
-  a.smkAcc = (a.smkAcc || 0) + dt * (exhale ? 16 * Math.sin(Math.PI * clamp((s - 2.9) / 1.4, 0, 1)) + 3 : inhale > 0.2 ? 4 : 0)
+  // the bowl, at the stem's far end
+  P.updateMatrixWorld(true); L.updateMatrixWorld(true)
+  bowl.set(0, 0.245, 0).applyMatrix4(P.matrixWorld)
+  lamp.copy(L.position); lamp.y += 0.07 * L.scale.x
+  const warm = (flameOn ? 1 : 0) * flick + 0.65 * inhale * (0.7 + 0.3 * Math.sin(t * 0.03))
+  if (a.mesh.visible) {
+    // the glow sprites: the flame's while it burns, the bowl's as he draws
+    if (flameOn) burst('flare', lamp.x, lamp.y, lamp.z, 0, 1, 0, 0xffa24a, 0.42 * flick)
+    if (inhale > 0.05) burst('flare', bowl.x, bowl.y, bowl.z, 0, 1, 0, 0xff7a2a, 0.34 * inhale * (0.7 + 0.3 * Math.sin(t * 0.03)))
+    if (!view) bodyWarm(a, warm)
+  }
+  // the smoke: a thin wisp off the bowl while he draws, then the thick plume out of his mouth, rising and drifting back over his head
   const fwd = pipeM.set(-Math.sin(a.mesh.rotation.y), 0, -Math.cos(a.mesh.rotation.y))
+  if (view) fwd.set(0, 0, -1).transformDirection(view.matrixWorld)
+  a.smkAcc = (a.smkAcc || 0) + dt * (exhale ? 34 * Math.sin(Math.PI * clamp((s - 2.9) / 1.4, 0, 1)) + 6 : inhale > 0.2 ? 5 : 0)
   while (a.smkAcc >= 1 && a.mesh.visible) {
     a.smkAcc -= 1
-    if (view) fwd.set(0, 0, -1).transformDirection(view.matrixWorld)
-    burst('smoke', mouth.x, mouth.y, mouth.z, fwd.x * 0.7, 0.45, fwd.z * 0.7, 0xc9ced2, exhale ? 1 : 0.5)
+    if (exhale) burst('pipeSmoke', mouth.x, mouth.y, mouth.z, -fwd.x * 0.35, 1, -fwd.z * 0.35, 0xcfd3d7, 1.5)
+    else burst('pipeSmoke', bowl.x, bowl.y, bowl.z, fwd.x * 0.3, 1, fwd.z * 0.3, 0xcfd3d7, 0.45)
   }
   if (a.smkAcc >= 1) a.smkAcc = 0
 }
@@ -36836,7 +36866,7 @@ function draw(dt, t) {
   partsDraw(me, others, t, dt, meD)          // card #55: held bodies in their holders' hands, flights tumbling
   for (const id of [...avatars.keys()]) if (id >= 0 && !live.has(id)) dropAvatar(id)
   for (const id of bodySeen.keys()) if (!live.has(id)) bodySeen.delete(id)
-  for (const [id, P] of bodyPipes) if (!live.has(id)) { P.removeFromParent(); bodyPipes.delete(id) }
+  for (const [id, P] of bodyPipes) if (!live.has(id)) { P.removeFromParent(); P.userData.flame.removeFromParent(); bodyPipes.delete(id) }
   if (!offPlay()) clearPrepared(true)
 
   drawPickups(pkl, t)
