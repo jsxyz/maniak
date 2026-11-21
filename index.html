@@ -21130,9 +21130,9 @@ function rigMovePose(a, R, want, t) {
   if (smk > 0) {
     // card #16, the pipe: the lighter's hand comes to the bowl, then the pipe to his lips for the draw (his head tipping back),
     // held there, then lowered as the smoke goes out (head up, chest opening). He stands: his legs keep the idle clip
-    const P = S.p ||= [new THREE.Vector3(), new THREE.Vector3()], sm = THREE.MathUtils.smoothstep
+    const P = S.p ||= Array.from({ length: 4 }, () => new THREE.Vector3()), sm = THREE.MathUtils.smoothstep
     const raise = sm(smk, 0, 0.7) * (1 - sm(smk, 3.5, 4.2)), inhale = sm(smk, 0.9, 1.5) * (1 - sm(smk, 2.7, 3.1))
-    const out = sm(smk, 2.9, 3.3) * (1 - sm(smk, 3.9, 4.4)), lit = sm(smk, 0.15, 0.5) * (1 - sm(smk, 1.45, 1.85))
+    const out = sm(smk, 2.9, 3.3) * (1 - sm(smk, 3.9, 4.4)), lit = sm(smk, 0.15, 0.5) * (1 - sm(smk, 1.95, 2.4))
     turn('spine_02', [1, 0, 0], 0.05 * raise); turn('Head', [1, 0, 0], 0.04 * raise - 0.3 * inhale - 0.34 * out); turn('spine_03', [1, 0, 0], -0.07 * out - 0.05 * inhale)
     R.inst.updateMatrixWorld(true); R.inst.getWorldQuaternion(rootQ)
     const keep = ['upperarm_r', 'lowerarm_r', 'hand_r', 'upperarm_l', 'lowerarm_l', 'hand_l'].map(n => R.bones.get(n)).filter(Boolean), was = keep.map(b => b.quaternion.clone())
@@ -21142,8 +21142,22 @@ function rigMovePose(a, R, want, t) {
       const mx = P[0].x, my = P[0].y + 0.05, mz = P[0].z + 0.1                       // his lips, in the body's own frame
       // both elbows out wide and up, so the forearms clear his shoulders and show from behind: the pipe hand at his lips, the
       // lighter's hand at the bowl (up and to his left of his face, where the pipe's stem points)
-      arm('r', [mx - 0.015, my - 0.02, mz + 0.03], [mx - 0.85, my + 0.08, mz - 0.1])
-      if (lit > 0.01) arm('l', [mx + 0.125, my + 0.08, mz + 0.13], [mx + 0.85, my + 0.08, mz - 0.1])
+      // the pipe's stem level and out to his left (PIPE_FIT): its mouthpiece at his lips, his fist a little way along it, the bowl
+      // 0.39 m out at mouth height; the lighter's hand cups under the bowl, elbow wide
+      const ca = Math.cos(PIPE_FIT.angle), sa = Math.sin(PIPE_FIT.angle), dn = Math.hypot(sa, PIPE_FIT.rise, ca)
+      const dx = sa / dn, dy = PIPE_FIT.rise / dn, dz = ca / dn, lx = mx + 0.01, ly = my - 0.02, lz = mz + 0.03
+      // the goal is where the FIST (grip_*) goes, but the arm's solve lands the hand bone, the grip some way beyond it: solve, see
+      // the offset, solve again for it (as the whirl does)
+      const reach = (side, goal, pole) => {
+        const g = R.inst.getObjectByName('grip_' + side), hb = R.bones.get('hand_' + side)
+        for (let pass = 0; pass < 3; pass++) {
+          P[2].set(...goal)
+          if (pass && g && hb) { g.getWorldPosition(P[0]); hb.getWorldPosition(P[1]); R.inst.worldToLocal(P[0]); R.inst.worldToLocal(P[1]); P[2].sub(P[0].sub(P[1])) }
+          arm(side, P[2].toArray(), pole)
+        }
+      }
+      reach('r', [lx + dx * PIPE_FIT.grip, ly + dy * PIPE_FIT.grip, lz + dz * PIPE_FIT.grip], [mx - 0.85, my, mz - 0.1])
+      if (lit > 0.01) reach('l', [lx + dx * 0.39, ly + dy * 0.39 - 0.075, lz + dz * 0.39 - 0.01], [mx + 0.85, my - 0.05, mz - 0.1])
     }
     keep.forEach((b, i) => b.quaternion.copy(was[i].slerp(b.quaternion, i < 3 ? raise : lit)))
   } else if (chg >= 0 && chg < 1) {
@@ -29847,6 +29861,11 @@ function makePipe() {
 const bodyPipes = new Map()       // each player's pipe prop, by id (not on the avatar, which a change of coat replaces)
 const pipeQ = new THREE.Quaternion(), pipeV = new THREE.Vector3(), pipeM = new THREE.Vector3(), pipeC = new THREE.Color(), pipeL = new THREE.Vector3(), pipeB = new THREE.Vector3()
 const WARM = new THREE.Color(1.0, 0.42, 0.1)
+// how the pipe is held (third person, and rigMovePose's matching hands): the stem level, out to his left PIPE_FIT.angle from straight
+// ahead, the mouthpiece at his lips and his hand grip m along it; the bowl at mouth height and clear of his head, the lighter's
+// hand cupped under it. cap: the live puffs one smoker may keep (each burst is three), so a crowd of smokers can't flood the screen
+const PIPE_FIT = { angle: 0.7, rise: 0.04, grip: 0.075, scale: 1.6, lighter: 1.4, cap: 150, burst: 3, life: 3800 }
+const PIPE_Y = new THREE.Vector3(0, 1, 0), pipeD = new THREE.Vector3()
 // the lighter's and the ember's warm light on him: the lamp grid can't take a lamp that comes and goes and a new light would
 // recompile every program, so his own materials take a little warm glow (emissive, kept apart from what they had), and the flame
 // and the bowl each get a glow sprite
@@ -29871,7 +29890,7 @@ function bodyDraw(id, st, t, dt, view = null, fade = 1) {
   }
   if (!P) { P = makePipe(); avatarGroup.add(P, P.userData.flame); bodyPipes.set(id, P) }
   const U = P.userData, L = U.flame
-  const raise = smoothS(s, 0, 0.7) * (1 - smoothS(s, 3.5, 4.2)), flameOn = s > 0.3 && s < 1.5
+  const raise = smoothS(s, 0, 0.7) * (1 - smoothS(s, 3.5, 4.2)), flameOn = s > 0.3 && s < 2.0
   const inhale = smoothS(s, 0.9, 1.5) * (1 - smoothS(s, 2.7, 3.1)), exhale = s > 2.9 && s < 4.3
   const flick = 0.85 + 0.15 * Math.sin(t * 0.045)
   P.visible = fade > 0.05; L.visible = flameOn && fade > 0.05
@@ -29892,10 +29911,12 @@ function bodyDraw(id, st, t, dt, view = null, fade = 1) {
   } else {
     // the pipe's hand at his lips, its stem up and outward to his left (the bowl clear of his head, so it shows from behind); the
     // lighter's hand (his left) at the bowl, its flame up
-    const ry = a.mesh.rotation.y, sc = Math.min(1.1, Math.max(0.65, (a.spec.h + a.spec.r) / 0.9)) * 1.3
+    const ry = a.mesh.rotation.y, sc = PIPE_FIT.scale, ca = Math.cos(PIPE_FIT.angle), sa = Math.sin(PIPE_FIT.angle)
     handAt(a, P.position); handAt(a, L.position, true)
-    P.rotation.set(-0.3, ry, 0.75, 'YXZ'); P.scale.setScalar(sc)
-    L.rotation.set(0, ry, 0); L.scale.setScalar(sc * 1.15)
+    pipeD.set(-Math.sin(ry) * ca - Math.cos(ry) * sa, PIPE_FIT.rise, -Math.cos(ry) * ca + Math.sin(ry) * sa).normalize()
+    P.quaternion.setFromUnitVectors(PIPE_Y, pipeD); P.scale.setScalar(sc)
+    P.position.addScaledVector(pipeD, -PIPE_FIT.grip)
+    L.rotation.set(0, ry, 0); L.scale.setScalar(PIPE_FIT.lighter)
     const head = a.rig?.bones.get('Head')
     if (head) { head.getWorldPosition(mouth); mouth.y += 0.02 * sc } else mouth.copy(a.mesh.position).setY(a.mesh.position.y + 0.7)
     mouth.x -= Math.sin(ry) * 0.12; mouth.z -= Math.cos(ry) * 0.12
@@ -29915,8 +29936,11 @@ function bodyDraw(id, st, t, dt, view = null, fade = 1) {
   const fwd = pipeM.set(-Math.sin(a.mesh.rotation.y), 0, -Math.cos(a.mesh.rotation.y))
   if (view) fwd.set(0, 0, -1).transformDirection(view.matrixWorld)
   a.smkAcc = (a.smkAcc || 0) + dt * (exhale ? 34 * Math.sin(Math.PI * clamp((s - 2.9) / 1.4, 0, 1)) + 6 : inhale > 0.2 ? 5 : 0)
+  const live = a.puffs = (a.puffs || []).filter(e => e > t)
   while (a.smkAcc >= 1 && a.mesh.visible) {
     a.smkAcc -= 1
+    if ((live.length + 1) * PIPE_FIT.burst > PIPE_FIT.cap) { a.smkAcc = 0; break }
+    live.push(t + PIPE_FIT.life)
     if (exhale) burst('pipeSmoke', mouth.x, mouth.y, mouth.z, -fwd.x * 0.35, 1, -fwd.z * 0.35, 0xcfd3d7, 1.5)
     else burst('pipeSmoke', bowl.x, bowl.y, bowl.z, fwd.x * 0.3, 1, fwd.z * 0.3, 0xcfd3d7, 0.45)
   }
