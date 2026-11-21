@@ -32812,10 +32812,27 @@ const testTools = (() => {
   }
   const ALIAS = { highways: 'highway', viaduct: 'highway', motorway: 'highway', overpass: 'interchange', junction: 'interchange', stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
   const things = () => Object.keys(NEAR).filter(k => k !== 'brokenwindow').join(', ') + ', window broken'
+  // card #9 (asked for the site's panel, whose player is a guest of a dedicated server): /tp <name> <x> <z> moves a named player (the full
+  // name, or a prefix only one starts with) the way a respawn or a rescue does: setCharPos in tpTo, so the player's own prediction snaps and does
+  // not rubber-band. The host's own /tp <x> <z> is as it was. A server (no character of its own) can use the named form only
   const tp = a => {
+    const w = String(a || '').replace(/,/g, ' ').trim().split(/\s+/)
+    if (w.length >= 3 && !Number.isFinite(Number(w[0]))) {
+      if (!isHost) return refuse('Only the host can use test commands.')
+      const x = Number(w.at(-2)), z = Number(w.at(-1)), q = w.slice(0, -2).join(' ').toLowerCase()
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return sysMsg('§cUsage: §f/tp [name] <x> <z>')
+      const all = [...roster].filter(([id]) => id < BOT_ID0 && players.get(id)), exact = all.filter(([, p]) => p.name.toLowerCase() === q)
+      const hit = exact.length ? exact : all.filter(([, p]) => p.name.toLowerCase().startsWith(q))
+      if (!hit.length) return sysMsg('§cNo player called §f' + esc(q))
+      if (hit.length > 1) return sysMsg('§c' + hit.length + ' players match §f' + esc(q) + '§c: use the full name')
+      const c = players.get(hit[0][0])
+      if (c.dead > 0) return sysMsg('§c' + esc(hit[0][1].name) + ' is down.')
+      const [px, py, pz] = tpTo(c, x, z, 0, null)
+      return sysMsg('§7Moved §f' + esc(hit[0][1].name) + ' §7to x §f' + Math.round(px) + ' §7z §f' + Math.round(pz) + ' §7y §f' + py.toFixed(1))
+    }
     const c = me(true); if (!c) return
-    const n = String(a || '').replace(/,/g, ' ').trim().split(/\s+/).map(Number)
-    if (n.length !== 2 || !n.every(Number.isFinite)) return sysMsg('§cUsage: §f/tp <x> <z>')
+    const n = w.map(Number)
+    if (n.length !== 2 || !n.every(Number.isFinite)) return sysMsg('§cUsage: §f/tp [name] <x> <z>')
     const [x, y, z] = tpTo(c, n[0], n[1], 0, null)
     sysMsg('§7Teleported to x §f' + Math.round(x) + ' §7z §f' + Math.round(z) + ' §7y §f' + y.toFixed(1))
   }
@@ -33012,7 +33029,7 @@ const blackbox = (() => {
   return B
 })()
 Object.assign(GAME.commands, {
-  tp:    { args: '<x> <z>', help: 'host only, test: teleport to the street under a point', run: testTools.tp },
+  tp:    { args: '[<name>] <x> <z>', help: 'host only, test: teleport to the street under a point; a named player (full name or a unique prefix), else you', run: testTools.tp },
   near:  { args: '<thing> [go]', help: 'host only, test: find the nearest (' + testTools.things() + '), go to teleport beside it', run: testTools.near },
   where: { args: '', help: 'test: your x, z, heading and city cell', run: testTools.where },
   blackbox: { args: '[on|off|dump]', help: 'test: a flight recorder for the black box that flashes when a car turns (card #74)', run: blackbox.run },
