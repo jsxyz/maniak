@@ -26298,12 +26298,14 @@ function smashDustVisible(p,f,e) {
 // A stale faustGlow array would assign shopfront or lamp emission to road vertices after a crater.
 function craterPaint(paint,positions,size=3,fill=1) {
   const out=new Float32Array(positions.length/3*size),P=paint.p,C=paint.c
-  for(let i=0;i<positions.length;i+=3){const x=positions[i],y=positions[i+1],z=positions[i+2];let best=Infinity,color=Array(size).fill(fill)
+  for(let i=0;i<positions.length;i+=3){const x=positions[i],y=positions[i+1],z=positions[i+2];let best=Infinity,color=Array(size).fill(fill),near=Infinity,nearAt=-1      // card #90: and the nearest, if none is under it
     for(let j=0;j<P.length;j+=9){const ax=P[j],az=P[j+2],bx=P[j+3],bz=P[j+5],cx=P[j+6],cz=P[j+8],d=(bz-cz)*(ax-cx)+(cx-bx)*(az-cz);if(Math.abs(d)<1e-10)continue
       const u=((bz-cz)*(x-cx)+(cx-bx)*(z-cz))/d,v=((cz-az)*(x-cx)+(ax-cx)*(z-cz))/d,w=1-u-v,dy=Math.abs(y-(u*P[j+1]+v*P[j+4]+w*P[j+7]))
+      const m=((ax+bx+cx)/3-x)**2+((az+bz+cz)/3-z)**2;if(m<near){near=m;nearAt=j}
       if(u<-.001||v<-.001||w<-.001||dy>=best)continue
       best=dy;const at=j/3*size;color=Array.from({length:size},(_,k)=>u*C[at+k]+v*C[at+size+k]+w*C[at+2*size+k])
     }
+    if(best===Infinity&&nearAt>=0){const at=nearAt/3*size;color=Array.from({length:size},(_,k)=>(C[at+k]+C[at+size+k]+C[at+2*size+k])/3)}      // a cut hole: the ground round it
     out.set(color,i/3*size)
   }
   return out
