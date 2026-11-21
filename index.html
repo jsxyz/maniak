@@ -12828,8 +12828,10 @@ function stepPhysics(dt) {
 // ---------------------------------------------------------------- Road traffic (host authoritative)
 // Simulation is separate from the seeded city: graph edges come from its motor lanes. No player slots are used.
 // Traffic uses ordinary Bullet cars and object snapshots. The bounded `tf` roster adds lifecycle + driver state only.
-const TRAFFIC = { cap: 80, fleet: ['Car','Sports car','Van','Truck','Bus'], density: {core:54,civic:32,tenement:28,industrial:18}, radius: 420, retire: 520, think: 0.1, cruise: [7, 11], trim: 15, stop: 21 }
+const TRAFFIC = { cap: 160, fleet: ['Car','Sports car','Van','Truck','Bus'], density: {core:108,civic:64,tenement:56,industrial:27}, quality: {low:0.5,medium:0.5,high:1}, radius: 420, retire: 520, think: 0.1, cruise: [7, 11], trim: 15, stop: 21 }
 let trafficState = null
+// card #86: the host's quality setting scales the ambient fleet (low and medium keep the old 80-car fleet)
+const trafficK = () => TRAFFIC.quality[settings.quality] ?? 1
 const trafficRemote = new Map(), trafficViews = new Map()
 const trafficKey = (x, z) => x + ':' + z
 function trafficReset() {
@@ -13058,6 +13060,7 @@ function trafficThink(o, dt, people) {
   }
   for (const c of people) if (!(c.dead > 0) && !seatOf(c)) obstacle(c.x, c.y, c.z, c.r || 0.5)
   for (const p of objs) if (p !== o && p.heldBy === undefined) {
+    if (Math.abs(p.x - o.x) > 60 || Math.abs(p.z - o.z) > 60) continue          // card #86
     if (!p.V) { obstacle(p.x, p.y, p.z, p.R); continue }
     const f = rotq(p.q, [0, 0, -1]), along = Math.abs(f[0] * fw[0] + f[2] * fw[2]), across = Math.abs(f[0] * -fw[2] + f[2] * fw[0])
     obstacle(p.x, p.y, p.z, across * p.V.l / 2 + along * p.V.w / 2, along * p.V.l / 2 + across * p.V.w / 2)
@@ -13171,10 +13174,11 @@ function trafficHidden(x, z, people) {
 }
 function trafficSpawn(people) {
   const T = trafficState, count = [...T.cars.values()].filter(o => o.trafficAmbient).length
-  if (count >= TRAFFIC.cap || objs.length >= OBJ_MAX - 8 || !people.length) return
+  const K = trafficK()
+  if (count >= TRAFFIC.cap * K || objs.length >= OBJ_MAX - 8 || !people.length) return
   const p = people[(T.serial++) % people.length], district = faustGet(...FAUSTLAND_API.cellAt(p.x,p.z).map(v => clamp(v, 0, LV.grow.S - 1))).plan.district      // card #18: the nearest grid cell's, outside it
   const anchors=[];for(const c of people)if(anchors.every(a=>Math.hypot(a.x-c.x,a.z-c.z)>TRAFFIC.radius*1.5))anchors.push(c)
-  const density=Math.min(TRAFFIC.density[district]||8,Math.max(1,Math.floor(TRAFFIC.cap/anchors.length)))
+  const density=Math.min((TRAFFIC.density[district]||8)*K,Math.max(1,Math.floor(TRAFFIC.cap*K/anchors.length)))
   if ([...T.cars.values()].filter(o => o.traffic?.ambient && Math.hypot(o.x - p.x, o.z - p.z) < TRAFFIC.radius + 80).length >= density) return
   const edges = T.edges.filter(e => { const q = trafficPoint(e, e.length / 2), d = Math.hypot(q.x - p.x, q.z - p.z); return d > 120 && d < TRAFFIC.radius && Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96 })
   for (let trial = 0; edges.length && trial < 12; trial++) {
@@ -13228,7 +13232,7 @@ function trafficTick(dt, all) {
   const warm = people.map(p => FAUSTLAND_API.cellAt(p.x,p.z).join(':')).join('|')
   if (warm !== T.warm) { T.warm=warm; T.queue=[...faustRange(people.map(p=>[p.x,p.z]),4)].filter(key=>!T.cells.has(key)) }
   const cell = T.queue.shift(); if(cell)trafficCell(...cell.split(' ').map(Number))
-  if ((T.spawn -= dt) <= 0) { T.spawn += 0.35; trafficSpawn(people) }
+  if ((T.spawn -= dt) <= 0) { T.spawn += T.cars.size < TRAFFIC.cap * trafficK() * 0.7 ? 0.2 : 0.35; trafficSpawn(people) }
   const ms = performance.now() - t; T.stats.ticks++; T.stats.ms += ms; T.stats.maxMs = Math.max(T.stats.maxMs, ms)
 }
 function trafficRows() {
@@ -21143,7 +21147,7 @@ function periodWheelsFrame() {
   for (const b of Object.values(F.wheels)) {
     if (b.parent !== objGroup) objGroup.add(b)
     b.count = b.userData.n; b.visible = b.count > 0
-    if (b.count) { b.instanceMatrix.needsUpdate = true; b.computeBoundingSphere() }
+    if (b.count) { b.instanceMatrix.needsUpdate = true; b.instanceMatrix.clearUpdateRanges?.(); b.instanceMatrix.addUpdateRange?.(0, b.count * 16); b.computeBoundingSphere() }
     b.userData.n = 0
   }
 }
@@ -28670,8 +28674,8 @@ function rigSkirt(a, R, dt) {
 const STREET_FILES = { anims: 'anims_street.ae18f90f.glb', bike: 'bike.9b59aabf.glb', pram: 'pram.4b8575f8.glb', baby: 'baby.d56501e1.glb', dog: 'dog.f8b8105a.glb', pigeon: 'pigeon.b13d236f.glb' }
 const STREET = {
   // people per 96 m cell by district, scaled by the quality setting
-  density: { core: 22, civic: 17, tenement: 14, industrial: 5, plaza: 18 }, quality: { low: 0.6, medium: 0.8, high: 1 },
-  share: { idle: 0.2, junction: 0.2, pram: 0.08, dog: 0.08 }, strays: 0.5, flocks: [1, 3], cyclistGap: 150,
+  density: { core: 40, civic: 31, tenement: 25, industrial: 6, plaza: 24 }, quality: { low: 0.34, medium: 0.45, high: 1 },
+  share: { idle: 0.2, junction: 0.26, pram: 0.08, dog: 0.08 }, strays: 0.5, flocks: [1, 3], cyclistGap: 150,
   walk: [1.2, 1.55], cross: 1.95, pram: 1.05, run: 4.4, ride: [4.4, 5.8], dogWalk: 1.0,
   // drawing: LOD ranges (m) for people (LOD0, LOD1, LOD2, then impostors), and how far each kind is drawn at all
   lod: [12, 30, 60], draw: { ped: 140, bike: 120, pram: 75, dog: 60, pigeon: 45, flock: 350 },
@@ -28955,7 +28959,7 @@ function slCell(ci, cj) {
   })
   const district = P.plaza ? 'plaza' : P.district
   const n = Math.round((STREET.density[district] ?? 10) * q * (0.85 + 0.3 * rng()))
-  const id = k => (ci * 512 + cj) * 64 + k
+  const fid = k => (ci * 512 + cj) * 64 + k, id = k => k < 48 ? fid(k) : 0x800000 + (ci * 512 + cj) * 48 + (k - 48)      // card #86
   let k = 0
   const body = () => { const r = rng(); return r < 0.6 ? (r * 5 / 0.6 | 0) % 3 : 3 + (rng() < 0.5 ? 0 : 1) }     // three men, two women
   const tint = () => { const r = rng(); return [0.82 + r * 0.3, 0.82 + rng() * 0.28, 0.82 + rng() * 0.26] }
@@ -28965,7 +28969,7 @@ function slCell(ci, cj) {
   if (P.diagonal && !cell.rings.length) return slKeep(cell)
   if (P.plaza || !cell.rings.length) {
     const cx = X + 48, cz = Z + 48, R0 = P.plaza ? 34 : 30
-    for (let i = 0; i < n && k < 60; i++) {
+    for (let i = 0; i < n && k < 88; i++) {
       const m = 3 + (rng() * 3 | 0), a0 = rng() * 6.283, pts = [], ft = P.features?.length      // card #69: a plaza's ring of walking, clear of its monument
       for (let j = 0; j < m; j++) { const a = a0 + j * 6.283 / m + (ft ? 0 : (rng() - 0.5) * 0.6), r = ft ? FAUST_FEAT.loop[0] + (FAUST_FEAT.loop[1] - FAUST_FEAT.loop[0]) * rng() : R0 * (0.25 + 0.7 * rng()); pts.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]) }
       if (rng() < STREET.share.idle) { const p = pts[0]; cell.agents.push({ id: id(k++), kind: SL_K.idle, body: body(), tint: tint(), x: p[0], z: p[1], yaw: rng() * 6.283, clip: ['idle', 'phone', 'talk', 'arms_folded'][rng() * 4 | 0], ph: rng(), home: slLoop(pts, STREET.walk[0], 0) }); continue }
@@ -28973,12 +28977,12 @@ function slCell(ci, cj) {
       const R = slLoop(dir ? pts : pts.slice().reverse(), v, 0, null, -rng() * 3e5)
       cell.agents.push({ id: id(k++), kind: rng() < STREET.share.pram ? SL_K.pram : rng() < STREET.share.dog ? SL_K.walker : SL_K.ped, body: body(), tint: tint(), route: R })
     }
-    for (let f = 0; f < (P.plaza ? 3 : 1); f++) cell.flocks.push(slFlock(cell, id(48 + f), cx + (rng() - 0.5) * 50, cz + (rng() - 0.5) * 50, 8 + (rng() * 12 | 0), rng))
+    for (let f = 0; f < (P.plaza ? 3 : 1); f++) cell.flocks.push(slFlock(cell, fid(48 + f), cx + (rng() - 0.5) * 50, cz + (rng() - 0.5) * 50, 8 + (rng() * 12 | 0), rng))
     return slKeep(cell)
   }
   // the junction this cell owns, if signalled: some walkers loop over its crosswalks
   const junc = Z - X !== 384 && slJunction(X, Z), corners = junc && slJunctionCorners(X, Z, near)
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < n && k < 88; i++) {
     const ring = cell.rings[rng() * cell.rings.length | 0], pts = ring.pts, r = rng()
     const tw = tint(), b = body()
     if (r < STREET.share.idle) {
@@ -28992,7 +28996,7 @@ function slCell(ci, cj) {
       const face = Math.round(inYaw / (Math.PI / 2)) * Math.PI / 2 + (rng() < 0.3 ? Math.PI : 0)
       const pair = rng() < 0.3
       cell.agents.push({ id: id(k++), kind: SL_K.idle, body: b, tint: tw, x, z, yaw: face, clip: ['idle', 'phone', 'talk', 'arms_folded', 'idle'][rng() * 5 | 0], ph: rng(), home: slRingLoop(ring, false, side, null, STREET.walk[0]) })
-      if (pair && k < 60) {
+      if (pair && k < 88) {
         cell.agents.at(-1).yaw = face + Math.PI / 2; cell.agents.at(-1).clip = 'talk'
         const [px, pz] = slFree(x + Math.sin(face + Math.PI / 2) * 1.1, z + Math.cos(face + Math.PI / 2) * 1.1, ux, uz, near.posts)
         cell.agents.push({ id: id(k++), kind: SL_K.idle, body: body(), tint: tint(), x: px, z: pz, yaw: face - Math.PI / 2, clip: 'talk', ph: rng(), home: cell.agents.at(-1).home }) }
@@ -29030,7 +29034,7 @@ function slCell(ci, cj) {
     const ring = cell.rings[rng() * cell.rings.length | 0].r, side = rng() * 4 | 0, u = 0.2 + rng() * 0.6
     const x = side === 0 ? ring[0] - 1.6 : side === 2 ? ring[2] + 1.6 : ring[0] + (ring[2] - ring[0]) * u
     const z = side === 1 ? ring[1] - 1.6 : side === 3 ? ring[3] + 1.6 : ring[1] + (ring[3] - ring[1]) * u
-    const fl = slFlock(cell, id(48 + f), x, z, 5 + (rng() * 8 | 0), rng); fl.out = [[-1, 0], [0, -1], [1, 0], [0, 1]][side]; cell.flocks.push(fl)
+    const fl = slFlock(cell, fid(48 + f), x, z, 5 + (rng() * 8 | 0), rng); fl.out = [[-1, 0], [0, -1], [1, 0], [0, 1]][side]; cell.flocks.push(fl)
   }
   return slKeep(cell)
 }
@@ -29048,6 +29052,7 @@ function slKeep(cell) {
     if (ag.home) for (let i = 0; i < ag.home.n; i++) { const x = ag.home.keys[i * 5 + 1], z = ag.home.keys[i * 5 + 2]; b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], z); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], z) }
     if (ag.companion) b = [b[0] - 2, b[1] - 2, b[2] + 2, b[3] + 2]
     ag.box = b
+    ag.cr = false; if (ag.route) for (let i = 0; i < ag.route.n; i++) if (ag.route.keys[i * 5 + 3] === 2) { ag.cr = true; break }          // card #86: crosses a road
   }
   st.cells.set(cell.key, cell); st.stats.cells = st.cells.size; return cell
 }
@@ -29376,7 +29381,7 @@ function slDetached(ag, r, t, o) {
 
 // ---- the host: what it tests, and the records it makes
 // people around a point at room time T, from their cells (3x3 around it) and from the cyclist lines near it
-function slAround(x, z, R, T, fn) {
+function slAround(x, z, R, T, fn, skip) {
   const st = slState, S = st.S, A = S * 48, pose = slAroundPose
   // the cells the box [x±R, z±R] (plus a knocked-down runner's reach) overlaps; an agent whose route stays outside the box
   // is skipped unless a record has it off its route
@@ -29388,6 +29393,7 @@ function slAround(x, z, R, T, fn) {
       for (const ag of cell.agents) {
         const b = ag.box
         if (b && (b[0] > x + R || b[2] < x - R || b[1] > z + R || b[3] < z - R) && !st.byId.has(ag.id)) continue
+        if (skip && skip(ag)) continue
         slPose(ag, T, pose); if (pose.hidden) continue
         if (Math.abs(pose.x - x) < R && Math.abs(pose.z - z) < R) fn(ag, pose, cell)
       }
@@ -29596,7 +29602,10 @@ const slRoadFuture = SL_POSE()
 function slRoadList() {
   const st = slState, T = slNow()
   if (st.road && Math.abs(T - st.road.T) < 50) return st.road.list
-  const list = [], seen = new Set()
+  const list = [], seen = new Set(), back = STREET.backS * 1000
+  const quiet = ag => { if (ag.cr || ag.kind === SL_K.cyclist || st.byId.has(ag.id)) return false
+    for (const q of st.panics) if (q.t <= T && T - q.t < back && ag.pan?.get(q.key) !== false) return false
+    return true }
   for (const c of players.values()) slAround(c.x, c.z, 160, T, (ag, p) => {
     if (!(p.mode === 2 || ag.kind === SL_K.cyclist || p.rec) || p.hidden || seen.has(ag.id)) return
     seen.add(ag.id)
@@ -29607,7 +29616,7 @@ function slRoadList() {
     }
     list.push({ id: ag.id, x: p.x, y: p.y, z: p.z, ahead, radius: ag.kind === SL_K.cyclist ? 0.9 : ag.kind === SL_K.pram ? 0.8 : 0.45,
       vx: Math.sin(p.yaw) * p.v, vz: Math.cos(p.yaw) * p.v, kind: ag.kind === SL_K.cyclist ? 'cyclist' : ag.kind === SL_K.pram ? 'pram' : ag.kind === SL_K.stray ? 'dog' : 'ped' })
-  })
+  }, quiet)
   st.road = { T, list }
   return list
 }
@@ -29757,12 +29766,12 @@ function* slKitSteps([anims, street, ...rest]) {
   const kit = { root, bodies: [], parts: {} }
   const clips = [...anims.animations, ...street.animations]
   for (const [i, g] of bodies.entries()) {
-    const b = {}; yield* slSkinnedSteps(g, clips, SL_CLIPS.civ, i < 3 ? 60 : 40, STREET.bodies[i].replace('civ_', ''), b)
+    const b = {}; yield* slSkinnedSteps(g, clips, SL_CLIPS.civ, i < 3 ? 110 : 80, STREET.bodies[i].replace('civ_', ''), b)
     kit.bodies.push(b); for (const im of b.ims) root.add(im)
   }
-  kit.dog = {}; yield* slSkinnedSteps(dog, dog.animations, SL_CLIPS.dog, 24, '', kit.dog); for (const im of kit.dog.ims) root.add(im)
+  kit.dog = {}; yield* slSkinnedSteps(dog, dog.animations, SL_CLIPS.dog, 48, '', kit.dog); for (const im of kit.dog.ims) root.add(im)
   kit.pigeon = {}; yield* slSkinnedSteps(pigeon, pigeon.animations, SL_CLIPS.pigeon, 320, '', kit.pigeon); for (const im of kit.pigeon.ims) root.add(im)
-  for (const [name, cap] of [['bike_frame', 40], ['bike_wheel', 80], ['bike_crank', 40], ['bike_pedal', 80], ['pram_body', 24], ['pram_wheel_f', 48], ['pram_wheel_r', 48]])
+  for (const [name, cap] of [['bike_frame', 40], ['bike_wheel', 80], ['bike_crank', 40], ['bike_pedal', 80], ['pram_body', 48], ['pram_wheel_f', 96], ['pram_wheel_r', 96]])
     for (const lod of ['', '_lod1']) { const im = slPart(name.startsWith('bike') ? bike : pram, name + lod, cap, true); if (im) { kit.parts[name + lod] = im; root.add(im) } }
   const lg = new THREE.BufferGeometry(), lp = new THREE.BufferAttribute(new Float32Array(48 * 8 * 3), 3); lp.setUsage(THREE.DynamicDrawUsage); lg.setAttribute('position', lp)
   kit.leash = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x2b2118 })); kit.leash.frustumCulled = false; root.add(kit.leash)
@@ -30026,7 +30035,8 @@ function slFrame(t, dt, obl) {
   // overhead flocks: six circling the city, seen from the street
   slDrawSky(kit, T, cx, cz)
   kit.leash.geometry.setDrawRange(0, ln * 8); kit.leash.geometry.attributes.position.needsUpdate = true
-  for (const c of kit.root.children) if (c.isInstancedMesh) { c.instanceMatrix.needsUpdate = true; if (c.instanceColor) c.instanceColor.needsUpdate = true; if (c.userData.frame) c.userData.frame.needsUpdate = true
+  for (const c of kit.root.children) if (c.isInstancedMesh) { c.instanceMatrix.needsUpdate = true; if (c.instanceColor) { c.instanceColor.needsUpdate = true; c.instanceColor.clearUpdateRanges?.(); c.instanceColor.addUpdateRange?.(0, c.count * 3) }
+    if (c.userData.frame) { c.userData.frame.needsUpdate = true; c.userData.frame.clearUpdateRanges?.(); c.userData.frame.addUpdateRange?.(0, c.count * 4) }
     if (c.instanceMatrix.clearUpdateRanges) { c.instanceMatrix.clearUpdateRanges(); c.instanceMatrix.addUpdateRange(0, c.count * 16) } }
   slForget(st)
   if (!isHost) slPrune(T)
