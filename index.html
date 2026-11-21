@@ -805,7 +805,7 @@ const SOUNDS = {
   'Chain whirl': { say: 'a fast overhead metal chain whirl: rushing air and accelerating steel rattles', seed: 0, file: ['sfx_whirl1.15b0998f.mp3', 'sfx_whirl2.f598f8bb.mp3', 'sfx_whirl3.903f7370.mp3'], synth: null, vary: 0.05 },   // the chain and block swung round, repeated while it spins
   'Chain throw': { say: 'a heavy concrete block thrown hard: a strong rush of air and chain clatter', seed: 0, file: ['sfx_throw1.daf70f08.mp3', 'sfx_throw2.23582d6e.mp3'], synth: null, vary: 0.04 },      // the block let fly
   'Chain catch': { say: 'concrete catches masonry and a steel chain snaps taut with a metallic clack', seed: 0, file: ['sfx_catch1.39c18615.mp3', 'sfx_catch2.36753cdf.mp3'], synth: null, vary: 0.03 },     // the block lodging in a surface, the chain going taut
-  'Move stomp': { say: 'one heavy sprinting footfall: a big boot slamming down on pavement, a deep short thud', seed: 0, file: ['sfx_stomp1.89cafb1c.mp3', 'sfx_stomp2.04de4369.mp3', 'sfx_stomp3.50a0c343.mp3'], synth: null, vary: 0.06 },   // each heavy footfall of the Maniak's sprint
+  'Move stomp': { say: 'one heavy sprinting footfall: a big boot slamming down on pavement, a deep short thud', seed: 0, file: null, synth: null },   // each heavy footfall of the Maniak's sprint
   'Move charge': { say: 'the strain of winding a heavy swing or leap: a held breath and a creak of effort', seed: 0, file: ['sfx_strain1.9e403f77.mp3', 'sfx_strain2.a43210af.mp3', 'sfx_strain3.7cb480cc.mp3'], synth: null, vary: 0.05 },   // while the chain swing or leap charges, over and over, louder as it fills
   // cards #15 and #16, placed at the player who does them
   'Pipe flick': { say: 'a metal lighter flicked open and struck: a bright steel click, then a soft whoosh of flame', seed: 0, file: 'sfx_flick1.dd6abe2b.mp3', synth: null },   // the pipe's lighter (P, first stage)
@@ -39929,8 +39929,8 @@ function boatCrewDraw(o, K, v) {
 // right behind the stern its screw's churn, white, about its beam wide, gone within WAKE.wash s. All of it fades over WAKE.life s.
 // Spray off the bow once it planes. Drawn with the blob shadows' own material (RGBA vertex colours, transparent, two-sided, no depth
 // write), so it compiles no new shader program
-const WAKE = { n: 48, every: 0.05, life: 2.4, spread: 0.36, start: 0.42, arm: 0.25, armGrow: 0.15, edge: 0.75, between: 0.03, churn: 0.5, churnW: 0.35,
-  churnGrow: 0.6, wash: 0.9, dash: 5, dark: 0.35, break: 0.3, back: 0.25, lift: 0.04, min: 1.2, col: [0.93, 0.95, 0.96] }      // arms seen from the chase camera (QA #62)
+const WAKE = { n: 48, every: 0.05, life: 2.4, spread: 0.36, start: 0.42, arm: 0.25, armGrow: 0.15, edge: 0.9, between: 0.03, churn: 0.5, churnW: 0.35,
+  churnGrow: 0.6, wash: 0.9, dash: 5, dark: 0.7, break: 0.35, fadePow: 1, back: 0.25, lift: 0.04, min: 1.2, col: [0.93, 0.95, 0.96] }      // continuous broken arms, bright in Plain (QA #62)
 function boatWake(o, K, H, v) {
   const live = objs.find(x => x.id === o.id), b = live?.body, S = BOAT_SHAPES[K.model || K.name], T = now() / 1000, tr = v.trail ||= { pts: [], mesh: null, seq: 0 }
   while (tr.pts.length && T - tr.pts[0].t > WAKE.life) tr.pts.shift()
@@ -39975,7 +39975,7 @@ function boatTrailDraw(tr, stern, T) {
   if (tr.mesh.parent !== objGroup) objGroup.add(tr.mesh)
   const pos = tr.mesh.geometry.attributes.position, col = tr.mesh.geometry.attributes.color, [r, g, bl] = WAKE.col
   list.forEach((p, i) => {
-    const age = Math.max(0, T - p.t), w = p.w + age * p.sp * WAKE.spread, a = WAKE.arm + WAKE.armGrow * age, fade = Math.pow(Math.max(0, 1 - age / WAKE.life), 1.5) * p.k
+    const age = Math.max(0, T - p.t), w = p.w + age * p.sp * WAKE.spread, a = WAKE.arm + WAKE.armGrow * age, fade = Math.pow(Math.max(0, 1 - age / WAKE.life), WAKE.fadePow) * p.k
     const wash = Math.max(0, 1 - age / WAKE.wash), c = clamp(p.c + WAKE.churnGrow * age, 0.05, Math.max(0.06, w - a - 0.05))
     const arm = WAKE.edge * fade * p.n, low = WAKE.between * fade, mid = Math.max(low, WAKE.churn * wash * fade), cEdge = Math.max(low, 0.3 * mid)
     // across: [offset from the middle, opacity]
