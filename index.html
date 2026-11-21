@@ -8122,7 +8122,8 @@ function inDoorsNear(x, z, r) {
     if (!c || ci < 0 || cj < 0 || ci >= LV.grow.S || cj >= LV.grow.S) continue
     c.plan.lots.forEach((l, li) => {
       const dx = (l.district === 'industrial' ? l.x - 0.6 * l.w : l.x) - x, dz = l.z + l.d - z
-      if (dx * dx + dz * dz < r * r) out.push(ci + ' ' + cj + ' ' + li)
+      // (a door that cannot open is not offered: its interior is not drawn through a shut door)
+      if (dx * dx + dz * dz < r * r && (faustIn.open.has(ci + ' ' + cj + ' ' + li) || !c.physics || inCanOpen(c, inBuilding(ci + ' ' + cj + ' ' + li)))) out.push(ci + ' ' + cj + ' ' + li)
     })
   }
   return out
@@ -8262,10 +8263,12 @@ function inBodies(boxes, ramps) {
 // box -> its body in a Faustland chunk's physics (addChunk's order: the slim compound first, then a body a box)
 function inBodyMap(c) {
   const P = c.physics
-  if (P.byBox) return P.byBox
+  if (P.byBox && P.byBoxFor === P.src) return P.byBox
+  // the chunk's bodies are of ITS boxes (src: a felled post or a crater's cut changes it), the thin ones' compound first when it has one
   const map = new Map(), slim = P.slim
-  let i = c.plan.boxes.some(b => slim?.has(b)) ? 1 : 0
-  for (const b of c.plan.boxes) if (!slim?.has(b) && !b.paint) map.set(b, P.bodies[i++])
+  let i = P.bodies[0]?.kids ? 1 : 0
+  for (const b of P.src) if (!slim?.has(b) && !b.paint) map.set(b, P.bodies[i++])
+  P.byBoxFor = P.src
   return P.byBox = map
 }
 // the chunk's ray copies without the open buildings' solids
@@ -8273,16 +8276,28 @@ function inRayCopies(c) {
   const P = c.physics, shut = new Set()
   for (const O of faustIn.open.values()) if (O.c === c) for (const i of O.B.solids) shut.add(c.plan.boxes[i])
   if (P.ray) { dropBody(P.ray); A.destroy(P.ray.mesh) }
-  P.ray = rayMesh(shut.size ? c.plan.boxes.filter(b => !shut.has(b)) : c.plan.boxes)
+  P.ray = rayMesh(shut.size ? P.src.filter(b => !shut.has(b)) : P.src)
+}
+// can the building's solids all leave the world? They must still stand in the chunk's own boxes: a crater that cut one (it is pieces in
+// the crater's own chunk now) leaves the building shut
+const inCanOpen = (c, B) => !!c.physics && !c.physics.dropped && B.solids.every(i => c.physics.src.includes(c.plan.boxes[i]))
+// an open building's chunk was rebuilt (a crater elsewhere in its cell cut a box: addChunk made every body new and live, the building's
+// solids too): take them out again, or close the building if it lost one
+function inKeepShut(O) {
+  const c = O.c, P = c.physics
+  if (!P || O.phys === P) return
+  O.phys = P
+  if (!inCanOpen(c, O.B)) return inClose(O, !!P?.dropped)
+  const map = inBodyMap(c)
+  for (const i of O.B.solids) { const b = map.get(c.plan.boxes[i]); if (b && !b.shut) { if (!b.out) world.removeRigidBody(b.body); b.out = true; b.shut = 1 } }
+  faustIn.rays.add(c)
 }
 function inOpen(id) {
   if (faustIn.open.has(id)) return faustIn.open.get(id)
   const t = performance.now(), B = inBuilding(id), c = faustGet(B.ci, B.cj)
   faustPhysics(c)
-  if (!c.physics) return null
-  // a crater cut into its boxes already (a smash on its roof): it stays shut
-  if (craters.some(([x, z, r, , y]) => y > 1 && Math.abs(x - B.x) < B.w + r && Math.abs(z - B.z) < B.d + r)) return null
-  const map = inBodyMap(c), O = { id, B, c, shell: null, storeys: new Map(), want: new Set([0]), seen: performance.now() }
+  if (!c.physics || !inCanOpen(c, B)) return null
+  const map = inBodyMap(c), O = { id, B, c, phys: c.physics, shell: null, storeys: new Map(), want: new Set([0]), seen: performance.now() }
   for (const i of B.solids) { const b = map.get(c.plan.boxes[i]); if (b && !b.shut) { if (!b.out) world.removeRigidBody(b.body); b.out = true; b.shut = 1 } }
   faustIn.open.set(id, O)
   faustIn.rays.add(c)                 // the chunk's ray copies are rebuilt next tick (rays meet its old mass for one)
@@ -8379,6 +8394,7 @@ function faustInteriorTick(participants) {
   // the queued storeys: 2.5 ms a tick
   for (const t1 = performance.now(); faustIn.queue.length && performance.now() - t1 < 2.5;) { const j = faustIn.queue[0]; if (j.steps.next().done) faustIn.queue.shift() }
   for (const O of [...faustIn.open.values()]) {
+    inKeepShut(O); if (!faustIn.open.has(O.id)) continue
     // a storey stays 2 s past its last want: someone on a landing would otherwise build and drop it tick by tick
     if (want.has(O.id)) { for (const k of [...O.storeys.keys()]) if (!O.want.has(k) && now_ - (O.keep[k] || 0) > 2000) inStoreyDrop(O, k); continue }
     const far = points.every(p => { const D = O.B.door, dx = D.x - p[0], dz = D.z - p[1]; return dx * dx + dz * dz > FAUST_IN.close * FAUST_IN.close })
