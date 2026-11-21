@@ -6578,8 +6578,123 @@ function faustSubBlock(seed, S, plan, bi, bj) {
   const c = faustState?.seed === seed && faustState?.S === S ? faustRingPlan(faustState, plan, i, j) : faustRingCell(seed, S, plan, i, j), inB = (x, z, m = 0) => Math.abs(x - cx) <= e + m && Math.abs(z - cz) <= e + m
   return { exists: true, rect: [cx - e, cz - e, cx + e, cz + e], streets: faustRingStreets(seed, S, plan, i, j),
     pavements: c.pavements.filter(q => inB((q[0] + q[2]) / 2, (q[1] + q[3]) / 2, 8)), lots: c.lots.filter(l => inB(l.house.cx, l.house.cz)),
-    fences: c.fences.filter(q => inB(q[0], q[1])), trees: c.trees.filter(q => inB(q[0], q[1])) }
+    fences: c.fences.filter(q => inB(q[0], q[1])), trees: c.trees.filter(q => inB(q[0], q[1])),
+    parked: (c.parked || []).filter(q => inB(q.x, q.z, 8)), posts: (c.posts || []).filter(q => inB(q.x, q.z, 8)) }
 }
+// ---------------------------------------------------------------- suburb street furniture (card #91, builder B)
+// faustSubStreetside(seed, i, j, ctx): a suburb cell's street furniture, pure in (seed, cell, ctx). ctx = { streets: [{ a, b, half }]
+// (centre lines on the 160 m grid, the cell long), pavements, lots: [{ x0, x1, front, drive: [x0, z0, x1, z1], path, trees: [[x, z, r]] }],
+// segs (the highway, channel and water corridors) }. Returns { part, near, solid, light } as the ring plan's rows [shape, sx, sy, sz, x, y,
+// z, yaw, roll, tint] (half extents; the pieces are all in `near`, drawn within 700 m), plus `parked` [{ x, z, yaw, hl, hw, tint }] and `posts`
+// [{ x, z, hx, hz }] for street life (card #91; agreed with its walkers: people and dogs keep to 5.0-6.5 m, every piece here has its inner edge
+// at 6.5 m or more, a parked car lies 3.3-5.0 m off the centre line). They stand on the pavement's outer half and its yard strip (to 7.35 m)
+// or, a parked car, on the asphalt's edge, and keep 0.6 m clear of every drive and path of the lots on that side.
+// Every slot is keyed on the street's grid line and the position along it, so a cell's pieces never depend on its neighbours.
+const FAUST_SUB_STREET = {
+  lampStep: 40, lampAt: 10, poleAt: 20, hydrantStep: 80, hydrantAt: 66, shelterStep: 160, shelterAt: 80, carStep: 26, off: 6.6, poleOff: 6.7, carOff: 4.15, carHL: 2.3, carHW: 0.85,
+  wood: 0x4a3a2c, wire: 0x16191d, iron: 0x30353c,
+  hydrant: [0x8a2e24, 0xb08a2a, 0x7a2a22], mail: [0x2a3f5e, 0x3a3f46, 0x6a2c28, 0x2f4a3a], bin: [0x2e4a36, 0x2a3f5e, 0x4a4d52, 0x3b3e44],
+  car: [0x6b2a2a, 0x2a3a52, 0x3f4a3a, 0x8a8678, 0x2b2b2e, 0x7b6a3a, 0x5a5f66, 0x4a3a52], glass: 0x141a22, tyre: 0x15171a, shelter: 0x5a6a76, post: 0x8b939b, sign: 0x24508c
+}
+function faustSubStreetside(seed, i, j, ctx) {
+  const F = FAUST_SUB_STREET, P = FAUST_RINGS.sub.pitch, C = FAUST_RINGS.cell, x0 = i * C, z0 = j * C
+  const out = { part: [], near: [], solid: [], light: [], parked: [], posts: [] }
+  const H = (k, a, b = 0) => faustMix(seed ^ k, a, b)
+  const near = (k, sx, sy, sz, x, y, z, yaw, roll, tint) => out.near.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint])
+  const solid = (x, y, z, ex, ey, ez) => out.solid.push(faustBox(faustCm(x), faustCm(y), faustCm(z), faustCm(ex), faustCm(ey), faustCm(ez)))
+  const post = (x, z, hx, hz) => out.posts.push({ x: faustCm(x), z: faustCm(z), hx: faustCm(hx), hz: faustCm(hz) })
+  const fences = ctx.lots.flatMap(l => l.fence || [])      // [x0, z0, x1, z1, kind] along the yards' fronts
+  // each lot's drive and path as a rect [x0, z0, x1, z1], 0.6 m wider every way: nothing of ours stands on one
+  const keep = []
+  for (const l of ctx.lots) for (const r of [l.drive, l.path]) if (r) keep.push([r[0] - 0.6, r[1] - 0.6, r[2] + 0.6, r[3] + 0.6])
+  const clear = (x, z, r) => faustRingClear(ctx.segs, x, z, r, r)
+  const noTree = (x, z, r) => !ctx.lots.some(l => (l.trees || []).some(([tx, tz, tr]) => (tx - x) ** 2 + (tz - z) ** 2 < (tr + r) ** 2))
+  const offTrunk = (x, z, r) => !ctx.lots.some(l => (l.trees || []).some(([tx, tz, tr]) => (tx - x) ** 2 + (tz - z) ** 2 < (tr * 0.5 + r) ** 2))      // a post stands off a tree's trunk
+  for (const st of ctx.streets) {
+    const alongZ = st.a[0] === st.b[0], c = alongZ ? st.a[0] : st.a[1], lo = alongZ ? z0 : x0, hi = lo + C, L = Math.round(c / P)
+    const at = (t, off) => alongZ ? [c + off, t] : [t, c + off]
+    const yaw = alongZ ? -Math.PI / 2 : 0      // a box's own x lies along the street
+    const here = t => t >= lo && t < hi, key = (n, k = 0) => L * 128 + n + k, dir = alongZ ? 1 : 0
+    const lineH = H(0x5b01, L, dir), poles = lineH % 100 < 55, poleSide = lineH >>> 8 & 1 ? 1 : -1
+    // a piece of half-length `half` along the street (and `ah` across it) at t, `off` m to `side`, is off every drive and path
+    const offDrives = (t, half, side, off = F.off, ah = 0.5) => { const [x, z] = at(t, side * off), ex = alongZ ? ah : half, ez = alongZ ? half : ah
+      return !keep.some(q => x + ex > q[0] && x - ex < q[2] && z + ez > q[1] && z - ez < q[3]) }
+    const across = (sx, sz) => alongZ ? [sz, sx] : [sx, sz]      // half extents (along, across) to (x, z)
+    const box = (alongHalf, sy, acrossHalf, t, y, off, tint, yw = 0, roll = 0) => { const [x, z] = at(t, off), [ex, ez] = across(alongHalf, acrossHalf); near('body', ex, sy, ez, x, y, z, yw, roll, tint) }
+    // telegraph poles on one side of some streets, every 40 m, with two wires sagging between them
+    if (poles) for (let n = Math.floor((lo - F.poleAt) / F.lampStep); n <= Math.floor((hi - F.poleAt) / F.lampStep); n++) {
+      const t = n * F.lampStep + F.poleAt, po = F.poleOff, [px, pz] = at(t, poleSide * po)
+      if (!here(t) || H(0x5b02, key(n), dir) % 100 >= 94 || !clear(px, pz, 1) || !offDrives(t, 0.4, poleSide, po) || !offTrunk(px, pz, 0.4)) continue
+      box(0.12, 4.3, 0.12, t, 4.3, poleSide * po, F.wood)
+      box(0.07, 0.07, 1.3, t, 7.9, poleSide * po, F.wood)      // the crossarm
+      solid(px, 4.3, pz, 0.14, 4.3, 0.14); post(px, pz, 0.14, 0.14)
+      const t2 = t + F.lampStep, [qx, qz] = at(t2, poleSide * po), sag = 0.35, q = F.lampStep / 4, ang = Math.atan2(sag, F.lampStep / 2)
+      if (clear(qx, qz, 1)) for (const w of [-0.9, 0.9]) for (const [tm, sgn] of [[t + q, -1], [t + 3 * q, 1]])
+        box(q / Math.cos(ang), 0.015, 0.015, tm, 7.9 - sag / 2, poleSide * po + w, F.wire, yaw, sgn * ang)
+    }
+    // street lamps every 40 m on the side away from the poles (alternating where there are none): 6.4 m, an arm over the street, a lit
+    // head and its pool on the pavement
+    for (let n = Math.floor((lo - F.lampAt) / F.lampStep); n <= Math.floor((hi - F.lampAt) / F.lampStep); n++) {
+      const t = n * F.lampStep + F.lampAt, side = poles ? -poleSide : n & 1 ? 1 : -1, [px, pz] = at(t, side * F.off)
+      if (!here(t) || H(0x5b03, key(n), dir) % 100 < 6 || !clear(px, pz, 1) || !offDrives(t, 0.4, side) || !offTrunk(px, pz, 0.4)) continue
+      const [hx, hz] = at(t, side * (F.off - 1.5))
+      box(0.07, 3.2, 0.07, t, 3.2, side * F.off, F.iron)
+      box(0.05, 0.05, 0.85, t, 6.35, side * (F.off - 0.75), F.iron)      // the arm, across the street
+      near('light', 0.3, 0.07, 0.3, hx, 6.2, hz, 0, 0, 0xffffff)
+      near('pool', 4.2, 1, 4.2, hx, 0.115, hz, 0, 0, 0x5c5e63)
+      solid(px, 3.2, pz, 0.09, 3.2, 0.09); post(px, pz, 0.09, 0.09)
+    }
+    // hydrants every 80 m (six in ten)
+    for (let n = Math.floor((lo - F.hydrantAt) / F.hydrantStep); n <= Math.floor((hi - F.hydrantAt) / F.hydrantStep); n++) {
+      const t = n * F.hydrantStep + F.hydrantAt, h = H(0x5b04, key(n), dir), side = h >>> 12 & 1 ? 1 : -1, [px, pz] = at(t, side * (F.off + 0.2))
+      if (!here(t) || h % 100 >= 60 || !clear(px, pz, 1) || !offDrives(t, 0.5, side) || !noTree(px, pz, 0.5)) continue
+      const tint = F.hydrant[(h >>> 4) % 3], o = side * (F.off + 0.2)
+      box(0.14, 0.34, 0.14, t, 0.34, o, tint); box(0.17, 0.06, 0.17, t, 0.74, o, tint); box(0.09, 0.09, 0.09, t, 0.86, o, tint); box(0.06, 0.05, 0.27, t, 0.5, o, tint)
+      solid(px, 0.45, pz, 0.2, 0.45, 0.2); post(px, pz, 0.2, 0.2)
+    }
+    // a bus shelter 1 street-block in 5 (a side by hash), slim, within 6.5 to 7.35 m so people keep their lane: a glass back, a roof on two posts,
+    // a bench, a sign pole, a strip light under the roof; never over a fence or a hedge, a drive, a path or a tree
+    for (let n = Math.floor((lo - F.shelterAt) / F.shelterStep); n <= Math.floor((hi - F.shelterAt) / F.shelterStep); n++) {
+      const t = n * F.shelterStep + F.shelterAt, h = H(0x5b05, key(n), dir), side = h >>> 12 & 1 ? 1 : -1, mid = 6.925, [px, pz] = at(t, side * mid)
+      if (!here(t) || h % 100 >= 20 || !clear(px, pz, 2) || !offDrives(t, 2.4, side, mid, 0.6) || !noTree(px, pz, 2.4)) continue
+      if (fences.some(q => Math.abs(q[1] - (c + side * 7.4)) < 1.2 && q[2] > t - 2.6 && q[0] < t + 2.6)) continue
+      box(1.5, 1.1, 0.03, t, 1.2, side * 7.3, F.glass)      // the glass back, 3 m long, from 0.1 m up
+      box(1.6, 0.07, 0.45, t, 2.5, side * mid, F.shelter)      // the roof
+      for (const u of [-1.45, 1.45]) box(0.06, 1.2, 0.06, t + u, 1.2, side * 6.6, F.post)
+      { const [ex, ez] = across(1.0, 0.1); near('light', ex, 0.03, ez, px, 2.42, pz, 0, 0, 0xffffff); near('pool', 3.2, 1, 3.2, px, 0.115, pz, 0, 0, 0x5c5e63) }      // a strip light under the roof and its pool
+      box(1.0, 0.04, 0.2, t, 0.5, side * 7.0, F.wood)      // the bench
+      box(0.05, 1.2, 0.05, t + 2.1, 1.2, side * 6.6, F.post); box(0.03, 0.3, 0.3, t + 2.1, 2.3, side * 6.6, F.sign)
+      { const [bx, bz] = at(t, side * 7.075), [ex, ez] = across(1.5, 0.275); solid(bx, 1.2, bz, ex, 1.2, ez); post(bx, bz, ex, ez)
+        const [sx, sz] = at(t + 2.1, side * 6.6); solid(sx, 1.2, sz, 0.06, 1.2, 0.06); post(sx, sz, 0.06, 0.06) }
+    }
+    // the x-running streets' lots: a mailbox on a post (seven in ten) and a bin (two in ten) at a lot's end, off its drive and path
+    if (!alongZ) for (const l of ctx.lots) {
+      if (Math.abs(l.front - c) > 5.5) continue
+      const sg = Math.sign(c - l.front), h = H(0x5b06, Math.round(l.x0), Math.round(c)), zm = l.front - sg * 1.7, zb = l.front - sg * 1.78, own = [l.drive, l.path].filter(Boolean)
+      const spots = [l.x0 + 2.0, l.x1 - 2.0].filter(x => !own.some(r => x + 0.5 > r[0] - 0.6 && x - 0.5 < r[2] + 0.6))
+      if (!spots.length) continue
+      if (h % 100 < 70) { const x = spots[(h >>> 8 & 1) && spots.length > 1 ? 1 : 0]
+        if (clear(x, zm, 0.5) && noTree(x, zm, 0.4)) { near('body', 0.05, 0.55, 0.05, x, 0.55, zm, 0, 0, F.wood); near('body', 0.22, 0.13, 0.15, x, 1.2, zm, 0, 0, F.mail[h >>> 12 & 3])
+          solid(x, 0.7, zm, 0.22, 0.7, 0.15); post(x, zm, 0.22, 0.15) } }
+      if ((h >>> 16) % 100 < 20) { const x = spots[spots.length - 1], bx = x + (x < (l.x0 + l.x1) / 2 ? 0.8 : -0.8)      // a bin 0.6 m wide, 0.5 m deep (6.53 to 7.03 m)
+        if (clear(bx, zb, 0.6) && noTree(bx, zb, 0.5) && !own.some(r => bx + 0.4 > r[0] - 0.6 && bx - 0.4 < r[2] + 0.6)) { near('body', 0.3, 0.55, 0.25, bx, 0.55, zb, 0, 0, F.bin[h >>> 20 & 3]); near('body', 0.32, 0.05, 0.27, bx, 1.12, zb, 0, 0, F.iron)
+          solid(bx, 0.6, zb, 0.3, 0.6, 0.25); post(bx, zb, 0.3, 0.25) } }
+    }
+    // parked cars along the kerb: a slot every 26 m, one in nine, on its side by hash, off every drive and path and not at a crossing; 4.6 m by
+    // 1.7 m, centred 4.15 m off the centre line (3.3 to 5.0)
+    for (let n = Math.floor(lo / F.carStep); n <= Math.floor(hi / F.carStep); n++) {
+      const t = (n + 0.5) * F.carStep, h = H(0x5b07, key(n), dir), side = h >>> 12 & 1 ? 1 : -1, [px, pz] = at(t, side * F.carOff)
+      if (!here(t) || h % 100 >= 11 || !clear(px, pz, 2.6) || !offDrives(t, 3.2, side, F.carOff, 1.1) || Math.abs(((t % P) + P) % P - P / 2) > P / 2 - 12) continue
+      const tint = F.car[h >>> 16 & 7], o = side * F.carOff
+      box(2.25, 0.3, 0.84, t, 0.62, o, tint); box(1.2, 0.3, 0.78, t - 0.15, 1.2, o, tint); box(1.22, 0.2, 0.8, t - 0.15, 1.24, o, F.glass)      // body, cabin, glass band
+      for (const u of [-1.35, 1.35]) for (const v of [-0.77, 0.77]) box(0.36, 0.32, 0.1, t + u, 0.32, o + v, F.tyre)      // four wheels, level with the body's sides
+      box(2.27, 0.05, 0.86, t, 0.34, o, F.tyre)      // the sill, so it never floats
+      { const [ex, ez] = across(F.carHL, F.carHW); solid(px, 0.95, pz, ex, 0.95, ez); out.parked.push({ x: faustCm(px), z: faustCm(pz), yaw: alongZ ? faustCm(Math.PI / 2) : 0, hl: F.carHL, hw: F.carHW, tint }) }
+    }
+  }
+  return out
+}
+// ---------------------------------------------------------------- end suburb street furniture
 // a cell's plan: { band, far: [box, tint], body: [box, tint], part: [shape, sx, sy, sz, x, y, z, yaw, roll, tint] (a pooled shape's
 // scale, place and turn: yaw about y, then roll about its own z; pane: a window or door facing +z before its yaw, lit: a lit one,
 // shed: a lean-to tin roof falling toward +z, body: a box), roof: [cx, y, cz, ex, h, ez, alongZ, tint],
@@ -6789,7 +6904,7 @@ function faustRingCell(seed, S, plan, i, j) {
     // builder B's street furniture (card #91), when its block is in: lamps, poles and wires, mailboxes, hydrants, bins, shelters, cars
     if (typeof faustSubStreetside === 'function') {
       const add = faustSubStreetside(seed, i, j, { streets, pavements: out.pavements, lots: out.lots, segs })
-      if (add) { out.part.push(...(add.part || [])); out.solid.push(...(add.solid || [])); out.light.push(...(add.light || [])) }
+      if (add) { out.part.push(...(add.part || [])); out.near.push(...(add.near || [])); out.solid.push(...(add.solid || [])); out.light.push(...(add.light || [])); out.parked = add.parked || []; out.posts = add.posts || [] }
     }
     return out
   }
@@ -8246,12 +8361,14 @@ function faustShedFront(g, lot) {
   const both = (a, b, c, t) => { g.tri(a, b, c, t); g.tri(a, c, b, t) }
   for (const q of dx) { g.box(faustBox(q, 4.75, wl + 0.2, 0.05, 0.05, 0.2), iron); g.box(faustBox(q, 4.62, wl + 0.42, 0.15, 0.1, 0.15), 0x30353c, -1) }
   if (kind === 0) {
-    const q = dx[1], zb = wl + 1.7      // a gantry beam across the front on two struts, with a trolley, a chain and a hook block over the second door
-    g.box(faustBox(q, 5.25, zb, 2.4, 0.2, 0.14), steel); g.box(faustBox(q, 5.47, zb, 2.4, 0.03, 0.2), 0x8b939b)
-    for (const s of [-1, 1]) { g.box(faustBox(q + s * 2.2, 5.25, wl + 0.85, 0.1, 0.1, 0.85), steel); g.box(faustBox(q + s * 2.2, 4.62, zb, 0.1, 0.62, 0.1), steel) }
-    g.box(faustBox(q, 5.0, zb, 0.34, 0.12, 0.22), 0x30353c)      // the trolley
-    g.box(faustBox(q, 4.2, zb, 0.04, 0.8, 0.04), iron); g.box(faustBox(q, 3.28, zb, 0.2, 0.18, 0.15), 0xd8b21a); g.box(faustBox(q, 3.0, zb, 0.05, 0.1, 0.05), iron)
-    for (let i = 0; i < 9; i++) g.box(faustBox(q - 2.67 + i * 0.67, 4.62, wl + 0.33, 0.17, 0.12, 0.012), i & 1 ? 0xd8b21a : 0x16191d)      // a hazard band on the door's front face
+    const q = dx[1], zt = wl + 2.0      // a hoist: an I-beam cantilevered 2.1 m out from the wall over the pavement, a trolley, a chain, a hook block and a crate in the air
+    g.box(faustBox(q, 4.66, wl + 1.06, 0.11, 0.13, 1.06), steel); g.box(faustBox(q, 4.81, wl + 1.06, 0.22, 0.025, 1.06), 0x8b939b); g.box(faustBox(q, 4.51, wl + 1.06, 0.22, 0.025, 1.06), 0x8b939b)
+    g.box(faustBox(q, 4.66, wl + 0.03, 0.34, 0.5, 0.03), iron)      // the plate it hangs from on the wall
+    both([q, 4.05, wl + 0.27], [q, 4.52, wl + 1.5], [q, 4.52, wl + 0.27], steel)      // a gusset under it
+    g.box(faustBox(q, 4.4, zt, 0.17, 0.09, 0.2), 0x30353c)      // the trolley
+    g.box(faustBox(q, 3.98, zt, 0.03, 0.34, 0.03), iron); g.box(faustBox(q, 3.55, zt, 0.17, 0.17, 0.14), 0xd8b21a); g.box(faustBox(q, 3.3, zt, 0.04, 0.08, 0.04), iron)
+    g.box(faustBox(q, 2.97, zt, 0.4, 0.3, 0.4), 0x8a6a3a); g.box(faustBox(q, 2.97, zt, 0.42, 0.04, 0.42), 0x30353c)      // the load, a crate with a strap
+    for (let i = 0; i < 9; i++) g.box(faustBox(q - 2.67 + i * 0.67, 4.22, wl + 0.315, 0.17, 0.12, 0.012), i & 1 ? 0xd8b21a : 0x16191d)      // a hazard band on the door's front face, under its top
   } else if (kind === 2 && faustShedKit(lot) !== 1) {
     const x0 = dx[0] - 3.5, x1 = dx[1] + 3.5, cx = (x0 + x1) / 2, ex = (x1 - x0) / 2      // a steel canopy over both doors, on tie rods
     g.box(faustBox(cx, 4.3, wl + 0.85, ex, 0.07, 0.85), steel); g.box(faustBox(cx, 4.16, wl + 1.68, ex, 0.12, 0.03), iron)
