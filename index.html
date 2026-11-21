@@ -6517,10 +6517,17 @@ const FAUST_CUBE = [0, 1, 2].flatMap(axis => [-1, 1].flatMap(sign => {
   return [0, 1, 2, 0, 2, 3].map(i => corners[i])
 }))
 function faustBatch(capacity = 12288) {
-  const p = new Float32Array(capacity * 3), n = new Float32Array(capacity * 3), uv = new Float32Array(capacity * 2), colors = new Float32Array(capacity * 3)
-  const glow = new Float32Array(capacity), col = new THREE.Color(); let count = 0, lit = 0
-  const vertex = (x, y, z, nx, ny, nz, u, v) => {
+  // card #69: the arrays start at 8192 vertices and double up to the capacity (the limit), so a build allocates what it needs
+  let cur = Math.min(capacity, 8192)
+  let p = new Float32Array(cur * 3), n = new Float32Array(cur * 3), uv = new Float32Array(cur * 2), colors = new Float32Array(cur * 3)
+  let glow = new Float32Array(cur); const col = new THREE.Color(); let count = 0, lit = 0
+  const grow = () => {
     if (count >= capacity) throw new Error('Faustland geometry budget exceeded')
+    const next = Math.min(capacity, cur * 2), big = (a, k) => { const b = new Float32Array(next * k); b.set(a); return b }
+    p = big(p, 3); n = big(n, 3); uv = big(uv, 2); colors = big(colors, 3); glow = big(glow, 1); cur = next
+  }
+  const vertex = (x, y, z, nx, ny, nz, u, v) => {
+    if (count >= cur) grow()
     const i = count * 3, j = count * 2
     p[i] = x; p[i + 1] = y; p[i + 2] = z; n[i] = nx; n[i + 1] = ny; n[i + 2] = nz
     uv[j] = u; uv[j + 1] = v; colors[i] = col.r; colors[i + 1] = col.g; colors[i + 2] = col.b; glow[count] = lit; count++
@@ -25452,7 +25459,7 @@ AUTO_STEPS.go = (R, a) => {
 // thing along the roads by the traffic router. The router's own driver (trafficThink: lanes, junction locks and signals, braking for
 // people and cars, pure-pursuit steering) is asked for its input each frame and that is laid over the player's, for the player is
 // seated and trafficDriveTo only takes an empty car: the route is made with the seat blanked, and o.traffic held aside between frames.
-// { drive: { x, z, speed, urgent } | { thing } | 'thing' }. Ends on arrival ({ arrived, x, z, left, ms }) or throws.
+// { drive: { x, z, speed, urgent (default true: not held at junctions or signals; false: traffic manners) } | { thing } | 'thing' }. Ends on arrival ({ arrived, x, z, left, ms }) or throws.
 function autoCarNear(me, skip) {
   let best = null, bd = Infinity
   for (const o of objs) {
@@ -25546,7 +25553,7 @@ AUTO_STEPS.drive = (R, a) => {
       st.tried = t
       const riders = o.riders.slice(); o.riders.fill(undefined)
       let ok = false
-      try { ok = trafficDriveTo(o, { x: gx, z: gz }, { driver: false, urgent: !!A.urgent, speed: Number(A.speed) || 12 }) } finally { riders.forEach((r, k) => { o.riders[k] = r }) }
+      try { ok = trafficDriveTo(o, { x: gx, z: gz }, { driver: false, urgent: A.urgent !== false, speed: Number(A.speed) || 12 }) } finally { riders.forEach((r, k) => { o.riders[k] = r }) }
       if (ok) {
         autoSay('§7drive: on the road, §f' + Math.round(Math.hypot(gx - o.x, gz - o.z)) + ' m §7to go')
         if (st.goalOpen === undefined) st.goalOpen = autoLane(gx, gz, o.V).d > 28            // a goal on open ground (the plaza): the last of it off the road
