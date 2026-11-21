@@ -15608,7 +15608,7 @@ function trafficDetach(o, eject = true) {
   if (eject && a.driver && o.V) {
     const p = seatAt(o, o.V.exit[0]), fw = rotq(o.q, [1, 0, 0]), event = [r2(trafficClock()), r2(p[0]), r2(p[2]), r2(-fw[0]), r2(-fw[2])]
     o.trafficExit = GAME.streetLife?.driverExit ? null : event; trafficState.stats.carjacks++
-    GAME.streetLife?.driverExit?.({ vehicleId: o.id, x: p[0], y: p[1], z: p[2], dx: -fw[0], dz: -fw[2] })
+    GAME.streetLife?.driverExit?.({ vehicleId: o.id, x: p[0], y: p[1], z: p[2], dx: -fw[0], dz: -fw[2], hit: o.exitHit || undefined })          // card #101: #57's blow
   }
   o.traffic = null
   if (o.car) o.V.wheels.at.forEach((w, k) => { o.car.applyEngineForce(0, k); o.car.setBrake(1, k) })
@@ -24089,7 +24089,11 @@ function carThrough(c, o, G, P, d) {
     const who = o.riders[i] !== undefined ? players.get(o.riders[i]) : !i && o.traffic?.driver ? 'traffic' : null
     if (who && g < bd) { bd = g; best = who }
   })
-  if (best === 'traffic') { trafficDetach(o, true); return null }
+  if (best === 'traffic') {          // card #101: knocked out of the car by the blow, and hurt by it (a swing's whole damage)
+    o.exitHit = { dmg: (G.dmg ?? 10) * profDmg(c, G.name) * (G.melee ? profPellets(c, G.name, G.pellets ?? 1) : 1), by: c, ux: d[0], uz: d[2], gun: GUNS.indexOf(G), cause: 1 }
+    try { trafficDetach(o, true) } finally { o.exitHit = null }
+    return null
+  }
   if (!best || best.dead > 0 || best.prot > 0) return null
   const h = best, was = hookHitOn && [h.hp, h.mark, h.markT]
   h.hp -= stat(h, 'take', stat(c, 'give', G.dmg * profDmg(c, G.name)))
@@ -30302,6 +30306,13 @@ function boom(o, list, credit) {
   const B = o.V.boom, by = players.get(o.by), at = [o.x, o.y, o.z]
   if (LV.faust && isHost) dsBlast(at[0], at[1], at[2], B.radius * 1.6, 3)      // card #46: glass shatters past the blast's own reach
   o.riders.forEach((id, i) => { const c = id !== undefined && players.get(id); if (c) leave(c, o, i) })
+  // card #101: the blast hurts the street (people and birds) as the pram's does; then a traffic driver still aboard (blown up in
+  // the tick it was hit hard: no fuse to get him out first) dies with his car, thrown out of his seat's side (after the blast: it
+  // would have caught him twice)
+  if (isHost && LV.faust) try { GAME.streetLife?.blast?.(at[0], at[2], B, by) } catch (e) {}
+  if (isHost && o.traffic?.driver && o.V.seats?.[0]) { const s = seatAt(o, o.V.seats[0]), sx = s[0] - o.x, sz = s[2] - o.z, n = Math.hypot(sx, sz) || 1
+    o.traffic.driver = false
+    try { GAME.streetLife?.driverExit?.({ vehicleId: o.id, x: s[0], z: s[2], dx: sx / n, dz: sz / n, hit: { dmg: 1000, by, ux: sx / n, uz: sz / n, gun: -1, cause: 5 } }) } catch (e) {} }
   for (const c of list) {
     const dx = c.x - at[0], dz = c.z - at[2], d = Math.hypot(dx, c.y - at[1], dz), k = 1 - d / B.radius
     const was = hookHitOn && [c.hp, c.mark, c.markT]
@@ -30680,7 +30691,7 @@ function partsNear(c, verb, reach = GRAB.reach) {
       out.push({ kind: 'person', src: 'char', ref: h, gap, R: h.r, mass: PARTS.person.mass })
     }
     if (slState && LV.faust) slAround(c.x, c.z, reach + 2.5, tickAt || now(), (ag, p) => {
-      if (p.down && !p.dead || p.hidden || p.scale < 0.6 || ag.kind === SL_K.exit || ag.kind === SL_K.cyclist && p.rec && !p.dead) return          // card #101: bodies too
+      if (p.down && !p.dead || p.hidden || p.scale < 0.6 || ag.kind === SL_K.exit && !p.dead || ag.kind === SL_K.cyclist && p.rec && !p.dead) return          // card #101: bodies too
       if (p.rec && p.rec.kind !== 2 && p.rec.kind !== 5 && p.rec.kind !== 11) return
       const dog = ag.kind === SL_K.stray, R = dog ? 0.3 : 0.32
       const gap = Math.hypot(p.x - c.x, p.z - c.z) - c.r - R
@@ -31104,6 +31115,7 @@ function partsAgent(id) {
   if (!st) return null
   for (const c of st.cells.values()) for (const ag of c.agents) if (ag.id === id) return ag
   for (const L of st.lines?.values?.() || []) for (const ag of L.riders || []) if (ag.id === id) { ag.line = L; return ag }
+  for (const e of st.exits?.values?.() || []) if (e.ag.id === id) return e.ag          // card #101: a driver out of his car
   return null
 }
 // where a holder is drawn here (or simulated, off screen or on a server): x, y, z, yaw
@@ -32658,7 +32670,7 @@ function slAddRec(a, local) {
 }
 function slPrune(t) {
   const st = slState
-  for (const [k, r] of st.rec) if (t - r.t > (r.kind === 11 || r.kind === 13 || r.kind === 9 && !r.what && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {          // card #101: a death longer, and a body's throws (they place it)
+  for (const [k, r] of st.rec) if (t - r.t > (r.kind === 11 || r.kind === 13 || (r.kind === 9 && !r.what || r.kind === 4) && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {          // card #101: a death longer, and a body's throws (they place it)
     st.rec.delete(k); st.exits.delete(k)
     if (r.kind === 8 && partsGrabbed.get(r.id) === r) partsGrabbed.delete(r.id)
     if (r.kind === 2) st.panics.splice(st.panics.indexOf(r), 1)
@@ -32793,7 +32805,7 @@ function slFleeStart(ag, at) {
 const SL_POSE = () => ({ x: 0, z: 0, y: 0, yaw: 0, clip: 'idle', ct: 0, scale: 1, mode: 0, v: 0, s: 0, i: 0, u: 0, down: false, rec: null, hidden: false, bike: null, prop: 0 })
 function slPose(ag, t, o) {
   o.y = 0; o.scale = 1; o.down = false; o.hidden = false; o.rec = null; o.lieRoll = 0; o.roll = 0; o.pitch = 0; o.dead = false; o.fw = 0
-  const r = ag.kind === SL_K.exit ? ag.r : slRecFor(ag, t)
+  const r = ag.kind === SL_K.exit ? slRecFor(ag, t) || ag.r : slRecFor(ag, t)          // card #101: an exit's knock-down or death shows
   // the schedule's pose first (cyclists from their line)
   if (ag.kind === SL_K.cyclist) slRider(ag.line, ag, t, o)
   else if (ag.kind !== SL_K.exit) slAmbient(ag, t, o)
@@ -32915,6 +32927,9 @@ function slDetached(ag, r, t, o) {
   if (r.kind === 10) return slStaggerPose(ag, r, t, o)          // card #67: a stagger, still on its feet
   const tau = (t - r.t) / 1000, H = ag.body >= 3 ? 1.66 : 1.78, S = STREET
   const dog = ag.kind === SL_K.stray
+  // card #101: a driver not out of his car yet (a guest draws behind the host's clock, so his exit is ahead of it): not drawn; he
+  // was drawn lying at the door (the lie, k1 0, held from tau below 0) before he ran
+  if (r.kind === 4 && tau < 0) { o.hidden = true; o.scale = 0; return }
   if (r.kind === 1 || r.kind === 4 || r.kind === 11) {          // card #101: a death (11) is a knock-down that never gets up
     if (r.kind === 11 && typeof slDeadInWater === 'function' && slDeadInWater(ag, r, t, o)) { slDeadFade(tau, o); return }          // #94: afloat
     // card #101: thrown or dropped after it died, or flying as it died (#55's record 9): it lies where it came down
@@ -33321,11 +33336,31 @@ function slObstacles(x, z, R = 25) {
   return x === undefined ? list : list.filter(o => Math.abs(o.x - x) < R && Math.abs(o.z - z) < R && Math.hypot(o.x - x, o.z - z) < R)
 }
 // a driver taken out of a car (traffic's carjack): a man who runs for the nearest doorway
-function slDriverExit({ vehicleId, x, z, dx = 1, dz = 0 } = {}) {
+// card #101: hit { dmg, by, ux, uz, gun, cause }: the exit takes a hit as he gets out (a knock-down a ms on, so it follows his exit;
+// at none left, his death); without it he runs as before. Returns his id
+function slDriverExit({ vehicleId, x, z, dx = 1, dz = 0, hit } = {}) {
   if (!isHost || !slState || !Number.isFinite(x) || !Number.isFinite(z)) return
   const T = tickAt || now(), id = 0x200000 + (++slState.exitN % 4096)
   const [x2, z2] = slRunTo(x, z, dx, dz, 24)
-  slAddRec([SL_REC.exit, id, Math.round(T), slR2(x), slR2(z), slR2(x2), slR2(z2), slHash(vehicleId | 0, T | 0) % 3])
+  const r = slAddRec([SL_REC.exit, id, Math.round(T), slR2(x), slR2(z), slR2(x2), slR2(z2), slHash(vehicleId | 0, T | 0) % 3])
+  const e = r && slState.exits.get(r.key)
+  if (e && hit && hit.dmg > 0) { const n = Math.hypot(hit.ux ?? dx, hit.uz ?? dz) || 1, ux = (hit.ux ?? dx) / n, uz = (hit.uz ?? dz) / n
+    slKnock(e.ag, { x: r.x, z: r.z, y: 0, yaw: Math.atan2(dx, dz), down: false, dead: false, rec: null, v: 0, scale: 1 }, ux, uz, 2 + Math.min(4, hit.dmg / 30), hit.by || null, Math.round(T) + 1,
+      1 + Math.min(2, hit.dmg / 60), undefined, undefined, hit.dmg, hit.gun ?? -1, hit.cause ?? 6) }
+  return r ? id : undefined
+}
+// a blast in the street (a car's, by boom): the street people in its radius hurt and thrown (its damage at the distance, cause 5),
+// the birds there killed, the street panicked; as the pram's blast does
+function slBlastStreet(x, z, B, by, T) {
+  if (!isHost || !slState) return
+  const caught = []
+  slAround(x, z, B.radius, T, (ag, p) => { const d = Math.hypot(p.x - x, p.z - z); if (d < B.radius && !p.dead && !p.hidden) caught.push([ag, { ...p }, d]) })
+  for (const [ag, p, d] of caught) {
+    slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
+    try { slKnock(ag, p, (p.x - x) || 0.01, p.z - z, 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }
+  }
+  slBirdsNear(x, z, B.radius, T, (f, i, q) => slBirdKill(f, i, by, (q.x - x) || 0.01, q.z - z, T))
+  slPanic(x, z, T, STREET.scareR * 2)
 }
 // the wire: new records in the next few snapshots, and every live one every refreshMs (a late joiner, a lost packet)
 function slWireOut() {
@@ -33929,7 +33964,7 @@ function slFrameSafe(t, dt, obl) { try { slFrame(t, dt, obl) } catch (e) { frame
   HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust && faustState) { if (!slState || slState.seed !== faustState.seed) slReset(); slHostTick() } }
 }
 GAME.streetLife = {
-  obstacles: slObstacles, driverExit: slDriverExit,
+  obstacles: slObstacles, driverExit: slDriverExit, blast: (x, z, B, by) => slBlastStreet(x, z, B, by, tickAt || now()),          // card #101: blast
   // traffic may report a contact from its own physics; the host's own test makes the same record, so either is enough
   struck: ({ id, vehicleId, vx = 0, vz = 0 } = {}) => {
     if (!isHost || !slState) return
