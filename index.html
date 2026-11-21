@@ -21869,6 +21869,11 @@ const CAPE_CURL = 0.25, CAPE_FLUTTER = 0.12, CAPE_FLUTTER_RATE = 20
 // CAPE_RUN_GATHER of its width (rather than CAPE_GATHER), so the forearm passes outside it. It comes in with the ripple
 // (5 to 9 m/s): standing, walking, his run and dying are as they were
 const CAPE_SOFT = 0.02, CAPE_SOFT_F = 0.25, CAPE_SOFT_IN = 0.04, CAPE_RUN_GATHER = 0.37
+// (#72, #62's stills in a tenement: the cape's corner through a door jamb, drawn on the far side) walls: when the level's
+// solids are by him (within CAPE_WALL_NEAR either side of his hips, or between his hips and the hem's corners), each of
+// the cloth's edge points is looked at from its row's middle and from his hips; a wall in either way draws that bone's width in until neither line meets it (CAPE_WALL short), as an arm does, so the cloth
+// bunches through a doorway and along a wall instead of passing into them
+const CAPE_WALL = 0.06, CAPE_WALL_NEAR = 1.5, CAPE_WALL_EDGE = 1.12, CAPE_WALL_RATE = 30, CAPE_WALL_HARD = 0.005, CAPE_WALL_HOLD = 0.5, CAPE_WALL_SEE = 1.3, CAPE_WALL_IN = 4, CAPE_WALL_OUT = 1.2, CAPE_WALL_AHEAD = 0.15, CAPE_WALL_EASE = 0.35, CAPE_WALL_JERK = 0.008
 const capeP = new THREE.Vector3(), capeX = new THREE.Vector3(), capeY = new THREE.Vector3(), capeM = new THREE.Matrix4(), capeR = new THREE.Quaternion(), capeL3 = new THREE.Matrix3()
 // once per model: the cloth's points, each its bones, its bind position in each bone's frame, the weights, and the share
 // of it each cape bone carries (a turn of cape bone k moves it by share[k]); and each cape bone's axes in its parent's
@@ -21914,7 +21919,7 @@ function capePoints(R) {
       let best = null, bd = Infinity
       for (const e of near) { const d = Math.abs(e[1][X] - x) + Math.abs(e[1][1] - y) - e[1][Z] * inward * 0.05; if (d < bd) { bd = d; best = e } }
       if (!best) continue
-      const p = { names: [], local: [], dl: [], w: [], share: [0, 0, 0], top: f < 0.2, side: Math.abs(s) > 0.4, k: 0, f }
+      const p = { names: [], local: [], dl: [], w: [], share: [0, 0, 0], top: f < 0.2, side: Math.abs(s) > 0.4, k: 0, f, s }
       hinges.forEach((y, k) => { if ((best[1][1] - y) * Math.sign(bot - top) > 0.01) p.k = k })
       for (let c = 0; c < 4; c++) {
         const j = J.getComponent(best[0], c), w = W.getComponent(best[0], c)
@@ -21930,6 +21935,8 @@ function capePoints(R) {
       pts.push(p)
     }
   }
+  // (each point's row's middle, for the walls)
+  for (const p of pts) p.mid = pts.findIndex(q => q.f === p.f && q.s === 0)
   return (M.capePts = pts)
 }
 // per avatar: its points and capsules on its own bones, as flat arrays (positions filled in each frame): per point its
@@ -21943,6 +21950,7 @@ function capeRig(R) {
   return (R.capeS = {
     pts: pts.map(p => ({ ...p, bones: p.names.map(n => R.bones.get(n)), local: p.local.flat(), dl: p.dl.flat() })), morph: R.capeMorph ||= [0, 0, 0],
     of: R.cape.map((b, k) => pts.flatMap((p, i) => p.k === k ? [i] : [])), below: pts.flatMap((p, i) => p.top ? [] : [i]),
+    hem: pts.flatMap((p, i) => p.f === CAPE_ROWS[CAPE_ROWS.length - 1] && Math.abs(p.s) > 0.9 ? [i] : []),
     at: new Float64Array(pts.length * 3),
     caps: caps.map(([n, ...e]) => ({ bone: R.bones.get(n), arm: /arm|hand/.test(n), e: e.slice(0, 6), r: e[6] })),
     A: new Float64Array(caps.length * 6), r: new Float64Array(caps.length), near: R.cape.map(() => []), every: caps.map((c, i) => i),
@@ -21950,7 +21958,7 @@ function capeRig(R) {
 }
 // x = M e (a point by a bone's world matrix, as plain numbers)
 const capeMul = (M, x, y, z, out, o) => { out[o] = M[0] * x + M[4] * y + M[8] * z + M[12]; out[o + 1] = M[1] * x + M[5] * y + M[9] * z + M[13]; out[o + 2] = M[2] * x + M[6] * y + M[10] * z + M[14] }
-const capeTmp = new Float64Array(3), capeHinge = new Float64Array(3)
+const capeTmp = new Float64Array(3), capeHinge = new Float64Array(3), capeHip = new THREE.Vector3()
 function capeSkinPts(S) {
   const [c, fs, fc] = S.morph
   S.pts.forEach((p, i) => {
@@ -22097,6 +22105,10 @@ function capePose(R, from, to = R.cape.length - 1) {
     if (!k) {
       if (R.capeSw) b.quaternion.premultiply(rigQ.setFromAxisAngle(X.B, R.capeSw))
       b.position.copy(R.capeAt).addScaledVector(X.B, R.capeOff / (R.capeS?.scale || 1))
+    } else if (R.capeCs) {
+      // (by a wall, this bone shifted sideways from its parent's, along the parent's across axis: in its scaled units)
+      const P0 = R.capePos ||= R.cape.map(c => c.position.clone()), d = (R.capeCs[k] - R.capeCs[k - 1]) / ((R.capeS?.scale || 1) * Math.max(R.capeG[k - 1], 0.05))
+      b.position.copy(P0[k]); b.position.x += d * (R.capeSide?.[k] || 1)
     }
     b.updateMatrixWorld(true)
   }
@@ -22170,7 +22182,9 @@ function rigCape(a, R, dt) {
     const want = dying ? 0 : lift * share + Math.sin(R.capePh - k * 1.1 + a.cid) * amp * ripple + plumb * (k ? 1 : 0.85)
     wants[k] = want
     // (at speed, no further into him than CAPE_SOFT_IN past its last contact)
-    const wantS = run && lo[k] > -Infinity && !dying ? want + (Math.max(want, lo[k] - CAPE_SOFT_IN) - want) * run : want
+    // (by a wall too: the cape drawn in there settles onto his back rather than slamming into it)
+    const sf = Math.max(run, !dying && R.capeClock - (R.capeWallAt ?? -1e9) < CAPE_WALL_HOLD ? 1 : 0)
+    const wantS = sf && lo[k] > -Infinity && !dying ? want + (Math.max(want, lo[k] - CAPE_SOFT_IN) - want) * sf : want
     R.capeW[k] += ((wantS - R.capeT[k]) * 40 - R.capeW[k] * 9) * h; R.capeT[k] += R.capeW[k] * h
     if (R.capeT[k] < lo[k]) { R.capeT[k] = lo[k]; R.capeW[k] = Math.max(R.capeW[k], 0) }
     if (R.capeT[k] > hi[k]) { R.capeT[k] = hi[k]; R.capeW[k] = Math.min(R.capeW[k], 0) }
@@ -22185,6 +22199,22 @@ function rigCape(a, R, dt) {
   const ground = capeLying && floor !== null
   if (R.frame % 16 === 0) R.capeTop = true      // now and then, try the first bone's top rows in its contact again
   capeSkinPts(S); capeCaps(S)
+  // (walls by him: either side of his hips, or between his hips and the hem's corners; the cloth asks the level only then)
+  let walls = false
+  const fl = Math.hypot(R.capeB.x, R.capeB.z) || 1, fwX = -R.capeB.x / fl, fwZ = -R.capeB.z / fl
+  const Pw = capeHip.setFromMatrixPosition(R.bones.get('pelvis').matrixWorld)
+  const sees = (ax, ay, az, bx, by, bz, mg = CAPE_WALL) => { const dx = bx - ax, dy = by - ay, dz = bz - az, r = Math.hypot(dx, dy, dz); return r < 0.02 || staticRay(ax, ay, az, dx / r, dy / r, dz / r, r + mg) >= r + mg }
+  if (!dying && !capeLying && !seated && typeof staticRay === 'function') {
+    for (const [dx, dz] of [[rigF.x, rigF.z], [-rigF.x, -rigF.z]]) if (staticRay(Pw.x, Pw.y, Pw.z, dx, 0, dz, CAPE_WALL_NEAR) < CAPE_WALL_NEAR) walls = true
+    // (the hem's corners stretched out by CAPE_WALL_SEE from its middle: a wall is found before the cloth reaches it)
+    // (and as they will be CAPE_WALL_AHEAD s on at his speed: a door he runs at is found before he reaches it)
+    for (const sh of [0, (a.v || 0) * CAPE_WALL_AHEAD]) { if (walls) break
+      const ox = fwX * sh, oz = fwZ * sh
+      for (const i of S.hem) { const m = S.pts[i].mid, ax = S.at[m * 3], ay = S.at[m * 3 + 1], az = S.at[m * 3 + 2]
+        if (!sees(Pw.x + ox, Pw.y, Pw.z + oz, ax + (S.at[i * 3] - ax) * CAPE_WALL_SEE + ox, ay + (S.at[i * 3 + 1] - ay) * CAPE_WALL_SEE, az + (S.at[i * 3 + 2] - az) * CAPE_WALL_SEE + oz)) { walls = true; break } } }
+    // (once seen, a wall is asked about for CAPE_WALL_HOLD s more: the cloth drawn in clear of it no longer finds it)
+    if (walls) R.capeWallAt = R.capeClock; else walls = R.capeClock - (R.capeWallAt ?? -1e9) < CAPE_WALL_HOLD
+  }
   // then each bone, top down: gather its sides off his arms, ease the top back, and the least extra lift that brings
   // its points out, about its hinge
   const H = capeHinge, at = S.at, hs = R.lod < 1 ? h : 2 * h      // (the time since this cape was last solved)
@@ -22215,7 +22245,90 @@ function rigCape(a, R, dt) {
         }
         // (and at speed narrower than his shoulders, eased in and out: the arms' gather is at once)
         const top = 1 + ((CAPE_RUN_WIDTH[k] ?? 1) - 1) * shape, wide = R.capeG[k] > top ? Math.max(top, R.capeG[k] - 1.5 * hs) : Math.min(top, R.capeG[k] + 1.2 * hs)
-        const g = Math.max(CAPE_GATHER + (CAPE_RUN_GATHER - CAPE_GATHER) * run, Math.min(gather, wide))
+        const floorG = CAPE_GATHER + (CAPE_RUN_GATHER - CAPE_GATHER) * run, Wg = R.capeGw ||= R.cape.map(() => 1), Wv = R.capeGwv ||= R.cape.map(() => 0)
+        const Cs = R.capeCs ||= R.cape.map(() => 0), Cv = R.capeCv ||= R.cape.map(() => 0), Ct = R.capeCt ||= R.cape.map(() => 0)
+        let g, shift = null
+        if (walls) {
+          // (the walls, each edge on its own side: per row of this bone (not the top rows, between his shoulders), how far
+          // each edge may reach from the row's middle before a wall, CAPE_WALL short: along the row (one ray) and from his
+          // hips (halved five times); then the widest width and the sideways shift that keep both edges inside, the shift
+          // back toward the middle wherever there's room. A wall on one side moves that edge in and the cape hangs off it;
+          // both sides blocked, it narrows. The first bone, hung from his back, doesn't shift)
+          const ahead = (a.v || 0) > 2 ? (a.v || 0) * CAPE_WALL_AHEAD : 0, G0 = R.capeG[k], rows = []
+          for (const i of S.of[k]) {
+            const p = S.pts[i], m = p.mid
+            if (!(p.s > 0.9) || !(m >= 0) || p.top) continue
+            const o = S.pts.findIndex(q => q.f === p.f && q.s === -p.s)
+            if (o < 0) continue
+            rows.push([m, i, o])
+          }
+          // (which way the parent's across axis points: toward the + edge or away)
+          if (k && rows.length) { const [m, i] = rows[0], E = R.cape[k - 1].matrixWorld.elements, d = (at[i * 3] - at[m * 3]) * E[0] + (at[i * 3 + 1] - at[m * 3 + 1]) * E[1] + (at[i * 3 + 2] - at[m * 3 + 2]) * E[2]
+            ;(R.capeSide ||= R.cape.map(() => 1))[k] = d < 0 ? -1 : 1 }
+          const reach = (m, e, mg, sh) => {      // how far along the row from its middle toward edge e it may reach (m)
+            const cx = at[m * 3], cy = at[m * 3 + 1], cz = at[m * 3 + 2], ex = at[e * 3] - cx, ey = at[e * 3 + 1] - cy, ez = at[e * 3 + 2] - cz, el = Math.hypot(ex, ey, ez)
+            if (el < 0.02) return [Infinity, el]
+            const full = el * CAPE_WALL_EDGE / Math.max(G0, 0.05) + 0.5, ox = fwX * sh, oz = fwZ * sh
+            const t = staticRay(cx + ox, cy, cz + oz, ex / el, ey / el, ez / el, full + mg)
+            let A = t >= full + mg ? Infinity : t - mg
+            const sees = d => { const f = d / el; return staticRay(Pw.x + ox, Pw.y, Pw.z + oz, cx + ex * f - Pw.x, cy + ey * f - Pw.y, cz + ez * f - Pw.z, 1) >= 1 }
+            // (the line from his hips to the edge at reach d: a ray of length 1 over the scaled vector)
+            const hipClear = d => { const f = d / el, x = cx + ex * f + ox, y = cy + ey * f, z = cz + ez * f + oz, dx = x - Pw.x - ox, dy = y - Pw.y, dz = z - Pw.z - oz, r = Math.hypot(dx, dy, dz); return r < 0.02 || staticRay(Pw.x + ox, Pw.y, Pw.z + oz, dx / r, dy / r, dz / r, r + mg) >= r + mg }
+            const hiTo = Math.min(full, A)
+            if (!hipClear(hiTo)) { let a0 = 0, a1 = hiTo; if (!hipClear(0)) A = 0; else { for (let n = 0; n < 5; n++) { const md = (a0 + a1) / 2; if (hipClear(md)) a0 = md; else a1 = md } A = Math.min(A, a0) } }
+            return [A, el]
+          }
+          // (in the unshifted cape's terms: each edge's limit from the cape's own middle, never past where that edge hangs at
+          // the full width, so the free edge stays put and only the edge by the wall comes in; then the widest width G and
+          // the shift interval [lo, hi] (m, toward the + edge) that keep both edges inside)
+          const solve = (mg, sh) => {
+            const lims = rows.map(([m, i, o]) => { const [Ap, ep] = reach(m, i, mg, sh), [An, en] = reach(m, o, mg, sh), xp = ep * CAPE_WALL_EDGE / Math.max(G0, 0.05), xn = en * CAPE_WALL_EDGE / Math.max(G0, 0.05)
+              return [Math.min(Cs[k] + Ap, xp), xp, Math.min(An - Cs[k], xn), xn] })      // [limit +, full +, limit -, full -]
+            if (!lims.length) return null
+            const iv = gg => { let lo = -Infinity, hi = Infinity; for (const [Pp, xp, Pn, xn] of lims) { lo = Math.max(lo, gg * xn - Pn); hi = Math.min(hi, Pp - gg * xp) } return [lo, hi] }
+            let G = 1
+            for (const [Pp, xp, Pn, xn] of lims) G = Math.min(G, k ? (Pp + Pn) / (xp + xn) : Math.min(Pp / xp, Pn / xn))
+            G = Math.max(0, G)
+            let [lo, hi] = iv(G)
+            if (lo > hi) { let a0 = 0, a1 = G; for (let n = 0; n < 6; n++) { const md = (a0 + a1) / 2; const [l2, h2] = iv(md); if (l2 <= h2) a0 = md; else a1 = md } G = a0; [lo, hi] = iv(G) }
+            return { G, lo: k ? lo : 0, hi: k ? hi : 0 }
+          }
+          const soft = solve(CAPE_WALL, 0), soon = ahead ? solve(CAPE_WALL, ahead) : null
+          let gT = 1, lo = -Infinity, hi = Infinity
+          for (const q of [soft, soon]) if (q) { gT = Math.min(gT, q.G); lo = Math.max(lo, q.lo); hi = Math.min(hi, q.hi) }
+          if (lo > hi) { const md = (lo + hi) / 2; lo = hi = md }
+          const want = Math.max(floorG, Math.min(gather, gT, top)), wantC = Math.min(hi, Math.max(lo, 0))
+          // (the targets ramp, CAPE_WALL_IN a second in and CAPE_WALL_OUT out, and the width and shift follow them critically
+          // damped at CAPE_WALL_RATE: a step in either is a pop)
+          const Wt = R.capeGt ||= R.cape.map(() => 1)
+          Wt[k] = want < Wt[k] ? Math.max(want, Wt[k] - CAPE_WALL_IN * hs) : Math.min(want, Wt[k] + CAPE_WALL_OUT * hs)
+          Ct[k] += Math.max(-CAPE_WALL_IN * 0.5 * hs, Math.min(CAPE_WALL_IN * 0.5 * hs, wantC - Ct[k]))
+          const w2 = CAPE_WALL_RATE * CAPE_WALL_RATE
+          Wv[k] += (w2 * (Wt[k] - Wg[k]) - 2 * CAPE_WALL_RATE * Wv[k]) * hs; Wg[k] += Wv[k] * hs
+          Cv[k] += (w2 * (Ct[k] - Cs[k]) - 2 * CAPE_WALL_RATE * Cv[k]) * hs
+          let nc = Cs[k] + Cv[k] * hs
+          g = Math.max(floorG, Math.min(Wg[k], gather))
+          // (the wall itself, eased: a third of what still reaches into it each solve, so it's drawn out over 3-4 frames)
+          const hard = solve(CAPE_WALL_HARD, 0)
+          if (hard) {
+            if (g > hard.G) g = Math.max(floorG, g - (g - hard.G) * CAPE_WALL_EASE)
+            const cl = Math.min(hard.hi, Math.max(hard.lo, nc))
+            nc += (cl - nc) * CAPE_WALL_EASE
+          }
+          // (and no change in either's speed of more than CAPE_WALL_JERK (m at the hem) from one solve to the next: that is
+          // what reads as a pop)
+          { const Gd = R.capeGd ||= R.cape.map(() => 0), Cd = R.capeCd ||= R.cape.map(() => 0), j = CAPE_WALL_JERK * (hs * 60) * (hs * 60), hw = Math.max(0.2, ...rows.map(([m, i]) => Math.hypot(at[i * 3] - at[m * 3], at[i * 3 + 1] - at[m * 3 + 1], at[i * 3 + 2] - at[m * 3 + 2]) / Math.max(G0, 0.05)))
+            const dg = Math.max(Gd[k] - j / hw, Math.min(Gd[k] + j / hw, g - G0)); g = Math.max(floorG * 0.9, G0 + dg); Gd[k] = g - G0
+            if (k) { const dc = Math.max(Cd[k] - j, Math.min(Cd[k] + j, nc - Cs[k])); nc = Cs[k] + dc; Cd[k] = dc } }
+          if (k) shift = nc; else Cv[k] = 0
+          if (g < Wg[k]) { Wg[k] = g; Wv[k] = Math.min(0, Wv[k]) }
+          if (g < Wt[k]) Wt[k] = g
+        } else {
+          g = Math.max(floorG, Math.min(gather, wide)); Wg[k] = g; Wv[k] = 0; (R.capeGt ||= R.cape.map(() => 1))[k] = g; if (R.capeGd) R.capeGd[k] = 0; if (R.capeCd) R.capeCd[k] = 0
+          // (away from walls, any shift goes back to the middle the same way)
+          if (Cs[k] || Cv[k]) { const w2 = CAPE_WALL_RATE * CAPE_WALL_RATE; Ct[k] = 0; Cv[k] += (w2 * (0 - Cs[k]) - 2 * CAPE_WALL_RATE * Cv[k]) * hs; shift = Math.abs(Cs[k] + Cv[k] * hs) < 1e-4 && Math.abs(Cv[k]) < 1e-3 ? 0 : Cs[k] + Cv[k] * hs; if (!shift) Cv[k] = 0 }
+        }
+        if (shift !== null && Math.abs(shift - Cs[k]) > 1e-5) { Cs[k] = shift; capePose(R, k); capeSkinPts(S); moved = true }
         if (Math.abs(g - R.capeG[k]) > 0.002) { R.capeG[k] = g; capePose(R, k); capeSkinPts(S); moved = true }
       }
       // the top rows off his shoulders: the least move back of the first bone that clears them; let down at 0.3 m/s
@@ -22247,15 +22360,15 @@ function rigCape(a, R, dt) {
         // (dying or on the ground, it folds at CAPE_FOLD rad/s at most: falling, the road can come up a long way in a frame)
         let lift = capeLift(R, S, k, H, L, skin, floor, down, up, ground, dying)
         if (dying || ground) lift = Math.max(-CAPE_FOLD * hs, Math.min(CAPE_FOLD * hs, lift))
-        else if (run && lift > 0) {      // (at speed, soft: a share of it, no less than keeps it within CAPE_SOFT of its skin)
-          const stuck = capeStuck, need = capeSearch(S, k, H, L, skin - CAPE_SOFT * run, floor, 0, down, up, top, false, false)
+        else if ((run || walls) && lift > 0) {      // (at speed or by a wall, soft: a share of it, no less than keeps it within CAPE_SOFT of its skin)
+          const sf = Math.max(run, walls ? 1 : 0), stuck = capeStuck, need = capeSearch(S, k, H, L, skin - CAPE_SOFT * sf, floor, 0, down, up, top, false, false)
           capeStuck = stuck
-          lift = Math.max(need, lift * (1 - (1 - CAPE_SOFT_F) * run))
+          lift = Math.max(need, lift * (1 - (1 - CAPE_SOFT_F) * sf))
         }
         if (lift) {
           R.capeT[k] += lift
           // (at speed the cloth keeps the push's speed, so when his body stops pushing it carries on and the spring slows it)
-          if (lift > 0) { lo[k] = R.capeT[k]; hi[k] = Math.max(hi[k], lo[k]); R.capeW[k] = Math.max(R.capeW[k], run && !dying && !ground ? run * lift / hs : 0) }
+          if (lift > 0) { lo[k] = R.capeT[k]; hi[k] = Math.max(hi[k], lo[k]); R.capeW[k] = Math.max(R.capeW[k], (run || walls) && !dying && !ground ? Math.max(run, walls ? 1 : 0) * lift / hs : 0) }
           else { hi[k] = R.capeT[k]; lo[k] = Math.min(lo[k], hi[k]); R.capeW[k] = Math.min(R.capeW[k], 0) }
           capePose(R, k); capeSkinPts(S); moved = true
         }
