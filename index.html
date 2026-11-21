@@ -15200,6 +15200,7 @@ function parkFar() {
 }
 // a parked car out of the world back in, without the forces anything gathered on it out there (Bullet clears them only in the world)
 function inWorld(o) {
+  if (o.kin) kinWake(o)          // card #86: a kinematic far car is dynamic again before anything acts on it
   if (!o.away) return
   o.away = false; o.body.clearForces(); world.addRigidBody(o.body, ...collideFor(o.K)); awaySig = ''
 }
@@ -16264,6 +16265,7 @@ let trafficState = null
 // card #86: out of every player's TRAFFIC.far metres an ambient car thinks every TRAFFIC.thinkFar s (its lookahead is 38 m, so a stale step of
 // 3 m is safe, and no walker is listed past 160 m), and at once when it comes inside; pursuit and summoned cars keep the full rate
 TRAFFIC.far = 250; TRAFFIC.thinkFar = 0.3; TRAFFIC.thinkBudget = 16; TRAFFIC.spawnMin = 120
+TRAFFIC.kinOut = 130; TRAFFIC.kinIn = 100; TRAFFIC.kinMax = 2; TRAFFIC.kinCool = 10          // card #86: the kinematic LOD (m, m, switches a tick, s)
 const trafficFar = (o, a, people) => o.trafficAmbient && !a.urgent && !a.follow && people.length > 0 && people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.far)
 // card #86: the host's quality setting scales the ambient fleet (low and medium keep the old 80-car fleet)
 const trafficK = () => (TRAFFIC.quality[settings.quality] ?? 1) * (TRAFFIC.scale ?? 1)
@@ -16456,6 +16458,7 @@ function trafficDriveTo(vehicle, point, options = {}) {
 function trafficDetach(o, eject = true) {
   const a = o.traffic
   if (!a) return
+  if (o.kin) kinOff(o)          // card #86
   if (a.lock && trafficState?.locks.get(a.lock) === o.id) trafficState.locks.delete(a.lock)
   if (a.lockHeld && trafficState?.locks.get(a.lockHeld.key) === o.id) trafficState.locks.delete(a.lockHeld.key)      // card #63
   if (eject && a.driver && o.V) {
@@ -16542,7 +16545,7 @@ function trafficThink(o, dt, people) {
       if (id !== undefined && id !== o.id && (!ow || !objs.includes(ow) || !ow.traffic || ow.traffic.lock !== key && ow.traffic.lockHeld?.key !== key || ow.traffic.wait > ROUND.lockStale)) trafficState.locks.delete(key) }
     const owner = trafficState.locks.get(key), green = !trafficSignalled(junction) || trafficSignal(junction.x, junction.z, e.dx ? 'x' : 'z') === 'green'
     const stopLine = trafficStop(e)
-    const crossing = trafficJunction(junction), blockedExit = !a.urgent && crossing && a.next && (trafficExitBlocked(o, a.next) || trafficYieldBlocked(o, e, a.next) || trafficWalkersBlock(e, a.next)
+    const crossing = trafficJunction(junction), blockedExit = !a.urgent && crossing && a.next && !o.kin && (trafficExitBlocked(o, a.next) || trafficYieldBlocked(o, e, a.next) || trafficWalkersBlock(e, a.next)
       || green && owner === undefined && !a.lock && trafficOlderWaiting(o, e))
     // card #63: an exit held ROUND.exit s by something standing in it: an ambient car takes another exit (no forever hold)
     if (blockedExit && !a.lock && !a.route && a.wait > ROUND.exit && trafficExitBlocked(o, a.next)) {
@@ -16553,6 +16556,7 @@ function trafficThink(o, dt, people) {
     else if (!a.urgent && crossing && a.next && left < stopLine + o.V.l / 2 + 2 && !a.lock) { trafficState.locks.set(key, o.id); a.lock = key }
     if ((a.lock || a.urgent && crossing && a.next) && left < trafficTrim(e) + 1) { trafficTurnFree(o, a); trafficTurn(a); return trafficThink(o, 0, people) }
   }
+  if (o.kin) { a.wait = a.kv < 0.3 ? a.wait + dt : 0; return { kin: true, d: Math.min(desired, Math.sqrt(Math.max(0, stop) * 6)) } }      // card #86: no rays, no objects, no people: nobody is near
   // Front bumper lookahead; all people (including the Maniak), street life and other vehicles get a stopping gap.
   // card #63: going round a standing vehicle (trafficRound): the path runs R.shift m off the lane's centre; through a turn
   // whose path was found to clear it (R.turn), only that vehicle is passed so
@@ -16884,11 +16888,85 @@ function trafficSpawn(people) {
     trafficAttach(o, e); T.stats.spawned++; return
   }
 }
+// card #86: the simulation LOD. A dynamic ambient car costs Bullet's raycast vehicle (about 0.05-0.09 ms a 60 Hz tick); a kinematic body about 0.005.
+// Why a car must stay dynamic: it is urgent, following or summoned, flees, has a rider, is held, thrown, launched or fused, lies over, or is mid-turn
+// (only for going kinematic) or off its lane by 2 m or more (same).
+function trafficKinHold(o, a) {
+  return !o.trafficAmbient || !o.V || o.V.fly || !o.car || a.urgent || a.follow || a.route || a.flee > 0 || o.riders.some(v => v !== undefined) ||
+    o.heldBy !== undefined || o.thrownBy !== undefined || o.launchBy !== undefined || o.fuse !== undefined || upOf(o) < 0.9
+}
+function kinOn(o, a) {
+  const v = o.body.getLinearVelocity(), fw = rotq(o.q, [0, 0, -1])
+  a.kv = Math.hypot(v.x(), v.z()); a.kd = a.kv; a.ky = o.y; a.kYaw = Math.atan2(-fw[0], -fw[2]); a.kLat = trafficLaneLat(a.edge, o.x, o.z)
+  setParked(o, true)                                         // the engine's: the vehicle action out, the hull shape (the body is still dynamic)
+  world.removeRigidBody(o.body)
+  o.body.setCollisionFlags(o.body.getCollisionFlags() | 2)   // CF_KINEMATIC_OBJECT
+  o.body.setMassProps(0, zeroVec); o.body.updateInertiaTensor()
+  o.body.setActivationState(CF_NEVER_SLEEP)
+  o.body.setLinearVelocity(zeroVec); o.body.setAngularVelocity(zeroVec)
+  world.addRigidBody(o.body, ...collideFor(o.K))
+  o.kin = true; a.think = 0; trafficState.stats.kinOn = (trafficState.stats.kinOn || 0) + 1
+}
+function kinOff(o) {
+  if (!o.kin) return
+  const a = o.traffic, v = a?.kv || 0, yaw = a?.kYaw || 0
+  o.kin = false
+  world.removeRigidBody(o.body)
+  o.body.setCollisionFlags(o.body.getCollisionFlags() & ~2)
+  o.body.forceActivationState(1)                             // NEVER_SLEEP is sticky for setActivationState
+  setParked(o, false)                                        // the engine's: mass and inertia back, the vehicle action in, active
+  velVec.setValue(-Math.sin(yaw) * v, 0, -Math.cos(yaw) * v); o.body.setLinearVelocity(velVec); o.body.setAngularVelocity(zeroVec); o.body.activate()
+  if (a) { a.input = {}; a.think = 0; a.far = false; a.kd = 0; a.kAt = trafficClock() }
+  if (trafficState) trafficState.stats.kinOff = (trafficState.stats.kinOff || 0) + 1
+}
+const kinWake = o => kinOff(o)
+// the cars on straight edges by edge, with their place along it (a kinematic car keeps its gap to the one ahead)
+function trafficKinLane(T) {
+  const lane = new Map()
+  for (const o of T.cars.values()) {
+    const a = o.traffic; if (!a || a.path || !a.edge || !o.V) continue
+    const e = a.edge, s = (o.x - e.from.x - e.ox) * e.dx + (o.z - e.from.z - e.oz) * e.dz
+    let l = lane.get(e); if (!l) lane.set(e, l = []); l.push({ o, s, l: o.V.l })
+  }
+  return lane
+}
+// one tick of a kinematic car: speed toward the lite think's desired (up 2.2, down 6 m/s2), along its lane (eased onto the line from where it left
+// the dynamic mode) or its turn's path, held to a gap behind the car ahead, the body placed
+function trafficKinStep(o, a, dt, lane) {
+  const e = a.edge
+  let v = a.kv, want = a.kd ?? 0, x = o.x, z = o.z, yawT = a.kYaw
+  if (a.path) {
+    const P = a.path; let i = a.index, d = Math.hypot(P[i].x - x, P[i].z - z), step
+    v += clamp(Math.min(want, 4) - v, -6 * dt, 2.2 * dt); step = v * dt
+    while (step > 0) {
+      if (d <= step) {
+        x = P[i].x; z = P[i].z; step -= d
+        if (i < P.length - 1) { a.index = ++i; d = Math.hypot(P[i].x - x, P[i].z - z) }
+        else {          // the turn is done: as trafficThink does at its end
+          if (trafficState.locks.get(a.lock) === o.id) trafficState.locks.delete(a.lock)
+          a.lock = null; a.edge = a.next; a.next = trafficNext(a); a.path = null; a.kLat = 0; break
+        }
+      } else { x += (P[i].x - x) / d * step; z += (P[i].z - z) / d * step; step = 0 }
+    }
+    if (a.path) yawT = Math.atan2(-(P[i].x - x), -(P[i].z - z))
+  } else {
+    const px = e.from.x + e.ox, pz = e.from.z + e.oz, along = (x - px) * e.dx + (z - pz) * e.dz
+    for (const q of lane.get(e) || []) if (q.o !== o && q.s > along) want = Math.min(want, Math.sqrt(Math.max(0, q.s - along - (q.l + o.V.l) / 2 - 3) * 6))
+    v += clamp(want - v, -6 * dt, 2.2 * dt)
+    const s = Math.min(e.length - 0.5, along + v * dt)
+    a.kLat -= Math.sign(a.kLat) * Math.min(Math.abs(a.kLat), 0.5 * dt)
+    x = px + e.dx * s - e.dz * a.kLat; z = pz + e.dz * s + e.dx * a.kLat; yawT = Math.atan2(-e.dx, -e.dz)
+  }
+  a.kv = v; a.kYaw += clamp(wrapPi(yawT - a.kYaw), -3 * dt, 3 * dt)
+  posVec.setValue(x, a.ky, z); quatVec.setValue(0, Math.sin(a.kYaw / 2), 0, Math.cos(a.kYaw / 2))
+  const t = o.body.getWorldTransform(); t.setOrigin(posVec); t.setRotation(quatVec); o.body.getMotionState().setWorldTransform(t)
+}
 function trafficTick(dt, all) {
   if (!LV.faust) return
   if (!trafficState) trafficReset()
   const t = performance.now(), T = trafficState, people = all.filter(c => !c.bot && c.owner === undefined && c.body), clock = trafficClock()
   let thinks = 0          // card #86: this tick's thinks
+  let lane = null, kinNew = []          // card #86: the kinematic LOD: the cars by edge (built when a kinematic car needs it), the cars that may go kinematic
   parkedTick(dt, people)      // card #63: the city's parked cars (host)
   for (const o of [...T.cars.values()]) {
     if (!objs.includes(o)) { T.cars.delete(o.id); continue }
@@ -16900,17 +16978,25 @@ function trafficTick(dt, all) {
         if (a.follow && (a.replan -= dt) <= 0) { a.replan = 2; trafficDriveTo(o,a.follow,{follow:true,driver:a.driver,speed:a.cruise,urgent:a.urgent}) }
         if (o.hp < a.hp - 0.1) a.flee = 12
         a.hp = o.hp; a.flee = Math.max(0, a.flee - dt)
+        // card #86: kinematic far cars: woken at once inside TRAFFIC.kinIn m of anyone or on any hold; sent kinematic (a few a tick, below) beyond TRAFFIC.kinOut
+        let dMin = Infinity; for (const p of people) dMin = Math.min(dMin, Math.hypot(o.x - p.x, o.z - p.z))
+        if (!people.length) dMin = 0
+        if (o.kin) { if (dMin < TRAFFIC.kinIn || trafficKinHold(o, a)) kinOff(o) }
+        else if (dMin > TRAFFIC.kinOut && !a.path && !trafficKinHold(o, a) && Math.abs(trafficLaneLat(a.edge, o.x, o.z)) < 2 && clock - (a.kAt ?? -1e9) > TRAFFIC.kinCool) kinNew.push([o, a, dMin])
         const due = (a.think -= dt) <= 0
         if (due || a.far) {
-          const far = trafficFar(o, a, people)
+          const far = o.kin || trafficFar(o, a, people)
           if ((due || !far) && (thinks < (far ? TRAFFIC.thinkBudget * 0.6 : TRAFFIC.thinkBudget) || !due)) {
             const step = far ? TRAFFIC.thinkFar * (1 + 0.3 * ((o.id * 0.6180339) % 1)) : TRAFFIC.think; thinks++
-            a.far = far; a.input = trafficThink(o, step, all); a.think = (a.think <= 0 ? a.think : 0) + step
+            a.far = far; const r = trafficThink(o, step, all); if (o.kin) a.kd = r.d; else a.input = r; a.think = (a.think <= 0 ? a.think : 0) + step
           }
         }
+        if (o.kin) trafficKinStep(o, a, dt, lane ||= trafficKinLane(T))          // card #86: no vehicle, no driveStep
+        else {
         // Reuse the engine's driveStep with a private seat reference; AI drivers are never roster participants.
         const driver = { id: -1000 - o.id, seat: [o, 0] }, saved = o.riders[0]
         o.riders[0] = driver.id; driveStep(driver, a.input); o.riders[0] = saved
+        }
       }
     }
     if (!o.riders?.some(v => v !== undefined) && o.heldBy === undefined && people.length && (people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.retire) || (o.traffic?.stuck || 0) > ROUND.stuck) && trafficHidden(o.x, o.z, people) && o.trafficAmbient) {
@@ -16919,6 +17005,8 @@ function trafficTick(dt, all) {
     }
     if (o.trafficExit && clock - o.trafficExit[0] > 8) o.trafficExit = null
   }
+  kinNew.sort((p, q) => q[2] - p[2])          // card #86: the farthest first, TRAFFIC.kinMax a tick
+  for (const [o, a] of kinNew.slice(0, TRAFFIC.kinMax)) if (objs.includes(o) && o.traffic === a && !o.kin) kinOn(o, a)
   T.departures = T.departures.filter(d => d.until > clock)
   // Preparing a spawn ring is optional work. One cell per tick avoids an 81-plan cold-frame burst.
   const warm = people.map(p => FAUSTLAND_API.cellAt(p.x,p.z).join(':')).join('|')
@@ -39696,7 +39784,7 @@ Object.assign(GAME.commands, {
     if (w.length) { TRAFFIC.scale = w[0]; STREET.scale = w[1] ?? Math.min(1, w[0]) }
     if (w.length > 2) { TRAFFIC.radius = w[2]; TRAFFIC.retire = w[2] + 100 }
     if (w.length > 3) TRAFFIC.spawnMin = w[3]
-    sysMsg('§7ambient cars x§f' + (TRAFFIC.scale ?? 1) + '§7 (cap §f' + Math.round(TRAFFIC.cap * trafficK()) + '§7), crowd drawn x§f' + (STREET.scale ?? 1) + '§7, spawn band §f' + TRAFFIC.spawnMin + '§7-§f' + TRAFFIC.radius + '§7 m, retire §f' + TRAFFIC.retire + '§7 m')
+    sysMsg('§7ambient cars x§f' + (TRAFFIC.scale ?? 1) + '§7 (cap §f' + Math.round(TRAFFIC.cap * trafficK()) + '§7), crowd drawn x§f' + (STREET.scale ?? 1) + '§7, spawn band §f' + TRAFFIC.spawnMin + '§7-§f' + TRAFFIC.radius + '§7 m, retire §f' + TRAFFIC.retire + '§7 m, kinematic §f' + objs.filter(o => o.kin).length + '§7 of §f' + (trafficState?.cars.size || 0) + '§7 cars (§f' + (trafficState?.stats.kinOn || 0) + '§7 on, §f' + (trafficState?.stats.kinOff || 0) + '§7 off)')
   } },
   blackbox: { args: '[on|off|dump]', help: 'test: a flight recorder for the black box that flashes when a car turns (card #74)', run: blackbox.run },
 })
