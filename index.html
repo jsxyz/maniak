@@ -10400,6 +10400,7 @@ FAUSTLAND_API.water = { at: (x, z, out) => { const g = faustWaterWho(); return g
   get mix() { const g = faustWaterWho(); return g ? faustWater(g.seed, g.S).mix : null }, waves: FAUST_WATER.waves, waveAt: faustWaveAt, config: FAUST_WATER }
 FAUSTLAND_API.water.waterAt = FAUSTLAND_API.water.at
 let frameJsAt = 0
+let gameSpeed = 1
 const realNow = /\[native code\]/.test(Function.prototype.toString.call(performance.now)) ? performance.now.bind(performance) : () => Date.now()
 const background = (() => {
   const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [], lateCount: 0 }
@@ -10505,7 +10506,7 @@ const background = (() => {
       gpuOpen.upKB = Math.round(gpuOpen.upKB)
       const sim = [...simMap].filter(([, v]) => v >= 1).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + Math.round(v)); simMap.clear()
       const js = frameJsAt ? +(realNow() - frameJsAt).toFixed(1) : 0, bg = +(open.bgMs || 0).toFixed(1)
-      frameLog.push({ i, t: Math.round(t), ms, js, bg, gap: +Math.max(0, ms - js - bg).toFixed(1), draw: Math.round(draw), phase, q, ticks: simTicks, sim, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen }); simTicks = 0
+      frameLog.push({ i, t: Math.round(t), ms, speed: gameSpeed, js, bg, gap: +Math.max(0, ms - js - bg).toFixed(1), draw: Math.round(draw), phase, q, ticks: simTicks, sim, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen }); simTicks = 0
       if (q >= 3 && !(gpuLog.at(-1)?.kind === 'queue' && gpuLog.at(-1).q >= q)) gpuLog.push({ t: Math.round(t), i, kind: 'queue', q })
       if (ms >= 50) gpuLog.push({ t: Math.round(t), i, kind: 'frame', ms, parts: open.parts.slice(0, 4), links: gpuOpen.links, upKB: gpuOpen.upKB })
       { const s = Math.floor(t / 1000)
@@ -14340,7 +14341,7 @@ let trafficState = null
 TRAFFIC.far = 250; TRAFFIC.thinkFar = 0.3; TRAFFIC.thinkBudget = 16; TRAFFIC.spawnMin = 120
 TRAFFIC.kinOut = 130; TRAFFIC.kinIn = 100; TRAFFIC.kinMax = 2; TRAFFIC.kinCool = 10
 const trafficFar = (o, a, people) => o.trafficAmbient && !a.urgent && !a.follow && people.length > 0 && people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.far)
-const trafficScale = () => Math.max(0.1, Math.min(1, GAME.perfScale?.() ?? (IS_TOUCH ? 0.4 : 1)))
+const trafficScale = () => Math.max(0.1, Math.min(1, GAME.perfScale?.() ?? 1, IS_TOUCH ? 0.4 : 1))
 const trafficK = () => (TRAFFIC.quality[settings.quality] ?? 1) * (TRAFFIC.scale ?? 1) * trafficScale()
 const trafficRemote = new Map(), trafficViews = new Map()
 const trafficKey = (x, z) => x + ':' + z
@@ -14566,6 +14567,7 @@ function trafficOlderWaiting(o, e) {
   }
   return false
 }
+const trafficPart = { rays: 0, round: 0 }
 function trafficThink(o, dt, people) {
   const a = o.traffic, e = a.edge, fw = rotq(o.q, [0, 0, -1]), yaw = Math.atan2(-fw[0], -fw[2]), speed = speedOf(o)
   const along = (o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, left = e.length - along
@@ -14664,13 +14666,16 @@ function trafficThink(o, dt, people) {
       s += L; px = q.x; pz = q.z
     }
   }
-  const reach = 5 + speed * speed / 10, y = o.y + 0.2
-  const rays = (R ? [-0.35, 0, 0.35] : [-0.7, 0, 0.7]).map(s => {
+  const reach = 5 + speed * speed / 10, y = o.y + 0.2, tr0 = performance.now()
+  const rays = (speed < 0.3 && stop < 1 ? [] : R ? [-0.35, 0, 0.35] : [-0.7, 0, 0.7]).map(s => {
     const t = castRay(o.x - fw[2] * s + fw[0] * (o.V.l / 2 + 0.3), y, o.z + fw[0] * s + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], reach, RAY_GROUP | G_OBJ)
     return (t < 1 && R && R.p.body && A.getPointer(rayCb.get_m_collisionObject()) === A.getPointer(R.p.body) ? 1 : t) * reach
   })
+  trafficPart.rays += performance.now() - tr0
   if (Math.min(...rays) < reach) { stop = Math.min(stop, Math.max(0, Math.min(...rays) - 2)); if (!a.path && e.kind !== 'side' && !R) offset = rays[0] < rays[2] ? 0.65 : -0.65 }
+  const tq0 = performance.now()
   const round = trafficRound(o, a, e, fw, speed, stop, hold, people, dt)
+  trafficPart.round += performance.now() - tq0
   if (round === 'plan') return trafficThink(o, 0, people)
   if (round) return round
   if (a.roundGap && hold) stop = Math.min(stop, Math.max(0, hold.stop + 2.5 - a.roundGap))
@@ -14963,8 +14968,9 @@ function trafficTick(dt, all) {
     if (t - (T.slowAt || 0) < 25) return
     dt = T.dtAcc; T.dtAcc = 0; T.slowAt = t
   }
-  const budget = Math.max(3, Math.round(TRAFFIC.thinkBudget * scale)), thinkStep = TRAFFIC.think / Math.max(0.4, scale)
-  let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0
+  const thinkStep = TRAFFIC.think / Math.max(0.4, scale)
+  const budget = Math.min(Math.max(3, Math.round(TRAFFIC.thinkBudget * scale)), Math.ceil(Math.max(1, T.cars.size - (T.kinN || 0)) * dt / thinkStep * 1.5) + 2)
+  let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0, kinN = 0
   let lane = null, kinNew = []
   parkedTick(dt, people)
   for (const o of [...T.cars.values()]) {
@@ -14989,7 +14995,7 @@ function trafficTick(dt, all) {
             a.far = far; const t0 = performance.now(), r = trafficThink(o, step, all); thinkMs += performance.now() - t0; if (o.kin) a.kd = r.d; else a.input = r; a.think = (a.think <= 0 ? a.think : 0) + step
           }
         }
-        if (o.kin) { const t0 = performance.now(); trafficKinStep(o, a, dt, lane ||= trafficKinLane(T)); kinMs += performance.now() - t0 }
+        if (o.kin) { const t0 = performance.now(); trafficKinStep(o, a, dt, lane ||= trafficKinLane(T)); kinMs += performance.now() - t0; kinN++ }
         else {
         const driver = { id: -1000 - o.id, seat: [o, 0] }, saved = o.riders[0]
         o.riders[0] = driver.id; const t0 = performance.now(); driveStep(driver, a.input); driveMs += performance.now() - t0; o.riders[0] = saved
@@ -15013,6 +15019,8 @@ function trafficTick(dt, all) {
   const ms = performance.now() - t; T.stats.ticks++; T.stats.ms += ms; T.stats.maxMs = Math.max(T.stats.maxMs, ms)
   background.simAdd('traffic', ms)
   background.simAdd('traffic think', thinkMs); background.simAdd('traffic kin', kinMs); background.simAdd('traffic drive', driveMs)
+  background.simAdd('traffic rays', trafficPart.rays); background.simAdd('traffic round', trafficPart.round)
+  trafficPart.rays = 0; trafficPart.round = 0; T.kinN = kinN
 }
 function trafficRows() {
   return trafficState ? [...trafficState.cars.values()].map(o => [o.id, o.traffic?.driver ? 1 : 0, ...o.trafficExit || []]) : []
@@ -17809,7 +17817,7 @@ function interiorWarmProbe() {
   if (typeof faustSewMats === 'function') interiorProbe.add(new THREE.Mesh(g, faustSewMats().brick))
   return interiorProbe
 }
-const lookKey = name => [name, settings.quality, settings.shadows, innerWidth, innerHeight, devicePixelRatio, graphics.lost].join('/')
+const lookKey = name => [name, settings.quality, settings.shadows, innerWidth, innerHeight, devicePixelRatio, GOV_LEVELS[govLevel].d, graphics.lost].join('/')
 function gpuState(target, fn) {
   const old = renderer.getRenderTarget(), face = renderer.getActiveCubeFace(), mip = renderer.getActiveMipmapLevel()
   const clear = renderer.autoClear, tone = renderer.toneMapping, xr = renderer.xr.enabled
@@ -17971,7 +17979,7 @@ function requestLook(name) {
     let success = false
     try {
       const Q = QUALITY[settings.quality] || QUALITY.high
-      const ratio = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : Q.ratio) * (softGL() ? SOFT_SCALE : 1) * (LOOKS[name]?.scale?.(settings.quality) ?? 1)
+      const ratio = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : Q.ratio) * GOV_LEVELS[govLevel].d * (softGL() ? SOFT_SCALE : 1) * (LOOKS[name]?.scale?.(settings.quality) ?? 1)
       const w = Math.floor(innerWidth * ratio), h = Math.floor(innerHeight * ratio)
       if (name === 'realistic') {
         background.mark('real init')
@@ -19817,6 +19825,29 @@ function placeChunk(cell, g) {
   screensTake(g)
 }
 const VIEW = { short: 0.6, normal: 1, far: 1.6 }
+const GOV_LEVELS = [{ s: 1, d: 1, v: 1 }, { s: 0.7, d: 1, v: 1 }, { s: 0.5, d: 1, v: 1 }, { s: 0.5, d: 0.8, v: 1 }, { s: 0.35, d: 0.67, v: 1 }, { s: 0.35, d: 0.67, v: 0.6 }, { s: 0.25, d: 0.5, v: 0.6 }]
+let govLevel = 0, govAt = 0
+const govWin = [], govLog = []
+GAME.perfScale = () => GOV_LEVELS[govLevel].s
+const govAwake = () => { let n = 0; for (const o of objs) if (o.body?.isActive?.()) n++; return n }
+function govSet(level, why, ms) {
+  govLevel = level; govAt = realNow()
+  govLog.push({ i: pageLife.frames, t: Math.round(performance.now()), level, why, ms, awake: govAwake() }); if (govLog.length > 40) govLog.shift()
+  govWin.length = 0
+  try { applySettings() } catch (e) {}
+  viewScale = VIEW[settings.distance] * GOV_LEVELS[level].v; applyView()
+}
+function govern() {
+  if (phase !== 'playing' || startingGame || document.hidden || softGL()) { govWin.length = 0; return }
+  const f = background.frames(1)[0]
+  if (!f) return
+  const t = realNow()
+  govWin.push([t, f.ms]); while (govWin.length && t - govWin[0][0] > 5000) govWin.shift()
+  if (t - govAt < 1500) return
+  const second = govWin.filter(([s]) => t - s <= 1000), slow = second.filter(([, m]) => m > 40).length
+  if (second.length >= 5 && slow >= second.length * 0.7 && govLevel < GOV_LEVELS.length - 1) return govSet(govLevel + 1, slow + ' of ' + second.length + ' frames over 40 ms', f.ms)
+  if (govLevel > 0 && t - govAt > 5000 && govWin.length >= 60 && govWin.every(([, m]) => m < 23)) govSet(govLevel - 1, govWin.length + ' frames under 23 ms', f.ms)
+}
 let viewScale = 1
 const viewEnd = (k = viewScale) => LV.faust ? 2200 * k : Math.min(320 * Math.min(k, 1), ARENA * LV.theme.fog[2] * k)
 function applyView() {
@@ -25001,12 +25032,14 @@ function drawDebug(me, fps) {
         (startLog.warmProgs != null ? ' (in play +' + v(background.stats.lateCount) + ')' : '')) : '') +
     (rescues.n ? row('rescue', v(rescues.n) + '  last ' + esc(rescues.last.who + ' at ' + [rescues.last.x, rescues.last.y, rescues.last.z].map(Math.round).join(' ') +
         ' vy ' + Math.round(rescues.last.vy) + (rescues.last.cell ? '  cell ' + rescues.last.cell : '') + ' (' + rescues.last.cause + ')')) : '') +
+    row('perf', 'level ' + v(govLevel) + '  scale ' + v(GOV_LEVELS[govLevel].s) + '  pixels x' + v(GOV_LEVELS[govLevel].d) + '  view x' + v(GOV_LEVELS[govLevel].v) + '  awake ' + v(govAwake()) +
+      (govLog.length ? '  ' + esc(govLog.slice(-3).map(e => '#' + e.i + ' L' + e.level + ' (' + e.why + ')').join(', ')) : '')) +
     row('models', (D => 'libs ' + esc(D.libs) + '  workers ' + v(D.workers ?? '-') + (D.noWorkers ? ' (' + esc(D.noWorkers) + ')' : '') + '  files ' + v([...D.files.values()].filter(f => f.state === 'loaded').length) + '/' + v(D.files.size) +
       '  rigs ' + v([...D.rigs.values()].filter(s => s === 'ready').length) + '/' + v(D.rigs.size) + '  cars ' + esc(periodFleet ? periodFleet.failed ? 'failed' : periodFleet.ready ? 'ready' : 'loading' : '-') +
       '  street ' + esc(slKitJob ? slKitJob.failed ? 'failed' : slKitJob.done ? 'ready' : 'loading' : '-') +
       ([...D.files.entries()].some(([, f]) => f.state !== 'loaded') ? '  waiting ' + esc([...D.files.entries()].filter(([, f]) => f.state !== 'loaded').slice(0, 4).map(([k, f]) => k.split('.')[0] + ' ' + f.state + ' ' + Math.round((Date.now() - f.t0) / 1000) + 's').join(', ')) : '') +
       (D.fails.length ? '  <span class="w">failed ' + esc(D.fails.slice(-3).join('; ')) + '</span>' : '') + '  gpu ' + esc(modelGpu()))(modelDiag)) +
-    ((f => f?.sim?.length ? row('sim', 'last frame ' + v(f.ms) + ' ms, ' + v(f.ticks) + ' ticks: ' + esc(f.sim.slice(0, 7).join(', '))) : '')(background.frames(1)[0])) +
+    ((f => f?.sim?.length ? row('sim', 'last frame ' + v(f.ms) + ' ms, ' + v(f.ticks) + ' ticks (cap ' + v(tickCap) + ', speed ' + v(f.speed) + '): ' + esc(f.sim.slice(0, 7).join(', '))) : '')(background.frames(1)[0])) +
     row('bg', 'jobs ' + v(background.pending.length) +
         (background.pending.length ? ' (' + esc(background.jobs.slice(0, 8).join(' ')) + (background.pending.length > 8 ? ' …' : '') + ')' : '') +
         (compileSignal.cuts ? '  compile waits cut ' + v(compileSignal.cuts) + (compileSignal.broken ? ' (no ready signal)' : '') : '') +
@@ -25129,7 +25162,7 @@ function applySettings() {
   const Q = QUALITY[settings.quality] || QUALITY.high
   fxStride = Q.fx >= 1 ? 1 : Math.max(2, Math.round(1 / Q.fx))
   if (renderer) {
-    const want = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : Q.ratio) * (softGL() ? SOFT_SCALE : 1) * (LOOKS[activeLook || 'plain']?.scale?.(settings.quality) ?? 1)
+    const want = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : Q.ratio) * GOV_LEVELS[govLevel].d * (softGL() ? SOFT_SCALE : 1) * (LOOKS[activeLook || 'plain']?.scale?.(settings.quality) ?? 1)
     if (Math.abs(renderer.getPixelRatio() - want) > 0.01) {
       renderer.setPixelRatio(want)
       renderer.setSize(innerWidth, innerHeight)
@@ -25146,7 +25179,7 @@ function applySettings() {
     sunLight.shadow.mapSize.set(Q.shadowMap, Q.shadowMap)
     if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null }
   }
-  viewScale = VIEW[settings.distance]; applyView()
+  viewScale = VIEW[settings.distance] * GOV_LEVELS[govLevel].v; applyView()
   for (const id in SET_BUTTONS) { const b = el('#' + id); if (b) b.textContent = SET_BUTTONS[id][0](Q) }
   GAME.audio.apply()
 }
@@ -27513,6 +27546,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
   models: () => ({ ...modelDiag, files: Object.fromEntries(modelDiag.files), rigs: Object.fromEntries(modelDiag.rigs), cars: periodFleet && { ready: !!periodFleet.ready, failed: !!periodFleet.failed }, street: slKitJob && { done: !!slKitJob.done, failed: !!slKitJob.failed }, gpu: modelGpu() }),
+  perf: () => ({ level: govLevel, ...GOV_LEVELS[govLevel], awake: govAwake(), bodies: objs.filter(o => o.body).length, log: govLog.slice() }),
   fps(n) { if (n !== undefined) fpsCap = +n >= 5 && +n <= 240 ? +n : 0; return fpsCap },
   telescreen: (n = 120) => teleState(n),
   background: (n = 300) => ({ fps: fpsCap, origin: performance.timeOrigin, seconds: GAME.background.seconds(), gate: GAME.background.gate, gated: GAME.background.stats.gated || 0, frames: GAME.background.frames(n), gpu: GAME.background.gpuEvents(), rests: GAME.background.stats.rests || 0, jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
@@ -37350,7 +37384,7 @@ function railFrame() {
 }
 GAME.monorail = { plan: (seed, S) => faustRail(seed, S), car: railCar, get state() { return railState }, carrier: (route, k, j) => railState?.cars.find(c => c.route.id === route && c.k === k && c.j === j)?.key ?? null }
 
-let acc = 0, last = now(), snapAcc = 0, tickAt = 0
+let acc = 0, last = now(), snapAcc = 0, tickAt = 0, spiralRun = 0, spiralDt = 0, tickCap = MAX_CATCHUP
 const tickSamples = new Map()
 const prevPose = new WeakMap(), accRing = [], objDrawn = new Map(), prevChain = new Map()
 let drawD = 0, drawAt = 0, drawAlpha = 1
@@ -37585,6 +37619,8 @@ function checkLiveness(t, own) {
 
 function stepSim(t) {
   let dt = (t - last) / 1000, own = dt > 1
+  if (!document.hidden && dt < 1) { spiralRun = dt > spiralDt * 1.05 && lastSteps >= 3 ? spiralRun + 1 : Math.max(0, spiralRun - 1); spiralDt = dt }
+  tickCap = document.hidden ? MAX_CATCHUP : spiralRun >= 3 ? 4 : spiralRun === 0 ? MAX_CATCHUP : tickCap
   lastGapMs = dt * 1000
   last = t
   if (dt > 0.25) dt = 0.25
@@ -37611,7 +37647,7 @@ function stepSim(t) {
 
   let steps = 0
   tickSamples.clear()
-  while (acc >= TICK && steps < MAX_CATCHUP) {
+  while (acc >= TICK && steps < tickCap) {
     keepPoses()
     acc -= TICK; steps++; tickAt = t - acc * 1000
     if (lagGive > 0) lagGive--
@@ -37673,9 +37709,10 @@ function stepSim(t) {
     inqFloor.clear()
   }
 
-  if (acc > TICK * MAX_CATCHUP) acc = 0
+  if (acc > TICK * tickCap) acc = 0
 
   lastSteps = steps
+  gameSpeed = dt > 0 ? +(steps * TICK / Math.min(dt, 0.25)).toFixed(2) : 1
   return dt
 }
 
@@ -39812,6 +39849,7 @@ class Arena extends ENABLE3D.Scene3D {
     pageLife.frames++
     const drawMs = drawT0 ? now() - drawT0 : 0
     try { background.frameEnd(pageLife.frames, drawMs, phase + (startingGame ? ' start' : ''), gpuQueueTick(pageLife.frames)); gpuTimerPoll() } catch (e) {}
+    try { govern() } catch (e) {}
     if (drawT0) { msDraw = msDraw * 0.9 + drawMs * 0.1; drawT0 = 0 }
     if (blackbox.on) try { blackbox.frame() } catch (e) { blackbox.on = false; console.warn('blackbox', e) }
     if (stats) stats.end()
