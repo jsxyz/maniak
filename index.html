@@ -2503,12 +2503,15 @@ function cityChunk(seed, S, ci, cj, B = [], scenery = [], spot = [[], [], [], []
 const FAUST = { cell: 96, lid: 3800, world: 16000, navTop: 1200, detail: 2, physics: 1, retain: 3, calls: 220, triangles: 180000,
   // The cruise altitude is the globe's underside, above the tallest transit mast.
   airBand: [540, 840], cruiseY: 740, skyFar: 40000, globe: { x: 0, y: 2140, z: -3000, radius: 1400 },
-  head: { position: [0, 1550, -1579.2], size: [1380, 1672.5, 405.6],
+  head: { position: [0, 1420, -1300], size: [880, 1000, 400],
     // The sculpted head (FAUST_HEAD) takes the placeholder's place once loaded: metres, uniform scale, centred on X, tilted down
-    // to glare at the city. Its neck and the back of its hair run into the globe. lod: lod0..lod2 from these distances (m)
-    model: { file: 'faust_head.f3c3c979.glb', position: [0, 1700, -1500], pitch: 0.18, lod: [0, 700, 1700] },
-    // a cold floodlight from the city below, so the face reads from the street; the moon stays the key
-    flood: { color: 0xb4ccff, intensity: 1, from: [0, -1400, 2400] } } }
+    // to glare at the city. Card #95: the whole bust (face, hair, the gorget that ends it) floats clear of the globe, at least
+    // 30 m from its surface (offline, from every LOD's own vertices). lod: lod0..lod2 from these distances (m)
+    // stop: the bust's ellipsoid (metres, the model's frame: from position, before the pitch), where Realistic's light shafts stop
+    model: { file: 'faust_head.bd62acb8.glb', position: [0, 1490, -1230], pitch: 0.18, lod: [0, 700, 1700], stop: { centre: [2.6, -41.5, -12.1], radii: [404.8, 504.3, 441.0] } },
+    // cold floodlights from the city below (from: metres from the head), so the face reads from the street: a raking key
+    // from below one side models the brow, nose and jaw against the moon's key from above the other; a weak frontal fill
+    floods: [{ color: 0xb4ccff, intensity: 1.4, from: [1100, -1300, 1500] }, { color: 0xb4ccff, intensity: 0.35, from: [0, -1400, 2400] }] } }
 const faustBox = (cx, cy, cz, ex, ey, ez, more) => ({ cx, cy, cz, ex, ey, ez, ...more })
 const faustKey = (x, z) => x + ' ' + z
 const faustMix = (seed, x, z) => cityHash((seed >>> 0) ^ Math.imul(x, 73856093) ^ Math.imul(z, 19349663))
@@ -8914,9 +8917,11 @@ function faustMonument() {
   headGeometry.translate(-centre.x, -centre.y, -centre.z); headGeometry.scale(1 / size.x, 1 / size.y, 1 / size.z)
   headGeometry.computeVertexNormals(); headGeometry.computeBoundingSphere()
   faustReplaceHead(new THREE.Mesh(headGeometry, skyStone))
-  const flood = new THREE.DirectionalLight(FAUST.head.flood.color, FAUST.head.flood.intensity), at = FAUST.head.model.position
-  flood.position.set(at[0] + FAUST.head.flood.from[0], at[1] + FAUST.head.flood.from[1], at[2] + FAUST.head.flood.from[2])
-  flood.target.position.fromArray(at); far.add(flood, flood.target)
+  for (const L of FAUST.head.floods) {
+    const flood = new THREE.DirectionalLight(L.color, L.intensity), at = FAUST.head.model.position
+    flood.position.set(at[0] + L.from[0], at[1] + L.from[1], at[2] + L.from[2])
+    flood.target.position.fromArray(at); far.add(flood, flood.target)
+  }
   faustHeadInstall()
   faustSkyWeather(far)
   // card #18: the sky set is solid (faustSolids). The city's pass clears depth after the sky's, so near the globe or the
@@ -34931,9 +34936,9 @@ const AIR = {
   // service: m/s, m/s² out and in, s at a stop, m and s backing off, rad/s turning, m lifted (at m/s at most) as it turns, m of climb ramp and level approach
   speed: 20, accel: 0.8, decel: 0.6, dwell: 22, back: 40, backT: 14, turn: 0.22, lift: 40, rise: 2.5, ramp: 420, level: 140,
   slope: 0.32, corridor: 700, clear: 160, swing: 260, cruise: 700, level2: 60, express: 820, headway: 170, perLine: 4,
-  // the Globe line's run (x, axis y, z): under the neck and hair at the band's top, then under the globe's underside, round
-  // and back; checked offline against the head's collider and the globe (hull top 12-20 m below, decks within chain reach)
-  globe: [[-170, 840, -1500], [-150, 840, -2060], [-150, 716, -2660], [0, 712, -3080], [150, 716, -2660], [150, 840, -2060], [170, 840, -1500]],
+  // the Globe line's run (x, axis y, z): under the bust's gorget at the band's top, then under the globe's underside, round
+  // and back; checked offline against the head's collider and the globe (card #95: under the gorget at x = +-60: hull top >= 12 m below the bust, decks within the chain's 60 m)
+  globe: [[-60, 840, -950], [-150, 840, -2060], [-150, 716, -2660], [0, 712, -3080], [150, 716, -2660], [150, 840, -2060], [60, 840, -950]],
   // drawing: nearer than `near` in the city pass with its LODs; out to the sky's far plane in the sky pass
   lod: [260, 900], near: 1900 }
 const airRadius = z => { const H = AIR.hull; if (z <= H[0][0]) return 0; for (let i = 1; i < H.length; i++) if (z <= H[i][0]) {
@@ -35556,7 +35561,7 @@ function planeCircuits(seed, S) {
   for (const [cx, cz, a0] of [[x1 - r, x0 + r, -Math.PI / 2], [x1 - r, x1 - r, 0], [x0 + r, x1 - r, Math.PI / 2], [x0 + r, x0 + r, Math.PI]])
     for (let i = 0; i <= 8; i++) { const a = a0 + Math.PI / 2 * i / 8; rect.push([cx + r * Math.cos(a), 450, cz + r * Math.sin(a)]) }
   out.push({ id: 'towers', path: rect, speed: 42, fleet: 2 })
-  out.push({ id: 'face', path: ring(0, 1500, -640, 260, 32), speed: 40, fleet: 1 })
+  out.push({ id: 'face', path: ring(0, 1450, -410, 260, 32), speed: 40, fleet: 1 })       // card #95: the loop in front of the face, ~120 m clear of the nose
   out.push({ id: 'globe', path: ring(0, 3050, -3000, 1500, 64), speed: 48, fleet: 2 })
   for (const [n, C] of out.entries()) {
     C.loop = airPath([...C.path, C.path[0]])
