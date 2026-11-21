@@ -3194,7 +3194,7 @@ function faustPosters(P) {
 // card #9: a lot's telescreen. Pure in the lot, as faustPosters is (no plan entry, no collider, nothing in the plan's hash): about one
 // non-Gothic core tower in five (in three if its base is 40 m or more) shows one on the front (+z) or back (-z) face of its base mass,
 // in the gap between two of its piers, on the bays inFace lays out (so a pane is never cut in half by the frame): the bays that lie
-// wholly in the gap, trimmed to at most 20 m and to what fits between the belt course and the cornice, 16:9, its foot 7 m up (three in ten higher, in the middle of the base). { x, y, z, w, h, yaw,
+// wholly in the gap, trimmed to at most 20 m and to what fits between the belt course and the cornice, 16:9, its foot 7 m up (three in ten higher, in the middle of the base, their centre at most 22 m up: a screen is for the street; a giant, 15 m or wider, is left where it was, to be seen from afar). { x, y, z, w, h, yaw,
 // sgn, li, framed }: z is the panel's plane, 0.2 m proud of the wall
 function faustTelescreens(P) {
   const out = []
@@ -3208,7 +3208,7 @@ function faustTelescreens(P) {
     for (let k = 0; bays.length && (wide() > 20 || wide() * 9 / 16 > room); k++) bays = k & 1 ? bays.slice(0, -1) : bays.slice(1)
     if (bays.length < 2 || wide() < 5.5) return
     const w = wide(), h = w * 9 / 16, sgn = back ? -1 : 1
-    out.push({ x: inCm(face.c + (bays[0][0] + bays.at(-1)[1]) / 2), y: inCm(Math.max(7 + h / 2, mid ? Math.min(top - 1.6 - h / 2, top * 0.45) : 0)), z: inCm(face.plane + sgn * 0.2), w: inCm(w), h: inCm(h),
+    out.push({ x: inCm(face.c + (bays[0][0] + bays.at(-1)[1]) / 2), y: inCm(Math.max(7 + h / 2, mid ? Math.min(top - 1.6 - h / 2, top * 0.45, w >= 15 ? Infinity : 22) : 0)), z: inCm(face.plane + sgn * 0.2), w: inCm(w), h: inCm(h),
       yaw: back ? Math.PI : 0, sgn, li, framed: true })
   })
   return out
@@ -16763,7 +16763,7 @@ const SCREEN_IDLE = 0x161b24, screenSpots = []      // a level's own screens, as
 // at its own shape (letterboxed or pillarboxed in the idle colour) and given the period treatment: scanlines, a vignette and a slow
 // roll bar painted on it, a warm tint (a little over 1: a screen is the brightest thing on its facade) and a flicker on the material. One upload of it a frame at most, none in a rest frame
 // (background.gpuLast: the frame before linked programs or sent a big upload), and none unless a screen is in view.
-const TELE_W = 512, TELE_H = 288, TELE_HZ = 15, TELE_MAX_HZ = 30, TELE_WAIT_MS = 2000, TELE_CARD_MS = 125, TELE_LOOP_S = 12
+const TELE_W = 512, TELE_H = 288, TELE_HZ = 15, TELE_MAX_HZ = 30, TELE_WAIT_MS = 2000, TELE_CARD_MS = 250, TELE_CARD_NEAR = 80, TELE_LOOP_S = 12
 const TELE_LONG = 1920, TELE_SHORT = 1080, TELE_REST_KB = 4096, TELE_TINT = [1.22, 1.14, 0.98], TELE_TINT_REAL = [1.0, 0.94, 0.82]
 const TELE_SLOGANS = ['FAUST KNOWS BEST', 'OBEY. WORK. SMILE.', 'REPORT ALL CAPES', 'SICKOS AROUND EVERY CORNER.', 'MOST OF THEM ARE IN CHARGE OF SOMETHING.', 'THE CITY SLEEPS BECAUSE FAUST DOES NOT']
 // a page that frames this one and plays the room's stream itself can feed the screens its pictures: asked of it by
@@ -16845,6 +16845,8 @@ function screenInView() {
   f.v.setFromProjectionMatrix(f.m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
   return spots.some(p => (f.s.center.set(p.x, p.y, p.z), f.s.radius = Math.hypot(p.w, p.h) / 2, f.v.intersectsSphere(f.s)))
 }
+// whether a screen within TELE_CARD_NEAR m of the camera is in view, by the frustum screenInView set this frame
+const teleNear = () => { const f = screenFrustum, c = camera.position; return !!f && teleSpots().some(p => Math.hypot(p.x - c.x, p.z - c.z) <= TELE_CARD_NEAR && (f.s.center.set(p.x, p.y, p.z), f.s.radius = Math.hypot(p.w, p.h) / 2, f.v.intersectsSphere(f.s))) }
 // the frame's work, once (the look's passes draw the scene more than once): paint what is due onto the canvas and send it up
 function teleFrame() {
   if (renderHeadless || !tele.tex || !screenMat) return
@@ -16867,7 +16869,7 @@ function teleFrame() {
   } else if (tele.fed.on) { /* its next picture is due: this one stays */ }
   else if (v && v.readyState >= 2 && v.currentTime !== tele.vTime && n - tele.vAt >= 1000 / TELE_HZ - 1) {
     tele.vAt = n; tele.vTime = v.currentTime; teleDraw(v, v.videoWidth || TELE_W, v.videoHeight || TELE_H); did = tele.src = 'own'
-  } else if (tele.src === 'card' && n - tele.cardAt >= TELE_CARD_MS) {
+  } else if (tele.src === 'card' && n - tele.cardAt >= TELE_CARD_MS && (tele.cardAt < 0 || teleNear())) {      // 4 Hz, and only near: a still beyond 80 m
     if (!tele.card0) tele.card0 = n
     tele.cardAt = n; teleCard((n - tele.card0) / 1000 % TELE_LOOP_S); teleTreat(n); tele.w = TELE_W; tele.h = TELE_H; did = 'card'
   }
