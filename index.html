@@ -1051,6 +1051,8 @@ const BEAM_STYLES = {
   lance: { speed: 60 },
 }
 const PARTICLES = {
+  // card #93: a boat's bow spray once it planes (its wake is a foam strip of its own, boatTrailDraw)
+  spray: { n: 5, life: [0.3, 0.6], speed: [2, 4.5], size: [0.12, 0.22], cone: 0.6, fall: 9, grow: 1.6, cell: 0, color: 0xe8ecee },
   smoke: { round: true, n: 5, life: [0.9, 1.7], speed: [0.6, 2.2], size: [0.5, 0.85], cone: 0.7, fall: -1.2, grow: 3.2, cell: 0, color: 0x75716a },      // card #12, the ejector
   flare: { n: 1, life: [0.1, 0.14], speed: [0, 0], size: [0.9, 1.1], cone: 0, grow: 1.8, add: true, cell: 3, hot: 0.3 },
   spark: { n: 12, life: [0.18, 0.4], speed: [5, 12], size: [0.1, 0.16], cone: 1, fall: 12, grow: 0.4, add: true, cell: 0, stretch: 0.07, hot: 0.55 },
@@ -1220,6 +1222,118 @@ const PLANE_HULL = [[-0.5, 1.3, -3.4], [0.5, 1.3, -3.4], [-0.5, 2.5, -3.4], [0.5
   ...[-4.5, 4.5].flatMap(x => [[x, 3.05, -1.55], [x, 3.25, -1.55], [x, 3.05, -0.05], [x, 3.25, -0.05]]),
   ...[-4.1, 4.1].flatMap(x => [[x, 1.49, -1.2], [x, 1.6, -1.2], [x, 1.49, 0.2], [x, 1.6, 0.2]]),
   [0, 3.2, -3.7], [0, 0.6, -3.7], [-1.3, 1.9, -3.7], [1.3, 1.9, -3.7]]
+// ---------------------------------------------------------------- boats and the water's buoyancy (card #93)
+// The brief (pin rule 5): water per seed (rivers, lakes, dams, spillways, bridges), boats and a submarine; not every seed has
+// every kind of water, so boats are found only where the seed's water is (#92).
+//
+// floatStep(o, F, dt, t) is the water's one buoyancy model: for boats, and for whatever else floats or sinks (#94's cars, #92's
+// crates and safes), on #92's water (GAME.faustland.water: at(x, z, out) gives the level, depth and flow; waveAt(x, z, t) gives the
+// moving surface, the same one the drawing displaces by). F is a float row. Its probes are columns over the hull's waterplane,
+// [x, foot y, z, area] in model space from the body's centre, up to F.top. Each column pushes up by how deep it stands under the
+// surface, so a hull floats at its draft, rights itself when heeled, and pitches and rolls on the waves. The water drags each
+// column along the hull's own axes, against the flow: little ahead, much sideways (a keel), and the bob damped. A hull floods
+// from o.floodT (ms on the shared clock; the host sets it, and it rides the snapshot): after F.float s, its lift goes over
+// F.sink s. t is the tick's own time on the shared clock (carrierT: the host's tick, a guest's predicted or replayed one), so a
+// replay recomputes the same forces.
+//
+// Hulls (BOAT_SHAPES, m, model space as VEHICLE_SHAPES': x right, y up from the keel, -z ahead): length, beam, depth from keel
+// to gunwale, draft at its load; bow: the share of the length that narrows to the stem; transom: the stern's width as a share
+// of the beam (counter: where a rounded stern begins, as a share of the length from the stem); vee: how far the bottom rises
+// from the keel to the chine (m); deck: the superstructure's boxes, which the
+// collision hull wraps. The collision hull and the probes are built from the same shape, so what floats is what collides.
+const BOAT_SHAPES = {
+  Rowboat: { l: 4.2, b: 1.45, d: 0.62, draft: 0.17, bow: 0.42, transom: 0.62, vee: 0.1, stations: 5, across: 2, deck: [] },
+  Speedboat: { l: 6.2, b: 2.05, d: 1.0, draft: 0.34, bow: 0.4, transom: 0.86, vee: 0.22, stations: 6, across: 2, sweep: 0.45, rake: 0.75, rakeFrom: 0.5,
+    deck: [[-0.84, 1.19, -1.05, 0.84, 1.5, -0.5]] },
+  'Police launch': { l: 9.5, b: 2.8, d: 1.4, draft: 0.6, bow: 0.38, transom: 0.8, vee: 0.3, stations: 6, across: 2,
+    deck: [[-0.95, 1.4, -1.7, 0.95, 3.0, 0.6]] },
+  Tug: { l: 12.5, b: 4.4, d: 2.3, draft: 1.5, bow: 0.32, transom: 1, counter: 0.74, vee: 0.5, stations: 7, across: 3,
+    deck: [[-1.3, 2.3, -2.6, 1.3, 4.6, 0.3], [-0.55, 2.3, 0.6, 0.55, 5.6, 1.7]] },
+  Barge: { l: 26, b: 7.6, d: 2.3, draft: 1.0, bow: 0.08, transom: 0.95, vee: 0.05, stations: 9, across: 3,
+    deck: [[-3.0, 2.3, -10, 3.0, 2.9, 10]] },
+  // round: a pressure hull of that beam and depth, its deck casing at d; tower: the conning tower the casing carries; cam: the chase
+// camera's length (its VEHICLE_SHAPES camL), nearer than its own length would put it
+  Submarine: { l: 32, b: 3.8, d: 3.6, draft: 3.0, bow: 0.22, transom: 0.12, vee: 0, stations: 10, across: 2, round: true, cam: 20,
+    deck: [[-0.8, 3.6, -5.0, 0.8, 6.9, 1.2]] },
+}
+// the half-beam at z along a hull (s from the stem, 0..1): the bow's curve, then straight to a transom of its own width
+function boatHalf(S, z) {
+  const s = Math.min(1, Math.max(0, (z + S.l / 2) / S.l)), b = S.b / 2      // (clamp comes later in the file than the rows that call this)
+  if (S.round) return s < S.bow ? b * Math.sin(Math.PI / 2 * s / S.bow) : s > 1 - S.transom ? b * Math.sin(Math.PI / 2 * (1 - s) / S.transom) : b
+  if (S.counter && s > S.counter) return b * Math.sqrt(Math.max(0, 1 - ((s - S.counter) / (1 - S.counter)) ** 2))      // a rounded (counter) stern
+  return s < S.bow ? b * Math.sin(Math.PI / 2 * s / S.bow) : b * (1 - (1 - S.transom) * ((s - S.bow) / (1 - S.bow)) ** 2)
+}
+// its collision hull's points, model space (y 0 at the keel): the gunwale's outline, the chines and keel, the stem, the deck boxes
+function boatHull(S) {
+  const pts = [], n = S.round ? 16 : 10
+  for (let i = 0; i <= n; i++) {
+    // the sheer: a runabout's sweeps up all the way from the transom to the bow (sweep m higher there), the rest lift a little forward;
+    // its keel rises at the forefoot (rake of its depth at the stem, over the forward rakeFrom of its length), the section squeezed up to it
+    const z = -S.l / 2 + S.l * i / n, h = boatHalf(S, z), s = i / n, sheer = S.sweep ? S.d + S.sweep * (1 - s) ** 1.6 : S.d + 0.06 * S.d * Math.max(0, 1 - i / 3)
+    const r = S.rake && s < S.rakeFrom ? S.rake * S.d * (1 - s / S.rakeFrom) ** 2 : 0, up = y => r + y * (sheer - r) / sheer
+    if (S.round) {                                   // a round section, as tall as it is wide where it narrows, with the casing's deck on top
+      const r = h / (S.b / 2), ry = S.d / 2 * r, cy = S.d / 2
+      if (h < 0.02) { pts.push([0, cy, z]); continue }
+      for (let k = 0; k < 8; k++) { const a = Math.PI * 2 * k / 8; pts.push([Math.cos(a) * h, cy + Math.sin(a) * ry, z]) }
+      if (r > 0.6) pts.push([-h * 0.45, S.d, z], [h * 0.45, S.d, z])
+      continue
+    }
+    if (h < 0.02) { pts.push([0, sheer, z]); continue }
+    pts.push([-h, sheer, z], [h, sheer, z], [-h * 0.92, up(S.vee), z], [h * 0.92, up(S.vee), z])
+    if (i > 0) pts.push([0, up(0), z])
+  }
+  for (const [x0, y0, z0, x1, y1, z1] of S.deck) for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [z0, z1]) pts.push([x, y, z])
+  return pts
+}
+// its probes: columns on a grid of stations along the waterline and points across it, each with its share of the waterplane
+function boatProbes(S) {
+  const P = [], len = S.l / S.stations
+  for (let i = 0; i < S.stations; i++) {
+    const z = -S.l / 2 + len * (i + 0.5), h = boatHalf(S, z) * 0.94
+    for (let j = 0; j < S.across; j++) {
+      const x = S.across === 1 ? 0 : -h + 2 * h * (j + 0.5) / S.across, w = 2 * h / S.across
+      P.push([x, S.round ? S.d / 2 - S.d / 2 * Math.sqrt(Math.max(0, 1 - (x / Math.max(boatHalf(S, z), 1e-3)) ** 2)) * boatHalf(S, z) / (S.b / 2) : S.vee * Math.abs(x) / (S.b / 2), z, len * w])
+    }
+  }
+  return P
+}
+// the boats' rows (card #93), built from these for OBJECTS (the hull and its wreck), VEHICLE_SHAPES (room, seats, exits) and
+// VEHICLES (the drive: its sail row for boatStep and floatStep). Per boat: mass, colour, centre (com: y from the keel; bal: z),
+// top speed m/s, hp, ram, boom; its seats (model space from the keel; seat 0 drives); sail: thrust m/s² (and its share astern),
+// drag per m/s and quad per (m/s)² [ahead, sideways, up] when wet to its draft, rudder (its push per m/s of water past it),
+// wash (the propeller's water past it), spin (oars: a turn where it lies), plane (lift per (m/s)², its cap in g), bank (its lean
+// into a turn), prop (the propeller, model space), bob (its bob's damping, of critical), turn (the water's hold on its turning),
+// float and sink (s: how long it stays up once flooding, then how long it takes to go); dive (the submarine): push (its planes'
+// push up or down, g), pitch (rad: its bow down diving, up rising), trim and trimD (the planes' spring to that angle per rad, and
+// its damping per rad/s, per unit mass), floor (m it keeps off the bottom), depth (m: its keel's deepest)
+const BOAT_ROWS = [
+  ['Rowboat', 3, 0x5a4632, 0.22, 0.1, 3.3, 120, 0.6, { radius: 3, dmg: 20, knock: 6 }, [[0, 0.35, 0.2], [0, 0.35, 1.3]],
+    { thrust: 0.75, reverse: 0.7, drag: [0.06, 0.8, 0], quad: [0.06, 2.5, 1.5], rudder: 0, wash: 0, spin: 1.4, prop: [0, 0.05, 0], bob: 0.35, turn: 0.8, float: 1, sink: 5 }],
+  ['Speedboat', 10, 0x6e2a1a, 0.4, 0.35, 23, 260, 2.5, { radius: 6, dmg: 100, knock: 14 }, [[-0.45, 0.62, -0.3], [0.45, 0.62, -0.3], [-0.45, 0.62, 0.8], [0.45, 0.62, 0.8]],
+    { thrust: 6.5, reverse: 0.35, drag: [0.04, 0.5, 0], quad: [0.02, 0.9, 1.2], rudder: 0.11, wash: 2.5, plane: [0.012, 0.35], bank: 0.012, prop: [0, 0.12, 2.95], bob: 0.35, turn: 1.0, float: 2, sink: 8 }],
+  ['Police launch', 24, 0x1b2433, 0.75, 0.4, 18, 450, 3.5, { radius: 7, dmg: 120, knock: 16 }, [[-0.4, 1.5, -0.8], [0.4, 1.5, -0.8]],
+    { thrust: 4.2, reverse: 0.4, drag: [0.04, 0.6, 0], quad: [0.0125, 1.0, 1.2], rudder: 0.09, wash: 2.2, plane: [0.004, 0.2], bank: 0.006, prop: [0, 0.2, 4.4], bob: 0.35, turn: 2.0, float: 3, sink: 12 }],
+  ['Tug', 60, 0x2c3a2a, 1.3, 0.39, 8, 900, 6, { radius: 9, dmg: 150, knock: 18 }, [[-0.5, 3.0, -1.6], [0.5, 3.0, -1.6]],
+    { thrust: 2.2, reverse: 0.6, drag: [0.05, 0.8, 0], quad: [0.03, 1.4, 1.4], rudder: 0.16, wash: 2.6, spin: 3.5, prop: [0, 0.45, 5.8], bob: 0.35, turn: 3.5, float: 4, sink: 18 }],
+  ['Submarine', 110, 0x353c45, 1.15, 0.653, 11, 1500, 8, { radius: 10, dmg: 160, knock: 20 }, [[0, 4.6, -2.0]],
+    { thrust: 1.6, reverse: 0.5, drag: [0.03, 0.9, 0.2], quad: [0.006, 1.2, 1.4], rudder: 0.05, wash: 2.0, prop: [0, 1.8, 15.6], bob: 0.35, turn: 3.5, float: 8, sink: 30,
+      dive: { push: 0.12, pitch: 0.12, trim: 120, trimD: 40, floor: 1.5, depth: 22 } }],
+]
+// the barge has no drive of its own (the river's tugs push it): it floats on a row of its own
+const BARGE_FLOAT = { drag: [0.06, 1.2, 0], quad: [0.05, 1.8, 1.6], bob: 0.4, turn: 1.4, float: 6, sink: 30 }
+const boatObjectRows = () => [
+  ...BOAT_ROWS.flatMap(([name, mass, color]) => [
+    { name, shape: 'hull', mass, bounce: 0.05, friction: 0.6, damp: [0.02, 0.1], hit: 0.4, color, drive: name, points: boatHull(BOAT_SHAPES[name]), boat: true },
+    { name: name + ' wreck', shape: 'hull', model: name, mass, bounce: 0.05, friction: 0.8, damp: [0.05, 0.3], hit: 0.2, color: 0x2b2b2b, boat: true }]),
+  { name: 'Barge', shape: 'hull', mass: 90, bounce: 0.02, friction: 0.8, damp: [0.02, 0.1], hit: 0.2, color: 0x3a2f28, points: boatHull(BOAT_SHAPES.Barge), boat: true, sail: BARGE_FLOAT },
+]
+// room, seats and exits (beside the hull at each seat, at its keel: whoever leaves it afloat goes into the water beside it). h:
+// the room's ceiling for seatRoom, 2.6 m over the highest seat: a boat is open above its riders, so the biggest of them fits
+const boatVehicleShapes = () => Object.fromEntries(BOAT_ROWS.map(([name, , , , , , , , , seats]) => { const S = BOAT_SHAPES[name]
+  return [name, { w: S.b, l: S.l, ...S.cam ? { camL: S.cam } : {}, h: Math.max(S.d, ...S.deck.map(b => b[4]), ...seats.map(p => p[1] + 2.6)), wheels: { r: 0.3, at: [] }, seats,
+    exit: seats.map(([x, , z], i) => [(x < 0 || x === 0 && i % 2 === 0 ? -1 : 1) * (S.b / 2 + 0.8), 0, z]) }] }))
+const boatVehicleRows = () => BOAT_ROWS.map(([name, mass, , com, bal, speed, hp, ram, boom, seats, sail]) =>
+  ({ ...vehicleRow({ name, share: 0, engine: 0, brake: [0, 0], hand: 0, steer: 0.5, turn: 20, speed, hp, ram, boom, com, bal, wheels: { slip: [1, 1] }, wreck: name + ' wreck', variants: [{}] }), seats, sail }))
 const OBJECTS = [
   { name: 'Ball', r: 0.55, mass: 1, bounce: 0.6, friction: 0.6, damp: [0.1, 0.3],
     hit: 1, color: 0xe3b341, stripe: 0xf4efe1 },
@@ -1246,6 +1360,8 @@ const OBJECTS = [
   // card #5, the biplane and its wreck (PLANE); points: its hull in model space (carPts adds the wheels' rims)
   { name: 'Biplane', shape: 'hull', mass: 8, bounce: 0.1, friction: 0.7, damp: [0, 0.3], hit: 0.3, color: 0x6e1c1c, drive: 'Biplane', plane: true, points: PLANE_HULL },
   { name: 'Biplane wreck', shape: 'hull', model: 'Biplane', mass: 8, bounce: 0.05, friction: 0.9, damp: [0.2, 0.5], hit: 0.2, color: 0x2b2b2b, plane: true },
+  // card #93: the boats and their wrecks, and the barge (boatObjectRows)
+  ...boatObjectRows(),
 ]
 // card #84: a manhole's cover, once ripped off (a 16-sided slab, 92 cm across, 7 cm thick); its look is PROP_MODELS' 'Manhole cover'
 OBJECTS.push({ name: 'Manhole cover', shape: 'hull', points: Array.from({ length: 16 }, (_, i) => [Math.cos(i / 16 * Math.PI * 2) * 0.46, 0, Math.sin(i / 16 * Math.PI * 2) * 0.46]).flatMap(p => [[p[0], -0.035, p[2]], [p[0], 0.035, p[2]]]),
@@ -1296,6 +1412,7 @@ VEHICLE_SHAPES[PLANE.row] = { w: 9, l: 7.2, h: 3.4,
   // the tail wheel's ray runs as the mains' (r 0.4): its hub sits 0.35 over the drawn one so it meets the ground where that does
   wheels: { r: 0.4, at: [[-0.95, 0.4, -1.3, false], [0.95, 0.4, -1.3, false], [0, 1.5, 4.3, true]] },
   seats: [[0, 1.7, 0.85], [0, 1.7, -0.25]], exit: [[-1.6, 0, 0.85], [-1.6, 0, -0.25]] }
+Object.assign(VEHICLE_SHAPES, boatVehicleShapes())      // card #93: the boats' room, seats and exits
 const VEHICLES = [
   { name: 'Car', share: 1, engine: 50, brake: [1.24, 0.76], hand: 0.6, steer: 0.65, turn: 30, speed: 59, hp: 300, ram: 3.2, boom: { radius: 7, dmg: 120, knock: 16 }, com: 0.55, wheels: {"slip":[1.4,1.5]},
     variants: [{}, { name: 'Sport', color: 0xffd400, speed: 1.15, grip: 1.1 }, { color: 0x2c6fbb }, { color: 0xb8bec6 }, { name: 'Beater', color: 0x8c7b5c, speed: 0.85, grip: 0.85 }, { name: 'Squad', color: 0x17171b, speed: 1.08, grip: 1.08 }], squad: 5, wreck: 'Wreck' },
@@ -1313,6 +1430,7 @@ const VEHICLES = [
 // card #5: the biplane's row (PLANE); its seats as they are (vehicleRow mirrors a car's), its flight in planesTick
 VEHICLES.push({ ...vehicleRow({ name: PLANE.row, share: 0, engine: 0, brake: [0, PLANE.brake], hand: 1, steer: 0.6, turn: 20, speed: 46, hp: 240, ram: 2.4,
   boom: { radius: 8, dmg: 130, knock: 16 }, com: 1.6, bal: 0, wheels: { slip: [1.2, 1.2] }, wreck: PLANE.wreck, variants: [{}] }), seats: VEHICLE_SHAPES[PLANE.row].seats, fly: PLANE })
+VEHICLES.push(...boatVehicleRows())      // card #93: the boats' drives (their sail rows)
 // card #44: Faustland's period fleet, drawn from assets/vehicles.*.glb (made for The MANIAK; see SOURCES.md). VEHICLE_STYLES:
 // per VEHICLES row, per variant (by index, as variantAt picks it): style, the file's model (sedan, taxi, beater, coupe,
 // speedster, van, truck, bus); wheels: 'ww' whitewalls and chrome hubcaps, 'bk' black tyres on painted steel; paints: [body,
@@ -13329,7 +13447,7 @@ function carWant(b, seat, tgt, sd, dt) {
   if (b.bot.enforcer || b.bot.deal || (ai.carCd = (ai.carCd || 0) - dt) > 0 || tgt && sd < (ai.car ? 50 : BOARD_FAR) || !tgt && !(ai.roam ||= parked.size && roamSpot(b, b.y - b.h - b.r)) || objs.some(o => o.heldBy === b.id)) return ai.car = null
   const free = (o, i) => o.riders[i] === undefined && fits(b, o, i), by = o => players.get(o.riders[0])
   // empty, or a same-side driver's while it waits
-  const usable = o => o.V && !o.V.fly && o.car && o.heldBy === undefined && o.thrownBy === undefined && o.fuse === undefined && upOf(o) > 0.7 && !canLift(b, o) &&
+  const usable = o => o.V && !o.V.fly && !o.V.sail && o.car && o.heldBy === undefined && o.thrownBy === undefined && o.fuse === undefined && upOf(o) > 0.7 && !canLift(b, o) &&
     o.V.speed >= BOARD_GAIN * bestPace(b) && (o.riders[0] === undefined ? free(o, 0) && !o.traffic && speedOf(o) < 3 : by(o) && sideOf(by(o)) === sideOf(b) && speedOf(o) < 3 && o.riders.some((r, i) => free(o, i)))
   if (ai.car && !(objs.includes(ai.car) && usable(ai.car) && Math.hypot(ai.car.x - b.x, ai.car.z - b.z) < 30 && (ai.carT -= dt) > 0)) ai.car = null
   if (!ai.car && (ai.carScan = (ai.carScan || 0) - dt) <= 0) {
@@ -14253,6 +14371,7 @@ const CAR_CAM = { low: 0.05, floor: 0.75, sinkBy: 0.5, clear: 0.6 }
 const chaseTurn = inp => chase.inYaw === chase.inYaw ? wrapPi(inp.yaw - chase.inYaw) : 0
 function vehicleCamera(o, me, inp, cam, firstPerson) {
   if (o.V?.fly) return planeCamera(o, me, inp, cam, firstPerson)      // card #5
+  if (o.V?.sail?.dive) { const r = subCamera(o, me, inp, cam); if (r) return r }      // card #93: the submarine's periscope
   const pass = (seatOf(me)?.[1] ?? me.ride?.[1]) > 0
   if (chase.yaw !== chase.yaw || tickAt - chase.t >= 500) chaseStep(o, inp)
   const at = objDrawn.get(o), X = at ? at.x : o.x, Y = at ? at.y : o.y, Z = at ? at.z : o.z, Q = at ? at.q : o.q, drawnOff = at ? [0, 0, 0] : o.off || [0, 0, 0]
@@ -14268,7 +14387,7 @@ function vehicleCamera(o, me, inp, cam, firstPerson) {
     cam.lookAt(e[0] + sx * cp, e[1] + Math.sin(inp.pitch), e[2] + sz * cp)
     return { dist: 0, hideSelf: true, fade: 0, seatRay: pass ? { x: e[0], y: e[1], z: e[2], dx: sx * cp, dy: Math.sin(inp.pitch), dz: sz * cp, near: 0 } : null }
   }
-  const off = drawnOff, L = V.l || 2 * o.R, H = V.h || o.R, x0 = X + off[0], z0 = Z + off[2]
+  const off = drawnOff, L = V.camL || V.l || 2 * o.R, H = V.h || o.R, x0 = X + off[0], z0 = Z + off[2]      // card #93: camL, a camera length of its own
   const ground = Y + off[1] + o.low, py = ground + H
   const pull = 1 + drive(V, 'chase') * clamp(chase.v / V.speed, 0, 1), up = (1.5 + 0.15 * L) * pull
   const wantBack = 1.3 * L * pull + chase.lag, tf = frameT || now(), fdt = chase.camT === chase.camT ? clamp((tf - chase.camT) / 1000, 0, 0.25) : -1
@@ -14914,7 +15033,7 @@ function fits(c, o, i) {
   return seatRoom(C, o.V, i) && o.V.seats.every(([x2, , z2], j) => { if (j === i || o.riders[j] === undefined || Math.abs(z2 - z) > 0.3) return true
     const B = riderRow(o.riders[j]); return !(M(C).room || M(B).room) || Math.abs(at(B, x2) - at(C, x)) >= half(C) + half(B) })
 }
-const canLift = (c, p) => !p.K.carry && p.K.mass <= liftOf(c)
+const canLift = (c, p) => !p.K.carry && !p.K.boat && p.K.mass <= liftOf(c)      // card #93: a boat is boarded, never lifted
 const takeable = (c, p) => p.K.carry ? p.heldBy === undefined && objGap(c, p) <= p.K.carry.reach && inSight(c, p) :
   p.V && objGap(c, p) <= 1.5 && !canLift(c, p) && p.riders.some((r, i) => r === undefined && fits(c, p, i)) && inSight(c, p) ||
   p.heldBy === undefined && objGap(c, p) <= (hurlOf(c)?.reach ?? 1.5) && canLift(c, p) && inSight(c, p)
@@ -15187,6 +15306,7 @@ function driveStep(c, inp) {
   const s = seatOf(c)
   if (!s || s[1]) return
   if (s[0].V.fly) return      // card #5: a plane flies (planesTick)
+  if (s[0].V.sail) return     // card #93: a boat sails (waterTick)
   const o = s[0], V = o.V, W = V.wheels, v = o.body.getLinearVelocity(), fw = rotq(o.q, [0, 0, -1]), go = v.x() * fw[0] + v.y() * fw[1] + v.z() * fw[2]
   let f = clamp(inp.f || 0, -1, 1), brake = 0
   if (f * go < -0.5) { brake = 1; f = 0 }
@@ -15296,34 +15416,13 @@ function postTick(list) {
 // postTick; returns the step's ms
 // the tick's list, in place, with only those still in the game: a removal mid-tick leaves no body-less one for later steps
 const present = list => { let n = 0; for (const c of list) if (players.get(c.id) === c) list[n++] = c; list.length = n }
-// card #94 (interim; card #93's waterTick/floatStep takes this call's place): a vehicle in water floats on the surface for CAR_WET.float s,
-// then floods over CAR_WET.sink s and goes down. The driver can leave (E) and the ejector fires throughout; its engine is off in the water.
-// o.floodT: the clock's second it first took water (the host sets it; a guest's own prediction takes it from its own first sight)
-const CAR_WET = { float: 1.5, sink: 3, buoy: 1.6, flooded: 0.6, drag: 1.4, dragV: 5, spin: 0.97, draft: 1.2 }
-function carWater(dt, t) {
-  const T = carrierT / 1000          // the tick's shared-clock time (the host's tickAt; a prediction's, a replay's own); tickChars' t is an object on the host
-  for (const o of objs) {
-    if (!o.V || o.V.fly || o.V.sail || o.parked && !o.body.isActive() || o.heldBy !== undefined) continue          // boats float on #93's floatStep
-    const W = waterOf(o.x, o.z)
-    if (!W) { if (o.floodT !== undefined && o.y > o.floodY + 2) o.floodT = undefined; continue }
-    const low = o.y + (o.low ?? -0.8), sub = clamp((W.y - low) / CAR_WET.draft, 0, 1)
-    if (sub <= 0) continue
-    if (o.floodT === undefined) { o.floodT = T; o.floodY = W.y }
-    const flood = clamp((T - o.floodT - CAR_WET.float) / CAR_WET.sink, 0, 1), m = o.K.mass, v = o.body.getLinearVelocity()
-    const k = CAR_WET.buoy + (CAR_WET.flooded - CAR_WET.buoy) * flood
-    forceVec.setValue((W.flow[0] - v.x()) * m * CAR_WET.drag * sub, -GRAV * m * k * sub - v.y() * m * CAR_WET.dragV * sub, (W.flow[1] - v.z()) * m * CAR_WET.drag * sub)
-    o.body.applyCentralForce(forceVec); o.body.activate()
-    const w = o.body.getAngularVelocity(); velVec.setValue(w.x() * CAR_WET.spin, w.y() * CAR_WET.spin, w.z() * CAR_WET.spin); o.body.setAngularVelocity(velVec)
-    if (o.car) o.V.wheels.at.forEach((w, i) => o.car.applyEngineForce(0, i))
-  }
-}
 function tickChars(list, inputFor, dt, P, t) {
   carrierPlace()
   if (P) P.beforeIntent(t)
   preTick(list, inputFor, dt)
   if (P) present(list)
   for (const c of list) { carryStep(c, inputFor(c), dt); driveStep(c, inputFor(c)) }
-  carWater(dt, t)
+  waterTick(list, inputFor, dt)       // card #93: the water's push on all in it, and a boat's own drive
   planesTick(list, inputFor, dt)
   if (P) P.beforePhysics(t)
   if (P) present(list)
@@ -24270,6 +24369,7 @@ function carBlow(c, o, G, P, d) {
     l[best + 6] = Math.round(Math.min(CAR_DMG.rMax, Math.max(l[best + 6] / 100, B) + CAR_DMG.grow) * 100)
   }
   carPartSet(o, m, l)
+  if (o.K.boat) boatHoled(o, lp)      // card #93: below its waterline, a hole
   if (P[1] < c.y - c.h - c.r + CAR_DMG.lowAt) carVolleyLow = true
   try { sfxPlay('Car punch', { x: P[0], y: P[1], z: P[2] }, 'world', kind === 'rise' ? 1 : 0.7) } catch (e) {}
   return carThrough(c, o, G, P, d)
@@ -24283,7 +24383,7 @@ function carThrough(c, o, G, P, d) {
   V.seats.forEach((s, i) => {
     const q = seatAt(o, [s[0], s[1] + 0.45, s[2]]), px = q[0] - P[0], py = q[1] - P[1], pz = q[2] - P[2]
     const al = clamp(px * d[0] + py * d[1] + pz * d[2], 0, CAR_DMG.depthIn), g = Math.hypot(px - d[0] * al, py - d[1] * al, pz - d[2] * al)
-    const who = o.riders[i] !== undefined ? players.get(o.riders[i]) : !i && o.traffic?.driver ? 'traffic' : null
+    const who = o.riders[i] !== undefined ? players.get(o.riders[i]) : !i && o.traffic?.driver ? 'traffic' : !i && o.crew && !o.crew.dead ? 'crew' : null      // card #93: a boat's helmsman
     if (who && g < bd) { bd = g; best = who }
   })
   if (best === 'traffic') {          // card #101: knocked out of the car by the blow, and hurt by it (a swing's whole damage)
@@ -24291,6 +24391,7 @@ function carThrough(c, o, G, P, d) {
     try { trafficDetach(o, true) } finally { o.exitHit = null }
     return null
   }
+  if (best === 'crew') { boatCrewHit(o, stat(c, 'give', G.dmg * profDmg(c, G.name)), c); return null }      // card #93: a boat's helmsman
   if (!best || best.dead > 0 || best.prot > 0) return null
   const h = best, was = hookHitOn && [h.hp, h.mark, h.markT]
   h.hp -= stat(h, 'take', stat(c, 'give', G.dmg * profDmg(c, G.name)))
@@ -38365,7 +38466,7 @@ function airDraw() {
   if (!V || !LV.faust || !camera) return
   const t = isHost ? drawnT() : renderT
   if (V.t === t) return
-  V.t = t; planeFrame++
+  V.t = t; planeFrame++; boatViewsTick()
   for (const [key, v] of planeViews) if (v.seen < planeFrame - 1) { v.root.visible = false; if (v.seen < planeFrame - 600) { v.root.removeFromParent(); planeViews.delete(key) } }
   if (V.far.parent !== faustState?.skyScene && faustState?.skyScene) faustState.skyScene.add(V.far)
   const cp = camera.position
@@ -38394,6 +38495,740 @@ GAME.air = {
   local: (id, x, y, z, t) => { const p = GAME.air.pose(id, t); return p && carrierLocal(p, x, y, z) },
   world: (id, x, y, z, t) => { const p = GAME.air.pose(id, t); return p && carrierWorld(p, x, y, z) },
   get view() { return airView && { kits: Object.fromEntries(Object.entries(airKits).map(([k, K]) => [k, !!K.scene])), ships: airView.ships.map(s => ({ id: s.id, near: s.root.parent === airView.near, lod: s.lods.findIndex(g => g.visible), at: s.root.position.toArray().map(v => +v.toFixed(2)) })) } },
+}
+// a float row from a hull, its centre at0 (model space) and mass: probes from the centre, F.rho the push per m² per m of depth
+// that holds its weight at its draft, and the damping that settles its bob in about a second
+function boatFloat(S, at0, mass, sail) {
+  const probes = boatProbes(S).map(([x, y, z, a]) => [x - at0[0], y - at0[1], z - at0[2], a])
+  const held = probes.reduce((s, p) => s + p[3] * Math.max(0, S.draft - (p[1] + at0[1])), 0), area = probes.reduce((s, p) => s + p[3], 0)
+  const heave = Math.sqrt(-GRAV / S.draft)
+  return { probes, area, top: S.d - at0[1], draft: S.draft, rho: mass * -GRAV / held, bob: 2 * (sail.bob ?? 0.35) * heave, holeY: S.draft + 0.25,
+    drag: sail.drag, quad: sail.quad, turn: sail.turn ?? 0.6, side: sail.side ?? 0, float: sail.float ?? Infinity, sink: sail.sink ?? 6, lose: sail.lose ?? 1 }
+}
+// a float row for any hull (#94's cars, #92's crates and safes): columns on a grid under its box, each from the hull's bottom to its
+// top. pts: the hull's points from its centre (hullOf's). opts: draft (m at which it floats while dry inside, its own share of its
+// depth), float and sink (s: how long it stays up once in, then how long it takes to go; Infinity floats for good), drag, quad
+// (as a boat's sail row; default a blunt box's), turn, across and along (the grid)
+function hullFloat(pts, mass, opts) {
+  const lo = [0, 1, 2].map(i => Math.min(...pts.map(p => p[i]))), hi = [0, 1, 2].map(i => Math.max(...pts.map(p => p[i])))
+  const nx = opts.across ?? 2, nz = opts.along ?? 4, w = (hi[0] - lo[0]) / nx, l = (hi[2] - lo[2]) / nz, probes = []
+  for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) probes.push([lo[0] + w * (i + 0.5), lo[1], lo[2] + l * (j + 0.5), w * l])
+  const area = w * l * nx * nz, draft = opts.draft, heave = Math.sqrt(-GRAV / draft)
+  return { probes, area, top: hi[1], draft, rho: mass * -GRAV / (area * draft), bob: 2 * (opts.bob ?? 0.4) * heave,
+    drag: opts.drag ?? [0.3, 0.6, 0], quad: opts.quad ?? [0.25, 0.5, 1.5], turn: opts.turn ?? 1.2, side: 0,
+    float: opts.float ?? Infinity, sink: opts.sink ?? 6, lose: opts.lose ?? 1, wet: !!opts.wet }
+}
+const floatRec = { id: 0, kind: '', y: 0, level: 0, floor: 0, depth: 0, flow: [0, 0] }
+const floatWater = () => GAME.faustland?.water
+// the surface at (x, z) at t (ms, shared clock): the level and the waves, or NaN on dry ground
+function floatTop(x, z, t) {
+  const W = floatWater(), at = W?.at?.(x, z, floatRec)
+  return at ? at.level + floatWave(W, x, z, t, at.kind) : NaN
+}
+// the wave height there at t (ms, shared clock): #92's waveAt (seconds, by the body's kind), only once the drawn surface moves by
+// the same table (its `drawn` flag); while the water is drawn flat, a boat sits flat on it, never bobbing out of step
+const floatWave = (W, x, z, t, kind) => W?.waveAt && W.waves?.drawn ? W.waveAt(x, z, t / 1000, kind) || 0 : 0
+// one tick of the water on body o (its float row F): returns how wet it is, 0 dry to 1 at its draft (more when deeper)
+function floatStep(o, F, dt, t) {
+  const b = o.body, tr = b.getWorldTransform(), p = tr.getOrigin(), r = tr.getRotation(), q = [r.x(), r.y(), r.z(), r.w()]
+  const px = p.x(), py = p.y(), pz = p.z(), v = b.getLinearVelocity(), w = b.getAngularVelocity()
+  const vx = v.x(), vy = v.y(), vz = v.z(), wx = w.x(), wy = w.y(), wz = w.z()
+  const ax = rotq(q, [1, 0, 0]), ay = rotq(q, [0, 1, 0]), az = rotq(q, [0, 0, -1]), m = o.K.mass
+  const holes = F.holeY !== undefined ? boatHoles(o, F.holeY) : 0
+  const flood = o.floodT === undefined ? 0 : clamp(((t - o.floodT) / 1000 - F.float) / (F.sink / Math.max(1, holes)), 0, 1), lift = 1 - flood * F.lose
+  let fx = 0, fy = 0, fz = 0, tx = 0, ty = 0, tz = 0, wet = 0
+  const W = floatWater()
+  for (const [x, y, z, A] of F.probes) {
+    const rx = ax[0] * x + ay[0] * y - az[0] * z, ry = ax[1] * x + ay[1] * y - az[1] * z, rz = ax[2] * x + ay[2] * y - az[2] * z
+    const at = W?.at?.(px + rx, pz + rz, floatRec)
+    if (!at) continue
+    const top = at.level + floatWave(W, px + rx, pz + rz, t, at.kind), foot = py + ry
+    const deep = clamp(top - foot, 0, F.top - y)          // the column's depth under the surface, at most its own height
+    if (!(deep > 0)) continue
+    const share = A / F.area * Math.min(1, deep / F.draft)      // its share of the hull's wetted drag
+    // the push acts at the middle of the water it displaces (the column's wet half, up its own axis): a hull is held up from its
+    // centre of buoyancy, never from its keel, so a high superstructure still rights itself
+    const up = F.rho * A * deep * lift, bx = rx + ay[0] * deep / 2, by = ry + ay[1] * deep / 2, bz = rz + ay[2] * deep / 2
+    fy += up; tx += by * 0 - bz * up; tz += bx * up - by * 0
+    let ux = 0, uy = 0, uz = 0
+    // the column's velocity through the water: the body's at that point, less the water's own flow
+    const cx = vx + wy * rz - wz * ry - at.flow[0], cy = vy + wz * rx - wx * rz, cz = vz + wx * ry - wy * rx - at.flow[1]
+    const va = cx * az[0] + cy * az[1] + cz * az[2], vs = cx * ax[0] + cy * ax[1] + cz * ax[2], vu = cx * ay[0] + cy * ay[1] + cz * ay[2]
+    const da = -m * share * (F.drag[0] + F.quad[0] * Math.abs(va)) * va, ds = -m * share * (F.drag[1] + F.quad[1] * Math.abs(vs)) * vs
+    const du = -m * share * (F.bob + F.quad[2] * Math.abs(vu)) * vu
+    ux += da * az[0] + ds * ax[0] + du * ay[0]; uy += da * az[1] + ds * ax[1] + du * ay[1]; uz += da * az[2] + ds * ax[2] + du * ay[2]
+    fx += ux; fy += uy; fz += uz
+    tx += ry * uz - rz * uy; ty += rz * ux - rx * uz; tz += rx * uy - ry * ux
+    // the keel's sideways push acts at the row's own height (F.side, from the centre), not at the column's foot: so a fast turn
+    // heels it only as its row says, and a planing hull doesn't trip over its own chine
+    const lift_ = F.side - y; tx += lift_ * (ay[1] * ds * ax[2] - ay[2] * ds * ax[1]); ty += lift_ * (ay[2] * ds * ax[0] - ay[0] * ds * ax[2]); tz += lift_ * (ay[0] * ds * ax[1] - ay[1] * ds * ax[0])
+    wet += share
+  }
+  if (!wet) return 0
+  // the water's hold on its turning, by how wet it is
+  const k = F.turn * m * Math.min(1, wet)
+  tx -= k * wx; ty -= k * wy; tz -= k * wz
+  forceVec.setValue(fx, fy, fz); b.applyCentralForce(forceVec)
+  forceVec.setValue(tx, ty, tz); b.applyTorque(forceVec)
+  return wet
+}
+// a boat's own drive, its driver's input: the propeller's thrust ahead (only while it is in the water), the rudder's push
+// sideways at the stern by the water past it (its speed through the water and the propeller's wash), and a planing hull's
+// lift with speed. inp: f -1..1 (S astern, W ahead), r -1..1 (A, D)
+function boatStep(o, inp, dt, t) {
+  const S = o.V.sail, b = o.body, tr = b.getWorldTransform(), p = tr.getOrigin(), r = tr.getRotation(), q = [r.x(), r.y(), r.z(), r.w()]
+  const fw = rotq(q, [0, 0, -1]), rt = rotq(q, [1, 0, 0]), v = b.getLinearVelocity(), go = v.x() * fw[0] + v.y() * fw[1] + v.z() * fw[2], m = o.K.mass
+  const at0 = hullAt(o.K), pp = rotq(q, [S.prop[0] - at0[0], S.prop[1] - at0[1], S.prop[2] - at0[2]]), top = floatTop(p.x() + pp[0], p.z() + pp[2], t)
+  if (!(top > p.y() + pp[1])) return false            // the propeller is out of the water: it spins in the air
+  const f = clamp(inp?.f || 0, -1, 1), steer = clamp(inp?.r || 0, -1, 1), h = Math.hypot(fw[0], fw[2]) || 1
+  let fx = 0, fy = 0, fz = 0, tx = 0, ty = 0, tz = 0
+  const push = (Fx, Fy, Fz, at) => { fx += Fx; fy += Fy; fz += Fz; tx += at[1] * Fz - at[2] * Fy; ty += at[2] * Fx - at[0] * Fz; tz += at[0] * Fy - at[1] * Fx }
+  if (f) { const T = m * S.thrust * (f > 0 ? f : f * S.reverse); push(fw[0] / h * T, 0, fw[2] / h * T, pp) }      // level, along its heading
+  if (steer) { const k = -m * S.rudder * steer * (go + S.wash * f); push(rt[0] * k, 0, rt[2] * k, pp) }
+  if (S.plane && go > 0) push(0, m * Math.min(S.plane[0] * go * go, S.plane[1] * -GRAV), 0, [0, 0, 0])
+  if (S.dive) boatDive(o, S, inp, q, p, t, push)
+  if (S.bank && go > 0) { const w = b.getAngularVelocity(), up = rotq(q, [0, 1, 0]), yr = w.x() * up[0] + w.y() * up[1] + w.z() * up[2], k = -m * S.bank * yr * go
+    tx += fw[0] * k; ty += fw[1] * k; tz += fw[2] * k }      // a planing hull leans into its turn
+  if (steer && S.spin) { const up = rotq(q, [0, 1, 0]), k = -m * S.spin * steer; tx += up[0] * k; ty += up[1] * k; tz += up[2] * k }      // oars: it turns where it lies
+  forceVec.setValue(fx, fy, fz); b.applyCentralForce(forceVec)
+  forceVec.setValue(tx, ty, tz); b.applyTorque(forceVec)
+  return true
+}
+// the submarine (its sail row's dive): nothing kept between ticks, so a replay recomputes it. Its tanks, flooded, take exactly the
+// lift its hull has over its weight under the water, so it is neutral and hangs where it is (the water damps its rise and fall);
+// blown, it rises and floats up to its draft. Its planes push it down (descend held) or up (jump
+// held) at dive.push g and hold its bow at dive.pitch (rad) down or up; never within dive.floor m of the bottom, nor deeper than dive.depth (its
+// keel below the surface). The driver's input: a driven boat's; with nobody aboard it only hangs or floats
+function boatDive(o, S, inp, q, p, t, push) {
+  const D = S.dive, F = floatOf(o.K), H = hullOf(o.K), m = o.K.mass, at = floatWater()?.at?.(p.x(), p.z(), floatRec)
+  if (!F || !at) return
+  const up = rotq(q, [0, 1, 0]), keel = p.y() - H.at[1], top = keel + BOAT_SHAPES[o.K.name].d, surf = at.level, under = clamp((surf - top) / 0.5, 0, 1)
+  const full = F.probes.reduce((s, [, y, , A]) => s + F.rho * A * (F.top - y), 0)          // its hull's whole lift, under
+  const want = inp?.descend ? -1 : inp?.j ? 1 : 0, deep = surf - keel, room = at.depth - deep
+  // its tanks: flooded while it dives (descend held), blown while it rises (jump held), and otherwise as full as its casing is
+  // under: so it sinks when told, rises when told, and hangs neutral wherever it is left
+  const flood = want < 0 ? 1 : want > 0 ? 0 : under
+  if (flood > 0) push(0, -flood * Math.max(0, full - m * -GRAV), 0, [0, 0, 0])
+  const go = want < 0 ? (room > D.floor && deep < D.depth ? -1 : 0) : want
+  if (room < D.floor) push(0, m * D.push * -GRAV * (1 - Math.max(0, room) / D.floor), 0, [0, 0, 0])      // off the bottom: it lifts clear
+  if (go) push(0, go * m * D.push * -GRAV, 0, [0, 0, 0])
+  // its planes hold its bow at D.pitch down while it dives, up while it rises, level otherwise (under the water, where the
+  // surface no longer trims it): a spring to that angle and its damping, about its own side axis
+  if (under > 0 || go) {
+    const fw = rotq(q, [0, 0, -1]), rt = rotq(q, [1, 0, 0]), w = o.body.getAngularVelocity(), pitch = Math.asin(clamp(fw[1], -1, 1)), rate = w.x() * rt[0] + w.y() * rt[1] + w.z() * rt[2]
+    const k = m * (D.trim * (go * D.pitch - pitch) - D.trimD * rate)
+    boatTorque(o, rt[0] * k, rt[1] * k, rt[2] * k)
+  }
+}
+function boatTorque(o, x, y, z) { forceVec.setValue(x, y, z); o.body.applyTorque(forceVec) }
+// a row's float, built once: a boat's (and its wreck's) from its hull shape and its drive's sail row; anything else that floats or
+// sinks from its own `float` row (a hullFloat's opts: #94's cars, #92's crates and safes); null: the water leaves it alone
+// #94's cars (the vehicle rows that aren't a boat or a plane): they float briefly, then sink (card #94), and they start
+// to flood the tick they go in; out of the water and clear of it, they're dry again
+const FLOAT_SETTLE = 3000
+const CAR_FLOAT = { draft: 0.55, float: 1.5, sink: 3, wet: true }
+function floatOf(K) {
+  if (K.floatRow !== undefined) return K.floatRow
+  const H = hullOf(K), name = K.model || K.name, S = BOAT_SHAPES[name], V = VEHICLES.find(v => v.name === name)
+  const car = !!K.drive && !S && !K.plane
+  return K.floatRow = !H ? null : S && (V?.sail || K.sail) ? boatFloat(S, H.at, K.mass, V?.sail || K.sail)
+    : K.float || car ? hullFloat(H.pts, K.mass, K.float || CAR_FLOAT) : null
+}
+// every tick, beside planesTick (host, a guest's prediction and its replays alike): the water's push on everything in it, and a
+// boat's own drive under its driver here. A boat's wreck (not the barge: it has no drive of its own, but it is no wreck) starts
+// to flood the first tick the host sees it in the water
+function waterTick(list, inputFor, dt) {
+  const W = floatWater()
+  if (!W?.at || !objs.length) return
+  const t = carrierT
+  for (const o of objs) {
+    if (!o.body || o.heldBy !== undefined || o.away) continue
+    const F = floatOf(o.K)
+    if (!F) continue
+    const p = o.body.getWorldTransform().getOrigin(), at = W.at(p.x(), p.z(), floatRec)
+    if (!at || p.y() - o.R > at.level + 2) { if (isHost && F.wet && o.floodT !== undefined) o.floodT = undefined; continue }      // out and clear: dry again
+    if (isHost && o.floodT === undefined && o.K.boat && o.K.model && !o.K.drive) o.floodT = t      // a boat's wreck (its row's model: the boat it was)
+    const wet = floatStep(o, F, dt, t)
+    if (!(wet > 0)) continue
+    if (F.wet) { if (isHost && o.floodT === undefined) o.floodT = t; if (o.car && !o.V?.sail) o.V.wheels.at.forEach((w, i) => o.car.applyEngineForce(0, i)) }      // a car in the water: flooding, its engine dead
+    // afloat, or still going down, it never sleeps: Bullet zeroes a sleeping body's velocity, so a boat drifting or sinking slower
+    // than its sleep threshold (0.8 m/s) would stop dead every 2 s and start again. Sunk and settled (its float and sink time and
+    // FLOAT_SETTLE ms on) it may sleep on the bed
+    if (!(o.floodT !== undefined && t - o.floodT > (F.float + F.sink) * 1000 + FLOAT_SETTLE)) o.body.activate()
+    const id = o.V?.sail && o.car && !o.parked ? o.riders[0] : undefined, c = id !== undefined ? list.find(c => c.id === id) : null
+    if (o.moored && !o.loose) { if (o.riders?.[0] !== undefined || o.boatAI) o.loose = true; else boatHold(o, dt) }     // cast off once someone takes the helm
+    if (c) boatStep(o, inputFor(c), dt, t)
+    else if (isHost && o.boatAI && o.V?.sail && o.riders?.[0] === undefined) {      // the host's helm (#14's launch, the river's tugs)
+      if (o.boatAI.river !== undefined) boatRiverAim(o, o.boatAI, W)
+      boatStep(o, boatHelm(o, o.boatAI), dt, t)
+    }
+    if (isHost && o.tow !== undefined) boatTow(o)
+    if (isHost && o.crew) boatCrewTick(o)
+  }
+}
+// a moored boat's lines: a spring and its damping toward its berth (o.berth: x, z, yaw), so the current, the waves and a push
+// move it only as far as its lines give, and it swings back; a strong push (a car, his punch) still rocks it
+function boatHold(o, dt) {
+  const B = o.berth, b = o.body
+  if (!B) return
+  const p = b.getWorldTransform().getOrigin(), v = b.getLinearVelocity(), w = b.getAngularVelocity(), m = o.K.mass, k = BOATS.lines
+  const fw = rotq(o.q, [0, 0, -1]), yaw = Math.atan2(-fw[0], -fw[2]), dy = wrapPi(B.yaw - yaw)
+  forceVec.setValue(m * (k[0] * (B.x - p.x()) - k[1] * v.x()), 0, m * (k[0] * (B.z - p.z()) - k[1] * v.z())); b.applyCentralForce(forceVec)
+  forceVec.setValue(0, m * (k[2] * dy - k[3] * w.y()), 0); b.applyTorque(forceVec)
+}
+// ---- a boat with nobody at its helm that sails anyway, by the host's order o.boatAI: { x, z } a point to make for, or { id } a player
+// to chase where he is now; speed (m/s, at most its own top), stop (m: near enough, it holds there). Each tick the helm turns
+// toward it (the rudder by the angle off) and holds a speed by the distance left and how straight ahead it lies; three feelers
+// along its heading (ahead, and 30° either side), as far as it carries in a second and a half, find the shore: where one meets
+// dry ground or water shallower than its draft, it turns away from that side, and slows if all three do
+function boatHelm(o, A) {
+  const fw = rotq(o.q, [0, 0, -1]), yaw = Math.atan2(-fw[0], -fw[2]), v = o.body.getLinearVelocity(), go = v.x() * fw[0] + v.z() * fw[2], S = BOAT_SHAPES[o.K.name]
+  const c = A.id !== undefined ? players.get(A.id) : null, tx = c ? c.x : A.x, tz = c ? c.z : A.z
+  if (!(tx === tx)) return { f: 0, r: 0 }
+  const d = Math.hypot(tx - o.x, tz - o.z), err = wrapPi(Math.atan2(-(tx - o.x), -(tz - o.z)) - yaw), W = floatWater(), look = S.l / 2 + 4 + Math.abs(go) * 1.5
+  const shoal = a => { const h = yaw + a, at = W?.at?.(o.x - Math.sin(h) * look, o.z - Math.cos(h) * look, floatRec); return !at || at.depth < S.draft + 0.5 }
+  const left = shoal(0.52), ahead = shoal(0), right = shoal(-0.52)
+  let r = clamp(-err * 1.6, -1, 1)
+  if (left && !right) r = 1; else if (right && !left) r = -1; else if (ahead) r = err > 0 ? -1 : 1
+  // the speed it wants: by the distance left (half a metre a second per metre), slow while it points well away, and its
+  // throttle to get there (astern to brake)
+  // a boat that turns where it lies (its sail row's spin: the tug's twin screws) keeps still while it points well away
+  const stop = A.stop ?? 10, top = Math.min(A.speed ?? o.V.speed, o.V.speed), want = clamp((d - stop) * 0.5, 0, top) * (Math.abs(err) > 1.2 ? (o.V.sail.spin ? 0 : 0.3) : 1)
+  let f = clamp((want - go) * 0.5, -1, 1)
+  // held (A.hold, a point): ahead or astern to keep it there, the rudder still on its heading
+  if (A.hold) { const along = (A.hold[0] - o.x) * fw[0] + (A.hold[1] - o.z) * fw[2]; f = clamp(along * 0.25 - go * 0.8, -1, 1) }
+  if (left && ahead && right) f = Math.min(f, 0.2)
+  return { f, r, j: false }
+}
+// a spot on the water near (x, z) for a boat of length l: on rings out from there, the first point with water as deep as `deep`
+// and as much open water around it as half its length; its heading along the water (toward the most open side). null if none
+function boatSpot(x, z, R = 120, l = 10, deep = 1.5) {
+  const W = floatWater(), at = W?.at
+  if (!at) return null
+  const open = (px, pz) => { const a = at(px, pz, floatRec); return !!a && a.depth >= deep }
+  for (let r = 0; r <= R; r += 8) for (let k = 0, n = Math.max(1, Math.round(2 * Math.PI * r / 8)); k < n; k++) {
+    const a = 2 * Math.PI * k / n, px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r
+    if (!open(px, pz)) continue
+    let best = -1, yaw = 0
+    for (let j = 0; j < 8; j++) { const h = Math.PI * j / 4, s = [0.5, 1].reduce((n, f) => n + open(px - Math.sin(h) * l * f, pz - Math.cos(h) * l * f), 0); if (s > best) { best = s; yaw = h } }
+    if (best >= 2) return { x: px, z: pz, yaw, level: at(px, pz, floatRec).level }
+  }
+  return null
+}
+// ---- the river's traffic (host): tugs up and down each river near a player, some with a barge in tow, keeping to their right of
+// its centreline (#92's body.centre, downstream order) by RIVER.keep m; let go once nobody is near. A tug's order: { river, dir
+// (+1 downstream, -1 up), s (m along the line), speed, stop: 0, hold }: it makes for the point RIVER.ahead m on along the line,
+// set to its right. Where its way is shut (the river's end, or water too shallow for it on its line: a shoal, a dam) a lone tug
+// turns back where it lies (its twin screws: its sail row's spin), and a tow holds where it is (hold: the point). A tow only
+// runs upstream, so its barge streams behind it on the current, and it sets out only with RIVER.clear m of open water ahead.
+// A barge in tow hangs on a line (o.tow: the barge's id) from the tug's stern to its bow: past RIVER.line m the line pulls
+// both ways (a spring and its damping), slack it pulls nothing
+const RIVER = { near: 380, away: 620, think: 2000, tows: 2, barge: 0.5, cruise: 4.5, keep: 7, ahead: 28, line: 9, pull: [2.2, 1.6], probe: 6, under: 0.5, warn: 30, clear: 160, gap: 25, room: 2 }
+// a river's centreline as a path (#92's body.centre, downstream order): its points' running lengths (cached on it), the point and
+// heading s m along it, and the nearest s to (x, z) within `span` of s0
+const riverSumsOf = new WeakMap()      // the lines' running lengths, kept beside #92's own arrays (never on them)
+function riverSums(C) {
+  let L = riverSumsOf.get(C)
+  if (!L) { L = [0]; for (let i = 1; i < C.length; i++) L.push(L[i - 1] + Math.hypot(C[i][0] - C[i - 1][0], C[i][1] - C[i - 1][1])); riverSumsOf.set(C, L) }
+  return L
+}
+function riverAt(C, s) {
+  const L = riverSums(C), t = clamp(s, 0, L.at(-1))
+  let i = 1; while (i < C.length - 1 && L[i] < t) i++
+  const n = L[i] - L[i - 1] || 1, f = (t - L[i - 1]) / n, dx = (C[i][0] - C[i - 1][0]) / n, dz = (C[i][1] - C[i - 1][1]) / n
+  return [C[i - 1][0] + (C[i][0] - C[i - 1][0]) * f, C[i - 1][1] + (C[i][1] - C[i - 1][1]) * f, dx, dz]
+}
+function riverNear(C, x, z, s0, span = 1e9) {
+  const L = riverSums(C)
+  let best = s0, bd = Infinity
+  for (let i = 1; i < C.length; i++) {
+    if (L[i] < s0 - span || L[i - 1] > s0 + span) continue
+    const ax = C[i - 1][0], az = C[i - 1][1], ex = C[i][0] - ax, ez = C[i][1] - az, n2 = ex * ex + ez * ez || 1
+    const f = clamp(((x - ax) * ex + (z - az) * ez) / n2, 0, 1), d = Math.hypot(ax + ex * f - x, az + ez * f - z)
+    if (d < bd) { bd = d; best = L[i - 1] + f * Math.sqrt(n2) }
+  }
+  return best
+}
+// whether a river's way is shut for a boat of shape S from s along its line (dir +1 downstream, -1 up), within reach m past
+// its bow: the river's end, or its line there dry or shallower than its draft and RIVER.under
+function riverShut(C, W, s, dir, S, reach) {
+  const L = riverSums(C).at(-1)
+  if (s + dir * (S.l / 2 + reach) > L || s + dir * (S.l / 2 + reach) < 0) return true
+  for (let k = S.l / 2; k <= S.l / 2 + reach; k += RIVER.probe) { const [x, z] = riverAt(C, s + dir * k), a = W.at(x, z, floatRec); if (!a || a.depth < S.draft + RIVER.under) return true }
+  return false
+}
+// whether another boat lies in o's lane ahead (dir along the line from s): its hull within RIVER.gap m of o's, ahead, and less than
+// their half beams and RIVER.room m off to the side. Its own barge never blocks it
+function riverBlocked(o, S, dir, C, s) {
+  const [, , dx, dz] = riverAt(C, s), ux = dx * dir, uz = dz * dir
+  for (const b of objs) {
+    if (b === o || !b.K.boat || b.id === o.tow) continue
+    const Sb = BOAT_SHAPES[b.K.model || b.K.name] || S, ax = b.x - o.x, az = b.z - o.z, along = ax * ux + az * uz, side = Math.abs(az * ux - ax * uz)
+    if (along > 0 && along < (S.l + Sb.l) / 2 + RIVER.gap && side < (S.b + Sb.b) / 2 + RIVER.room) return true
+  }
+  return false
+}
+// a tug's aim: where it is along its river, then the point RIVER.ahead m on, set to its right of the line as it goes. Where its
+// way is shut within RIVER.ahead and RIVER.warn m, or a boat lies in its lane ahead, a lone tug turns back (it pivots: the helm
+// holds it still until it points the new way) and a tow holds where it is, till its way opens
+function boatRiverAim(o, A, W) {
+  const body = W.bodies?.find(b => b.id === A.river), C = body?.centre
+  if (!C || C.length < 2) return
+  const S = BOAT_SHAPES[o.K.name], reach = RIVER.ahead + RIVER.warn
+  A.s = riverNear(C, o.x, o.z, A.s ?? 0, 120)
+  const shut = dir => riverShut(C, W, A.s, dir, S, reach) || riverBlocked(o, S, dir, C, A.s)
+  if (!shut(A.dir)) A.hold = null
+  else if (o.tow === undefined && !shut(-A.dir)) { A.dir = -A.dir; A.hold = null }
+  else A.hold ||= [o.x, o.z]
+  const [x, z, dx, dz] = riverAt(C, A.s + A.dir * RIVER.ahead), tx = dx * A.dir, tz = dz * A.dir
+  // its right of the line as it goes (right of -Z is +X), as far as RIVER.keep while the water stays deep (its draft and 1 m)
+  // out to its far side: a narrow channel through the city keeps it nearer the middle
+  const deep = off => { const a = W.at(x - tz * off, z + tx * off, floatRec); return !!a && a.depth >= S.draft + 1 }
+  let off = RIVER.keep
+  while (off > 0 && !(deep(off + S.b / 2) && deep(off - S.b / 2))) off -= 1
+  A.x = x - tz * Math.max(0, off); A.z = z + tx * Math.max(0, off)
+}
+function boatTow(o) {
+  const g = objs.find(b => b.id === o.tow)
+  if (!g || g.heldBy !== undefined) { o.tow = undefined; return }
+  const Sa = BOAT_SHAPES[o.K.name], Sb = BOAT_SHAPES[g.K.name], Ha = hullOf(o.K), Hb = hullOf(g.K)
+  const a = rotq(o.q, [0, Sa.d - Ha.at[1], Sa.l / 2 - Ha.at[2]]), b = rotq(g.q, [0, Sb.d - Hb.at[1], -Sb.l / 2 - Hb.at[2]])
+  const ax = o.x + a[0], az = o.z + a[2], bx = g.x + b[0], bz = g.z + b[2], dx = bx - ax, dz = bz - az, d = Math.hypot(dx, dz)
+  if (!(d > RIVER.line)) return
+  const ux = dx / d, uz = dz / d, va = o.body.getLinearVelocity(), vb = g.body.getLinearVelocity(), rel = (vb.x() - va.x()) * ux + (vb.z() - va.z()) * uz
+  const m = Math.min(o.K.mass, g.K.mass), F = m * (RIVER.pull[0] * (d - RIVER.line) + RIVER.pull[1] * Math.max(0, rel))
+  forceVec.setValue(ux * F, 0, uz * F); relVec.setValue(...a); o.body.applyForce(forceVec, relVec)
+  forceVec.setValue(-ux * F, 0, -uz * F); relVec.setValue(...b); g.body.applyForce(forceVec, relVec)
+  o.body.activate(); g.body.activate()
+}
+// the river's tows: per river near a player, up to RIVER.tows, each set out on its centreline away from where he is
+function boatsRiverTick(W, near) {
+  const T = tickAt || now()
+  if (T - (boatsRiverTick.t || 0) < RIVER.think) return
+  boatsRiverTick.t = T
+  for (const o of objs.filter(o => o.boatAI?.river !== undefined)) if (!near(o.x, o.z, RIVER.away) && !o.riders?.some(r => r !== undefined)) {
+    const g = o.tow !== undefined && objs.find(b => b.id === o.tow); if (g) boatDrop(g); boatDrop(o) }
+  for (const body of W.bodies) {
+    const C = body.kind === 'river' && body.centre
+    if (!C || C.length < 2) continue
+    const have = objs.filter(o => o.boatAI?.river === body.id).length
+    if (have >= RIVER.tows) continue
+    // a point of its line near a player but not right beside him (100-300 m), the further from the others the better
+    const Ls = riverSums(C).at(-1), live = [...players.values()].filter(c => !(c.dead > 0)), boats = objs.filter(o => o.K.boat)
+    let best = -1, bd = -1
+    for (let s0 = 30; s0 < Ls - 30; s0 += 25) {
+      const [x, z] = riverAt(C, s0), pd = Math.min(Infinity, ...live.map(c => Math.hypot(c.x - x, c.z - z)))
+      if (pd < 100 || pd > 300) continue
+      const od = Math.min(Infinity, ...boats.map(o => Math.hypot(o.x - x, o.z - z)))
+      if (od < 60) continue
+      if (od > bd) { bd = od; best = s0 }
+    }
+    if (best < 0) continue
+    const towing = (boatHash(LV.grow?.seed ?? 0, body.id + ':b:' + T) % 100) / 100 < RIVER.barge
+    const dir = towing ? -1 : boatHash(LV.grow?.seed ?? 0, body.id + ':' + T) & 1 ? 1 : -1, [cx, cz, ux, uz] = riverAt(C, best), tx = ux * dir, tz = uz * dir
+    if (riverShut(C, W, best, dir, BOAT_SHAPES.Tug, RIVER.clear) || towing && riverShut(C, W, best, -dir, BOAT_SHAPES.Barge, BOAT_SHAPES.Tug.l + RIVER.line + BOAT_SHAPES.Barge.l)) continue
+    const x = cx - tz * RIVER.keep, z = cz + tx * RIVER.keep, h = Math.atan2(-tx, -tz)
+    const at = W.at(x, z, floatRec)
+    if (!at || at.depth < BOAT_SHAPES.Tug.draft + 1) continue
+    const tug = GAME.boats.add('Tug', { x, z, yaw: h, level: at.level }, boatFreeId())
+    if (!tug) continue
+    tug.boatAI = { river: body.id, dir, s: best, speed: RIVER.cruise, stop: 0 }; tug.loose = true; tug.crew = boatCrewNew(tug)
+    if (towing) {
+      const S = BOAT_SHAPES.Barge, back = BOAT_SHAPES.Tug.l / 2 + RIVER.line + S.l / 2, bx = x + Math.sin(h) * back, bz = z + Math.cos(h) * back, bat = W.at(bx, bz, floatRec)
+      if (bat) { const k = OBJECTS.findIndex(K => K.name === 'Barge'), H = hullOf(OBJECTS[k]), g = addObject(k, [bx, bat.level - S.draft + H.at[1] + 0.02, bz], boatFreeId(), h); if (g) tug.tow = g.id }
+    }
+  }
+}
+// an object id nobody holds (from the top down, as mcAdd takes his car's): none is retired for a while after use (departures)
+function boatFreeId() {
+  let id = OBJ_MAX - 1
+  while (id >= 16 && (objs.some(o => o.id === id) || trafficState?.departures.some(v => v.id === id && v.until > trafficClock()))) id--
+  return id >= 16 ? id : null
+}
+// ---- holes and the crew (pin rule 12, "Everything is killable"). A blow (#57's carBlow) that lands on a boat below its waterline
+// (its row's holeY, model space) holes it: the host starts its flood clock, and each further hole there sinks it the faster (the
+// holes are counted from #57's own records, which reach every guest as they are)
+function boatHoles(o, y) {
+  const l = GAME.parts?.list?.(o)
+  let n = 0
+  if (l) for (let i = 0; i + 1 < l.length; i += CAR_DMG.rec) if (l[i + 1] / 100 < y) n++
+  return n
+}
+function boatHoled(o, lp) {
+  const F = floatOf(o.K)
+  if (!isHost || !F || F.holeY === undefined || !(lp[1] < F.holeY)) return
+  if (o.floodT === undefined) o.floodT = carrierT || tickAt || now()
+}
+// A boat the host sails with nobody aboard (the river's tugs, #14's launch) has a helmsman (o.crew: hp, dead), drawn at its helm
+// as traffic draws its drivers. A blow through the hull past his seat strikes him (carThrough); the boat's own hits wear him too
+// (BOAT_CREW.share of the hp it loses); its boom or its sinking kills him. Dead, his helm stops: the boat keeps its heading and
+// slows on the water's drag, and he slumps over the wheel. His body leaves the boat by #101's driverExit (a death: dmg 1000, a
+// street body thrown off its side) when the boat blows up (cause 5, a blast) or sinks (6); a player who takes the helm of a boat
+// with a dead helmsman puts his body over the side (6); a living one he displaces goes with nothing drawn, as before
+const BOAT_CREW = { hp: 60, share: 0.5 }
+const boatCrewNew = o => ({ hp: BOAT_CREW.hp, dead: false, was: o.hp })
+function boatCrewHit(o, dmg, by) {
+  const C = o.crew
+  if (!isHost || !C || C.dead || !(dmg > 0)) return
+  C.hp -= dmg
+  if (C.hp <= 0) { C.dead = true; C.hp = 0; C.by = by?.id; o.boatAI = null }
+}
+// each host tick for a crewed boat: its own hits wear him, its end ends him
+function boatCrewTick(o) {
+  const C = o.crew
+  if (!C) return
+  if (o.riders?.[0] !== undefined) { if (C.dead) boatCrewBody(o, 6); o.crew = null; return }            // someone took the helm: he went over the side
+  if (o.V && o.hp < C.was) boatCrewHit(o, (C.was - o.hp) * BOAT_CREW.share, o.by !== undefined ? players.get(o.by) : null)
+  C.was = o.hp
+  const F = floatOf(o.K), sunk = o.floodT !== undefined && F && (carrierT - o.floodT) / 1000 > F.float + F.sink
+  if (!o.V || sunk) { if (!C.dead) { C.dead = true; C.hp = 0 } boatCrewBody(o, !o.V ? 5 : 6); o.crew = null }
+}
+// his body off the boat: #101's driverExit with a death's hit (dmg 1000) beside it, thrown off its side, where it went down or
+// blew up; cause as #101's (5 a blast, 6 any other), by whoever killed him
+function boatCrewBody(o, cause) {
+  const S = BOAT_SHAPES[o.K.model || o.K.name], rt = rotq(o.q, [1, 0, 0]), n = Math.hypot(rt[0], rt[2]) || 1, ux = rt[0] / n, uz = rt[2] / n, b = (S?.b ?? 2) / 2 + 0.8
+  const id = o.crew?.by ?? o.by, by = id !== undefined ? players.get(id) || null : null      // whoever killed him, else whoever last hit the boat
+  try { GAME.streetLife?.driverExit?.({ vehicleId: o.id, x: o.x + ux * b, z: o.z + uz * b, dx: ux, dz: uz, hit: { dmg: 1000, by, ux, uz, gun: -1, cause } }) } catch (e) {}
+}
+// ---- the moorings: the host keeps a boat at every dock of the seed's water within BOATS.moor m of a player, its kind by the
+// dock's id and the seed (the same for every host), and lets it go once nobody is near it and nobody is aboard
+const BOATS = { moor: 260, away: 420, think: 1000, lines: [1.2, 1.6, 2.5, 3.0],      // lines: spring per m and its damping, the same for its heading
+  // a dock's boat: shares by the water body's kind; the submarine only at the first dock of a bay or a reservoir
+  fleet: { river: [['Rowboat', 4], ['Speedboat', 3], ['Tug', 2], ['Police launch', 1]], lake: [['Rowboat', 5], ['Speedboat', 3]],
+    reservoir: [['Rowboat', 3], ['Speedboat', 2]], bay: [['Rowboat', 3], ['Speedboat', 3], ['Tug', 2], ['Police launch', 1], ['Barge', 1]], channel: [] },
+  wake: { speed: 1.5, every: 0.09, spray: 8 } }
+const boatMoored = new Map()          // dock key: the object id of its boat
+let boatThinkT = 0
+const boatHash = (seed, s) => { let h = (seed | 0) ^ 0x9e3779b9; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0 }
+function boatKindAt(W, body, dock, first) {
+  if (first && (body.kind === 'bay' || body.kind === 'reservoir')) return 'Submarine'
+  const F = BOATS.fleet[body.kind] || [], n = F.reduce((s, [, w]) => s + w, 0)
+  if (!n) return null
+  let r = boatHash(LV.grow?.seed ?? 0, body.id + ':' + dock.id) % n
+  for (const [k, w] of F) if ((r -= w) < 0) return k
+  return null
+}
+function boatsHostTick(t) {
+  const W = floatWater(), T = tickAt || now()
+  if (!W?.bodies || T - boatThinkT < BOATS.think) return
+  boatThinkT = T
+  const near = (x, z, R) => [...players.values()].some(c => !(c.dead > 0) && Math.hypot(c.x - x, c.z - z) < R)
+  boatsRiverTick(W, near)
+  for (const body of W.bodies) (body.docks || []).forEach((dock, i) => {
+    for (const side of [1, -1]) {
+      const key = body.id + ':' + dock.id + ':' + side, id = boatMoored.get(key), o = id !== undefined && objs.find(o => o.id === id)
+      if (o) { if (!near(o.x, o.z, BOATS.away) && !o.riders?.some(r => r !== undefined)) { boatDrop(o); boatMoored.delete(key) } continue }
+      if (id !== undefined) boatMoored.delete(key)
+      if (!near(dock.x, dock.z, BOATS.moor)) continue
+      const name = boatKindAt(W, body, { id: dock.id + ':' + side }, i === 0 && side === 1), k = name && OBJECTS.findIndex(K => K.name === name)
+      if (!(k >= 0)) continue
+      let b = boatMoor(k, body, dock, side)
+      for (const f of BOAT_DOCK.fallback) if (!b && f !== name) b = boatMoor(OBJECTS.findIndex(K => K.name === f), body, dock, side)
+      if (b) boatMoored.set(key, b.id)
+    }
+  })
+}
+// a boat lying alongside its dock: #92's dock is its land end and its heading toward the water (yaw), its deck running its len m
+// out that way, 2.6 m either side of its line, its top at 0.25. The boat lies parallel to the deck, bow out, off its side by
+// half its beam and 0.5 m, as far out along it (to a fifth past its tip) as the water is deep enough under its whole length (its
+// draft and 0.6 m); a slot too shallow for its kind takes a lighter boat (BOAT_DOCK.fallback)
+const BOAT_DOCK = { deck: 2.6, gap: 0.5, from: 0.35, to: 1.2, under: 0.6, len: 40, fallback: ['Speedboat', 'Rowboat'] }      // to: past the deck's tip, where it is deeper
+function boatMoor(k, body, dock, side = 1) {
+  const K = OBJECTS[k], S = BOAT_SHAPES[K.name], H = hullOf(K), W = floatWater()
+  if (!S || !H || !W?.at) return null
+  const len = W.plan?.bodies?.find(b => b.id === body.id)?.docks?.find(d => d.id === dock.id)?.len ?? BOAT_DOCK.len
+  const dx = -Math.sin(dock.yaw), dz = -Math.cos(dock.yaw), nx = -dz * side, nz = dx * side, off = BOAT_DOCK.deck + S.b / 2 + BOAT_DOCK.gap
+  const deep = (x, z) => { const a = W.at(x, z, floatRec); return !!a && a.depth >= S.draft + BOAT_DOCK.under }
+  for (let f = BOAT_DOCK.from; f <= BOAT_DOCK.to + 1e-9; f += 0.05) {
+    const along = Math.max(len * f, S.l / 2 + 1), x = dock.x + dx * along + nx * off, z = dock.z + dz * along + nz * off
+    if (!deep(x, z) || !deep(x + dx * S.l / 2, z + dz * S.l / 2) || !deep(x - dx * S.l / 2, z - dz * S.l / 2)) continue
+    const id = boatFreeId()
+    if (id === null) return null
+    faustEnsure?.([[x, z]])
+    const o = addObject(k, [x, body.level - S.draft + H.at[1] + 0.02, z], id, dock.yaw)
+    if (!o) return null
+    o.moored = body.id + ':' + dock.id + ':' + side; o.berth = { x, z, yaw: dock.yaw }
+    return o
+  }
+  return null
+}
+function boatDrop(o) {          // as squadRemove lets a squad car go: its id retired a while, so no guest takes a new one for it
+  dropObject(o); objs.splice(objs.indexOf(o), 1)
+  if (trafficState) trafficState.departures.push({ id: o.id, until: trafficClock() + 12 })
+  for (const sent of objSent.values()) sent.delete(o.id)
+}
+// ---- the look: the boats file (BOAT_FILE, made for the game in Blender, card #93): per style its LOD0/1/2 and its wreck, LOD0 with its
+// moving parts (prop, rudder, the rowboat's oars), all on one palette material of the period cars' own class (PeriodCarMaterial:
+// their program, no new one), its four paint cells recoloured per boat (BOAT_PAINTS, one picked by its seed) as periodPaint does a
+// car's. Each boat its own view, its LOD by distance from the camera; until the file loads (or where it never does) its
+// collision hull stands in, drawn plain. Its wake and bow spray while it moves through the water (visual only, from the drawn pose)
+const BOAT_FILE = 'boats.1f47b937.glb'
+const BOAT_STYLES = { Rowboat: 'rowboat', Speedboat: 'speedboat', 'Police launch': 'launch', Tug: 'tug', Barge: 'barge', Submarine: 'sub' }
+// [topsides, cabin and deckhouse, waterline stripe, trim and markings]
+const BOAT_PAINTS = (({ black, maroon, wine, green, teal, cream, ivory, grey, slate, navy, tan, brown, olive, steel }) => ({
+  Rowboat: [[0x6e4c2c, 0x463220, maroon, cream], [ivory, 0x6e4c2c, maroon, black], [green, 0x6e4c2c, maroon, cream], [teal, brown, wine, cream]],
+  Speedboat: [[0x6e2a1a, 0x8a6a43, ivory, cream], [ivory, 0x8a6a43, maroon, black], [black, 0x8a6a43, maroon, cream]],
+  'Police launch': [[navy, ivory, maroon, ivory], [slate, ivory, maroon, ivory]],
+  Tug: [[black, maroon, 0x7a1f1a, cream], [green, cream, 0x7a1f1a, black], [slate, ivory, 0x7a1f1a, maroon]],
+  Barge: [[black, tan, 0x7a1f1a, cream], [olive, brown, 0x7a1f1a, cream], [steel, grey, 0x7a1f1a, black]],
+  Submarine: [[steel, slate, black, ivory], [grey, slate, black, cream]] }))(NOIR)
+let boatFleet = null
+function boatLoad() {
+  if (boatFleet || renderHeadless || serving || !scene) return
+  boatFleet = { ready: false, failed: false }
+  rigLoader()
+  rigFetch(BOAT_FILE).then(boatSetup).catch(e => { boatFleet.failed = true; console.warn('boats: their models did not load, their hulls stand in:', e && e.message) })
+}
+function boatSetup(gltf) {
+  const F = boatFleet, nodes = {}
+  let base = null
+  gltf.scene.updateMatrixWorld(true)
+  for (const n of gltf.scene.children) nodes[n.name] = n
+  gltf.scene.traverse(n => { if (n.isMesh) base ||= n.material })
+  if (!base || !nodes.rowboat_lod0) throw new Error('not a boats file')
+  // the palette sampled at cell centres: nearest, no mipmaps, so a far boat never blends neighbouring cells (as the cars')
+  for (const t of [base.map, base.emissiveMap, base.roughnessMap, base.metalnessMap]) if (t) { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true }
+  const mat = new PeriodCarMaterial().copy(base)
+  mat.side = THREE.FrontSide; mat.envMap = chrome().envMap; mat.envMapIntensity = PERIOD.env; mat.emissiveIntensity = PERIOD.lamp; mat.name = 'boat-period'
+  mat.userData.vehicleLamps = true; mat.needsUpdate = true
+  Object.assign(F, { nodes, base: mat, paints: new Map(), ready: true })
+}
+function boatPaint(paint) {
+  const F = boatFleet, key = paint.join(',')
+  if (!F.paints.has(key)) {
+    const src = F.base.map, cv = document.createElement('canvas'); cv.width = src.image.width; cv.height = src.image.height
+    const g = cv.getContext('2d'), cell = cv.width / 8
+    g.drawImage(src.image, 0, 0)
+    paint.forEach((c, i) => { g.fillStyle = css(c); g.fillRect(i * cell, 0, cell, cell) })
+    const t = new THREE.CanvasTexture(cv)
+    t.colorSpace = src.colorSpace; t.flipY = src.flipY; t.wrapS = src.wrapS; t.wrapT = src.wrapT; t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false
+    const m = F.base.clone(); m.map = t; m.userData.vehicleLamps = true
+    F.paints.set(key, m)
+  }
+  return F.paints.get(key)
+}
+const boatViews = new Map(), boatStands = new Map()
+let boatFrame = 0
+function boatStandIn(K) {
+  const H = hullOf(K)
+  if (!boatStands.has(K.name)) {
+    const h = new QuickHull().setFromPoints(H.pts.map(p => new THREE.Vector3(...p))), pos = []
+    for (const f of h.faces) { let e = f.edge; const vs = []; do vs.push(e.head().point); while ((e = e.next) !== f.edge)
+      for (let i = 1; i + 1 < vs.length; i++) pos.push(...vs[0].toArray(), ...vs[i].toArray(), ...vs[i + 1].toArray()) }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals(); g.userData.shared = true
+    boatStands.set(K.name, new THREE.Mesh(g, airMaterial(new THREE.MeshStandardMaterial({ color: K.color ?? 0x5a4632, roughness: 0.7, metalness: 0.1, side: THREE.DoubleSide }))))
+  }
+  return boatStands.get(K.name)
+}
+// its model: the stand-in, or its style's LODs (or its wreck) from the file, painted, placed from the hull's centre
+function boatModel(o, K, H) {
+  const name = K.model || K.name, style = BOAT_STYLES[name], F = boatFleet, wreck = !K.drive && !!K.model
+  if (!F?.ready || !style) { const m = boatStandIn(K).clone(); m.castShadow = m.receiveShadow = true; return { root: m, lods: [m], parts: [{}], file: false } }
+  const P = BOAT_PAINTS[name] || [[0x5b6066, 0x353c45, 0x7a1f1a, 0xc2b69a]], h = Math.imul((o.seed || (o.id ?? 0) + 1) ^ 0x5bd1e995, 0x27d4eb2d) >>> 0
+  const mat = wreck ? F.base : boatPaint(P[h % P.length]), root = new THREE.Group(), lods = []
+  for (const n of wreck ? [style + '_wreck'] : [0, 1, 2].map(i => style + '_lod' + i)) {
+    const m = F.nodes[n]?.clone()
+    if (!m) continue
+    m.traverse(c => { if (c.isMesh) { c.material = mat; c.castShadow = /lod0|wreck/.test(n); c.receiveShadow = true } })
+    m.position.set(-H.at[0], -H.at[1], -H.at[2]); m.visible = !lods.length
+    root.add(m); lods.push(m)
+  }
+  const parts = lods.map(m => ({ props: m.children.filter(c => /^prop/.test(c.name)), rudder: m.getObjectByName('rudder'), oars: ['oar_l', 'oar_r'].map(k => m.getObjectByName(k)).filter(Boolean) }))
+  return { root, lods, parts, file: true }
+}
+function boatLook(o) {
+  const K = OBJECTS[o.k], H = hullOf(K), key = o.id ?? o
+  if (!H || !objGroup) return true
+  boatLoad()
+  let v = boatViews.get(key)
+  const file = !!boatFleet?.ready
+  if (v && (v.k !== o.k || v.file !== file)) { v.root.removeFromParent(); if (v.trail?.mesh) { v.trail.mesh.removeFromParent(); v.trail.mesh.geometry.dispose(); v.trail.mesh.material.dispose() } boatViews.delete(key); v = null }
+  if (!v) {
+    const M = boatModel(o, K, H), root = new THREE.Group()
+    root.add(M.root); root.matrixAutoUpdate = false
+    boatViews.set(key, v = { root, lods: M.lods, parts: M.parts, file: M.file, k: o.k, lod: 0, wakeT: 0, seen: 0, spin: 0, row: 0 })
+  }
+  if (v.root.parent !== objGroup) objGroup.add(v.root)
+  v.seen = boatFrame; v.root.visible = true
+  v.root.position.set(o.x, o.y, o.z); v.root.quaternion.set(...o.q); v.root.updateMatrix()
+  const S = BOAT_SHAPES[K.model || K.name], d = camera ? v.root.position.distanceTo(camera.position) : 0, l = S?.l ?? 5
+  const lod = Math.min(d < 30 + 6 * l ? 0 : d < 120 + 20 * l ? 1 : 2, v.lods.length - 1)
+  if (lod !== v.lod) { v.lod = lod; v.lods.forEach((g, i) => { g.visible = i === lod }) }
+  const live = objs.find(x => x.id === o.id), b = live?.body, at = v.parts[lod]
+  if (b && at && K.drive) {
+    const vel = b.getLinearVelocity(), w = b.getAngularVelocity(), sp = Math.hypot(vel.x(), vel.z()), T = now() / 1000, dt = Math.min(0.1, T - (v.t ?? T)); v.t = T
+    const driven = live.riders?.[0] !== undefined
+    v.spin += dt * (driven ? 6 + sp * 3 : 0)
+    for (const pr of at.props || []) { pr.rotation.z = v.spin; pr.updateMatrix() }
+    if (at.rudder) { at.rudder.rotation.y = clamp(w.y() * 0.9, -0.5, 0.5); at.rudder.updateMatrix() }
+    v.row += dt * (driven && sp > 0.2 ? 5 : 0)
+    at.oars?.forEach((oar, i) => { oar.rotation.y = (i ? -1 : 1) * 0.6 * Math.sin(v.row); oar.rotation.z = (i ? 1 : -1) * (0.25 + 0.15 * Math.cos(v.row)); oar.updateMatrix() })
+  }
+  if (carDentable(live || o)) for (const g of v.lods) if (g.visible) carDress(g, live || o)      // card #57: its dents and holes
+  boatCrewDraw(o, K, v)
+  boatWake(o, K, H, v)
+  return true
+}
+// the helmsman, drawn as traffic draws its drivers (MODELS.trafficDriver in its 'drive' pose at seat 0), slumped over the wheel
+// once dead; host: o.crew, guest: the wire's 'bh'
+function boatCrewDraw(o, K, v) {
+  const live = objs.find(x => x.id === o.id), st = isHost ? live?.crew && (live.crew.dead ? 2 : 1) : boatCrews.get(o.id), M = MODELS.trafficDriver, V = vehicleOf(K)
+  if (!st || !M?.proto || !V) { if (v.crew) v.crew.root.visible = false; return }
+  if (!v.crew) {
+    const root = new THREE.Group(), inst = cloneSkinned(M.proto); fitToCapsule(inst, 1.72, M.height, M.footY, M.yaw || 0)
+    rigLods(inst).forEach((m, i) => { if (m) { m.visible = i === 2; m.castShadow = false; m.frustumCulled = false } }); root.add(inst)
+    v.crew = { root, inst, mixer: new THREE.AnimationMixer(inst), restY: inst.position.y, pelvis: inst.getObjectByName('pelvis'), hip: new THREE.Vector3() }
+    const c = M.anims.find(c => c.name === 'drive'); if (c) v.crew.mixer.clipAction(c).play()
+  }
+  const C = v.crew, p = seatAt({ ...o, at0: hullAt(K) }, V.seats[0]), f = rotq(o.q, [0, 0, -1])
+  if (C.root.parent !== objGroup) objGroup.add(C.root)
+  C.inst.position.y = C.restY; C.mixer.setTime(0)
+  C.root.position.set(p[0], p[1] + 0.1032, p[2]); C.root.rotation.set(st === 2 ? 0.55 : 0, Math.atan2(-f[0], -f[2]), st === 2 ? 0.25 : 0, 'YXZ')
+  if (C.pelvis) { C.root.updateMatrixWorld(true); C.pelvis.getWorldPosition(C.hip); C.inst.position.y += p[1] + 0.1032 - C.hip.y - (st === 2 ? 0.12 : 0) }
+  C.root.visible = true
+}
+// ---- a boat's wake (#72): a foam trail on the water from its stern, one strip per boat. Across it, seven lanes: its two edges are
+// bright lines (feathered out to nothing on either side) that diverge behind it into a V as they age (their half-width grows at
+// WAKE.spread of its speed when laid, the Kelvin wedge), dim water between them, and in the middle the screw's wash, bright at
+// the stern and gone within WAKE.wash s; along it the foam is broken (each sample a little brighter or dimmer), and all of it
+// fades over WAKE.life s. Spray off the bow once it planes. Drawn with the blob shadows' own material (RGBA vertex colours,
+// transparent, two-sided, no depth write), so it compiles no new shader program
+const WAKE = { n: 48, every: 0.05, life: 2.4, spread: 0.36, start: 0.42, edge: 0.55, between: 0.1, mid: 0.45, wash: 0.9, feather: 0.35, lane: 0.45,
+  break: 0.3, back: 0.25, lift: 0.04, min: 1.2, col: [0.93, 0.95, 0.96] }
+function boatWake(o, K, H, v) {
+  const live = objs.find(x => x.id === o.id), b = live?.body, S = BOAT_SHAPES[K.model || K.name], T = now() / 1000, tr = v.trail ||= { pts: [], mesh: null, seq: 0 }
+  while (tr.pts.length && T - tr.pts[0].t > WAKE.life) tr.pts.shift()
+  v.stern = null
+  if (b && K.drive && S) {
+    const vel = b.getLinearVelocity(), sp = Math.hypot(vel.x(), vel.z()), fw = rotq(o.q, [0, 0, -1]), h = Math.hypot(fw[0], fw[2]) || 1, fx = fw[0] / h, fz = fw[2] / h
+    const sx = o.x - fx * (S.l / 2 + WAKE.back), sz = o.z - fz * (S.l / 2 + WAKE.back), top = floatTop(sx, sz, renderT || now()), keel = o.y - H.at[1]
+    const wet = top === top && keel <= top + 0.3 && keel + S.d >= top - 1.2          // its stern in the water, and not deep under it
+    if (wet && sp >= WAKE.min) {
+      v.stern = { x: sx, z: sz, y: top + WAKE.lift, rx: -fz, rz: fx, w: S.b * WAKE.start, sp: Math.min(sp, 25), k: clamp((sp - WAKE.min) / 8, 0.25, 1), n: 1 }
+      if (T - (v.wakeT || 0) >= WAKE.every) {
+        v.wakeT = T; tr.seq++
+        const n = 1 - WAKE.break / 2 + WAKE.break * ((Math.imul(tr.seq ^ (o.id ?? 0) * 0x9e3779b1, 0x85ebca6b) >>> 0) / 4294967296)      // broken foam
+        tr.pts.push({ ...v.stern, t: T, n }); if (tr.pts.length > WAKE.n) tr.pts.shift()
+      }
+    }
+    if (wet && sp > BOATS.wake.spray && T - (v.sprayT || 0) >= BOATS.wake.every) {      // spray off the bow once it planes
+      v.sprayT = T
+      const bx = o.x + fx * S.l * 0.35, bz = o.z + fz * S.l * 0.35, s = Math.min(1.6, 0.5 + sp / 14)
+      for (const side of [-1, 1]) burst('spray', bx - fz * side * S.b * 0.45, top + 0.1, bz + fx * side * S.b * 0.45, -fz * side, 0.9, fx * side, 0xe8ecee, s)
+    }
+  }
+  boatTrailDraw(tr, v.stern, T)
+}
+// the strip: seven points across each sample (out, edge, between, middle, between, edge, out on the other side), from the oldest
+// sample to where its stern is now
+const WAKE_ACROSS = 7
+function boatTrailDraw(tr, stern, T) {
+  const list = stern ? [...tr.pts, { ...stern, t: T }] : tr.pts, A = WAKE_ACROSS
+  if (list.length < 2) { if (tr.mesh) tr.mesh.visible = false; return }
+  if (!tr.mesh) {
+    const N = WAKE.n + 1, g = new THREE.BufferGeometry(), idx = []
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * A * 3), 3).setUsage(THREE.DynamicDrawUsage))
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(N * A * 4), 4).setUsage(THREE.DynamicDrawUsage))
+    for (let i = 0; i < N - 1; i++) for (let j = 0; j < A - 1; j++) { const a = i * A + j, c = a + A; idx.push(a, a + 1, c, a + 1, c + 1, c) }
+    g.setIndex(idx)
+    tr.mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, side: THREE.DoubleSide, forceSinglePass: true, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }))
+    tr.mesh.frustumCulled = false; tr.mesh.renderOrder = 1
+  }
+  if (tr.mesh.parent !== objGroup) objGroup.add(tr.mesh)
+  const pos = tr.mesh.geometry.attributes.position, col = tr.mesh.geometry.attributes.color, [r, g, bl] = WAKE.col
+  list.forEach((p, i) => {
+    const age = Math.max(0, T - p.t), w = p.w + age * p.sp * WAKE.spread, fade = Math.pow(Math.max(0, 1 - age / WAKE.life), 1.5) * p.k * p.n
+    const f = WAKE.feather * (1 + age), wash = Math.max(0, 1 - age / WAKE.wash), lane = w * WAKE.lane
+    // across: [offset from the middle, opacity]
+    const X = [[-w - f, 0], [-w, WAKE.edge], [-lane, WAKE.between], [0, WAKE.mid * wash + WAKE.between * (1 - wash)], [lane, WAKE.between], [w, WAKE.edge], [w + f, 0]]
+    X.forEach(([d, a], j) => { pos.setXYZ(i * A + j, p.x + p.rx * d, p.y, p.z + p.rz * d); col.setXYZW(i * A + j, r, g, bl, a * fade) })
+  })
+  tr.mesh.geometry.setDrawRange(0, (list.length - 1) * (A - 1) * 6)
+  pos.needsUpdate = true; col.needsUpdate = true
+  tr.mesh.visible = true
+}
+// ---- the submarine's periscope: with its casing under the water and its periscope's head (SUB_SCOPE.at, model space) above it,
+// its driver looks through it: the camera at the head, turned by the mouse as the periscope turns, a narrow field, and the
+// eyepiece's ring over the screen. Deeper, the chase camera, under the water; up, the chase camera too
+const SUB_SCOPE = { at: [-0.3, 8.25, -0.45], fov: 30, above: 0.2 }
+let subScopeEl = null, subScopeSeen = -1
+function subCamera(o, me, inp, cam) {
+  const K = o.K, H = hullOf(K), S = BOAT_SHAPES[K.model || K.name], d = objDrawn.get(o), X = d ? d.x : o.x, Y = d ? d.y : o.y, Z = d ? d.z : o.z, Q = d ? d.q : o.q
+  const surf = floatWater()?.at?.(X, Z, floatRec)?.level
+  if (!H || !S || surf === undefined) return subScope(false)
+  const r = rotq(Q, [SUB_SCOPE.at[0] - H.at[0], SUB_SCOPE.at[1] - H.at[1], SUB_SCOPE.at[2] - H.at[2]]), px = X + r[0], py = Y + r[1], pz = Z + r[2]
+  if (!(Y - H.at[1] + S.d < surf && py > surf + SUB_SCOPE.above)) return subScope(false)
+  subScope(true)
+  const [dx, dy, dz] = aimDir(inp.yaw, inp.pitch)
+  cam.position.set(px, py, pz); cam.lookAt(px + dx, py + dy, pz + dz)
+  if (cam.fov !== SUB_SCOPE.fov) { cam.fov = SUB_SCOPE.fov; cam.updateProjectionMatrix?.() }
+  return { dist: 0, hideSelf: true, fade: 0 }
+}
+// the eyepiece: black outside its circle, a thin crosshair and range ticks; shown only on frames whose camera is the periscope's
+function subScope(on) {
+  if (typeof document === 'undefined') return null
+  if (on && !subScopeEl) {
+    subScopeEl = document.createElement('div')
+    Object.assign(subScopeEl.style, { position: 'fixed', inset: '0', pointerEvents: 'none', zIndex: '4',
+      background: 'linear-gradient(#0000 calc(50% - 0.5px), #000a calc(50% - 0.5px) calc(50% + 0.5px), #0000 0) no-repeat, ' +
+        'linear-gradient(90deg, #0000 calc(50% - 0.5px), #000a calc(50% - 0.5px) calc(50% + 0.5px), #0000 0) no-repeat, ' +
+        'radial-gradient(circle at 50% 50%, #0000 0 40vmin, #000 41vmin)' })
+    document.body.appendChild(subScopeEl)
+  }
+  if (on) subScopeSeen = boatFrame
+  if (subScopeEl) subScopeEl.style.display = on ? 'block' : 'none'
+  return null
+}
+// views not drawn this frame are hidden, and dropped after 10 s unseen
+function boatViewsTick() {
+  boatFrame++
+  if (subScopeEl && subScopeSeen < boatFrame - 1 && subScopeEl.style.display !== 'none') subScope(false)      // left the sub, or another camera
+  for (const [key, v] of boatViews) if (v.seen < boatFrame - 1) { v.root.visible = false; if (v.crew) v.crew.root.visible = false; if (v.trail?.mesh) v.trail.mesh.visible = false
+    if (v.seen < boatFrame - 600) { v.root.removeFromParent(); v.crew?.root.removeFromParent(); v.crew?.mixer.stopAllAction(); if (v.trail?.mesh) { v.trail.mesh.removeFromParent(); v.trail.mesh.geometry.dispose(); v.trail.mesh.material.dispose() } boatViews.delete(key) } }
+}
+// ---- the wire: the flood clocks (o.floodT, host ms) of what is flooding, so a guest's prediction and its replays sink it alike
+function boatWireOut() {
+  const fl = objs.filter(o => o.floodT !== undefined && floatOf(o.K)).map(o => [o.id, Math.round(o.floodT)])      // floatStep's own clocks (ms)
+  const bh = objs.filter(o => o.crew).map(o => [o.id, o.crew.dead ? 2 : 1])      // the helmsmen: alive 1, dead 2
+  return { ...fl.length ? { fl } : {}, ...bh.length ? { bh } : {} }
+}
+const boatFloods = new Map()
+const boatCrews = new Map()            // guest: the helmsmen the host draws, by boat: 1 alive, 2 dead
+// guest: each snapshot says it all (no `fl` row: nothing is flooding, so a car the host has dry again is dry here too); one that
+// comes up to 2 s after a newer one (the channel is unordered) is let be; one far older, or the first after 5 s without any
+// (a new room's clock), is taken
+let boatWireT = -Infinity, boatWireAt = -Infinity
+function boatWireIn(d) {
+  if (isHost) return
+  if (Number.isFinite(d.t)) { const r = now(); if (d.t < boatWireT && boatWireT - d.t < 2000 && r - boatWireAt < 5000) return; boatWireT = d.t; boatWireAt = r }
+  boatCrews.clear(); if (Array.isArray(d.bh)) for (const r of d.bh) if (Array.isArray(r) && Number.isInteger(r[0]) && (r[1] === 1 || r[1] === 2)) boatCrews.set(r[0], r[1])
+  boatFloods.clear()
+  if (Array.isArray(d.fl)) for (const r of d.fl) if (Array.isArray(r) && Number.isInteger(r[0]) && Number.isFinite(r[1])) boatFloods.set(r[0], r[1])
+  for (const o of objs) if (floatOf(o.K)) o.floodT = boatFloods.get(o.id)
+}
+// tests and the debug panel: the boats here, where, how fast, how wet, flooding since when, who drives
+GAME.boats = { shapes: BOAT_SHAPES, config: BOATS,
+  get list() { return objs.filter(o => o.K.boat).map(o => { const v = o.body.getLinearVelocity(); return { id: o.id, name: o.K.name, x: o.x, y: o.y, z: o.z,
+    speed: Math.hypot(v.x(), v.y(), v.z()), floodT: o.floodT, driver: o.riders?.[0], moored: o.moored || null } }) },
+  get moored() { return [...boatMoored] },
+  // #14: a launch's spot near him on the water, its chase, and its end (the call shapes of GAME.traffic: pursue returns false
+  // where there is no water to chase him on)
+  spot: (x, z, R, l) => boatSpot(x, z, R, l),
+  pursue(o, target, opts = {}) { if (!o?.V?.sail || !floatWater()?.at?.(o.x, o.z, floatRec)) return false
+    if (o.crew?.dead) return false      // nobody alive at its helm
+    o.boatAI = { id: target.id, speed: opts.speed, stop: opts.stop ?? 12, urgent: !!opts.urgent }; o.loose = true; o.crew ||= boatCrewNew(o); return true },
+  cancel(id) { const o = objs.find(o => o.id === id); if (o) o.boatAI = null },
+  // host: a boat of that row afloat at a spot (boatSpot's { x, z, yaw, level }) with object id `id`, as squadPut adds a car
+  add(name, spot, id) { const k = OBJECTS.findIndex(K => K.name === name), K = OBJECTS[k], S = BOAT_SHAPES[name], H = K && hullOf(K)
+    if (!isHost || !S || !H || !spot || id === null || id === undefined) return null
+    return addObject(k, [spot.x, spot.level - S.draft + H.at[1] + 0.02, spot.z], id, spot.yaw) } }
+{
+  const H = HOST_PHASES, bp = H.beforePhysics
+  H.beforePhysics = t => { bp(t); if (LV.faust) boatsHostTick(t) }
+  const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems
+  L.snapshot = () => ({ ...snap(), ...boatWireOut() })
+  L.takeItems = function (d) { take.call(this, d); boatWireIn(d) }
 }
 // ---------------------------------------------------------------- biplanes (card #5)
 // Pin rule 5, "Needs to have zeppelins and biplanes"; the brief: players fly them. The 'Biplane' rows (PLANE): seat 0, the
@@ -38550,6 +39385,7 @@ function planeLook(o) {
 }
 const PLANE_LOOK = { file: 'biplane.360a9509.glb', lods: [70, 320] }
 for (const K of OBJECTS) if (K.plane) K.ownLook = planeLook
+for (const K of OBJECTS) if (K.boat) K.ownLook = boatLook          // card #93
 airKits.plane = { file: PLANE_LOOK.file, lods: ['plane_lod0', 'plane_lod1', 'plane_lod2'], scene: null, ask: false }
 GAME.planes = { config: PLANE, look: PLANE_LOOK, airfield: () => LV.faust && LV.grow ? faustAirfield(LV.grow.seed, LV.grow.S) : null,
   get circuits() { return LV.faust && LV.grow ? planeCircuits(LV.grow.seed, LV.grow.S).map(C => ({ id: C.id, L: C.L, T: C.T, fleet: C.fleet })) : [] },
