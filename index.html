@@ -3333,7 +3333,7 @@ function faustFeatParts(f) {
 function faustProps(P, rail) {
   if (P.plaza || P.diagonal || P.layout !== 4 || P.alley) return []      // card #96: an alley cell's lots are not on their pavement tiles
   const L = FAUST_NIGHT.lamps, reach = L.post - L.head, X = (P.ci - P.S / 2) * 96, Z = (P.cj - P.S / 2) * 96, out = []
-  const feet = faustLampSites(P).map(s => s.own ? [s.x + 2.8, s.z] : s.nx || s.nz ? [s.x + s.nx * reach, s.z + s.nz * reach] : [s.x, s.z])
+  const feet = faustLampSites(P, true).map(s => s.own ? [s.x + 2.8, s.z] : s.nx || s.nz ? [s.x + s.nx * reach, s.z + s.nz * reach] : [s.x, s.z])
   feet.push([X + 9, Z + 9], [X + 87, Z + 87])
   const solid = (rail || []).filter(b => b.cy - b.ey < 3)
   const SIDE = [[0, -1, 3], [0, 1, 1], [1, -1, 2], [1, 1, 0]]
@@ -3828,7 +3828,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 22, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
+  const content = { version: 21, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -8284,7 +8284,29 @@ const FAUST_NIGHT = {
 // way to its post (0, 0: a lantern on top of it). Every road has four, two a kerb; the diagonal boulevard has lanterns down
 // both kerbs, and the other roads keep out of its roadway. own: the avenue's pair that every cell draws already. Pure: every
 // client finds the same lamps, and none of it is on the wire.
-function faustLampSites(P) {
+// a cell's doors and props, for the lamps of the cells beside it (card #99: a lamp stays clear of a door's approach, and of a prop, whichever cell the door is
+// in): { doors: [x, z, ux, uz] (a street door looks +z; a back door's and a club back door's out vector), props: [x, z] }. Pure in (seed, S, ci, cj).
+const faustDoorMemo = new Map()
+function faustCellDoors(seed, S, ci, cj) {
+  if (ci < 0 || cj < 0 || ci >= S || cj >= S) return { doors: [], props: [] }
+  const key = seed + '/' + S + '/' + ci + '/' + cj
+  let r = faustDoorMemo.get(key)
+  if (!r) {
+    const P = faustPlan(seed, ci, cj, S), doors = []
+    for (const l of P.lots) {
+      doors.push([l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, l.z + l.d, 0, 1])
+      for (const b of l.backDoors || []) doors.push([b.x, b.z, b.out[0], b.out[1]])
+      if (l.club?.back && l.club.backOut) doors.push([l.club.back[0], l.club.back[1], l.club.backOut[0], l.club.backOut[1]])
+    }
+    r = { doors, props: (P.props || []).map(p => [p.x, p.z]) }
+    faustDoorMemo.set(key, r)
+    if (faustDoorMemo.size > 3000) faustDoorMemo.delete(faustDoorMemo.keys().next().value)
+  }
+  return r
+}
+const faustLampMemo = new WeakMap()
+function faustLampSites(P, raw) {
+  if (!raw && faustLampMemo.has(P)) return faustLampMemo.get(P)
   const L = FAUST_NIGHT.lamps, X = (P.ci - P.S / 2) * 96, Z = (P.cj - P.S / 2) * 96, out = [], dirs = new Map()
   for (const q of faustLampOffsets(P.diagonal)) out.push({ x: X + 8.6, z: Z + q, nx: 1, nz: 0, own: true })
   for (const road of P.roads) {
@@ -8301,15 +8323,10 @@ function faustLampSites(P) {
     }
   }
   if (P.plaza && !P.diagonal) for (const [dx, dz] of FAUST_FEAT.lamps) out.push({ x: X + 48 + dx, z: Z + 48 + dz, nx: 0, nz: 0 })      // card #69
-  // a door's approach: no lamp post within 1.75 m of the line from a door out 2.5 m across the pavement (a street door, a back door, a club's back
-  // door); the lamp moves along its road, at most 3 m, to the nearest spot that is clear and 8 m from every other lamp's post
-  if (P.lots && dirs.size) {
-    const doors = []
-    for (const l of P.lots) {
-      doors.push([l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, l.z + l.d, 0, 1])
-      for (const b of l.backDoors || []) doors.push([b.x, b.z, b.out[0], b.out[1]])
-      if (l.club?.back && l.club.backOut) doors.push([l.club.back[0], l.club.back[1], l.club.backOut[0], l.club.backOut[1]])
-    }
+  // a door's approach: no lamp post within 1.75 m of the line from a door out 2.5 m across the pavement; the lamp moves along its road, at most 3 m
+  // (the 'own' pair and the diagonal boulevard's lanterns stay); none of this on the plan's own call (raw), which places the props
+  if (!raw && P.seed !== undefined && dirs.size) {
+    const near = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => faustCellDoors(P.seed, P.S, P.ci + a, P.cj + b)), doors = near.flatMap(n => n.doors), props = near.flatMap(n => n.props)
     const reach = L.post - L.head, gap = (px, pz) => { let g = 1e9
       for (const [dx0, dz0, ux, uz] of doors) { const t = Math.max(0, Math.min(2.5, (px - dx0) * ux + (pz - dz0) * uz)); g = Math.min(g, Math.hypot(px - dx0 - ux * t, pz - dz0 - uz * t)) }
       return g }
@@ -8318,12 +8335,14 @@ function faustLampSites(P) {
       const d = dirs.get(s); if (!d || gap(posts[i][0], posts[i][1]) >= 1.75) return
       for (let k = 1; k <= 12; k++) for (const sg of [1, -1]) {
         const m = sg * k * 0.25, px = posts[i][0] + d[0] * m, pz = posts[i][1] + d[1] * m
-        if (gap(px, pz) >= 1.75 && !posts.some((q, j) => j !== i && Math.hypot(q[0] - px, q[1] - pz) < 8)) { s.x += d[0] * m; s.z += d[1] * m; posts[i] = [px, pz]; return }
+        if (gap(px, pz) >= 1.75 && !posts.some((q, j) => j !== i && Math.hypot(q[0] - px, q[1] - pz) < 8) && !props.some(q => Math.hypot(q[0] - px, q[1] - pz) < 1)) { s.x += d[0] * m; s.z += d[1] * m; posts[i] = [px, pz]; return }
       }
     })
   }
   const clear = (x, z) => Math.abs(z - x - (Z - X)) * Math.SQRT1_2 > 14
-  return P.diagonal ? out.filter(s => s.own || !s.nx && !s.nz || clear(s.x, s.z) && clear(s.x + s.nx * (L.post - L.head), s.z + s.nz * (L.post - L.head))) : out
+  const res = P.diagonal ? out.filter(s => s.own || !s.nx && !s.nz || clear(s.x, s.z) && clear(s.x + s.nx * (L.post - L.head), s.z + s.nz * (L.post - L.head))) : out
+  if (!raw && P.seed !== undefined) faustLampMemo.set(P, res)
+  return res
 }
 // a cell's lamps as lights: x, y, z, candela each
 function faustLamps(P) {
