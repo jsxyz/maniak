@@ -19196,7 +19196,7 @@ function realLoadTextures(size) {
 let realTextureSource = realLoadTextures
 // The night sky: navy at the zenith, the city's sodium glow on the haze at the horizon, the moon and a few stars.
 const REAL_SKY_GLSL = /* glsl */`
-uniform vec3 moonDir;
+uniform vec3 moonDir; uniform float uFlash;      // card #85: a lightning flash 0..1
 varying vec3 vDir;
 float realStar(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 void main() {
@@ -19209,9 +19209,10 @@ void main() {
   vec2 sp = vec2(atan(d.z, d.x) * 95.5, asin(clamp(h, -1.0, 1.0)) * 95.5), cell = floor(sp);
   float r = realStar(cell);
   c += vec3(0.85, 0.9, 1.0) * step(0.986, r) * smoothstep(0.12, 0.5, h) * smoothstep(0.42, 0.1, length(fract(sp) - 0.5)) * 0.05 * fract(r * 37.0);
+  c += vec3(0.3, 0.36, 0.5) * uFlash * (0.4 + 0.6 * smoothstep(-0.05, 0.5, h));
   gl_FragColor = vec4(c, 1.0);
 }`
-const realSkyMaterial = moonDir => new THREE.ShaderMaterial({ uniforms: { moonDir: { value: moonDir } }, side: THREE.BackSide,
+const realSkyMaterial = moonDir => new THREE.ShaderMaterial({ uniforms: { moonDir: { value: moonDir }, uFlash: { value: 0 } }, side: THREE.BackSide,
   depthTest: false, depthWrite: false, fog: false, toneMapped: false, fragmentShader: REAL_SKY_GLSL,
   vertexShader: 'varying vec3 vDir;\nvoid main() { vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }' })
 // Image-based light for glossy things (the cowl, glass, wet stone): the sky, the city's windows on the horizon, the
@@ -19733,7 +19734,7 @@ function realRender(raw, s, cam) {
     for (let i = T.up.length - 1; i >= 0; i--) { const u = U.up.uniforms, low = i === T.up.length - 1 ? T.down[i + 1] : T.up[i + 1]
       u.tSrc.value = T.down[i].texture; u.tLow.value = low.texture; u.uLowTexel.value.set(1 / low.width, 1 / low.height); realPassTo(raw, R, 'up', T.up[i]) }
     const F = U.final.uniforms, G = REAL_GRADE
-    F.tColor.value = frame.texture; F.tBloom.value = (T.up[0] || T.down[0]).texture; F.uExposure.value = G.exposure * (1 - 0.25 * weatherLit()); F.uBloom.value = G.bloom * (1 - 0.7 * weatherLit());      // card #85: a lightning flash lights the street, it does not bloom the frame white F.uBloomN.value = tier.bloom
+    F.tColor.value = frame.texture; F.tBloom.value = (T.up[0] || T.down[0]).texture; F.uExposure.value = G.exposure * (1 - 0.1 * weatherLit()); F.uBloom.value = G.bloom * (1 - 0.5 * weatherLit());      // card #85: a lightning flash lights the street, it does not bloom the frame white F.uBloomN.value = tier.bloom
     F.uSat.value = G.saturation; F.uVignette.value = G.vignette; F.uGrain.value = G.grain; F.uTime.value = R.uniforms.time.value
     F.uShadows.value.set(...G.shadows); F.uHighlights.value.set(...G.highlights)
     if (tier.msaa) realPassTo(raw, R, 'final', out)
@@ -38085,16 +38086,16 @@ function weatherApi() {
 // shader), one quad a streak and a flat ring a splash, written on the CPU each frame inside a box that wraps around the camera.
 // The counts scale with the quality's fx share and the rain level, and are capped: RAIN.streaks and RAIN.splashes at most.
 // each look's rain: colour, the alpha share, and for Ink a second colour taken by every other streak (ink lines on the paper, paper lines on the black)
-const RAIN_LOOK = { plain: { c: [0.8, 0.88, 1], a: 1, alt: null }, ink: { c: [0.02, 0.02, 0.03], a: 2.2, alt: [0.92, 0.92, 0.9] }, realistic: { c: [0.38, 0.45, 0.58], a: 0.8, alt: null } }
+const RAIN_LOOK = { plain: { c: [0.8, 0.88, 1], a: 1, alt: null }, ink: { c: [0.02, 0.02, 0.03], a: 2.2, alt: [0.92, 0.92, 0.9] }, realistic: { c: [0.38, 0.45, 0.58], a: 0.8, alt: null, sp: 2.4 } }
 const RAIN = { streaks: 1100, splashes: 120, box: 28, top: 16, bottom: 7, speed: [10, 15], len: [1.3, 2.6], width: 0.016, alpha: 0.5, colour: [0.8, 0.88, 1],
   ring: [0.1, 0.5], life: [0.3, 0.6], reach: 14, sky: 0x10151b, skyK: 0.35, lit: 0.35, litHemi: 0.18, damp: 0.1, windFrom: 0.15,
   // lightning, each 0..1 times weather.flash (itself at most 1): Plain and Ink's sun and sky light up by these shares, the sky toward skyC; Realistic's moon and ambient add these
-  flash: { sun: 1.2, hemi: 3, sky: 0.8, skyC: 0xdfe8ff, real: [0.5, 0.8] } }
+  flash: { sun: 1.2, hemi: 3, sky: 0.8, skyC: 0xdfe8ff, real: [1.5, 4], dome: [0.3, 0.36, 0.5] } }
 // fog banks: weather.fog 0..1 pulls the linear fog (Plain, Ink) in from where it was to FOG.near..FOG.far and thickens Realistic's
 // exponential fog by up to FOG.density times; the bank's thickness drifts (±FOG.bank) with where he stands and with time
 // which looks show the weather: Plain passed #72; Ink and Realistic are switched on as each passes (a test may set gameHooks.weather.looks.ink = true)
 const WEATHER_LOOKS = { plain: true, ink: true, realistic: false }
-const FOG = { near: 8, far: 160, density: 5, bank: 0.18, tint: 0x3a4655, tintK: 0.7, curve: 0.8, inkCurve: 0.45, paper: new THREE.Color(0xd2d2cc) }
+const FOG = { near: 8, far: 160, density: 5, bank: 0.18, tint: 0x3a4655, tintK: 0.7, curve: 0.8, inkCurve: 0.45, real: new THREE.Color(0.04, 0.05, 0.07), paper: new THREE.Color(0xd2d2cc) }
 // loose paper in the wind: flat bits tumbling along the street ahead of the gusts, a ribbon mesh of its own (the rain's program)
 const PAPER = { n: 14, box: 34, size: [0.3, 0.21], from: 0.15, full: 0.6, drift: 0.8, colour: { plain: [0.46, 0.45, 0.4], ink: [0.02, 0.02, 0.03], realistic: [0.2, 0.19, 0.17] } }
 const rainState = { group: null, streaks: null, splashes: null, T: 0, ox: 0, oz: 0, px: 0, pz: 0, pT: 0, cover: 1, coverTo: 1, inkFog: false, indoor: 0, indoorTo: 0, wall: [40, 40, 40, 40], coverAt: 0, n: 0, m: 0, lit: null,
@@ -38222,7 +38223,7 @@ function rainDraw(dt, level, fx, look) {
     const u0 = R.T / Sp.t[i] + Sp.p[i], cyc = Math.floor(u0), u = u0 - cyc
     if (Sp.c[i] !== cyc) { Sp.c[i] = cyc; const h = weatherHash(i * 7919 + 13, cyc); Sp.x[i] = c.x + (((h & 0xffff) / 65535) * 2 - 1) * RAIN.reach; Sp.z[i] = c.z + ((((h >>> 16) & 0xffff) / 65535) * 2 - 1) * RAIN.reach }
     const r = RAIN.ring[0] + (RAIN.ring[1] - RAIN.ring[0]) * u, r0 = r * 0.7, d = Math.hypot(Sp.x[i] - c.x, Sp.z[i] - c.z)
-    const a = Math.min(1, amax * 2) * (1 - u) * (1 - u) * Math.min(1, d / 2.5) * (1 - Math.min(1, Math.max(0, (d - 8) / 7))) * (1 - weatherInside(Sp.x[i] - c.x, Sp.z[i] - c.z))
+    const a = Math.min(1, amax * 2 * (look.sp || 1)) * (1 - u) * (1 - u) * Math.min(1, d / 2.5) * (1 - Math.min(1, Math.max(0, (d - 8) / 7))) * (1 - weatherInside(Sp.x[i] - c.x, Sp.z[i] - c.z))
     for (let k = 0; k < 8; k++) {
       const ang = k * Math.PI / 4, ca = Math.cos(ang), sa = Math.sin(ang), o = i * 48 + k * 6, q = i * 64 + k * 8
       spa[o] = Sp.x[i] + ca * r0; spa[o + 1] = gy + 0.03; spa[o + 2] = Sp.z[i] + sa * r0; spa[o + 3] = Sp.x[i] + ca * r; spa[o + 4] = gy + 0.03; spa[o + 5] = Sp.z[i] + sa * r
@@ -38241,6 +38242,8 @@ function weatherFog() {
   if (f.isFog) { const end = viewEnd(), near0 = Math.min(ARENA * LV.theme.fog[1] * viewScale, end); f.near = near0 + (FOG.near - near0) * g; f.far = end + (FOG.far - end) * g }
   else if (f.isFogExp2) f.density = REAL_SKY.fogDensity * (1 + FOG.density * g)
   // Ink: fog is paper, as in the comic: the distance fades toward a light grey instead of black, and the outlines lighten into it (the outline pass reads inkFog)
+  // Realistic draws with its own FogExp2 (realState.fog), swapped in only while it renders, so the density and the haze colour go there
+  if (activeLook === 'realistic' && realState?.fog) { realState.fog.density = REAL_SKY.fogDensity * (1 + FOG.density * g); realState.fog.color.setHex(REAL_SKY.fog).lerp(FOG.real, 0.8 * g) }
   // (inkRender sets the fog colour itself for the frame, to near-black: it takes the paper share from weatherInkK, and restores it after)
   if (f.isFog && activeLook === 'ink') { const k = WEATHER_LOOKS.ink ? g : 0; rainState.inkK = 0.9 * k; rainState.inkFog = true; weatherInkLines(f, k) }
   else if (rainState.inkFog) { rainState.inkFog = false; rainState.inkK = 0; weatherInkLines(f, 0) }
@@ -38287,6 +38290,7 @@ function weatherLook(dt) {
   weatherTrees(wind ? weather.wind : 0)
   if (R.group && !rain && !wind) R.group.visible = false
   // Realistic's streets: its own wetness (the puddles grow with it and the sheen follows it), and a floor of damp
+  if (activeLook === 'realistic' && realState?.dome) realState.dome.material.uniforms.uFlash.value = weatherLit()      // the sky dome lit by a flash
   if (activeLook === 'realistic' && realState) realState.uniforms.wet.value = live ? RAIN.damp + (1 - RAIN.damp) * weather.wet : 1      // not switched on: the street as it was, always wet
   const g = weatherFog(), k = plain ? weather.cloud : 0, fogK = plain ? g : 0, flash = live && (plain || activeLook === 'ink') ? weather.flash : 0
   if (k > 0.001 || fogK > 0.001 || flash > 0.001 || R.lit?.on) weatherLights(k, fogK, flash)
