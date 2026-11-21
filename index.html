@@ -5314,14 +5314,14 @@ function faustChanMapLayer() {
 // the band's end; suburb: block pitch, street half width, frontage, house sizes; shanty: the chance a cell has a town, by
 // band start and end, shack pitch, cluster radius; caps: the most instances each pooled mesh draws; step: the camera's travel
 // (m) before the pool is refilled; part: cells a background step.
-const FAUST_RINGS = { version: 1, cell: 480, city: 14, jitter: 300, urban: 6000, suburb: 10000, edge: 15500, clear: 14,
+const FAUST_RINGS = { version: 2, near: 700, cell: 480, city: 14, jitter: 300, urban: 6000, suburb: 10000, edge: 15500, clear: 14,
   block: 96, street: 7, inset: 3, gap: 2.5, high: [20, 48], low: [9, 16], storey: 3.5,
   sub: { pitch: 160, street: 5, front: 25, house: [4.5, 6], depth: [4, 5.5], storeys: [3, 5.8], roof: [2.2, 3.2] },
   shanty: { odds: [0.2, 0.07], radius: [16, 36], count: [26, 70], alley: 0.7, bulbs: 22 },
-  caps: { far: 14000, body: 30000, roof: 20000, flat: 14000, light: 8000, pane: 70000, lit: 12000, shed: 8000, pool: 1000 }, step: 240, part: 4,
+  caps: { far: 14000, body: 30000, roof: 20000, flat: 14000, light: 8000, pane: 70000, lit: 12000, shed: 8000, pool: 4000 }, step: 240, part: 4,
   tints: { street: 0x2b2d31, walk: 0x4a4c50, park: 0x26301f, lot: 0x34363a, dirt: 0x3a3127, pole: 0x30353c,
     urban: [0x8d97ab, 0x77849b, 0x9ea9b5, 0x7d8796, 0x968b81], house: [0x8f8a7e, 0x7b8086, 0x9a8f78, 0x6f7a73, 0x857466],
-    roof: [0x3b2a26, 0x2f3338, 0x4a3328, 0x3a3f36], glass: 0x1a212b, door: [0x3b2b22, 0x2c3a40, 0x4a2622],
+    roof: [0x3b2a26, 0x2f3338, 0x4a3328, 0x3a3f36], glass: 0x1a212b, door: [0x3b2b22, 0x2c3a40, 0x4a2622], trim: 0xb9b2a0, porch: 0x6b665e, plank: 0x8a7a5a,
     // shacks: the lower walls (block, brick, scrap board), the upper (plywood, tin, painted board), patches; tin roofs (rust, grey)
     shackLow: [0x4f4a45, 0x5a3a2e, 0x463c32], shackHigh: [0x6e5a3e, 0x6d6f6c, 0x3e5566, 0x7a6a4f, 0x5b4a3a], patch: [0x8a7a5a, 0x5d6a6e, 0x7a4632, 0x9a9488],
     tin: [0x4a3224, 0x55585a, 0x3e2a1e, 0x5e5f5c] } }      // (#72: roofs darker than the walls, for the silhouette)
@@ -5358,6 +5358,19 @@ function faustRingClear(segs, x, z, ex, ez) {
   }
   return true
 }
+// card #91: a suburb cell's streets, the one source for their asphalt and the local traffic: [{ a: [x, z], b: [x, z], half }], centre
+// lines the cell long on the FAUST_RINGS.sub grid, where they clear the highways and the channels (else none); [] off the suburbs
+function faustRingStreets(seed, S, plan, i, j) {
+  if (faustRingBand(seed, S, i, j) !== 'suburb') return []
+  const C = FAUST_RINGS.cell, x0 = i * C, z0 = j * C, x1 = x0 + C, z1 = z0 + C
+  return faustRingStreetsIn(x0, z0, x1, z1, faustRingRoads(plan, x0, z0, x1, z1).concat(faustChanSegs(seed, S, x0, z0, x1, z1)))
+}
+function faustRingStreetsIn(x0, z0, x1, z1, segs) {
+  const U = FAUST_RINGS.sub, P = U.pitch, C = FAUST_RINGS.cell, out = []
+  for (let k = Math.ceil(x0 / P); k * P < x1; k++) if (faustRingClear(segs, k * P, (z0 + z1) / 2, U.street, C / 2)) out.push({ a: [k * P, z0], b: [k * P, z1], half: U.street })
+  for (let k = Math.ceil(z0 / P); k * P < z1; k++) if (faustRingClear(segs, (x0 + x1) / 2, k * P, C / 2, U.street)) out.push({ a: [x0, k * P], b: [x1, k * P], half: U.street })
+  return out
+}
 // a cell's plan: { band, far: [box, tint], body: [box, tint], part: [shape, sx, sy, sz, x, y, z, yaw, roll, tint] (a pooled shape's
 // scale, place and turn: yaw about y, then roll about its own z; pane: a window or door facing +z before its yaw, lit: a lit one,
 // shed: a lean-to tin roof falling toward +z, body: a box), roof: [cx, y, cz, ex, h, ez, alongZ, tint],
@@ -5368,7 +5381,8 @@ function faustRingClear(segs, x, z, ex, ez) {
 // at ground level, facing out (to the street for urban and houses; a shack's +z side)
 function faustRingCell(seed, S, plan, i, j) {
   const R = FAUST_RINGS, C = R.cell, T = R.tints, band = faustRingBand(seed, S, i, j)
-  const out = { band, far: [], body: [], roof: [], flat: [], light: [], solid: [], buildings: [], part: [] }
+  const out = { band, far: [], body: [], roof: [], flat: [], light: [], solid: [], buildings: [], part: [], near: [] }
+  const near = (k, sx, sy, sz, x, y, z, yaw, roll, tint) => out.near.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint])
   const part = (k, sx, sy, sz, x, y, z, yaw, roll, tint) => out.part.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint])
   const HALF = 1.5707963267948966
   if (band === 'city' || band === 'edge') return out
@@ -5415,8 +5429,7 @@ function faustRingCell(seed, S, plan, i, j) {
   if (band === 'suburb') {
     // blocks of gabled houses down their two long sides, facing the street; the streets between them, asphalt
     const U = R.sub, P = U.pitch, r = Math.max(Math.abs(x0 + C / 2), Math.abs(z0 + C / 2)), thin = 0.12 + 0.4 * (r - R.urban) / (R.suburb - R.urban)
-    for (let k = Math.ceil(x0 / P); k * P < x1; k++) if (faustRingClear(segs, k * P, (z0 + z1) / 2, U.street, C / 2)) flat(k * P - U.street, z0, k * P + U.street, z1, 0.05, T.street)
-    for (let k = Math.ceil(z0 / P); k * P < z1; k++) if (faustRingClear(segs, (x0 + x1) / 2, k * P, C / 2, U.street)) flat(x0, k * P - U.street, x1, k * P + U.street, 0.05, T.street)
+    for (const st of faustRingStreetsIn(x0, z0, x1, z1, segs)) st.a[0] === st.b[0] ? flat(st.a[0] - st.half, z0, st.a[0] + st.half, z1, 0.05, T.street) : flat(x0, st.a[1] - st.half, x1, st.a[1] + st.half, 0.05, T.street)
     for (let bi = Math.floor(x0 / P); bi < x1 / P; bi++) for (let bj = Math.floor(z0 / P); bj < z1 / P; bj++) {
       const cx = (bi + 0.5) * P, cz = (bj + 0.5) * P, e = P / 2 - U.street
       if (cx < x0 || cx >= x1 || cz < z0 || cz >= z1) continue
@@ -5434,6 +5447,16 @@ function faustRingCell(seed, S, plan, i, j) {
         // window in each end wall and one at the back
         const sd = (hh >>> 29) & 1 ? -1 : 1, fy = sg > 0 ? 0 : 2 * HALF, fz = z + sg * (hz + 0.03), wy = 1.55, glass = T.glass
         part('pane', 0.5, 1.05, 1, x + sd * 0.4 * hx, 1.05, fz, fy, 0, pick(T.door, hh >>> 3))
+        // (card #91) the door reads as one: a pale frame round it; a porch, a slab 0.18 m up, 2.4 m wide and 1.6 m out, with a
+        // canopy on two posts; a porch light by the frame, lit at night, its glow on the porch. None of it a collider.
+        { const dx = x + sd * 0.4 * hx, out_ = d => z + sg * (hz + d), trim = T.trim
+          near('body', 0.08, 1.14, 0.06, dx - 0.58, 1.14, out_(0.06), 0, 0, trim); near('body', 0.08, 1.14, 0.06, dx + 0.58, 1.14, out_(0.06), 0, 0, trim)
+          near('body', 0.66, 0.08, 0.06, dx, 2.22, out_(0.06), 0, 0, trim)
+          near('body', 1.2, 0.09, 0.8, dx, 0.09, out_(0.8), 0, 0, T.porch)
+          near('body', 1.3, 0.06, 0.85, dx, 2.62, out_(0.85), 0, 0, pick(T.roof, hh >>> 26))
+          for (const u of [-1.12, 1.12]) near('body', 0.06, 1.19, 0.06, dx + u, 1.37, out_(1.5), 0, 0, trim)
+          near('light', 0.09, 0.12, 0.09, dx - sd * 0.92, 1.95, out_(0.1), 0, 0, 0xffffff)
+          near('pool', 1.1, 1, 1.1, dx, 0.185, out_(0.8), 0, 0, T.porch) }
         part((hh >>> 28) & 1 ? 'lit' : 'pane', 0.6, 0.6, 1, x - sd * 0.5 * hx, wy, fz, fy, 0, glass)
         part('pane', 0.5, 0.6, 1, x + sd * 0.85 * hx, wy, fz, fy, 0, glass)
         if (y > 4) for (const u of [-0.5, 0.5]) part((hh >>> 27) & 1 && u > 0 ? 'lit' : 'pane', 0.55, 0.55, 1, x + u * hx, 4.3, fz, fy, 0, glass)
@@ -5478,6 +5501,10 @@ function faustRingCell(seed, S, plan, i, j) {
     part('pane', pw, 0.35 + ((hq >>> 22) % 3) * 0.12, 1, pp[0], lo + 0.15, pp[1], yaw + [0, 2, 1, -1][pf] * HALF, 0, pick(T.patch, hq >>> 24))
     const dp = on(-ex * 0.45, ez + 0.03)
     part('pane', 0.42, 0.95, 1, dp[0], 0.95, dp[1], yaw, 0, pick(T.door, hh >>> 26))
+    // (card #91) its door reads as one: a frame of scrap planks and a pallet for a step
+    for (const u of [-0.5, 0.5]) { const q = on(-ex * 0.45 + u, ez + 0.05); near('body', 0.06, 0.99, 0.04, q[0], 0.99, q[1], yaw, 0, T.plank) }
+    { const q = on(-ex * 0.45, ez + 0.05); near('body', 0.56, 0.06, 0.04, q[0], 1.96, q[1], yaw, 0, T.plank) }
+    { const q = on(-ex * 0.45, ez + 0.35); near('body', 0.55, 0.06, 0.3, q[0], 0.06, q[1], yaw, 0, T.plank) }
     // the roof: a lean-to of tin, falling one of four ways at its own pitch, overhanging
     const q = (hh >>> 28) & 3, odd = q & 1
     part('shed', (odd ? ez : ex) + 0.3, 0.3 + ((hq >>> 26) % 5) * 0.1, (odd ? ex : ez) + 0.35, top[0], y - 0.02, top[1], yaw + q * HALF, 0, pick(T.tin, hq >>> 29))
@@ -5591,6 +5618,7 @@ function faustRingsFrame() {
       for (const b of c.light) put('light', b.ex, b.ey, b.ez, b.cx, b.cy, b.cz, 0xffffff)
       const roles = faustRingInRoles(c)
       c.part.forEach(([k, sx, sy, sz, x, y, z, yaw, roll, tint], pi) => { const role = roles.get(pi); if (role !== undefined && pools[k].n < caps[k]) idx.set(role, pools[k].n); put(k, sx, sy, sz, x, y, z, tint, false, yaw, roll) })
+      if (cells[n][0] < R.near) for (const [k, sx, sy, sz, x, y, z, yaw, roll, tint] of c.near || []) put(k, sx, sy, sz, x, y, z, tint, false, yaw, roll)      // (card #91)
       if (n % R.part === R.part - 1) yield
     }
     // the swap (card #18): two sets of meshes kept for the game, one shown. The hidden set takes the new instances in place (a
@@ -5616,7 +5644,7 @@ function faustRingsFrame() {
       Q.array.set(P.c.subarray(0, P.n * 3)); Q.clearUpdateRanges(); Q.addUpdateRange(0, P.n * 3); Q.needsUpdate = true
       mesh.count = P.n; mesh.computeBoundingSphere()
     }
-    while (!background.uploadSlot(bytes)) yield 'frame'
+    for (let t = 0; t < 30 && !background.uploadSlot(bytes); t++) yield 'frame'      // at most 30 frames' wait, then it goes anyway
     for (const k of KINDS) { if (set[k]) set[k].visible = pools[k].n > 0; if (other[k]) other[k].visible = false }
     F.ringShown = set === sets[0] ? 0 : 1
     F.ringIdx = idx
@@ -5683,7 +5711,7 @@ function faustRingsMapLayer() {
 // Local frame: u along x from the box's centre, v from the door wall's outside inward (world z = cz + sg*(ez - v), sg the door's
 // side), y up. Faces (f) of a box are given in local bits (1 +u, 2 -u, 4 +y, 8 -y, 16 +v deeper, 32 -v toward the door) and kept
 // in the world's (1 +x, 2 -x, 4 +y, 8 -y, 16 +z, 32 -z), as the city's interiors do.
-const FAUST_RIN = { version: 1, wall: 0.3, shackWall: 0.14, slab: 0.15, part: 0.12, door: [1.4, 2.1], shackDoor: [1.2, 2.0], inner: [1.3, 2.1],
+const FAUST_RIN = { version: 2, wall: 0.3, shackWall: 0.14, slab: 0.15, part: 0.12, door: [1.4, 2.1], shackDoor: [1.2, 2.0], inner: [1.3, 2.1],
   hall: 1.7, stairRun: 4.5, skin: 0.04,
   // m from a door a participant opens the building at, and it closes past (with nobody inside, after 3 s)
   open: 18, close: 55 }
@@ -5824,7 +5852,6 @@ function faustRingInterior(b) {
   const frontDoor = () => {
     F = floors[0]
     leaf(d0 - 0.03, Vi0 + 0.02, Vi0 + dw - 0.05, 0.02, dh - 0.1, woodL)
-    addBox(F.boxes, d0 - 0.05, d1 + 0.05, 0, 0.05, -0.5, 0, IN_TINT.concrete, { nc: 1, f: 4 })
   }
   const connect = []                    // the rooms' doorways, [floor, room a, room b] by index, for the walk check
   let stairs = null
@@ -8109,7 +8136,7 @@ function faustFieldsFrame() {
   f.job = background.run('faust fields', function* () {
     const g = yield* faustFieldsSteps(cx, cz, F.seed)
     yield      // (card #18: the swap and its upload in frames of their own, the upload admitted by uploadSlot)
-    { const bytes = geometryBytes({ traverse: fn => fn({ geometry: g }) }); while (!background.uploadSlot(bytes)) yield 'frame' }
+    { const bytes = geometryBytes({ traverse: fn => fn({ geometry: g }) }); for (let t = 0; t < 30 && !background.uploadSlot(bytes); t++) yield 'frame' }
     f.mesh.geometry.dispose(); f.mesh.geometry = g; f.at = cx + ' ' + cz
     yield 'frame'
   }, { valid: () => faustState === F && F.fields === f }).catch(e => frameFailed('fields', e)).finally(() => { f.job = null })
@@ -8165,6 +8192,7 @@ const FAUSTLAND_API = { interior: faustInterior, storey: faustStorey, plan: faus
   // made), the cell (480 m) under x, z, and a building by its id ('ring i j n')
   ring: { cell: (i, j) => { const F = faustState, plan = F && faustRoadsReady(F); return plan ? faustRingPlan(F, plan, i, j) : null },
     at: (x, z) => [Math.floor(x / FAUST_RINGS.cell), Math.floor(z / FAUST_RINGS.cell)], size: () => FAUST_RINGS.cell,
+    streets: (i, j) => { const F = faustState, plan = F && faustRoadsReady(F); return plan ? faustRingStreets(F.seed, F.S, plan, i, j) : null },      // card #91
     // card #78: a house's or shack's interior plan (pure in the building), the open ones' ids, and the counters
     interior: id => { const b = FAUSTLAND_API.ring.building(id); return b ? b.kind === 'urban' ? faustRingUrbanInterior(b) : faustRingInterior(b) : null },
     interiors: () => ({ open: [...faustState?.ringIn?.open.keys() || []], stats: faustState?.ringIn?.stats || null }),
@@ -32752,6 +32780,7 @@ const squadPeople = () => [...players.values()].filter(c => !c.bot && c.owner ==
 // one car off the field: as the traffic retires its own
 function squadRemove(o) {
   const T = trafficState
+  if (o.squadKind === 'launch') GAME.boats?.cancel?.(o.id)
   trafficDetach(o, false)
   dropObject(o); objs.splice(objs.indexOf(o), 1)
   squadIds.delete(o.id)
@@ -32785,8 +32814,33 @@ function squadPut(spot, yaw, p, kind) {
   o.squadOf = p.id; o.squadKind = kind; o.squadAt = tickAt || now()
   return o
 }
+// he is on water (or a boat is under him): a launch comes for him, if the boats exist
+const squadLaunchK = () => GAME.boats?.add && GAME.boats.pursue && GAME.boats.spot ? OBJECTS.findIndex(K => K.name === 'Police launch') : -1
+const squadWater = p => squadLaunchK() >= 0 && !!GAME.faustland?.water?.at?.(p.x, p.z)
+// a launch on open water 100-300 m from him, out of the sight of everyone if one can be found (a few tries round the compass)
+function squadLaunch(p) {
+  const T = trafficState, people = squadPeople(), a0 = Math.random() * 6.283
+  let spot = null, seen = null
+  for (let i = 0; i < 6 && !spot; i++) {
+    const a = a0 + i * 1.047, s = GAME.boats.spot(p.x + Math.cos(a) * 190, p.z + Math.sin(a) * 190, 70, 10)
+    if (!s) continue
+    const d = Math.hypot(s.x - p.x, s.z - p.z)
+    if (d < 100 || d > 300) continue
+    if (trafficHidden(s.x, s.z, people)) spot = s; else seen ||= s
+  }
+  spot ||= seen
+  const id = squadId(T)
+  if (!spot || id < 0 || objs.length >= OBJ_MAX - 8) return false
+  squadIds.add(id)
+  const o = GAME.boats.add('Police launch', spot, id)
+  if (!o) { squadIds.delete(id); return false }
+  o.squadOf = p.id; o.squadKind = 'launch'; o.squadAt = tickAt || now(); o.squadState = 'drive'; o.squadPursueAt = o.squadAt
+  if (!GAME.boats.pursue(o, p, { speed: 16, stop: 12, urgent: true })) { squadRemove(o); return false }
+  return true
+}
 function squadSpawn(p, relax) {
   const T = trafficState; if (!T) return false
+  if (squadWater(p) && squadLaunch(p)) return true
   const V = vehicleOf(OBJECTS[squadK()]), spot = squadSpot(p.x, p.z, relax ? PATROL.spawn.near + 20 : PATROL.spawn.near, PATROL.spawn.far, V, squadPeople(), relax)
   if (!spot) return false
   const { e, q } = spot, o = squadPut(q, Math.atan2(-e.dx, -e.dz), p, 'chase')
@@ -32837,6 +32891,10 @@ function heatCars(p, H, T, dt) {
   const cars = squadCarsOf(p.id), want = PATROL.cars[H.stars] ?? 0
   for (const o of cars) {
     if (!o.V) { squadFell(o); continue }
+    if (o.squadKind === 'launch') {
+      if (T - o.squadPursueAt > 5000) { o.squadPursueAt = T; GAME.boats?.pursue?.(o, p, { speed: 16, stop: 12, urgent: true }) }
+      continue
+    }
     if (o.squadState === 'drive') {
       if (o.riders.some(r => r !== undefined)) { o.squadState = 'parked'; continue }
       const d = Math.hypot(o.x - p.x, o.z - p.z)
@@ -32845,7 +32903,8 @@ function heatCars(p, H, T, dt) {
       else if (!o.traffic) GAME.traffic.pursue(o, p, { urgent: true, speed: PATROL.speed })
     }
   }
-  if (cars.filter(o => o.squadState === 'drive').length < want && T - (H.carAt || 0) >= PATROL.gap * 1000) {
+  const water = squadWater(p)
+  if (cars.filter(o => o.squadState === 'drive' && (water || o.squadKind !== 'launch')).length < want && T - (H.carAt || 0) >= PATROL.gap * 1000) {
     const made = squadSpawn(p, (H.carFail | 0) >= 2)       // twice without a spot out of sight: any spot in the ring will do
     H.carFail = made ? 0 : (H.carFail | 0) + 1
     H.carAt = made ? T : T - (PATROL.gap - 2) * 1000        // a miss tries again in 2 s
