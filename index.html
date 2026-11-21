@@ -32641,7 +32641,13 @@ function dealTurn(R, name, xyz, ang) {
   const b = R.bones.get(name); if (!b || !ang) return
   b.parent.getWorldQuaternion(dealQ.parent)
   dealP[13].set(xyz[0], xyz[1], xyz[2]).applyQuaternion(dealQ.root).applyQuaternion(dealQ.parent.invert())
-  b.quaternion.premultiply(dealQ.delta.setFromAxisAngle(dealP[13], ang))
+  const M = R.dealMem ||= new Map()
+  let m = M.get(name); if (!m) M.set(name, m = { b, pre: new THREE.Quaternion(), post: new THREE.Quaternion(), on: false })
+  m.pre.copy(b.quaternion); b.quaternion.premultiply(dealQ.delta.setFromAxisAngle(dealP[13], ang)); m.post.copy(b.quaternion); m.on = true
+}
+// last frame's turns, undone on every bone the clip did not rewrite since (a bone it does rewrite is left as the clip set it)
+function dealUndo(R) {
+  if (R.dealMem) for (const m of R.dealMem.values()) { if (m.on && m.b.quaternion.equals(m.post)) m.b.quaternion.copy(m.pre); m.on = false }
 }
 function dealRot(b, u, v) {
   b.parent.getWorldQuaternion(dealQ.parent)
@@ -32671,6 +32677,7 @@ function dealArm(R, side, goal, bend, w) {
 }
 // the dealer's posture over the clip, each frame (a.dealIdle, a.dealAge, a.dealHead are set by dealDraw)
 function dealRig(a, R, dt, t) {
+  dealUndo(R)
   if (a.dying >= 0 || R.lod >= 2 || !R.bones.get('pelvis')) return
   const idle = a.dealIdle && R.name === 'idle', age = a.dealAge ?? -1, ease = 1 - Math.exp(-Math.min(dt || 0.033, 0.1) * 6)
   R.dealW = (R.dealW || 0) + ((idle ? 1 : 0) - (R.dealW || 0)) * ease
