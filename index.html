@@ -3640,7 +3640,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 19, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
+  const content = { version: 21, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -5355,7 +5355,7 @@ function faustChannels(seed, S) {
       // not under a bridge: the road's and a footbridge's decks, nor the diagonal's (which crosses the whole bank on a slant)
       const clash = chan.bridges.some(b => b.kind === 'diag' ? rs - b.s > Math.min(rside * 4, rside * K.top) - 15 * 1.4142 - rh && rs - b.s < Math.max(rside * 4, rside * K.top) + 15 * 1.4142 + rh
         : Math.abs(rs - b.s) < b.half + rh)
-      if ((h >>> 3) % 100 < 55 && !clash) chan.ramps.push({ id: id + ':r:' + k, side: rside, s: rs, w: K.ramp.w })
+      if ((h >>> 3) % 100 < 55 && !clash && rs - K.ramp.w / 2 > lo && rs + K.ramp.w / 2 < hi) chan.ramps.push({ id: id + ':r:' + k, side: rside, s: rs, w: K.ramp.w })
       // a storm sewer's mouth in a bank, 6.5 m down it
       const under = (side, s) => chan.bridges.some(b => b.kind === 'diag' ? Math.abs(s - (b.s + side * 16.6)) < 25 : Math.abs(s - b.s) < b.half + 3)
       if (o % 100 < 40 && k * 96 + ((o >>> 9) & 1 ? 38 : -38) > lo + 2 && k * 96 + ((o >>> 9) & 1 ? 38 : -38) < hi - 2 && !under((o >>> 7) & 1 ? 1 : -1, k * 96 + ((o >>> 9) & 1 ? 38 : -38))) { const side = (o >>> 7) & 1 ? 1 : -1, s = k * 96 + ((o >>> 9) & 1 ? 38 : -38), bk = river ? FAUST_WATER.river.sec : FAUST_CHAN.sec, md = river ? 2.2 : 6.5, uu = K.top - (K.top - bk.foot) * md / bk.h
@@ -5720,11 +5720,13 @@ function faustChanMapLayer() {
 //   A cell the water doesn't reach is untouched. Wet where the bed lies under the body's level (below the ground, y 0).
 const FAUST_WATER = { version: 1, cell: 96, grid: 6, reach: 240, look: 1500, part: 1000,
   // a river: depth by distance from its axis (banks 45 degrees, a 1 m shelf 8 m wide at level -3, a trough 7.5 m deep)
-  river: { reach: 3300, level: -3, flow: 1.2, tab: [[28, 0], [24, 4], [16, 4], [8, 7.5], [0, 7.5]],
-    sec: { foot: 24, h: 4, land: 16, kinds: ['bed', 'bed', 'bed'], inner: [[24, 0], [16, 0], [8, -3.5]] } },
-  kinds: { lake: { level: -0.7, dmax: 5, slope: 4 }, reservoir: { level: -1.2, dmax: 14, slope: 3.5 }, bay: { level: -0.8, dmax: 9, slope: 6 } },
+  river: { reach: 3300, level: -3, flow: 1.2, tab: [[28, 0], [20, 4], [12, 4], [8, 7.5], [0, 7.5]],      // banks 26 degrees (the Maniak climbs them: 45 stuck him), a 1 m shelf 8 m wide, a trough
+    sec: { foot: 20, h: 4, land: 16, kinds: ['bed', 'bed', 'bed'], inner: [[20, 0], [12, 0], [8, -3.5]] } },
+  kinds: { lake: { level: -0.7, dmax: 5, slope: 4 }, reservoir: { level: 8, dmax: 14, slope: 3.5, rim: { crest: 10, inner: 4, wide: 6, slope: 7 } }, bay: { level: -0.8, dmax: 9, slope: 6 } },
   // the waves the look draws and waveAt reads (one table: boats and the surface agree): sines [direction x, z, wavelength m, speed m/s, weight], amplitude m by kind
-  waves: { sines: [[0.8, 0.6, 22, 2.4, 1], [-0.5, 0.86, 9, 1.8, 0.6], [0.2, -0.98, 41, 3.1, 0.8]], amp: { river: 0.04, lake: 0.08, reservoir: 0.1, bay: 0.18, channel: 0 } },
+  waves: { drawn: false, sines: [[0.8, 0.6, 22, 2.4, 1], [-0.5, 0.86, 9, 1.8, 0.6], [0.2, -0.98, 41, 3.1, 0.8]], amp: { river: 0.04, lake: 0.08, reservoir: 0.1, bay: 0.18, channel: 0 } },
+  // the dam: its crest arc reaches lat m either side of the spillway, blending into the mound over blend m; the downstream face drops the crest's height in face m
+  dam: { lat: 130, blend: 80, face: 12, notch: 11, sill: 0.3, flow: 6.5, pool: 13, rise: 1.4, tint: [0x7f7b73, 0x6c6962, 0x9a958b] },
   tint: { mud: 0x4a4638, sand: 0x6a644f, deep: 0x1d292b, water: 0x14303b, fields: [0x2b3527, 0x3a3128, 0x464232, 0x30392a], dock: 0x5b4a39, pile: 0x3a3229, bollard: 0x2f343b, lamp: 0xffb35a, pole: 0x30353c } }
 // the seed's mix: { river, reservoir, bay, lakes }
 function faustWaterMix(seed, S) {
@@ -5758,8 +5760,8 @@ function faustWater(seed, S) {
     const ax = river.axis, reachEnd = Math.abs(river.hi), lim = lateral(river.c), walk = (sgn, n, salt) => {
       let s = sgn * reachEnd, w = river.c, th = 0; const pts = [[s, w]]
       for (let i = 0; i < n; i++) {
-        th = th * 0.9 + (faustMix(seed ^ 0x4d45414e, salt, i) % 1000 / 1000 - 0.5) * 0.55; th = Math.max(-0.6, Math.min(0.6, th))
-        if (w < lim[0] + 60) th = Math.max(th, 0.25); if (w > lim[1] - 60) th = Math.min(th, -0.25)
+        if (i >= 2) { th = th * 0.9 + (faustMix(seed ^ 0x4d45414e, salt, i) % 1000 / 1000 - 0.5) * 0.55; th = Math.max(-0.6, Math.min(0.6, th)) }      // the first 320 m run on straight: the trough carries on from the city's channel
+        if (i >= 2) { if (w < lim[0] + 60) th = Math.max(th, 0.25); if (w > lim[1] - 60) th = Math.min(th, -0.25) }
         s += sgn * Math.cos(th) * 160; w += Math.sin(th) * 160; w = Math.max(lim[0], Math.min(lim[1], w)); pts.push([s, w])
       }
       return pts
@@ -5797,25 +5799,35 @@ function faustWater(seed, S) {
     let r = kind === 'bay' ? 900 + rng() * 300 : 520 + rng() * 260
     let cx, cz, out
     if (ends1) {
-      // on the river's end: no bigger than the room beside the radials (their lines at ±288 across it) leaves, lobes included
-      const across = ends1.out[0] ? ends1.p[1] : ends1.p[0], room = Math.min(...[-R.avenue, R.avenue].map(l => Math.abs(across - l))) - 140
-      r = Math.max(200, Math.min(r, room / 1.25)); out = ends1.out; cx = ends1.p[0] + out[0] * (r + 30); cz = ends1.p[1] + out[1] * (r + 30) }
+      // on the river's end: no bigger than the room beside the radials (their lines at ±288 across it) leaves, lobes and a reservoir's mound included;
+      // where there is no room for even 200 m it stands free in the fields instead (and the river ends in a pond)
+      const across = ends1.out[0] ? ends1.p[1] : ends1.p[0], clear = Math.min(...[-R.avenue, R.avenue].map(l => Math.abs(across - l))), fit = kind === 'reservoir' ? clear - 245 : (clear - 140) / 1.25
+      if (fit < 200) ends1 = null; else r = Math.min(r, fit)
+    }
+    if (ends1) { out = ends1.out; cx = ends1.p[0] + out[0] * (r + (kind === 'reservoir' ? 54 : 30)); cz = ends1.p[1] + out[1] * (r + (kind === 'reservoir' ? 54 : 30)) }
     else { for (let t = 0; t < 40; t++) { const ang = rng() * 6.283, dist = 4200 + rng() * 5200; cx = Math.cos(ang) * dist; cz = Math.sin(ang) * dist; if (faustWaterFree(cx, cz, r + 40, taken, A)) break }
       out = [Math.cos(Math.atan2(cz, cx)), Math.sin(Math.atan2(cz, cx))] }
-    const caps = blob(cx, cz, r, 2, id.length * 7 + (kind === 'bay' ? 3 : 5)), b = body(id, kind, caps, { bounds: bounds(caps) })
-    taken.push([cx, cz, r * 1.35]); return { b, cx, cz, r, out }
+    const caps = blob(cx, cz, r, kind === 'reservoir' ? 0 : 2, id.length * 7 + (kind === 'bay' ? 3 : 5)), b = body(id, kind, caps, { bounds: bounds(caps) })
+    taken.push([cx, cz, r * 1.35]); return { b, cx, cz, r, out, onRiver: !!ends1 }
   }
   let reservoir = null, bay = null
   if (mix.reservoir) {
     reservoir = place('reservoir', 'reservoir:0', 0, ends && { p: ends.up, out: ends.upOut })
-    // the dam closes the reservoir's shore beside the river's head (increment 2 builds it): its middle, across the river's line
-    reservoir.b.dam = { x: cm(ends ? ends.up[0] + ends.upOut[0] * 30 : reservoir.cx - reservoir.out[0] * reservoir.r), z: cm(ends ? ends.up[1] + ends.upOut[1] * 30 : reservoir.cz - reservoir.out[1] * reservoir.r), yaw: ends ? cm(Math.atan2(-ends.upOut[0], -ends.upOut[1])) : 0 }
-  } else if (ends) { const c = ends.up, caps = blob(c[0] + ends.upOut[0] * 120, c[1] + ends.upOut[1] * 120, 150, 1, 11); body('lake:spring', 'lake', caps, { bounds: bounds(caps) }); taken.push([c[0] + ends.upOut[0] * 120, c[1] + ends.upOut[1] * 120, 220]) }
+    // the dam closes the reservoir's shore on the side of the river's head: its crest an arc of the shore (angle ang, from the centre), the spillway
+    // in the middle, the plunge pool at its foot (a pond of its own), the river's head just past it
+    const rb = reservoir.b, ang = reservoir.onRiver ? Math.atan2(-ends.upOut[1], -ends.upOut[0]) : Math.atan2(-reservoir.cz, -reservoir.cx), R2 = reservoir.r, pc = [reservoir.cx + Math.cos(ang) * (R2 + 42), reservoir.cz + Math.sin(ang) * (R2 + 42)], pa = [reservoir.cx + Math.cos(ang) * (R2 + 38), reservoir.cz + Math.sin(ang) * (R2 + 38), reservoir.cx + Math.cos(ang) * (R2 + 46), reservoir.cz + Math.sin(ang) * (R2 + 46), K.dam.pool]
+    rb.rim = true; rb.dam = { cx: cm(reservoir.cx), cz: cm(reservoir.cz), r: cm(R2), ang: cm(ang), x: cm(reservoir.cx + Math.cos(ang) * (R2 + 7)), z: cm(reservoir.cz + Math.sin(ang) * (R2 + 7)), yaw: cm(Math.atan2(-Math.cos(ang), -Math.sin(ang))), crest: K.kinds.reservoir.rim.crest, pool: pc.map(cm), spill: { x: cm(reservoir.cx + Math.cos(ang) * (R2 - 2)), z: cm(reservoir.cz + Math.sin(ang) * (R2 - 2)), width: 2 * K.dam.notch } }
+    body('pool:0', 'lake', [pa], { dmax: 4, slope: 3.2, bounds: bounds([pa]) }); taken.push([pc[0], pc[1], 60])
+  }
+  // a pond at the river's end, as big as the room beside the radials leaves (none if there is no room for a small one)
+  const pondFit = (p, out) => (Math.min(...[-R.avenue, R.avenue].map(l => Math.abs((out[0] ? p[1] : p[0]) - l))) - 140) / 1.25
+  if (ends && !(reservoir && reservoir.onRiver) && pondFit(ends.up, ends.upOut) >= 80) { const c = ends.up, pr = Math.min(150, pondFit(ends.up, ends.upOut)), caps = blob(c[0] + ends.upOut[0] * 120, c[1] + ends.upOut[1] * 120, pr, 1, 11); body('lake:spring', 'lake', caps, { bounds: bounds(caps) }); taken.push([c[0] + ends.upOut[0] * 120, c[1] + ends.upOut[1] * 120, 220]) }
   if (mix.bay) {
     bay = place('bay', 'bay:0', 0, ends && { p: ends.dn, out: ends.dnOut })
     const toward = Math.atan2(-bay.out[1], -bay.out[0])
     bay.b.docks = docks(bay.b, bay.cx, bay.cz, bay.r, 4, 5, toward)
-  } else if (ends) { const c = ends.dn, caps = blob(c[0] + ends.dnOut[0] * 200, c[1] + ends.dnOut[1] * 200, 260, 2, 13); body('lake:delta', 'lake', caps, { bounds: bounds(caps) }); taken.push([c[0] + ends.dnOut[0] * 200, c[1] + ends.dnOut[1] * 200, 360]) }
+  }
+  if (ends && !(bay && bay.onRiver) && pondFit(ends.dn, ends.dnOut) >= 80) { const c = ends.dn, pr = Math.min(260, pondFit(ends.dn, ends.dnOut)), caps = blob(c[0] + ends.dnOut[0] * 200, c[1] + ends.dnOut[1] * 200, pr, 2, 13); body('lake:delta', 'lake', caps, { bounds: bounds(caps) }); taken.push([c[0] + ends.dnOut[0] * 200, c[1] + ends.dnOut[1] * 200, 360]) }
   for (let n = 0; n < mix.lakes; n++) {
     const r = 160 + rng() * 360
     for (let t = 0; t < 60; t++) {
@@ -5830,9 +5842,11 @@ function faustWater(seed, S) {
   // ---- the cells: every 96 m cell a capsule's reach touches
   const cells = new Map(), C = K.cell
   bodies.forEach((b, bi) => b.caps.forEach((c, ci) => {
-    const r = c[4] + 0.5, i0 = Math.floor((Math.min(c[0], c[2]) - r) / C), i1 = Math.floor((Math.max(c[0], c[2]) + r) / C), j0 = Math.floor((Math.min(c[1], c[3]) - r) / C), j1 = Math.floor((Math.max(c[1], c[3]) + r) / C)
+    const r = c[4] + 0.5 + (b.rim ? 100 : 0), i0 = Math.floor((Math.min(c[0], c[2]) - r) / C), i1 = Math.floor((Math.max(c[0], c[2]) + r) / C), j0 = Math.floor((Math.min(c[1], c[3]) - r) / C), j1 = Math.floor((Math.max(c[1], c[3]) + r) / C)
     for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
       const x0 = i * C, z0 = j * C
+      // a river's own channel makes the cells inside its straight reach (their bed would be a sill across it): the cells begin where it ends
+      if (b.channel && river && (river.axis ? z0 : x0) >= river.lo && (river.axis ? z0 : x0) + C <= river.hi) continue
       if (faustWaterRectDist(c, x0, z0, x0 + C, z0 + C) < r) {
         const k = faustWaterKey(i, j); let e = cells.get(k); if (!e) cells.set(k, e = []); e.push(bi, ci) }
     }
@@ -5864,32 +5878,71 @@ function faustWaterFree(x, z, r, taken, A) {
   for (const [tx, tz, tr] of taken) if (Math.hypot(x - tx, z - tz) < r + tr + 80) return false
   return true
 }
-// the deepest bed under a point from a cell's entries, and what holds it: fills out = { depth, body, cap, d } (depth 0 where dry)
+// the bed's height at (x, z) from one capsule c of body b (ground is y 0): d the distance to its axis, t how far inside its edge
+function faustWaterBedY(b, c, x, z, d) {
+  if (b.tab) return -faustWaterTab(b.tab, d)
+  const t = c[4] - d
+  if (!b.rim) return -Math.min(b.dmax, Math.max(0, t) / b.slope)
+  const R = FAUST_WATER.kinds.reservoir.rim, L = b.level, Cr = R.crest, cr0 = R.inner + R.wide
+  const mound = t >= 0 ? L - Math.min(b.dmax, t / b.slope) : t >= -R.inner ? L + (-t) * (Cr - L) / R.inner : t >= -cr0 ? Cr : Math.max(0, Cr * (1 - (-t - cr0) / (Cr * R.slope)))
+  const dam = b.dam
+  if (!dam) return mound
+  const D = FAUST_WATER.dam, lat = faustWaterDamLat(dam, c, x, z, d)
+  if (lat > D.lat + D.blend) return mound
+  const face = t >= -cr0 ? mound : Math.max(0, Cr * (1 - (-t - cr0) / D.face)), sill = L - D.sill
+  let y = face
+  if (lat < D.notch + 3) { const wn = 1 - Math.max(0, Math.min(1, (lat - D.notch) / 3)), notch = t >= 0 ? mound : t >= -cr0 ? sill : Math.max(0, sill * (1 - (-t - cr0) / D.face)); y += (notch - y) * wn }
+  const w = Math.max(0, Math.min(1, (lat - D.lat) / D.blend)), s2 = w * w * (3 - 2 * w)
+  return y + (mound - y) * s2
+}
+// the distance along the arc from the dam's middle
+function faustWaterDamLat(dam, c, x, z, d) {
+  let da = Math.atan2(z - c[1], x - c[0]) - dam.ang
+  da -= Math.round(da / 6.283185307) * 6.283185307
+  return Math.abs(da) * d
+}
+// the rain's rise of a reservoir (m): weather.rain 0..1 (#85), kept under the crest
+const faustWaterRise = b => b.rim && typeof weather !== 'undefined' && weather?.rain > 0 ? Math.min(FAUST_WATER.dam.rise, 1.8 * weather.rain) : 0
+// the bed under a point from a cell's entries: out = { y, depth (below ground, negative on a mound), body, cap, d }; a dig beats a raise (a river through a mound)
 function faustWaterDepth(w, e, x, z, out) {
-  out.depth = 0; out.body = -1; out.cap = -1; out.d = 0
+  let lo = 0, hi = 0, lb = -1, lc = -1, ld = 0, hb = -1, hc = -1, hd = 0
   for (let k = 0; k < e.length; k += 2) {
-    const b = w.bodies[e[k]], c = b.caps[e[k + 1]], d = faustWaterSegDist(c, x, z)
-    const dep = b.tab ? faustWaterTab(b.tab, d) : Math.min(b.dmax, Math.max(0, (c[4] - d) / b.slope))
-    if (dep > out.depth) { out.depth = dep; out.body = e[k]; out.cap = e[k + 1]; out.d = d }
+    const b = w.bodies[e[k]], c = b.caps[e[k + 1]], d = faustWaterSegDist(c, x, z), y = faustWaterBedY(b, c, x, z, d)
+    if (y < lo) { lo = y; lb = e[k]; lc = e[k + 1]; ld = d } else if (y > hi) { hi = y; hb = e[k]; hc = e[k + 1]; hd = d }
   }
+  if (lo < 0) { out.y = lo; out.body = lb; out.cap = lc; out.d = ld } else { out.y = hi; out.body = hb; out.cap = hc; out.d = hd }
+  out.depth = -out.y
   return out
 }
-const faustWaterScratch = { depth: 0, body: -1, cap: -1, d: 0 }
+const faustWaterScratch = { y: 0, depth: 0, body: -1, cap: -1, d: 0 }
 // the water at (x, z): null on dry land, else { id, kind, y, level, floor, depth, flow: [fx, fz] } (out, if given, is filled and returned)
 function faustWaterAt(seed, S, x, z, out) {
   const w = faustWater(seed, S), i = Math.floor(x / 96), j = Math.floor(z / 96), e = w.cells.get(faustWaterKey(i, j))
   if (e) {
     const q = faustWaterDepth(w, e, x, z, faustWaterScratch), b = q.body >= 0 ? w.bodies[q.body] : null
-    if (b && q.depth > -b.level + 0.02) {
-      const r = out || { flow: [0, 0] }, c = b.caps[q.cap]; r.id = b.id; r.kind = b.kind; r.level = r.y = b.level; r.floor = -q.depth; r.depth = q.depth + b.level
-      if (b.tab) { const dx = c[2] - c[0], dz = c[3] - c[1], l = Math.hypot(dx, dz) || 1, v = FAUST_WATER.river.flow * Math.min(1, 0.4 + q.depth / 7.5); r.flow = r.flow || [0, 0]; r.flow[0] = dx / l * v; r.flow[1] = dz / l * v } else { r.flow = r.flow || [0, 0]; r.flow[0] = r.flow[1] = 0 }
-      return r
+    if (b) {
+      const c = b.caps[q.cap], lvl = b.level + faustWaterRise(b), t = c[4] - q.d
+      if (b.rim && t <= 0.01) {
+        // a reservoir's mound is dry; its spillway's chute carries a sheet of fast water down the dam's face
+        const dm = b.dam, D = FAUST_WATER.dam
+        if (dm && t > -22 && t < -3 && faustWaterDamLat(dm, c, x, z, q.d) < D.notch - 1) {
+          const r = out || { flow: [0, 0] }, rain = typeof weather !== 'undefined' && weather?.rain > 0 ? weather.rain : 0
+          r.id = b.id + ':spill'; r.kind = 'spillway'; r.floor = q.y; r.y = r.level = q.y + 0.35 + 0.5 * rain; r.depth = 0.35 + 0.5 * rain; r.flow = r.flow || [0, 0]
+          r.flow[0] = Math.cos(dm.ang) * D.flow * (0.7 + 0.6 * rain); r.flow[1] = Math.sin(dm.ang) * D.flow * (0.7 + 0.6 * rain)
+          return r
+        }
+      } else if (q.y < lvl - 0.02) {
+        const r = out || { flow: [0, 0] }; r.id = b.id; r.kind = b.kind; r.level = r.y = lvl; r.floor = q.y; r.depth = lvl - q.y
+        r.flow = r.flow || [0, 0]
+        if (b.tab) { const dx = c[2] - c[0], dz = c[3] - c[1], l = Math.hypot(dx, dz) || 1, v = FAUST_WATER.river.flow * Math.min(1, 0.4 + q.depth / 7.5); r.flow[0] = dx / l * v; r.flow[1] = dz / l * v } else { r.flow[0] = r.flow[1] = 0 }
+        return r
+      }
     }
   }
   const ch = faustChannels(seed, S), K = FAUST_CHAN
   for (const c of ch.list) {
     const r = c.rect
-    if (x > r.a0 && x < r.a1 && z > r.b0 && z < r.b1) {
+    if (x >= r.a0 && x <= r.a1 && z >= r.b0 && z <= r.b1) {
       const s = c.axis ? z : x, u = Math.abs((c.axis ? x : z) - c.c), sec = faustChanSec(c), river = c.kind === 'river'
       const bed = K.ground - sec.h + faustChanBed(sec, u), lvl = river ? FAUST_WATER.river.level : K.ground - K.depth - K.gutter[2] + K.water
       if (u < K.top && bed < lvl - 0.02) {
@@ -5908,14 +5961,15 @@ function faustWaterExit(seed, S, x, z) {
   if (!at) return null
   const i = Math.floor(x / 96), j = Math.floor(z / 96), e = w.cells.get(faustWaterKey(i, j))
   if (e) {
-    const q = faustWaterDepth(w, e, x, z, { depth: 0 }), b = w.bodies[q.body], c = b.caps[q.cap]
+    const q = faustWaterDepth(w, e, x, z, { depth: 0 }), b = q.body >= 0 ? w.bodies[q.body] : null, c = b && b.caps[q.cap]
+    if (!b) return null
     // the cap's nearest axis point, out along the line from it through here to where the bed meets the level, and on a metre
     const dx = c[2] - c[0], dz = c[3] - c[1], l = dx * dx + dz * dz, t = l ? Math.max(0, Math.min(1, ((x - c[0]) * dx + (z - c[1]) * dz) / l)) : 0, px = c[0] + dx * t, pz = c[1] + dz * t
     let nx = x - px, nz = z - pz; const nl = Math.hypot(nx, nz); if (nl < 1e-6) { nx = 1; nz = 0 } else { nx /= nl; nz /= nl }
-    const shore = b.tab ? 25 : c[4] - (-b.level) * b.slope, ex = px + nx * (shore + 1.5), ez = pz + nz * (shore + 1.5), dd = Math.hypot(ex - x, ez - z)
+    const shore = b.tab ? 22 : b.rim ? c[4] - 1 : c[4] - (-b.level) * b.slope, ex = px + nx * (shore + 1.5), ez = pz + nz * (shore + 1.5), dd = Math.hypot(ex - x, ez - z)
     if (dd > 12) return null
     const dock = (b.docks || []).find(k => Math.hypot(k.x - ex, k.z - ez) < 14)
-    return { id: b.id, kind: b.kind, y: 0, x: ex, z: ez, nx, nz, bank: dock ? 'stairs' : b.tab ? 'high' : 'low' }
+    return { id: b.id, kind: b.kind, y: b.rim ? b.level + 0.8 : 0, x: ex, z: ez, nx, nz, bank: dock ? 'stairs' : 'low' }
   }
   const ch = faustChannels(seed, S).list.find(c => c.id === at.id)
   if (!ch) return null
@@ -5924,7 +5978,7 @@ function faustWaterExit(seed, S, x, z) {
   for (const r of ch.ramps) if (r.side === side && Math.abs(r.s - s) < 14) { const dist = Math.hypot(Math.abs(u) - 16, r.s - s); if (!best || dist < best[0]) best = [dist, r.s] }
   const lip = best ? best[1] : s, ex = ch.axis ? ch.c + side * (top + 1.5) : lip, ez = ch.axis ? lip : ch.c + side * (top + 1.5)
   if (Math.hypot(ex - x, ez - z) > 12 + (best ? 14 : 0) && Math.abs(Math.abs(u) - top) > 12) return null
-  return { id: ch.id, kind: ch.kind === 'river' ? 'river' : 'channel', y: 0, x: ex, z: ez, nx: ch.axis ? side : 0, nz: ch.axis ? 0 : side, bank: best ? 'stairs' : 'high' }
+  return { id: ch.id, kind: ch.kind === 'river' ? 'river' : 'channel', y: 0, x: ex, z: ez, nx: ch.axis ? side : 0, nz: ch.axis ? 0 : side, bank: best ? 'stairs' : ch.kind === 'river' ? 'low' : 'high' }
 }
 // the wave table's height at (x, z) at time t (s) for a body kind: the surface the look draws; zero for a channel. The water's `y` itself is time-free.
 function faustWaveAt(x, z, t, kind) {
@@ -5955,8 +6009,16 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
   for (let a = 0; a <= n; a++) for (let b = 0; b <= n; b++) dp[a * (n + 1) + b] = faustWaterDepth(w, e, x0 + a * g, z0 + b * g, sc).depth
   // the bed: every 6 m quad, and where it holds a shore or a slope (some corner wet, not all deep) a 4 x 4 refinement of 1.5 m: the waterline and the
   // banks follow the bed's own curve, not the grid; vertex colours blend field -> sand -> mud -> deep by depth, so no tint steps either
-  const fields = FAUST_FIELDS.tints, fieldTint = (x, z) => fields[faustMix(seed ^ 0x51ed, Math.floor(x / 160), Math.floor(z / 160)) % fields.length]
-  const colAt = (x, z, dep) => dep <= 0 ? fieldTint(x, z) : dep < 0.6 ? faustWaterMix2(fieldTint(x, z), T.sand, dep / 0.6) : dep < 2.5 ? faustWaterMix2(T.sand, T.mud, (dep - 0.6) / 1.9) : faustWaterMix2(T.mud, T.deep, (dep - 2.5) / 5)
+  const fields = FAUST_FIELDS.tints, fieldTint = (x, z) => fields[faustMix(seed ^ 0x51ed, Math.floor(x / 160), Math.floor(z / 160)) % fields.length], rims = w.bodies.filter(b => b.rim), DT = K.dam.tint
+  const wetCol = (x, z, dep) => dep <= 0 ? fieldTint(x, z) : dep < 0.6 ? faustWaterMix2(fieldTint(x, z), T.sand, dep / 0.6) : dep < 2.5 ? faustWaterMix2(T.sand, T.mud, (dep - 0.6) / 1.9) : faustWaterMix2(T.mud, T.deep, (dep - 2.5) / 5)
+  const colAt = (x, z, dep) => {
+    if (dep < -0.01) for (const b of rims) {       // above the ground: a reservoir's mound, its dam
+      const c = b.caps[0], d = Math.hypot(x - c[0], z - c[1]), t = c[4] - d
+      if (t > 0) return wetCol(x, z, b.level + dep)
+      if (t > -45 && b.dam && faustWaterDamLat(b.dam, c, x, z, d) < K.dam.lat + 25) return t > -10 ? DT[2] : Math.floor(-dep / 2) & 1 ? DT[0] : DT[1]
+    }
+    return wetCol(x, z, dep)
+  }
   const tri = (p, q, r, dps) => { const ux = q[0] - p[0], uy = q[1] - p[1], uz = q[2] - p[2], vx = r[0] - p[0], vy = r[1] - p[1], vz = r[2] - p[2]
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = Math.hypot(nx, ny, nz) || 1, s = ny < 0 ? -1 : 1
     emit.tri(p, q, r, [s * nx / l, s * ny / l, s * nz / l], look ? [colAt(p[0], p[2], dps[0]), colAt(q[0], q[2], dps[1]), colAt(r[0], r[2], dps[2])] : 0, true, dps[0] + dps[1] + dps[2] > 0 ? 0.12 : 0) }
@@ -5967,8 +6029,8 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
   for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) {
     const d00 = dp[a * (n + 1) + b], d10 = dp[(a + 1) * (n + 1) + b], d01 = dp[a * (n + 1) + b + 1], d11 = dp[(a + 1) * (n + 1) + b + 1], hi = Math.max(d00, d10, d01, d11), lo = Math.min(d00, d10, d01, d11)
     const xa = x0 + a * g, za = z0 + b * g
-    const wl = -(w.bodies[e[0]].level)      // (the first body's waterline: a quad straddling it, or the ground's start, or a steep bank, is refined)
-    if (hi > 0 && (lo <= 0 || (lo < wl + 0.2 && hi > wl - 0.2) || hi - lo > 2.5)) {
+    const wl = -w.bodies[e[0]].level      // (the first body's waterline: a quad straddling it, or the ground's start, or a steep bank, is refined)
+    if (hi > 0 && (lo <= 0 || (lo < wl + 0.2 && hi > wl - 0.2)) || hi - lo > 2.5) {
       const m = 3, gs = g / m, sd = []
       for (let u = 0; u <= m; u++) { sd.push([]); for (let v = 0; v <= m; v++) sd[u].push(u === 0 && v === 0 ? d00 : u === m && v === 0 ? d10 : u === 0 && v === m ? d01 : u === m && v === m ? d11 : faustWaterDepth(w, e, xa + u * gs, za + v * gs, sc).depth) }
       for (let u = 0; u < m; u++) for (let v = 0; v < m; v++) quad(xa + u * gs, za + v * gs, gs, sd[u][v], sd[u + 1][v], sd[u][v + 1], sd[u + 1][v + 1], (u + v + a + b) & 1)
@@ -5976,7 +6038,7 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
   }
   if (look) {
     const seen = new Set()
-    for (let k = 0; k < e.length; k += 2) { const b = w.bodies[e[k]]; if (seen.has(e[k])) continue; seen.add(e[k])
+    for (let k = 0; k < e.length; k += 2) { const b = w.bodies[e[k]]; if (seen.has(e[k]) || b.rim) continue; seen.add(e[k])
       emit.face([x0, b.level, z0], [x0 + 96, b.level, z0], [x0 + 96, b.level, z0 + 96], [x0, b.level, z0 + 96], [0, 1, 0], T.water, false, 0.2) }
   }
   // docks whose land end lies in this cell: a deck, piles to the bed, bollards, a lamp at the end
@@ -5998,6 +6060,42 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
     const ex = k.x + d[0] * (k.len - 0.6)
     ob(ex, k.z + d[1] * (k.len - 0.6), d, 0.12, 0.12, top, top + 3.6, T.pole, 0, true)
     if (look) ob(ex, k.z + d[1] * (k.len - 0.6), d, 0.3, 0.3, top + 3.6, top + 4.1, T.lamp, -1, false)
+  }
+  // the dam: its crest's parapets, the sluice gates between piers across the spillway with a service bridge over them, the intake towers out in the reservoir
+  // with footbridges to the crest, the spillway's training walls, its sheet of white water and the plunge pool's foam. Each part belongs to the cell it stands in.
+  for (const b of w.bodies) if (b.dam) {
+    const dm = b.dam, c0 = b.caps[0], D = K.dam, sill = b.level - D.sill, st = DT, steel = 0x2b3138
+    const pos = (lat, t) => { const d = c0[4] - t, a = dm.ang + lat / d; return [c0[0] + Math.cos(a) * d, c0[1] + Math.sin(a) * d, a] }
+    const mine = (x, z) => Math.floor(x / 96) === i && Math.floor(z / 96) === j
+    const part = (lat, t, hl, hw, y0, y1, tint, glow, solid) => { const [x, z, a] = pos(lat, t); if (mine(x, z)) ob(x, z, [Math.cos(a), Math.sin(a)], hl, hw, y0, y1, tint, glow, solid) }
+    const crest = dm.crest
+    for (let lat = -128; lat < 128; lat += 8) if (Math.abs(lat + 4) > 14) for (const t of [-3.7, -10.2]) part(lat + 4, t, 0.25, 4.1, crest, crest + 1.1, st[1], 0, true)
+    for (const lat of [-8, -2.7, 2.7, 8]) { part(lat, -5, 5, 1.1, sill, 18, st[0], 0, true); part(lat, -5, 4.2, 0.9, 18, 19.2, st[2], 0, true) }
+    part(0, -5, 5.2, 11.5, 17.4, 18, st[2], 0, true)
+    for (const lat of [-5.35, 0, 5.35]) part(lat, -1.2, 0.3, 1.5, sill, sill + 5, steel, 0, true)
+    for (const sg of [-1, 1]) {
+      part(sg * 12.4, -7, 3, 0.35, sill - 0.5, sill + 2.5, st[0], 0, true)
+      for (let t = -11.5; t > -22; t -= 3) { const y = Math.max(0, sill * (1 - (-t - 10) / D.face)); part(sg * 12.4, t, 1.5, 0.35, y - 0.3, y + 2.5, st[0], 0, true) }
+    }
+    for (const sg of [-1, 1]) {
+      const lat = sg * 45
+      part(lat, 32, 4, 4, -3, 14, st[0], 0, true); part(lat, 32, 3, 3, 14, 24, st[1], 0, true); part(lat, 32, 2, 2, 24, 30, st[2], 0, true); part(lat, 32, 0.6, 0.6, 30, 37, st[1], 0, true)
+      part(lat, 12, 17, 1.4, crest + 0.1, crest + 0.5, st[2], 0, true)
+      for (const e of [-1, 1]) part(lat + e * 1.3, 12, 17, 0.08, crest + 0.5, crest + 1.5, st[1], 0, true)
+      if (look) {
+        part(lat, 32, 0.3, 0.3, 37, 37.8, T.lamp, -1, false)
+        for (const e of [-1, 1]) { part(lat, 32 + e * 4.05, 0.05, 1.6, 2, 7, 0x0b0e12, 0, false); part(lat + e * 4.05, 32, 1.6, 0.05, 2, 7, 0x0b0e12, 0, false) }
+      }
+    }
+    if (look) {
+      const [cx, cz] = pos(0, -12), P = (lat, t, y) => { const [x, z] = pos(lat, t); return [x, y, z] }, nW = D.notch - 1
+      if (mine(cx, cz)) {
+        emit.face(P(-nW, -4, sill + 0.35), P(nW, -4, sill + 0.35), P(nW, -10, sill + 0.35), P(-nW, -10, sill + 0.35), [0, 1, 0], 0xe3eef0, false, 0.45)
+        emit.face(P(-nW, -10, sill + 0.35), P(nW, -10, sill + 0.35), P(nW, -22, 0.35), P(-nW, -22, 0.35), [0.55, 0.83, 0.1], 0xe3eef0, false, 0.45)
+        for (let lat = -nW + 2.5; lat < nW; lat += 5) emit.face(P(lat - 0.5, -10, sill + 0.4), P(lat + 0.5, -10, sill + 0.4), P(lat + 0.5, -22, 0.4), P(lat - 0.5, -22, 0.4), [0.55, 0.83, 0.1], 0x9fb3b8, false, 0.2)
+      }
+      if (mine(dm.pool[0], dm.pool[1])) emit.face([dm.pool[0] - 13, -0.6, dm.pool[1] - 13], [dm.pool[0] + 13, -0.6, dm.pool[1] - 13], [dm.pool[0] + 13, -0.6, dm.pool[1] + 13], [dm.pool[0] - 13, -0.6, dm.pool[1] + 13], [0, 1, 0], 0xdfeaec, false, 0.3)
+    }
   }
 }
 function* faustWaterCellSolid(seed, S, i, j) {
@@ -6044,6 +6142,16 @@ function faustWaterFrame() {
   const w = faustWater(F.seed, F.S), K = FAUST_WATER
   if (!w.cells.size) return
   const V = F.waterLooks ||= new Map(), p = camera.position, reach = Math.min(viewEnd() + 100, K.look)
+  const Dc = F.waterDiscs ||= new Map()
+  for (const b of w.bodies) if (b.rim) {      // a reservoir's surface: one disc at its level, raised by the rain, there while the camera is within reach of it
+    const c = b.caps[0], near = Math.hypot(p.x - c[0], p.z - c[1]) < c[4] + reach + 100, have = Dc.get(b.id)
+    if (near && !have) {
+      const buf = faustRoadBuf(), N = 72, q = a => [c[0] + Math.cos(a) * (c[4] + 0.5), b.level, c[1] + Math.sin(a) * (c[4] + 0.5)]
+      for (let i = 0; i < N; i++) buf.tri([[c[0], b.level, c[1]], q(i / N * 6.2831853), q((i + 1) / N * 6.2831853)], [0, 1, 0], FAUST_WATER.tint.water, 0.2)
+      const m = new THREE.Mesh(buf.geometry(), F.materials.stone); m.receiveShadow = true; worldGroup.add(m); Dc.set(b.id, m)
+    } else if (!near && have) { worldGroup.remove(have); have.geometry.dispose(); Dc.delete(b.id) }
+    if (have) have.position.y = faustWaterRise(b)
+  }
   const stamp = Math.floor(p.x / 48) + ' ' + Math.floor(p.z / 48) + ' ' + Math.round(reach / 50)
   if (F.waterStamp === stamp) return
   F.waterStamp = stamp
@@ -6076,6 +6184,8 @@ function faustWaterMapLayer() {
     }
     g.fillStyle = '#c9a45c'
     for (const b of w.bodies) for (const k of b.docks || []) { const [x, y] = c.xy(k.x, k.z); g.fillRect(x - 1.5, y - 1.5, 3, 3) }
+    g.strokeStyle = '#d9d2be'; g.lineWidth = 2
+    for (const b of w.bodies) if (b.dam) { const d = b.dam, [x, y] = c.xy(d.x, d.z), tx = -Math.sin(d.ang) * 130 * c.k, ty = Math.cos(d.ang) * 130 * c.k; g.beginPath(); g.moveTo(x - tx, y - ty); g.lineTo(x + tx, y + ty); g.stroke() }
   } })
 }
 // the API for what moves in water (#93, #94): at(x, z[, out]), exit(x, z), bodies, the wave table, waveAt
