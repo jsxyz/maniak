@@ -30463,7 +30463,7 @@ function rigSkirt(a, R, dt) {
 // deliver take them as targets) and with vehicles, panics them, scatters pigeons, and sends each change once as a small
 // record in the snapshot ('sl', repeated a few times and refreshed every 2 s). A guest plays a record from its start time,
 // as the host does. Pram mothers and dogs use the same hit records; pigeons scatter.
-const STREET_FILES = { anims: 'anims_street.ae18f90f.glb', bike: 'bike.9b59aabf.glb', pram: 'pram.4b8575f8.glb', baby: 'baby.d56501e1.glb', dog: 'dog.f8b8105a.glb', pigeon: 'pigeon.b13d236f.glb' }
+const STREET_FILES = { anims: 'anims_street.ae18f90f.glb', bike: 'bike.9b59aabf.glb', pram: 'pram.4b8575f8.glb', stagger: 'anims_stagger.e55892dd.glb', baby: 'baby.d56501e1.glb', dog: 'dog.f8b8105a.glb', pigeon: 'pigeon.b13d236f.glb' }
 const STREET = {
   // people per 96 m cell by district, scaled by the quality setting
   density: { core: 40, civic: 31, tenement: 25, industrial: 6, plaza: 24 }, quality: { low: 0.34, medium: 0.45, high: 1 },
@@ -31099,25 +31099,43 @@ const slTumbleAt = (tb, tau) => tau < tb.ta ? tb.vl * tau - tb.aa * tau * tau / 
 // card #67: a stagger. Out to the step in 0.35 s, held there r.hold ms with the walk frozen (a car passing, side-on, must not find
 // the person walking back into it), then a brisk walk (2.2 m/s) to where the schedule has them by the time they arrive
 const slStagA = { x: 0, z: 0, yaw: 0, mode: 0, v: 0, s: 0, i: 0, u: 0 }, slStagB = { x: 0, z: 0, yaw: 0, mode: 0, v: 0, s: 0, i: 0, u: 0 }
-function slStaggerLen(ag, r) {
-  if (r.len) return r.len
-  const t1 = r.t + 350 + (r.hold || 0), a = slAmbient(ag, t1, slStagA), d0 = Math.hypot(a.x - r.x1, a.z - r.z1) / 2.2
-  const b = slAmbient(ag, t1 + d0 * 1000, slStagA); r.walk = Math.hypot(b.x - r.x1, b.z - r.z1) / 2.2
-  return r.len = 350 + (r.hold || 0) + r.walk * 1000 + 1
+// the authored clip's root travel along the hit direction (m, 30 fps from the hit): solved so the stance foot never slides (the end settles the
+// pelvis back over the planted foot, so it ends 0.354 m from where he stood). peak: the farthest point, the room it needs
+const SL_STAG = { len: 1.2, peak: 0.711, D: [0.0, 0.033, 0.067, 0.1, 0.133, 0.15, 0.15, 0.163, 0.184, 0.208, 0.23, 0.252, 0.273, 0.293, 0.337, 0.377, 0.42, 0.472, 0.536, 0.604, 0.669, 0.711, 0.693, 0.658, 0.612, 0.558, 0.502, 0.448, 0.4, 0.367, 0.354, 0.354, 0.354, 0.354, 0.354, 0.354, 0.354] }
+// the shape of one stagger, from its record and the schedule (cached): in place (hit_chest, 0.35 s) or the authored clip (when its record's step is the
+// clip's peak travel), where he rests after it, and the walk back to the schedule
+function slStaggerK(ag, r) {
+  if (r.k) return r.k
+  const A = slAmbient(ag, r.t, slStagA), dx = r.x1 - A.x, dz = r.z1 - A.z, L = Math.hypot(dx, dz), full = L > 0.5 && ag.kind !== SL_K.stray
+  const ux = full ? dx / L : 0, uz = full ? dz / L : 0, end = SL_STAG.D[SL_STAG.D.length - 1]
+  const k = { ax: A.x, az: A.z, ay: A.yaw, full, ux, uz, face: Math.atan2(-ux, -uz), clip: full ? SL_STAG.len * 1000 : 350 }
+  k.sx = full ? A.x + ux * end : r.x1; k.sz = full ? A.z + uz * end : r.z1
+  const a = slAmbient(ag, r.t + k.clip + (r.hold || 0), slStagA)
+  k.walk = Math.max(0.6, Math.hypot(a.x - k.sx, a.z - k.sz) / 0.5)          // s to rejoin the schedule: at most 0.5 m/s faster than it
+  k.len = k.clip + (r.hold || 0) + k.walk * 1000 + 1
+  return r.k = k
 }
+const slStaggerLen = (ag, r) => slStaggerK(ag, r).len
 function slStaggerPose(ag, r, t, o) {
-  const tau = (t - r.t) / 1000, H = (r.hold || 0) / 1000, len = slStaggerLen(ag, r), q = ag.kind === SL_K.stray, t1 = r.t + 350 + (r.hold || 0)
-  const A = slAmbient(ag, r.t, slStagA), ax = A.x, az = A.z, ay = A.yaw
-  if (tau < 0.35 + H) {
-    const b = tau < 0.35 ? Math.sin(tau / 0.35 * Math.PI / 2) : 1
-    o.x = ax + (r.x1 - ax) * b; o.z = az + (r.z1 - az) * b; o.yaw = ay; o.v = 0; o.mode = 1; slClip(ag, o, t)
-    if (tau < 0.7) { o.clip = q ? 'flinch' : 'knockback'; o.ct = q ? 0.3 * tau / 0.7 : 0.3 * Math.sin(Math.PI * tau / 0.7) }
+  const K = slStaggerK(ag, r), tau = (t - r.t) / 1000, H = (r.hold || 0) / 1000, q = ag.kind === SL_K.stray, t1 = r.t + K.clip + (r.hold || 0)
+  if (tau < K.clip / 1000 + H) {
+    o.v = 0; o.mode = 1
+    if (K.full) {          // the authored clip: carried along the hit direction by SL_STAG.D, facing the hit
+      const T = SL_STAG.D, f = Math.min(tau, SL_STAG.len) * 30, i = Math.min(Math.floor(f), T.length - 2), D = T[i] + (T[i + 1] - T[i]) * (f - i)
+      const u = Math.min(1, tau / 0.12)
+      o.x = K.ax + K.ux * D; o.z = K.az + K.uz * D; o.yaw = K.ay + slWrap(K.face - K.ay) * u * u * (3 - 2 * u)
+      slClip(ag, o, t)
+      if (tau < SL_STAG.len) { o.clip = 'stagger'; o.ct = tau }
+    } else {          // no room: the rock-back in place, a 0.3 m shove at 0.86 m/s
+      o.x = K.ax + (r.x1 - K.ax) * Math.min(1, tau / 0.35); o.z = K.az + (r.z1 - K.az) * Math.min(1, tau / 0.35); o.yaw = K.ay
+      slClip(ag, o, t)
+      if (tau < 0.35) { o.clip = q ? 'flinch' : 'hit_chest'; o.ct = q ? 0.3 * tau / 0.35 : Math.min(tau, 0.33) }
+    }
     return
   }
-  const Q = slAmbient(ag, r.t + len, slStagB), f = Math.min(1, (t - t1) / Math.max(1, len - 350 - (r.hold || 0)))
-  o.x = r.x1 + (Q.x - r.x1) * f; o.z = r.z1 + (Q.z - r.z1) * f
-  if (Math.hypot(Q.x - r.x1, Q.z - r.z1) > 0.02) o.yaw = Math.atan2(Q.x - r.x1, Q.z - r.z1)
-  o.v = 2.2; o.mode = 0; o.s = (t - t1) / 1000 * 2.2; slClip(ag, o, t)
+  const u = Math.min(1, (t - t1) / (K.walk * 1000)), e = u * u * (3 - 2 * u), a1 = slAmbient(ag, t1, slStagB), cur = slAmbient(ag, t, slStagA)
+  o.x = cur.x + (K.sx - a1.x) * (1 - e); o.z = cur.z + (K.sz - a1.z) * (1 - e); o.v = cur.v; o.mode = cur.mode; o.s = cur.s
+  o.yaw = cur.yaw + (K.full ? slWrap(K.face - cur.yaw) * (1 - e) : 0); slClip(ag, o, t)
 }
 // card #94: a knock that lands in deep water. Pure in the record and the water plan, so the same on every machine.
 // Phases from the landing (q s): fall to the surface (tf), swim to the exit's foot (Ts) or float (7 s), climb onto the bank (0.6 s)
@@ -31325,7 +31343,9 @@ function slKnock(ag, p, ux, uz, power, by, T, fling, step, hold, dmg, gun, cause
   // card #67: a hit under about 3 m/s (fling < 0.5 m) is a stagger: a step back, still up (a rider still falls)
   if (p.rec?.kind === 10) return          // still staggering
   if (fling < 0.5 && ag.kind !== SL_K.cyclist && (!p.rec || p.rec.kind === 2 && !(p.v > 0.5))) {          // a person cowering under a panic staggers too
-    const n = Math.hypot(ux, uz) || 1, [x1, z1] = slRunTo(p.x, p.z, ux / n, uz / n, step ?? 0.4)
+    const n = Math.hypot(ux, uz) || 1, dx = ux / n, dz = uz / n, reach = slRunTo(p.x, p.z, dx, dz, SL_STAG.peak + 0.06)
+    const roomy = (ag.kind === SL_K.ped || ag.kind === SL_K.idle) && Math.hypot(reach[0] - p.x, reach[1] - p.z) >= SL_STAG.peak
+    const [x1, z1] = roomy ? [p.x + dx * SL_STAG.peak, p.z + dz * SL_STAG.peak] : slRunTo(p.x, p.z, dx, dz, Math.min(step ?? 0.3, 0.3))
     return slAddRec(hold > 0 ? [SL_REC.stagger, ag.id, Math.round(T), slR2(p.x), slR2(p.z), slR2(x1), slR2(z1), Math.round(Math.min(hold, 5000))] : [SL_REC.stagger, ag.id, Math.round(T), slR2(p.x), slR2(p.z), slR2(x1), slR2(z1)])
   }
   if (!slKnockable(ag, p)) return slDodge(ag, p, ux, uz, T)
@@ -31448,7 +31468,10 @@ function slHostTick() {
       // and holds them there until the car's rear has passed their line at its contact speed (#72: a car rolling on re-staggered
       // them into its side every 0.7 s), then they rejoin their route
       // a slow bump staggers him, still up: aside to his own side, or with that side shut (a wall), ahead past the stopped car's nose
-      if (fl < 0.5 && ag.kind !== SL_K.cyclist && !p.rec) return slKnock(ag, p, Ls > 0 ? -fz * side : fx, Ls > 0 ? fx * side : fz, sp * 0.45, players.get(o.riders?.[0]), T, fl, Ls > 0 ? Ls : A, Math.max(0, (al + hl + 0.3) / Math.max(sp - (Math.sin(p.yaw) * fx + Math.cos(p.yaw) * fz) * (p.v || 0), 0.5) - 0.35) * 1000)
+      if (fl < 0.5 && ag.kind !== SL_K.cyclist && !p.rec && !o.riders.some(r => r !== undefined)) {          // card #67: the car stops at him, he staggers
+        const v = o.body.getLinearVelocity(); velVec.setValue(0, v.y(), 0); o.body.setLinearVelocity(velVec); o.body.activate()
+        return slKnock(ag, p, Ls > 0 ? -fz * side : fx, Ls > 0 ? fx * side : fz, sp * 0.45, null, T, fl)
+      }
       slKnock(ag, p, fx * A + -fz * side * Ls, fz * A + fx * side * Ls, sp * 0.45, players.get(o.riders?.[0]), T, d, undefined, undefined, 12 * (sp - 2), -1, 2)          // card #101
     })
   }
@@ -31552,7 +31575,7 @@ function slWireIn(d) {
 // GPU per instance, so each model and LOD is one instanced draw. Bikes and prams are rigid parts, instanced
 const SL_CLIPS = {
   civ: [['idle', 15, 1], ['walk', 30, 1], ['phone', 15, 1], ['talk', 15, 1], ['arms_folded', 15, 1], ['knockback', 30, 0], ['getup', 30, 0], ['death', 20, 0],
-    ['flee', 30, 1], ['cower', 15, 1], ['leash_walk', 30, 1], ['leash_idle', 15, 1], ['cycle_', 30, 1], ['cyclestop_', 15, 1], ['push_', 30, 1], ['pushidle_', 15, 1]],
+    ['flee', 30, 1], ['cower', 15, 1], ['hit_chest', 30, 0], ['stagger', 30, 0], ['leash_walk', 30, 1], ['leash_idle', 15, 1], ['cycle_', 30, 1], ['cyclestop_', 15, 1], ['push_', 30, 1], ['pushidle_', 15, 1]],
   dog: [['idle', 15, 1], ['walk', 30, 1], ['run', 30, 1], ['sit', 15, 1], ['sniff', 15, 1], ['eat', 15, 1], ['flinch', 30, 0]],
   pigeon: [['idle', 15, 1], ['peck', 30, 1], ['walk', 30, 1], ['fly', 30, 1], ['glide', 15, 1]],
 }
@@ -31654,18 +31677,18 @@ function slLoadKit() {
   if (slKitJob || renderHeadless || serving || !scene) return
   slKitJob = { steps: null, failed: false }
   rigLoader()
-  const files = [RIG_FILES.anims, STREET_FILES.anims, ...STREET.bodies.map(b => RIG_FILES[b]), STREET_FILES.bike, STREET_FILES.pram, STREET_FILES.dog, STREET_FILES.pigeon]
-  Promise.all(files.map(f => rigFetch(f))).then(gs => {
+  const files = [RIG_FILES.anims, STREET_FILES.anims, ...STREET.bodies.map(b => RIG_FILES[b]), STREET_FILES.bike, STREET_FILES.pram, STREET_FILES.dog, STREET_FILES.pigeon, STREET_FILES.stagger]
+  Promise.all(files.map(f => rigFetch(f).catch(e => { if (f === STREET_FILES.stagger) return null; throw e }))).then(gs => {
     slKitJob.steps = slKitSteps(gs)
     return background.run('street-kit', slKitJob.steps, { gpu: true, priority: 2 }).then(() => { slKitJob.steps = null; slKitJob.done = true })
   })
     .catch(e => { slKitJob.failed = true; modelFail('street life', e) })
 }
 function* slKitSteps([anims, street, ...rest]) {
-  const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon] = rest.slice(STREET.bodies.length)
+  const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon, stag] = rest.slice(STREET.bodies.length)
   const root = new THREE.Group(); root.name = 'street life'
   const kit = { root, bodies: [], parts: {} }
-  const clips = [...anims.animations, ...street.animations]
+  const clips = [...anims.animations, ...street.animations, ...(stag ? stag.animations : [])]
   for (const [i, g] of bodies.entries()) {
     const b = {}; yield* slSkinnedSteps(g, clips, SL_CLIPS.civ, i < 3 ? 110 : 80, STREET.bodies[i].replace('civ_', ''), b)
     kit.bodies.push(b); for (const im of b.ims) root.add(im)
