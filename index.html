@@ -11450,7 +11450,8 @@ function rayCapsule(ox, oy, oz, dx, dy, dz, c) {
 // ---------------------------------------------------------------- camera
 // m. Looks CAM.aim along the firing ray: screen centre = where the shot goes. far: furthest drawn.
 const CAM = { back: 4.3, up: 0.3, aim: 40, pad: 0.28, far: 320,
-              fadeNear: 1.9, fadeFar: 2.8 }
+              fadeNear: 1.9, fadeFar: 2.8, bodyFade: [0.9, 1.5],     // bodyFade: his own body fades over these m (fadeNear/Far: the cape's, in a swing)
+              lift: { from: 2.8, full: 1.2, up: 1.6, pull: 0.6 } }     // blocked short of from m, the camera rises up m and comes in by pull of its reach, fully by full m
 // short of pi/2, where lookAt's forward and up go parallel
 const PITCH_MAX = 1.54
 
@@ -11499,11 +11500,17 @@ function camRay(me, yaw, pitch, R = heldR(me), eased = null) {
   const oz = (-dz * back + Math.cos(yaw) * e) * k
   const len = Math.hypot(ox, oy, oz) || 1
   const nx = ox / len, ny = oy / len, nz = oz / len
-  const t = camBlock(px, py, pz, nx, ny, nz, len)
+  let t = camBlock(px, py, pz, nx, ny, nz, len), ux = nx, uy = ny, uz = nz
+  // blocked close behind him (a room, a corner): lift the camera, the more the closer, and sweep again
+  if (t < CAM.lift.from) {
+    const w = clamp((CAM.lift.from - t) / (CAM.lift.from - CAM.lift.full), 0, 1), u = w * w * (3 - 2 * w), pull = 1 - CAM.lift.pull * u
+    const ox2 = ox * pull, oz2 = oz * pull, oy2 = oy + CAM.lift.up * u * k, len2 = Math.hypot(ox2, oy2, oz2) || 1
+    ux = ox2 / len2; uy = oy2 / len2; uz = oz2 / len2; t = camBlock(px, py, pz, ux, uy, uz, len2)
+  }
 
-  let cy = py + ny * t
+  let cy = py + uy * t
   if (cy < FLOOR_TOP + 0.35) cy = FLOOR_TOP + 0.35
-  const x = px + nx * t, z = pz + nz * t
+  const x = px + ux * t, z = pz + uz * t
   const ax = me.x + dx * aim - x, ay = eyeY + dy * aim - cy, az = me.z + dz * aim - z
   const n = Math.hypot(ax, ay, az) || 1
   const fx = ax / n, fy = ay / n, fz = az / n
@@ -11660,7 +11667,7 @@ function updateCamera(me, inp, cam, firstPerson) {
   const r = camRay(me, inp.yaw, inp.pitch, e.r, leapCamEase(me))
   cam.position.set(r.x, r.y, r.z)
   cam.lookAt(...r.aim)
-  const fade = THREE.MathUtils.smoothstep(r.t, CAM.fadeNear, CAM.fadeFar)
+  const fade = THREE.MathUtils.smoothstep(r.t, ...CAM.bodyFade)
   return { dist: r.t, hideSelf: false, fade, ray: r }
 }
 
