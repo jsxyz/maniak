@@ -841,7 +841,8 @@ const CHARS = [
 const DISGUISE_CID = CHARS.push({ ...CHARS[0], name: 'Alistair', hidden: true, model: 'alistair', role: 'The Maniak, in his civilian clothes' }) - 1
 CHARS[0].disguise = DISGUISE_CID; CHARS[0].pipe = true
 const SCARS = { hole: { r:.13, color:0x17191a, edge:0x706a5e, mix: [.48, .58], fade: [.86, 1] }, scorch: { r:.6, color:0x080706, edge:0x151310 },
-  dent: { r:2.6, color:0x2b2722, edge:0x4d463c }, blast: { r:2.2, color:0x0b0908, edge:0x1d1a16 } }
+  dent: { r:2.6, color:0x2b2722, edge:0x4d463c }, blast: { r:2.2, color:0x0b0908, edge:0x1d1a16 },
+  chip: { r:0.7, color:0x1c1a18, edge:0x8f897d, mix: [.3, .62], fade: [.82, 1] } }
 const GEO_LIBS = [
   { name: 'engine', url: 'https://cdn.jsdelivr.net/gh/enable3d/enable3d@v0.26.1/bundles/enable3d.framework.0.26.1.min.js',
     sri: 'sha384-QTy5CYAjKg5FzOXYy6T6GnYx+oRXjOEzFBQMao+DqJBLX+e5Z1uR65+H9sQNHpvH', expose: "THREE", global: "ENABLE3D.THREE" },
@@ -1081,6 +1082,18 @@ const OBJECTS = [
   { name: 'Biplane', shape: 'hull', mass: 8, bounce: 0.1, friction: 0.7, damp: [0, 0.3], hit: 0.3, color: 0x6e1c1c, drive: 'Biplane', plane: true, points: PLANE_HULL },
   { name: 'Biplane wreck', shape: 'hull', model: 'Biplane', mass: 8, bounce: 0.05, friction: 0.9, damp: [0.2, 0.5], hit: 0.2, color: 0x2b2b2b, plane: true },
   ...boatObjectRows(),
+  { name: 'Arm', half: [0.06, 0.06, 0.31], mass: 0.5, bounce: 0.2, friction: 0.7, damp: [0.1, 0.4], hit: 1, color: 0xc89b7b, stripe: 0x8a0f16,
+    limb: { len: 0.62, club: 26, bands: [[0.05, 0x8a0f16], [0.62, 0x2e2a30], [1, 0xc89b7b]],
+      profile: [[0, 0], [0, 0.058], [0.05, 0.06], [0.3, 0.052], [0.62, 0.044], [0.78, 0.04], [0.88, 0.054], [0.97, 0.04], [1, 0]] } },
+  { name: 'Leg', half: [0.08, 0.08, 0.45], mass: 0.9, bounce: 0.2, friction: 0.7, damp: [0.1, 0.4], hit: 1, color: 0x34333c, stripe: 0x8a0f16,
+    limb: { len: 0.9, club: 36, bands: [[0.05, 0x8a0f16], [0.8, 0x34333c], [1, 0x1a1a1c]],
+      profile: [[0, 0], [0, 0.085], [0.05, 0.086], [0.5, 0.07], [0.78, 0.055], [0.85, 0.056], [0.9, 0.07], [0.99, 0.07], [1, 0]] } },
+  { name: 'Lower half', half: [0.2, 0.45, 0.12], mass: 1.2, bounce: 0.15, friction: 0.7, damp: [0.1, 0.4], hit: 1, color: 0x34333c, stripe: 0x8a0f16,
+    limb: { len: 0.9, club: 40, axis: 'y', copies: [[-0.1, 0, 0], [0.1, 0, 0]], bands: [[0.05, 0x8a0f16], [0.8, 0x34333c], [1, 0x1a1a1c]],
+      profile: [[0, 0], [0, 0.08], [0.05, 0.082], [0.5, 0.07], [0.78, 0.055], [0.85, 0.056], [0.9, 0.07], [0.99, 0.07], [1, 0]] } },
+  { name: 'Upper half', half: [0.22, 0.13, 0.4], mass: 2, bounce: 0.1, friction: 0.8, damp: [0.2, 0.5], hit: 1, color: 0x2a2a30, stripe: 0x8a0f16,
+    limb: { len: 0.8, club: 0, bands: [[0.06, 0x8a0f16], [1, 0x2a2a30]],
+      profile: [[0, 0], [0, 0.12], [0.1, 0.14], [0.6, 0.13], [0.9, 0.1], [1, 0]] } },
 ]
 OBJECTS.push({ name: 'Manhole cover', shape: 'hull', points: Array.from({ length: 16 }, (_, i) => [Math.cos(i / 16 * Math.PI * 2) * 0.46, 0, Math.sin(i / 16 * Math.PI * 2) * 0.46]).flatMap(p => [[p[0], -0.035, p[2]], [p[0], 0.035, p[2]]]),
   mass: 1.6, bounce: 0.2, friction: 0.6, damp: [0.08, 0.25], hit: 1, color: 0x2d3034, dmg: 45 })
@@ -12234,7 +12247,7 @@ function respawn(c) {
   c.ammo = Infinity; c.cool = 0; c.dead = 0
   c.charge = 0; c.burstLeft = 0
   c.pow = 0; c.powT = 0
-  c.smk = 0; c.smkHp = 0; c.chgT = 0; c.disguised = false
+  c.smk = 0; c.smkHp = 0; c.chgT = 0; c.disguised = false; c.gm = 0; c.bleedT = 0; c.upperDone = false
   c.knT = 0; c.knx = 0; c.knz = 0; c.knUp = 0
   c.mark = 0; c.markT = 0
   c.bag = 0
@@ -13956,7 +13969,7 @@ const COLLIDE = { capsule: [G_CAPSULE, -2], object: [G_OBJ, -1], vehicle: [G_OBJ
   ray: [RAY_GROUP, RAY_CAST | 1], solid: [RAY_GROUP | G_STATIC, -1 ^ G_STATIC], crown: [CROWN_GROUP, RAY_CAST], hub: [0, 0] }
 let vehicleWrecks = null
 const vehicleBody = K => !!K && (!!K.drive || (vehicleWrecks ??= new Set(VEHICLES.map(V => V.wreck).filter(Boolean))).has(K.name))
-const collideFor = K => vehicleBody(K) ? COLLIDE.vehicle : COLLIDE.object
+const collideFor = K => vehicleBody(K) ? COLLIDE.vehicle : K.cover ? [G_OBJ, -1 ^ G_CAPSULE] : COLLIDE.object
 function hullShape(pts) {
   const s = new A.btConvexHullShape()
   for (const p of pts) { posVec.setValue(...p); s.addPoint(posVec, true) }
@@ -14033,7 +14046,7 @@ function holdObjects() {
     const c = whoIs(o.heldBy)
     if (!c) { holdBy(o, null); continue }
     syncFromBody(c)
-    putObject(o, [...(partsHand(c, o) || handOf(c, o)), 0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2), 0, 0, 0, 0, 0, 0])
+    putObject(o, [...(partsHand(c, o) || handOf(c, o)), ...(o.K.limb ? clubOut.q : o.K.cover && partsActOf(c.id)[0] === 6 ? hammerOut.q : [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)]), 0, 0, 0, 0, 0, 0])
   }
 }
 let carTuning = null
@@ -21697,6 +21710,7 @@ function rigAnimate(a, want, dt, t) {
   rigGait(a, R, M, dt, airborne)
   if (a.dealId !== undefined) dealRig(a, R, dt, t)
   rigCape(a, R, dt)
+  goreBones(a, R)
 }
 const RIG_GAIT = 'gait'
 function rigGaitInto(R, fade) {
@@ -22923,6 +22937,7 @@ function objHullPoints(K) {
   return [...seen.values()]
 }
 function objLook(K) {
+  if (K.limb) return limbLook(K)
   if (K.prop) return propObjLook(K)
   const cv = document.createElement('canvas'), g = cv.getContext('2d')
   cv.width = cv.height = 64
@@ -23346,7 +23361,7 @@ function drawObjects(list, wheelsAt = () => null) {
   const n = OBJECTS.map(() => 0)
   for (const m of objPool) m.visible = false
   wheelN = 0
-  const listed = new Set(list.map(o => o.id ?? o))
+  const listed = new Set(list.map(o => o.id ?? o)), limbSeen = new Set()
   for (const key of objOf.keys()) if (!listed.has(key)) objOf.delete(key)
   const held = new Set(objOf.values())
   for (const o of list) {
@@ -23387,10 +23402,13 @@ function drawObjects(list, wheelsAt = () => null) {
       if (carDentable(o)) for (const v of m.children) if (v.visible) carDress(v, o)
       continue
     }
+    if (K && K.limb && limbViewFrame(o, K, limbSeen)) continue
     if (!(n[o.k] < OBJ_MAX)) continue
     if (!objMesh[o.k]) objGroup.add(objMesh[o.k] = objLook(OBJECTS[o.k]))
     objMesh[o.k].setMatrixAt(n[o.k]++, T[0].compose(T[1].set(o.x, o.y, o.z), T[2].set(...o.q), T[3]))
   }
+  limbViewsEnd(limbSeen)
+  coverMarks(list)
   objMesh.forEach((m, k) => {
     if (m && (m.count = n[k])) { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere() }
   })
@@ -28230,7 +28248,7 @@ const objectsDrawn = (others = []) => (objDrawn.clear(), isHost ? objs.map(drawn
   if (C && (o.K.carry || ph)) {
     const p = ph || handOf({ ...c, r: C.r, h: C.h }, { K: o.K, R: objR(o.K) })
     objEase.set(o.id, { at: p })
-    return { ...o, held: true, x: p[0], y: p[1], z: p[2], q: [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)] }
+    return { ...o, held: true, x: p[0], y: p[1], z: p[2], q: o.K.limb && ph ? clubOut.q.slice() : o.K.cover && ph && partsActOf(c.id)[0] === 6 ? hammerOut.q.slice() : [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)] }
   }
   if (!e) return o
   if (!e.off) Object.assign(e, { off: [0, 1, 2].map(i => e.at[i] - [o.x, o.y, o.z][i]), t: renderT })
@@ -29016,7 +29034,7 @@ function remoteAt(t) {
                yaw: q[F.yaw] + dy * k, vx: p[F.vx], vz: p[F.vz], hp: p[F.hp], dead: p[F.dead], cid: looksCidOf(p[F.cid], p[F.disg]), disg: p[F.disg] || 0, smk: p[F.smk] >= q[F.smk] ? lerp(q[F.smk] || 0, p[F.smk] || 0, k) : p[F.smk] || 0, kills: p[F.kills] | 0,
                prot: p[F.prot] || 0, anim: p[F.anim] >= 0 && p[F.anim] < 7 ? p[F.anim] | 0 : 0, pow: p[F.pow] || 0, markT: p[F.markT] || 0, web: p[F.web] || 0, jl: p[F.jLock] || 0, swim: p[F.swim] | 0,
                cap: p[F.cap] || 0, gun: p[F.gun] | 0, move: p[F.move] || 0, springT: p[F.leapCharge] || 0, hayAge: p[F.hay] >= q[F.hay] ? lerp(q[F.hay] || 0, p[F.hay] || 0, k) : p[F.hay] || 0, chainNet: chainBetween(q[F.chain], p[F.chain], k),
-               prof: p[F.prof] | 0, sprof: p[F.sprof] | 0, vy: p[F.vy], mark: effId(p[F.mark]), grab: p[F.grab] | 0, act: p[F.act] || 0 })
+               prof: p[F.prof] | 0, sprof: p[F.sprof] | 0, vy: p[F.vy], mark: effId(p[F.mark]), grab: p[F.grab] | 0, act: p[F.act] || 0, gm: p[F.gm] | 0 })
   }
   if (objSeats.size) {
     const ob = objectsAt(t)
@@ -29478,6 +29496,7 @@ const PLAYER_STATE = stateSchema([
   ['disg', c => c.disguised ? 1 : 0, (c, v) => { c.disguised = !!v }],
   ['smk', c => r2(c.smk || 0), (c, v) => { c.smk = Number.isFinite(v) ? clamp(v, 0, SMK_S) : 0 }],
   ['swim', c => c.water | 0],
+  ['gm', c => c.gm | 0, (c, v) => { c.gm = v | 0 }],
 ])
 GAME.schema = PLAYER_STATE
 
@@ -29540,6 +29559,10 @@ const PARTS = {
   passerby: { of: 'street', mass: 1, grab: { grip: 'scruff' }, throw: {}, punt: {} },
   dog: { of: 'street', mass: 0.4, grab: { grip: 'chest' }, throw: {}, punt: {} },
   pram: { of: 'street', mass: 1.4, grab: { grip: 'chest' }, throw: {}, punt: {} },
+  Arm: { of: 'object', grab: { grip: 'scruff' }, throw: {}, punt: {} },
+  Leg: { of: 'object', grab: { grip: 'scruff' }, throw: {}, punt: {} },
+  'Lower half': { of: 'object' },
+  'Upper half': { of: 'object' },
 }
 const PART_ADAPTERS = {}, partsHeard = { grab: [], rip: [], throw: [], punt: [], land: [] }
 const partsUses = [c => LV.faust && typeof faustInLift === 'function' && faustInLift(c), c => LV.faust && typeof faustSewUse === 'function' && faustSewUse(c)]
@@ -29632,20 +29655,28 @@ function partsStep(c, inp, dt) {
   const fire = inp.pf ?? inp.fire, alt = inp.pa ?? inp.alt, useEdge = !!inp.use, gripping = !!(inp.grip || inp.use)
   c.noGrab = Math.max(0, (c.noGrab || 0) - dt)
   const held = partsHeld(c)
+  if (!held) S.rip = -1
   if (c.dead > 0) { if (held) partsLetGo(c, held, 'drop'); S.act = 0; S.press = -1; return true }
   if (S.act) {
     S.age += dt
     const A = S.act, P = A === 1 ? GRAB.punt : A === 2 ? GRAB.throw : null
     if (P && !S.done && S.age >= (A === 1 ? P.drop : 0.12)) { S.done = true; if (held) partsLetGo(c, held, A === 1 ? 'punt' : 'throw') }
     if (A === 3 && S.age >= GRAB.rip && !S.done) { S.done = true; partsPullDone(c, S) }
+    if (A === 6 && !S.done && S.age >= HAMMER.T) { S.done = true; if (held) goreHammerLaunch(c, held) }
     c.threw = true
-    if (S.age >= (P ? P.done : A === 3 ? GRAB.rip + 0.2 : GRAB.grabS)) { S.act = 0; S.age = 0 }
+    if (S.age >= (P ? P.done : A === 3 ? GRAB.rip + 0.2 : A === 5 ? CLUB.swing : A === 6 ? HAMMER.T + 0.25 : GRAB.grabS)) { S.act = 0; S.age = 0 }
     else if (A !== 4) return true
   }
   if (held) {
     c.threw = !!(fire || alt)
-    if (useEdge && c.useT <= 0) { c.useT = USE_S; partsLetGo(c, held, 'drop') }
-    else if (fire && c.useT <= 0) { Object.assign(S, { act: 1, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S }
+    const person = held.src === 'char' || held.src === 'street' && held.kind === 'passerby', limb = held.src === 'object' && !!held.ref.K.limb, cover = held.src === 'object' && !!held.ref.K.cover
+    if (person && S.rip >= 0) {
+      if (!gripping) { const kept = S.ripGrab; S.rip = -1; S.ripGrab = false; if (!kept) { c.useT = USE_S; partsLetGo(c, held, 'drop') } }
+      else { S.rip += dt; if (S.rip >= GRAB.pull) { S.rip = -1; S.ripGrab = false; Object.assign(S, { act: 3, age: 0, done: false, pull: { src: 'limb', held } }); c.useT = USE_S } }
+      return true
+    }
+    if (useEdge && c.useT <= 0) { if (person) { S.rip = 0; S.ripGrab = false } else { c.useT = USE_S; partsLetGo(c, held, 'drop') } }
+    else if (fire && c.useT <= 0) { Object.assign(S, cover && !inp.sprint ? { act: 6, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : limb && !inp.sprint ? { act: 5, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : { act: 1, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S; if (limb) held.ref.clubHit = null }
     else if (alt && c.useT <= 0) { Object.assign(S, { act: 2, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S }
     return true
   }
@@ -29653,7 +29684,7 @@ function partsStep(c, inp, dt) {
   if (useEdge && c.useT <= 0) {
     for (const use of partsUses) { let took = false; try { took = use(c) } catch (e) { console.warn('parts use', e) } if (took) { c.useT = USE_S; return true } }
     const g = partsNear(c, 'grab')[0], car = objs.filter(seat).sort((a, b) => objGap(c, a) - objGap(c, b))[0]
-    if (g && !car) { c.useT = USE_S; partsTake(c, g); return true }
+    if (g && !car) { c.useT = USE_S; partsTake(c, g); if (g.src === 'char' || g.src === 'street' && g.kind === 'passerby') { S.rip = 0; S.ripGrab = true }; return true }
     S.press = 0; S.car = car || null
     return true
   }
@@ -29679,6 +29710,7 @@ function partsStep(c, inp, dt) {
 function partsPullDone(c, S) {
   const p = S.pull
   if (!p) return
+  if (p.src === 'limb') { if (isHost) (c.parts.due ||= []).push([p.held, 'rip']); return }
   if (p.src === 'object') { if (objs.includes(p.ref) && p.ref.heldBy === undefined && canLift(c, p.ref)) { liftUp(p.ref, c); partsEmit('grab', c, p) } return }
   if (p.src !== 'attached' || !isHost) return
   const A = PART_ADAPTERS[p.kind], R = PARTS[p.kind]?.rip, k = R && OBJECTS.findIndex(K => K.name === R.gives)
@@ -29750,7 +29782,7 @@ function partsHostRelease(all, credit) {
     const due = c.parts?.due
     if (!due?.length) continue
     c.parts.due = []
-    for (const [held, how] of due) partsLetGoHost(c, held, how, credit)
+    for (const [held, how] of due) how === 'rip' ? goreRipHost(c, held, credit) : partsLetGoHost(c, held, how, credit)
   }
 }
 function partsLetGoHost(c, held, how, credit) {
@@ -29931,7 +29963,7 @@ function partsSweep(all, credit) {
     const by = players.get(o.thrownBy), v = o.body.getLinearVelocity(), now3 = [o.x, o.y, o.z], was = o.partsAt || now3
     const sp = Math.max(Math.hypot(v.x(), v.y(), v.z()), o.partsV || 0)
     o.partsAt = now3; o.partsV = Math.hypot(v.x(), v.y(), v.z())
-    if (!by || sp < PARTS_HIT.min) continue
+    if (!by || sp < PARTS_HIT.min || o.K.cover) continue
     const m = o.K.mass, D = partsImpact(m, sp), dir = partsUnit(now3[0] - was[0], now3[1] - was[1], now3[2] - was[2]), R = (o.R || objR(o.K)) * 0.8
     const G = { ...GUNS[gunNamed('Punt')], name: o.K.name, dmg: D, knock: clamp(PARTS_HIT.knock * m * sp, 4, PARTS_HIT.knockMax), special: true }
     o.struck ||= new Set([o.thrownBy])
@@ -29968,7 +30000,11 @@ function partsRecParse(r, a) {
   else if (r.kind === 9) { [r.x0, r.z0, r.y0, r.vx, r.vy, r.vz, r.tw, r.tl, r.x1, r.z1, r.x2, r.z2, r.yaw, r.what, r.by] = a.slice(3, 18); r.what |= 0; r.yaw0 = a.length > 18 ? a[18] : r.yaw
     const g = partsGrabbed.get(r.id); if (g && g.t <= r.t) { r.from = g; partsGrabbed.delete(r.id) } }
 }
-const partsRecOk = a => (a[0] === 8 && (a.length === 8 || a.length === 10) || a[0] === 9 && (a.length === 18 || a.length === 19)) && a.every(Number.isFinite)
+const partsGore = new Map(), partsGoreAt = new Map()
+const partsGoreOf = id => partsGore.get(id) | 0
+function partsGoreSet(id, m, T) { partsGore.delete(id); partsGore.set(id, m | 0); partsGoreAt.set(id, T); if (partsGore.size > 64) { const k = partsGore.keys().next().value; partsGore.delete(k); partsGoreAt.delete(k) } }
+const partsGoreWord = id => { const m = partsGoreOf(id); if ((m & 12) !== 12) return m; const age = (slNow() - (partsGoreAt.get(id) ?? 0)) / 1000; return m + clamp(1 - age / 0.6, 0, 1) * 0.49 }
+const partsRecOk = a => (a[0] === 12 && a.length === 5 && a[3] >= 0 && a[3] < 32 || a[0] === 8 && (a.length === 8 || a.length === 10) || a[0] === 9 && (a.length === 18 || a.length === 19)) && a.every(Number.isFinite)
 const partsGrabbed = new Map()
 function partsStreetHeldBy(id) {
   const T = slNow()
@@ -30108,7 +30144,7 @@ function partsPram(kit, ag, p, d, T) {
 }
 
 const partsPack = c => c.grabBy !== undefined ? c.grabBy + 1 : c.punted ? -1 : 0
-const partsAct = c => { const S = c.parts; return S?.act ? S.act * 4 + Math.min(3.99, r2(S.age)) : S?.press > 0.12 ? 3 * 4 + 0.001 : 0 }
+const partsAct = c => { const S = c.parts; return S?.act ? S.act * 4 + Math.min(3.99, r2(S.age)) : S?.press > 0.12 || S?.rip > 0.12 ? 3 * 4 + 0.001 : 0 }
 function partsOwn(c, v) {
   const by = v > 0 ? v - 1 : undefined, was = c.grabBy
   c.grabBy = by
@@ -30127,9 +30163,9 @@ const partsHoldsDrawn = new Map()
 function partsDrawPrep(me, others) {
   partsHoldsDrawn.clear()
   const all = [me && { ...me, id: myId, grab: isHost ? partsPack(me) : me.grabBy !== undefined ? me.grabBy + 1 : me.puntedNet ? -1 : 0 }, ...others].filter(Boolean)
-  for (const p of all) { const a = avatars.get(p.id); if (a) { a.partsId = p.id; a.partsAct = p.id === myId ? partsAct(me) : p.act || 0 } }
+  for (const p of all) { const a = avatars.get(p.id); if (a) { a.partsId = p.id; a.partsAct = p.id === myId ? partsAct(me) : p.act || 0; a.goreMask = p.gm | 0 } }
   for (const p of all) if ((p.grab | 0) > 0) partsHoldsDrawn.set(p.grab - 1, { R: 0.4, grip: 'scruff', who: p.id })
-  for (const o of objs) { const by = o.heldBy ?? objHeld.get(o.id); if (by !== undefined && !o.K.carry) partsHoldsDrawn.set(by, { R: o.R || objR(o.K), grip: partsGrip(partsKindOf(o), o.R || objR(o.K)), obj: o }) }
+  for (const o of objs) { const by = o.heldBy ?? objHeld.get(o.id); if (by !== undefined && !o.K.carry) partsHoldsDrawn.set(by, { R: o.R || objR(o.K), grip: o.K.cover && partsActOf(by)[0] === 6 ? 'chest' : partsGrip(partsKindOf(o), o.R || objR(o.K)), obj: o }) }
   for (const r of partsGrabbed.values()) { const T = slNow(); if (r.t <= T && T - r.t < STREET.backS * 1000) { const ag = partsAgent(r.id)
     partsHoldsDrawn.set(r.by, { R: r.what ? 0.45 : ag?.kind === SL_K.stray ? 0.3 : 0.32, grip: r.what || ag?.kind === SL_K.stray ? 'chest' : 'scruff', street: r }) } }
 }
@@ -30141,6 +30177,7 @@ function partsDraw(me, others, t, dt, meD) {
     const a = avatars.get(p.id)
     if (!a?.mesh) continue
     const g = p.grab | 0
+    const [hk, ha] = partsActOf(p.id); if (hk === 6) a.mesh.rotation.y += hammerAngle(Math.min(ha, HAMMER.T))
     if (g > 0) {
       const H = partsDrawn.get(g - 1)
       if (!H) continue
@@ -30164,7 +30201,7 @@ function partsRig(a, R, M, t) {
     const clip = rigClip(M, hold.grip === 'scruff' ? PARTS_CLIPS.scruff : hold.grip === 'overhead' ? PARTS_CLIPS.over : PARTS_CLIPS.hold)
     if (clip) rigPose(R, clip, (t / 1000) % clip.duration, 1, RIG_UPPER)
   }
-  const name = code === 1 ? PARTS_CLIPS.punt : code === 2 ? PARTS_CLIPS.throw : code === 3 ? PARTS_CLIPS.pull : code === 4 ? PARTS_CLIPS.grab : null
+  const name = code === 1 ? PARTS_CLIPS.punt : code === 2 || code === 5 ? PARTS_CLIPS.throw : code === 3 ? PARTS_CLIPS.pull : code === 4 ? PARTS_CLIPS.grab : null
   const clip = name && rigClip(M, name)
   if (clip && age < clip.duration) R.over = { clip, t0: 0, at: t - age * 1000, clock: age, full: code === 1 || code === 3 || !(a.v > 0.6), parts: true }
   else if (R.over?.parts) R.over = null
@@ -30188,12 +30225,16 @@ function partsCarryAt(id, x, y, z, yaw, C, grip, R, out = [0, 0, 0]) {
 }
 function partsHand(c, o) {
   if (o.K.carry || !GAME.participantOf(c)?.grab) return null
+  if (o.K.limb) return clubPose(o.K, c.id, c.x, c.y, c.z, c.yaw, c).p
+  if (o.K.cover && partsActOf(c.id)[0] === 6) return hammerPose(c.id, c.x, c.y, c.z, c.yaw, c).p          // and the whirled cover
   const grip = partsGrip(partsObjectKind(c, o) || 'object', o.R || objR(o.K)), [k] = partsActOf(c.id)
   if (grip === 'overhead' && k !== 1) return null
   return partsCarryAt(c.id, c.x, c.y, c.z, c.yaw, c, grip === 'overhead' ? 'chest' : grip, o.R || objR(o.K))
 }
 function partsDrawHand(o, p, C) {
   if (o.K.carry || !C?.grab) return null
+  if (o.K.limb) return clubPose(o.K, p.id, p.x, p.y, p.z, p.yaw, C).p
+  if (o.K.cover && partsActOf(p.id)[0] === 6) return hammerPose(p.id, p.x, p.y, p.z, p.yaw, C).p
   const grip = partsGrip(partsKindOf(o), objR(o.K)), [k] = partsActOf(p.id)
   if (grip === 'overhead' && k !== 1) return null
   return partsCarryAt(p.id, p.x, p.y, p.z, p.yaw, C, grip === 'overhead' ? 'chest' : grip, objR(o.K))
@@ -30253,6 +30294,431 @@ function partsWireIn(d) {
   for (const [id, e] of partsNet) if (T - e.at > 15000) partsNet.delete(id)
 }
 
+const LIMB_CFG = {
+  limbs: [
+    { bit: 1, row: 'Arm', bone: 'upperarm_l', kid: 'lowerarm_l', cap: 0.16 },
+    { bit: 2, row: 'Arm', bone: 'upperarm_r', kid: 'lowerarm_r', cap: 0.16 },
+    { bit: 4, row: 'Leg', bone: 'thigh_l', kid: 'calf_l', cap: 0.2 },
+    { bit: 8, row: 'Leg', bone: 'thigh_r', kid: 'calf_r', cap: 0.2 }],
+  order: [1, 4, 2, 8],
+  stump: 0.25, scale: 0.001,
+  hp: 45, knock: 6,
+  keep: 60, max: 12,
+  bleed: { s: 9, hp: 12, left: 14 },
+  capColor: 0x4a0709,
+}
+const GORE_LIMBS = LIMB_CFG.limbs
+const CLUB = { swing: 0.46, hold: 0.9, back: 1.9, down: -0.8, windT: 0.14, strikeT: 0.28, hit: [0.12, 0.32], grip: [0.45, 0.1], lift: 0.25, reach: 0.15, speed: 9 }
+function clubPitch(age) {
+  const C = CLUB
+  return age < C.windT ? C.hold + (C.back - C.hold) * age / C.windT
+    : age < C.strikeT ? C.back + (C.down - C.back) * (age - C.windT) / (C.strikeT - C.windT)
+    : age < C.swing ? C.down + (C.hold - C.down) * (age - C.strikeT) / (C.swing - C.strikeT) : C.hold
+}
+const clubOut = { p: [0, 0, 0], q: [0, 0, 0, 1], tip: [0, 0, 0] }, clubQy = [0, 0, 0, 1], clubQx = [0, 0, 0, 1]
+function clubPose(K, id, x, y, z, yaw, C) {
+  const [k, age] = partsActOf(id), th = k === 5 ? clubPitch(age) : CLUB.hold, L = K.limb.len, s = Math.sin(yaw), c = Math.cos(yaw), k2 = (C?.r || 0.48) / 0.48
+  const f = CLUB.grip[0] * k2, gy = y + CLUB.grip[1] + CLUB.lift * clamp(th, 0, CLUB.back) / CLUB.back
+  const gx = x - s * f, gz = z - c * f, dy = Math.sin(th), dh = Math.cos(th), dx = -s * dh, dz = -c * dh
+  clubOut.p[0] = gx + dx * L / 2; clubOut.p[1] = gy + dy * L / 2; clubOut.p[2] = gz + dz * L / 2
+  clubOut.tip[0] = gx + dx * L; clubOut.tip[1] = gy + dy * L; clubOut.tip[2] = gz + dz * L
+  clubQy[1] = Math.sin(yaw / 2); clubQy[3] = Math.cos(yaw / 2); clubQx[0] = Math.sin(th / 2); clubQx[3] = Math.cos(th / 2)
+  qmulTo(clubOut.q, clubQy, clubQx)
+  return clubOut
+}
+function goreNext(m, n) {
+  const o = LIMB_CFG.order, k = n % o.length
+  for (let i = 0; i < o.length; i++) { const bit = o[(k + i) % o.length]; if (!(m & bit)) return bit }
+  return 0
+}
+const goreLimb = bit => GORE_LIMBS.find(L => L.bit === bit)
+function goreMaskSet(c, bit, on = true) { if (isHost && c) c.gm = on ? (c.gm | 0) | bit : (c.gm | 0) & ~bit }
+const goreFx = (code, x, y, z, nx, ny, nz, amount) => { try { GAME.gore?.emit?.(code, x, y, z, nx, ny, nz, amount) } catch (e) { console.warn('gore fx', e) } }
+function goreRipHost(c, held, credit) {
+  const S = c.parts, T = Math.round(tickAt || now())
+  let bit = 0, x, y, z, h = null
+  if (held.src === 'char') {
+    h = held.ref
+    if (h.grabBy !== c.id) return
+    bit = goreNext(h.gm | 0, S.ripN | 0); if (!bit) return
+    goreMaskSet(h, bit); x = h.x; y = h.y; z = h.z
+  } else if (held.src === 'street') {
+    const s = S.st
+    if (!s) return
+    bit = goreNext(partsGoreOf(s.ag.id), S.ripN | 0); if (!bit) return; const p = partsCarryAt(c.id, c.x, c.y, c.z, c.yaw, c, 'scruff', s.R); x = p[0]; y = p[1]; z = p[2]
+    slAddRec([12, s.ag.id, T, partsGoreOf(s.ag.id) | bit, 0])
+  } else return
+  S.ripN = (S.ripN | 0) + 1
+  const L = goreLimb(bit), k = OBJECTS.findIndex(K => K.name === L.row), id = partsFreeId()
+  partsLetGoHost(c, held, 'drop', credit)
+  const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw)
+  if (h) {
+    const G = { ...GUNS[FLUNG_G()], name: 'Arm', dmg: LIMB_CFG.hp, knock: LIMB_CFG.knock, special: true }
+    strike(c, h, G, fx, 0.3, fz)
+    knockChar(h, fx, 0.1, fz, 6)
+    h.hp = Math.min(h.hp, LIMB_CFG.bleed.left)
+    if (h.bot) h.still = { mode: 'stand', hp: -1e9, x: h.x, z: h.z, yaw: h.yaw, dir: 1, right: [1, 0] }
+    h.bleedPain = 0
+    h.bleedT = LIMB_CFG.bleed.s; h.bleedBy = c.id; h.bleedG = G
+    try { GAME.gore?.bleed?.(h.id, bit) } catch (e) { console.warn('gore bleed', e) }
+    if (downed(h) && credit) credit(c.id, c)(h, G)
+  }
+  goreFx(0, x, y + 0.3, z, fx, 0.2, fz, 3)
+  goreFx(1, x, y - 0.4, z, 0, 1, 0, 1.5)
+  const o = k >= 0 && id >= 0 && addObject(k, partsHoldAt(c.x, c.y, c.z, c.yaw, c, 'chest', 0.5), id)
+  if (!o) return
+  o.limbBit = bit; o.limbAge = 0
+  GAME.parts.setMask(o, bit); GAME.parts.push(o, [h ? h.cid : -1 - (S.st?.ag?.body | 0)])
+  if (canLift(c, o)) { liftUp(o, c); Object.assign(S, { act: 0, age: 0, done: true, grip: 'scruff', R: o.R }) }
+  partsEmit('rip', o, { kind: 'limb', bit }, c)
+}
+function goreAfter(all, dt, credit) {
+  if (!isHost) return
+  const T = tickAt || now(), loose = []
+  for (const h of all) {
+    if ((h.gm & 12) === 12 && h.dead > 0 && h.dead < 0.12 && !h.upperDone && typeof goreUpper === 'function') { h.upperDone = true; try { goreUpper(h) } catch (e) { console.warn('upper half', e) } }
+    if (!(h.bleedT > 0)) continue
+    if (h.dead > 0) { h.bleedT = 0; continue }
+    h.bleedT -= dt; h.hp -= LIMB_CFG.bleed.hp * dt
+    if ((h.bleedPain -= dt) <= 0 && h.hp > 0) { h.bleedPain = 0.45; const by = players.get(h.bleedBy); if (by) strike(by, h, { ...h.bleedG, dmg: 0.5, knock: 0 }, 0, 0.1, 0) }
+    if (h.hp <= 0 && downed(h) && credit) { const by = players.get(h.bleedBy); if (by) credit(by.id, by)(h, h.bleedG) }
+  }
+  for (const o of objs) {
+    if (!o.K.limb) continue
+    const c = o.heldBy !== undefined ? players.get(o.heldBy) : null, S = c?.parts
+    if (!c) { o.limbAge = (o.limbAge || 0) + dt; o.clubAt = null; loose.push(o); continue }
+    o.limbAge = 0
+    if (!S) continue
+    if (S.act !== 5 || S.age < CLUB.hit[0] || S.age > CLUB.hit[1]) { if (S.act !== 5) o.clubHit = null; o.clubAt = null; continue }
+    const P = clubPose(o.K, c.id, c.x, c.y, c.z, c.yaw, c), tip = [P.tip[0], P.tip[1], P.tip[2]], grip = [P.p[0] * 2 - tip[0], P.p[1] * 2 - tip[1], P.p[2] * 2 - tip[2]]
+    const was = o.clubAt || tip, sp = Math.hypot(tip[0] - was[0], tip[1] - was[1], tip[2] - was[2]) / dt
+    o.clubAt = tip
+    const hit = o.clubHit ||= new Set([c.id]), D = o.K.limb.club * clamp(sp / CLUB.speed, 0.6, 1.5), n = partsUnit(tip[0] - was[0], tip[1] - was[1], tip[2] - was[2])
+    const G = { ...GUNS[gunNamed('Punt')], name: o.K.name, dmg: D, knock: clamp(D * 0.25, 4, 14), special: true }
+    for (const v of all) {
+      if (hit.has(v.id) || v.dead > 0 || v.prot > 0 || seatOf(v) || v.grabBy !== undefined) continue
+      const r = v.r + CLUB.reach, from = [v.x, v.y - v.h, v.z], to = [v.x, v.y + v.h, v.z]
+      if (Math.min(partsSegDist(was, tip, from, to), partsSegDist(grip, tip, from, to)) > r) continue
+      hit.add(v.id)
+      const ux = tip[0] - grip[0], uz = tip[2] - grip[2], m = Math.hypot(ux, uz) || 1
+      strike(c, v, G, ux / m, 0.25, uz / m)
+      goreFx(0, v.x, v.y, v.z, ux / m, 0.2, uz / m, 1)
+      if (downed(v) && credit) credit(c.id, c)(v, G)
+    }
+    if (slState && LV.faust && Math.min(grip[1], tip[1]) < 2.6) slAround((grip[0] + tip[0]) / 2, (grip[2] + tip[2]) / 2, 2.5, T, (ag, p) => {
+      if (p.down || hit.has('s' + ag.id)) return
+      if (Math.min(partsSegDist([grip[0], 0, grip[2]], [tip[0], 0, tip[2]], [p.x, 0, p.z], [p.x, 0, p.z]), partsSegDist([was[0], 0, was[2]], [tip[0], 0, tip[2]], [p.x, 0, p.z], [p.x, 0, p.z])) > 0.35 + CLUB.reach) return
+      hit.add('s' + ag.id); slKnock(ag, p, n[0], n[2], Math.max(1, D * 0.05), c, T, undefined, undefined, undefined, D, gunNamed('Punt'), 1)
+      goreFx(0, p.x, 1.1, p.z, n[0], 0.2, n[2], 1)
+    })
+  }
+  loose.sort((a, b) => b.limbAge - a.limbAge)
+  for (let i = 0; i < loose.length; i++) if (loose[i].limbAge > LIMB_CFG.keep || i < loose.length - LIMB_CFG.max) {
+    const o = loose[i]
+    dropObject(o); objs.splice(objs.indexOf(o), 1)
+    for (const sent of objSent.values()) sent.delete(o.id)
+  }
+}
+let goreCapGeo = null, goreCapMat = null, goreRaggedGeo = null, goreCore = null
+function goreRagged() {
+  if (goreRaggedGeo) return goreRaggedGeo
+  const n = 7, pos = [0.05, 0.05, -0.03], idx = []
+  for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2 + ((i * 5) % 7) * 0.09, h = (i * 7919 % 13) / 13, r = 0.7 + 0.4 * h; pos.push(Math.cos(a) * r * (i % 2 ? 1 : 0.85), i % 2 ? 0.1 + 0.12 * h : 0, Math.sin(a) * r) }
+  for (let i = 0; i < n; i++) idx.push(0, 1 + i, 1 + (i + 1) % n)
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals()
+  return goreRaggedGeo = geo
+}
+const goreRaggedMat = () => goreCapMat ||= new THREE.MeshStandardMaterial({ color: LIMB_CFG.capColor, emissive: 0x0e0102, roughness: 1, side: THREE.DoubleSide })
+function goreBones(a, R) {
+  const m = a.goreMask | 0
+  if (!m && !R.goreWas) return
+  R.goreWas = m
+  const waist = (m & 12) === 12, k0 = a.spec.r / 0.48
+  goreCapGeo ||= new THREE.SphereGeometry(1, 10, 6); goreCapMat ||= goreRaggedMat()
+  for (const L of GORE_LIMBS) {
+    const b = R.bones.get(L.bone), k = L.kid && R.bones.get(L.kid)
+    if (!b || L.kid && !k) continue
+    const on = !!(m & L.bit)
+    let cap = R.goreCaps?.[L.bit]
+    if (on) {
+      if (L.hide || waist && L.row === 'Leg') b.scale.setScalar(LIMB_CFG.scale); else { b.scale.set(1, LIMB_CFG.stump, 1); k.scale.setScalar(LIMB_CFG.scale) }
+      if (waist && L.row === 'Leg') { if (cap) cap.visible = false; continue }
+      if (!cap) {
+        cap = (R.goreCaps ||= {})[L.bit] = new THREE.Mesh(goreRagged(), goreRaggedMat()); cap.castShadow = false; (L.hide ? b.parent : b).add(cap)
+        const core = new THREE.Mesh(goreRagged(), goreCore ||= new THREE.MeshStandardMaterial({ color: 0x1a0204, roughness: 1, side: THREE.DoubleSide })); core.scale.setScalar(0.55); core.position.y = 0.012; core.castShadow = false; cap.add(core)
+        const s = L.cap * k0; cap.scale.set(s, s * 1.3, s); cap.rotation.y = L.bit * 1.9; cap.position.copy(L.hide ? b.position : k.position).multiplyScalar(L.hide ? 1 : LIMB_CFG.stump * 0.96)
+      }
+      cap.visible = true
+    } else if (R.goreCaps?.[L.bit]) { b.scale.set(1, 1, 1); k?.scale.set(1, 1, 1); cap.visible = false }
+  }
+  const sp = R.bones.get('spine_01'), pel = R.bones.get('pelvis')
+  let wc = R.goreCaps?.waist
+  if (waist && sp) {
+    if (!wc) { wc = (R.goreCaps ||= {}).waist = new THREE.Mesh(goreRagged(), goreRaggedMat()); wc.castShadow = false; sp.add(wc); wc.scale.set(0.22 * k0, 0.16 * k0, 0.15 * k0); wc.position.set(0, -0.03, 0); wc.rotation.x = Math.PI }
+    wc.visible = true
+    if (pel && a.mesh.visible) {
+      const age = a.dying >= 0 ? a.dying : 0, u = clamp(age / 0.4, 0, 1), fade = 1 - u * u * (3 - 2 * u)
+      if (fade > 0) { a.mesh.updateMatrixWorld(true); pel.getWorldPosition(rigV); R.inst.position.y -= Math.max(0, rigV.y - (a.mesh.position.y - (a.spec.h + a.spec.r)) - 0.14) * fade }
+    }
+  } else {
+    if (wc) wc.visible = false
+  }
+}
+function limbLook(K) {
+  const L = K.limb, cv = document.createElement('canvas'), g = cv.getContext('2d')
+  cv.width = cv.height = 64
+  let at = 0
+  for (const [to, color] of L.bands) { g.fillStyle = css(color); g.fillRect(0, Math.floor(at * 64), 64, Math.max(1, Math.ceil((to - at) * 64))); at = to }
+  const map = new THREE.CanvasTexture(cv)
+  map.colorSpace = THREE.SRGBColorSpace
+  const S = 10, pos = [], uv = [], idx = []
+  for (const [ox, oy, oz] of L.copies || [[0, 0, 0]]) {
+    const n0 = pos.length / 3
+    for (const [t, r] of L.profile) for (let j = 0; j <= S; j++) { const a = j / S * Math.PI * 2; if (L.axis === 'y') pos.push(Math.cos(a) * r + ox, L.len / 2 - t * L.len + oy, Math.sin(a) * r * 0.9 + oz); else pos.push(Math.cos(a) * r + ox, Math.sin(a) * r * 0.9 + oy, -L.len / 2 + t * L.len + oz); uv.push(j / S, 1 - t) }
+    for (let i = 0; i + 1 < L.profile.length; i++) for (let j = 0; j < S; j++) { const a = n0 + i * (S + 1) + j, b = a + S + 1; idx.push(a, a + 1, b, a + 1, b + 1, b) }
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx)
+  geo.computeVertexNormals()
+  const m = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ map, roughness: 0.65 }), OBJ_MAX)
+  m.castShadow = m.receiveShadow = true
+  depthFor(m)
+  return m
+}
+
+const limbViews = new Map()
+function limbModelOf(cid) {
+  if (cid >= 0) { const C = CHARS[cid]; return MODELS[C?.model || 'man'] }
+  const name = STREET.bodies[-1 - cid] || STREET.bodies[0]
+  return Object.values(MODELS).find(M => M.file === RIG_FILES[name]) || MODELS.trafficDriver
+}
+function limbBuild(kind, bit, cid, src) {
+  const M = limbModelOf(cid)
+  if (!M?.proto) return null
+  const C = cid >= 0 ? CHARS[cid] : { h: 0.5, r: 0.4 }, inst = cloneSkinned(M.proto)
+  fitToCapsule(inst, 2 * (C.h + C.r), M.height, M.footY, M.yaw || 0)
+  rigLods(inst).forEach((m, i) => { if (m) m.visible = i === 0 })
+  inst.traverse(n => { if (n.isMesh) { n.frustumCulled = false; n.castShadow = n.receiveShadow = true } })
+  const group = new THREE.Group(), inner = new THREE.Group(), bones = new Map()
+  group.add(inner); inner.add(inst); inst.traverse(n => { if (n.isBone) bones.set(n.name, n) })
+  const sfx = (kind === 'Arm' ? bit === 1 : bit === 4) ? '_l' : '_r'
+  const keep = new Set(), keepTree = n => { keep.add(n); n.children.forEach(c => c.isBone && keepTree(c)) }
+  let root, tip
+  if (kind === 'Upper half') {
+    root = bones.get('pelvis'); tip = bones.get('Head')
+    const tl = bones.get('thigh_l'), tr = bones.get('thigh_r'); if (!root || !tip || !tl || !tr) return null
+    bones.forEach(b => keep.add(b)); for (const t of [tl, tr]) t.traverse(n => n.isBone && keep.delete(n))
+  } else if (kind === 'Lower half') {
+    root = bones.get('pelvis'); tip = bones.get('foot_l')
+    const sp = bones.get('spine_01'); if (!root || !tip || !sp) return null
+    keepTree(root); keep.delete(sp); sp.traverse(n => n.isBone && keep.delete(n)); inst.attach(root)
+  } else {
+    root = bones.get((kind === 'Arm' ? 'upperarm' : 'thigh') + sfx); tip = bones.get((kind === 'Arm' ? 'hand' : 'foot') + sfx)
+    if (!root || !tip) return null
+    keepTree(root); inst.attach(root)
+  }
+  for (const b of bones.values()) if (!keep.has(b)) b.scale.setScalar(0.001)
+  inst.updateMatrixWorld(true)
+  const cut = (kind === 'Lower half' ? bones.get('spine_01') : kind === 'Upper half' ? bones.get('thigh_l') : root).getWorldPosition(new THREE.Vector3())
+  for (const b of bones.values()) if (!keep.has(b) && (!b.parent || !b.parent.isBone || keep.has(b.parent))) b.position.copy(b.parent.worldToLocal(cut.clone()))
+  inst.updateMatrixWorld(true)
+  const p0 = root.getWorldPosition(new THREE.Vector3()), p1 = tip.getWorldPosition(new THREE.Vector3()), cap = new THREE.Mesh(goreCapGeo || (goreCapGeo = new THREE.SphereGeometry(1, 10, 6)), goreCapMat ||= new THREE.MeshStandardMaterial({ color: LIMB_CFG.capColor, roughness: 0.4 }))
+  cap.castShadow = false
+  if (kind === 'Upper half') {
+    const bottom = p0.y, top = p1.y + 0.12, c = (top + bottom) / 2, h = (top - bottom) / 2, R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2)
+    inner.quaternion.copy(R); inner.position.set(-p0.x, 0, c)
+    cap.geometry = goreRagged(); cap.material = goreRaggedMat(); cap.rotation.x = Math.PI / 2; cap.scale.set(0.22, 0.16, 0.15); cap.position.set(0, 0, h - 0.02)
+    if (src?.rig && src.dying >= 0 && (src.goreMask & 12) === 12) {
+      src.mesh.updateMatrixWorld(true)
+      for (const [name, b] of bones) { const s = src.rig.bones.get(name); if (s && keep.has(b)) { b.quaternion.copy(s.quaternion); if (name === 'pelvis') b.position.copy(s.position) } }
+      inner.position.set(0, 0, 0); inner.quaternion.identity(); inst.position.set(0, 0, 0); inst.quaternion.identity(); inst.scale.set(1, 1, 1); inst.updateMatrixWorld(true)
+      cap.removeFromParent()
+      const sp = bones.get('spine_01'), k0 = C.r / 0.48, wc = new THREE.Mesh(goreRagged(), goreRaggedMat())
+      wc.scale.set(0.22 * k0, 0.16 * k0, 0.15 * k0); wc.position.set(0, -0.03, 0); wc.rotation.x = Math.PI; sp.add(wc)
+      group.matrixAutoUpdate = false; group.matrix.copy(src.rig.inst.matrixWorld); group.matrixWorldNeedsUpdate = true; group.userData.frozen = true
+    }
+  } else if (kind === 'Lower half') {
+    const top = bones.get('spine_01').getWorldPosition(new THREE.Vector3()), foot = Math.min(p1.y, bones.get('foot_r')?.getWorldPosition(new THREE.Vector3()).y ?? p1.y) - 0.04
+    inner.position.set(-p0.x, -(top.y + foot) / 2, -p0.z)
+    cap.geometry = goreRagged(); cap.material = goreRaggedMat(); cap.scale.set(0.22, 0.16, 0.15); cap.position.set(0, (top.y - foot) / 2 + 0.01, 0)
+  } else {
+    const a = p1.clone().sub(p0), mid = p0.clone().add(p1).multiplyScalar(0.5), Q = new THREE.Quaternion().setFromUnitVectors(a.clone().normalize(), new THREE.Vector3(0, 0, 1))
+    inner.quaternion.copy(Q); inner.position.copy(mid.applyQuaternion(Q).negate())
+    const s = kind === 'Arm' ? 0.085 : 0.115; cap.geometry = goreRagged(); cap.material = goreRaggedMat(); cap.rotation.x = -Math.PI / 2; cap.rotation.z = bit * 1.3; cap.scale.set(s, s * 1.4, s); cap.position.set(0, 0, -a.length() / 2 + 0.01)
+  }
+  group.add(cap)
+  return group
+}
+function limbViewFrame(o, K, seen) {
+  const bit = partsMaskOf(o), L = partsListOf(o), cid = L[0]
+  if (!bit || cid === undefined) return false
+  const key = K.name + bit + ':' + cid
+  let v = limbViews.get(o.id)
+  if (!v || v.key !== key) {
+    if (v) v.group.removeFromParent()
+    let group = null
+    try { group = limbBuild(K.name, bit, cid, K.name === 'Upper half' ? avatars.get(L[1]) : null) } catch (e) { console.warn('limb view', e) }
+    if (!group) return false
+    objGroup.add(group); limbViews.set(o.id, v = { key, group })
+  }
+  seen.add(o.id)
+  if (v.group.userData.frozen) { v.group.visible = true; return true }
+  v.group.position.set(o.x, o.y, o.z); v.group.quaternion.set(o.q[0], o.q[1], o.q[2], o.q[3]); v.group.visible = true
+  return true
+}
+function limbViewsEnd(seen) { for (const [id, v] of limbViews) if (!seen.has(id)) { v.group.removeFromParent(); limbViews.delete(id) } }
+
+const HAMMER = { r: 0.3, thick: 0.04, T: 1.25, w0: 5, a: 16, R: 0.95, up: 0.12, tilt: 0.3, speed: 36, pitch: 0.04, spin: 48, wobble: [5, 3.5],
+  lift: 0.12, min: 9, cut: 0.45, loss: 0.88, e: 0.5, tangent: 0.85, lodgeV: 16, lodge: 0.8 }
+{
+  const K = OBJECTS.find(K => K.name === 'Manhole cover')
+  if (K) {
+    const T = HAMMER.thick / 2
+    K.points = Array.from({ length: 16 }, (_, i) => [Math.cos(i / 16 * Math.PI * 2) * HAMMER.r, 0, Math.sin(i / 16 * Math.PI * 2) * HAMMER.r]).flatMap(p => [[p[0], -T, p[2]], [p[0], T, p[2]]])
+    Object.assign(K, { mass: 1.6, bounce: 0.5, friction: 0.45, damp: [0.02, 0.04], cover: true, dmg: 45 })
+    PROP_MODELS['Manhole cover'] = k => {
+      k.add({ g: ['cylinder', HAMMER.r, HAMMER.r, HAMMER.thick, 18], m: 'dark', tag: 'lid' })
+      k.add({ g: ['cylinder', HAMMER.r * 0.87, HAMMER.r * 0.87, HAMMER.thick + 0.004, 18], m: 'accent', tag: 'face' })
+      for (let i = 0; i < 3; i++) k.box('dark', [HAMMER.r * 1.7, 0.01, 0.025], [0, HAMMER.thick / 2 + 0.001, 0], 'rib', [0, i * Math.PI / 3, 0])
+    }
+  }
+}
+const hammerAngle = age => HAMMER.w0 * age + 0.5 * HAMMER.a * age * age
+const hammerOut = { p: [0, 0, 0], q: [0, 0, 0, 1] }, hammerQy = [0, 0, 0, 1], hammerQx = [0, 0, 0, 1]
+function hammerPose(id, x, y, z, yaw, C) {
+  const [, age] = partsActOf(id), a = yaw + hammerAngle(Math.min(age, HAMMER.T)), k = (C?.r || 0.48) / 0.48
+  hammerOut.p[0] = x - Math.sin(a) * HAMMER.R * k; hammerOut.p[1] = y + HAMMER.up; hammerOut.p[2] = z - Math.cos(a) * HAMMER.R * k
+  hammerQy[1] = Math.sin(a / 2); hammerQy[3] = Math.cos(a / 2); hammerQx[0] = Math.sin(HAMMER.tilt / 2); hammerQx[3] = Math.cos(HAMMER.tilt / 2)
+  qmulTo(hammerOut.q, hammerQy, hammerQx)
+  return hammerOut
+}
+function goreHammerLaunch(c, held) {
+  const o = held.ref, P = hammerPose(c.id, c.x, c.y, c.z, c.yaw, c), [yaw, pitch] = aimAngles(c, 40), [dx, dy, dz] = aimDir(yaw, clamp(pitch * 0.5 + HAMMER.pitch, -0.2, 0.35))
+  const q = hammerOut.q.slice(), p = hammerOut.p.slice(), n = rotq(q, [0, 1, 0]), w = rotq(q, [HAMMER.wobble[0], 0, HAMMER.wobble[1]]), s = HAMMER.speed
+  holdBy(o, null)
+  putObject(o, [...p, ...q, dx * s + (c.vx || 0) * 0.5, dy * s, dz * s + (c.vz || 0) * 0.5, n[0] * HAMMER.spin + w[0], n[1] * HAMMER.spin + w[1], n[2] * HAMMER.spin + w[2]])
+  Object.assign(o, { thrownBy: c.id, thrownT: 0, struck: new Set([c.id]), coverAt: p, lodged: false })
+  GAME.parts.setMask(o, 0)
+  partsEmit('throw', c, held, o)
+}
+function goreCovers(all, credit) {
+  const T = tickAt || now(), g = GRAV
+  for (const o of objs) {
+    if (!o.K.cover) continue
+    if (o.lodged && o.heldBy !== undefined) { o.lodged = false; GAME.parts.setMask(o, 0); posVec.setValue(1, 1, 1); o.body.setLinearFactor(posVec); o.body.setAngularFactor(posVec) }
+    if (o.heldBy !== undefined || o.thrownBy === undefined || o.lodged) { o.coverAt = null; continue }
+    const lv = o.body.getLinearVelocity(), v = [lv.x(), lv.y(), lv.z()], sp = Math.hypot(...v), here = [o.x, o.y, o.z], was = o.coverAt || here
+    o.coverAt = here
+    const pv = o.coverV || v
+    o.coverV = v
+    const psp = Math.hypot(pv[0], pv[1], pv[2])
+    posVec.setValue(0, g * (sp >= HAMMER.min ? HAMMER.lift : 1), 0); o.body.setGravity(posVec)
+    if (sp < HAMMER.min) { if (sp < 2 && (o.thrownT += TICK) > 3) o.thrownBy = undefined; continue }
+    o.thrownT = 0
+    const by = players.get(o.thrownBy), dir = partsUnit(here[0] - was[0], here[1] - was[1], here[2] - was[2]), L = Math.hypot(here[0] - was[0], here[1] - was[1], here[2] - was[2])
+    o.struck ||= new Set([o.thrownBy])
+    let cutN = 0
+    if (by) for (const c of all) {
+      if (o.struck.has(c.id) || c.dead > 0 || c.prot > 0 || seatOf(c) || c.grabBy !== undefined) continue
+      if (partsSegDist(was, here, [c.x, c.y - c.h, c.z], [c.x, c.y + c.h, c.z]) > c.r + HAMMER.r) continue
+      o.struck.add(c.id)
+      const waist = Math.abs((was[1] + here[1]) / 2 - (c.y + 0.1 * (c.h + c.r))) <= HAMMER.cut
+      const G = { ...GUNS[gunNamed('Punt')], name: o.K.name, dmg: waist ? 9999 : partsImpact(o.K.mass, sp), knock: clamp(sp * 0.6, 6, 22), special: true, lethal: waist }
+      strike(by, c, G, dir[0], 0.3, dir[2])
+      if (waist) { goreCut(c, o, dir, by); cutN++ }
+      else goreFx(0, c.x, c.y + 0.3, c.z, dir[0], 0.2, dir[2], 2)
+      if (downed(c) && credit) credit(by.id, by)(c, G)
+    }
+    if (by && slState && LV.faust && Math.min(was[1], here[1]) < 2.4) slAround((was[0] + here[0]) / 2, (was[2] + here[2]) / 2, L / 2 + 2, T, (ag, p) => {
+      if (p.down || o.struck.has('s' + ag.id)) return
+      if (partsSegDist([was[0], 0, was[2]], [here[0], 0, here[2]], [p.x, 0, p.z], [p.x, 0, p.z]) > 0.3 + HAMMER.r) return
+      o.struck.add('s' + ag.id)
+      const waist = Math.abs((was[1] + here[1]) / 2 - 0.9) <= HAMMER.cut + 0.1
+      slKnock(ag, p, dir[0], dir[2], Math.max(2, sp * 0.15), by, T, undefined, undefined, undefined, waist ? 9999 : partsImpact(o.K.mass, sp), gunNamed('Punt'), 3)
+      if (waist) { if (typeof partsGoreOf === 'function') slAddRec([12, ag.id, Math.round(T), partsGoreOf(ag.id) | 12, 0]); goreHalf(p.x, 0, p.z, dir, sp, by, -1 - (ag.body | 0)); goreFx(0, p.x, 0.9, p.z, dir[0], 0.2, dir[2], 5); goreFx(1, p.x, 0.1, p.z, 0, 1, 0, 3); cutN++ }
+      else goreFx(0, p.x, 0.9, p.z, dir[0], 0.2, dir[2], 2)
+    })
+    for (const q of objs) {
+      if (q === o || !q.V || o.struck.has('o' + q.id) || q.heldBy !== undefined) continue
+      if (partsSegDist(was, here, [q.x, q.y, q.z], [q.x, q.y, q.z]) > (q.R || objR(q.K)) * 0.7 + HAMMER.r) continue
+      o.struck.add('o' + q.id)
+      if (by) { q.hp -= partsImpact(o.K.mass, sp) * 0.5; q.by = by.id; try { GAME.cars?.blow?.(by, q, { ...GUNS[gunNamed('Punt')], name: 'Haymaker' }, here, dir) } catch (e) {} }
+    }
+    if (cutN) { const k = Math.pow(HAMMER.loss, cutN); posVec.setValue(v[0] * k, v[1] * k, v[2] * k); o.body.setLinearVelocity(posVec) }
+    if (psp > HAMMER.min) {
+      const hit = [], pd = partsUnit(pv[0], pv[1], pv[2]), d = staticRay(here[0], here[1], here[2], pd[0], pd[1], pd[2], 2 + psp * TICK, hit)
+      if (d < 2 + psp * TICK && hit.length >= 6 && hit[4] < 0.6) {
+        const n = [hit[3], hit[4], hit[5]], vn = -(pv[0] * n[0] + pv[1] * n[1] + pv[2] * n[2])
+        if (vn > 1 && d * vn / psp <= HAMMER.r + 0.1 + vn * TICK) {
+          const at = [hit[0], hit[1], hit[2]], w = o.body.getAngularVelocity(), spin = [w.x(), w.y(), w.z()]
+          o.lastHit = { at: at.map(r2), n: n.map(r2), vn: r2(vn), sp: r2(psp), lodge: vn > HAMMER.lodgeV && vn / psp > HAMMER.lodge }
+          if (o.lastHit.lodge) {
+            const tx = n[2], tz = -n[0], tl = Math.hypot(tx, tz) || 1, ca = Math.cos(0.95), sa = Math.sin(0.95), nd = [n[0] * ca + tx / tl * sa, 0, n[2] * ca + tz / tl * sa], half = Math.SQRT1_2
+            putObject(o, [at[0] + n[0] * 0.04, at[1] + n[1] * 0.04, at[2] + n[2] * 0.04, nd[2] * half, 0, -nd[0] * half, half, 0, 0, 0, 0, 0, 0])
+            posVec.setValue(0, 0, 0); o.body.setLinearFactor(posVec); o.body.setAngularFactor(posVec); o.lodged = true
+            GAME.parts.setMask(o, 1); GAME.parts.push(o, [at[0] * 100, at[1] * 100, at[2] * 100, n[0] * 100, n[1] * 100, n[2] * 100])
+          } else {
+            const vt = [pv[0] + n[0] * vn, pv[1] + n[1] * vn, pv[2] + n[2] * vn]
+            putObject(o, [at[0] + n[0] * (HAMMER.r + 0.03), at[1] + n[1] * (HAMMER.r + 0.03), at[2] + n[2] * (HAMMER.r + 0.03), ...o.q,
+              vt[0] * HAMMER.tangent + n[0] * vn * HAMMER.e, vt[1] * HAMMER.tangent + n[1] * vn * HAMMER.e, vt[2] * HAMMER.tangent + n[2] * vn * HAMMER.e, ...spin])
+            o.struck = new Set([o.thrownBy]); o.coverAt = null; o.coverV = null
+          }
+          goreCoverFx(at, n, by)
+        }
+      }
+    }
+  }
+}
+function goreCoverFx(at, n, by) {
+  const f = [r2(at[0] - n[0] * 0.2), r2(at[1] - n[1] * 0.2), r2(at[2] - n[2] * 0.2), r2(at[0]), r2(at[1]), r2(at[2]), PUNT_G(), 1, by ? by.id : -1]
+  tracers.push(f); GAME.audio.fx([f])
+}
+function goreCut(c, o, dir, by) {
+  const lv = o.body.getLinearVelocity()
+  goreMaskSet(c, 12)
+  goreHalf(c.x, c.y - c.h - c.r, c.z, dir, Math.hypot(lv.x(), lv.y(), lv.z()), by, c.cid)
+  goreFx(0, c.x, c.y - 0.1, c.z, dir[0], 0.3, dir[2], 6)
+  goreFx(1, c.x, c.y - c.h, c.z, 0, 1, 0, 4)
+  goreFx(2, c.x, c.y - c.h, c.z, dir[0], 0, dir[2], 2)
+}
+function goreHalf(x, feet, z, dir, sp, by, cid) {
+  const k = OBJECTS.findIndex(K => K.name === 'Lower half'), id = partsFreeId()
+  if (k < 0 || id < 0) return null
+  const y = feet + OBJECTS[k].half[1] + 0.02, yaw = Math.atan2(-dir[0], -dir[2]), o = addObject(k, [x, y, z], id, yaw)
+  if (!o) return null
+  o.limbAge = 0
+  GAME.parts.setMask(o, 12); GAME.parts.push(o, [cid])
+  const lean = qmulTo([0, 0, 0, 1], [Math.sin(0.15) * dir[2], 0, -Math.sin(0.15) * dir[0], Math.cos(0.15)], o.q)
+  putObject(o, [x, y, z, ...lean, dir[0] * sp * 0.12, 0.6, dir[2] * sp * 0.12, dir[2] * 7, 0, -dir[0] * 7])
+  return o
+}
+
+const coverMarked = new Set()
+function coverMarks(list) {
+  for (const o of list) {
+    if (!OBJECTS[o.k]?.cover) continue
+    const L = partsListOf(o), on = (partsMaskOf(o) & 1) && L.length >= 6
+    if (!on) { coverMarked.delete(o.id); continue }
+    if (coverMarked.has(o.id)) continue
+    coverMarked.add(o.id)
+    const x = L[0] / 100, y = L[1] / 100, z = L[2] / 100, nx = L[3] / 100, ny = L[4] / 100, nz = L[5] / 100
+    scarAt([x, y, z, nx, ny, nz], 'chip', Math.abs(Math.round(x * 7919 + z * 104729)) | 0)
+    burst('dust', x + nx * 0.1, y, z + nz * 0.1, nx, 0.4, nz, 0xc9c0ae, 1.6)
+    burst('spark', x + nx * 0.1, y, z + nz * 0.1, nx, 0.3, nz, 0xffd9a0, 1)
+  }
+}
+
+function goreUpper(c) {
+  const k = OBJECTS.findIndex(K => K.name === 'Upper half'), id = partsFreeId()
+  if (k < 0 || id < 0) return
+  const feet = c.y - c.h - c.r, s = Math.sin(c.yaw), co = Math.cos(c.yaw), phi = c.yaw + Math.PI
+  const o = addObject(k, [c.x + s * 0.35, feet + 0.16, c.z + co * 0.35], id, phi)
+  if (!o) return
+  o.limbAge = 0
+  GAME.parts.setMask(o, 12); GAME.parts.push(o, [c.cid, c.id])
+  putObject(o, [c.x + s * 0.35, feet + 0.16, c.z + co * 0.35, 0, Math.sin(phi / 2), 0, Math.cos(phi / 2), 0, 0, 0, 0, 0, 0])
+}
+
 GAME.parts = {
   rows: PARTS, rules: GRAB,
   kind(name, row, adapter) { PARTS[name] = { ...PARTS[name], ...row }; if (adapter) PART_ADAPTERS[name] = adapter; return PARTS[name] },
@@ -30284,7 +30750,7 @@ MODELS.maniak.clips.swimUp = MODELS.maniak.clips.climb
   const P = HOST_PHASES, bi = P.beforeIntent, bp = P.beforePhysics, ap = P.afterPhysics
   P.beforeIntent = t => { partsMask(t.cur); bi(t) }
   P.beforePhysics = t => { bp(t); partsHostRelease(t.all, t.credit) }
-  P.afterPhysics = t => { partsSweep(t.all, t.credit); ap(t); partsAfter(t.all, t.dt, t.credit) }
+  P.afterPhysics = t => { partsSweep(t.all, t.credit); ap(t); partsAfter(t.all, t.dt, t.credit); goreAfter(t.all, t.dt, t.credit); goreCovers(t.all, t.credit) }
   const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems
   L.snapshot = () => ({ ...snap(), ...partsWireOut() })
   L.takeItems = function (d) { take.call(this, d); partsWireIn(d) }
@@ -31654,6 +32120,7 @@ function slAddRec(a, local) {
     for (const f of slDeathFns) try { f(r, ag) } catch (e) {} }
   if (r.kind === 13) { r.x1 = a[5]; r.z1 = a[6]; r.yaw = a[7]; for (const f of slBirdFns) try { f(r) } catch (e) {} }
   if (r.kind === 8 || r.kind === 9) partsRecParse(r, a)
+  if (r.kind === 12) { partsGoreSet(r.id, a[3], r.t); st.rec.set(key, r); if (!local) st.out.push({ r, n: 0 }); return r }
   st.rec.set(key, r)
   if (r.kind !== 2) { const L = st.byId.get(r.id) || st.byId.set(r.id, []).get(r.id); L.push(r); L.sort((p, q) => p.t - q.t) }
   else st.panics.push(r)
@@ -31666,6 +32133,7 @@ function slPrune(t) {
   for (const [k, r] of st.rec) if (t - r.t > (r.kind === 11 || r.kind === 13 || (r.kind === 9 && !r.what || r.kind === 4) && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {
     st.rec.delete(k); st.exits.delete(k)
     if (r.kind === 8 && partsGrabbed.get(r.id) === r) partsGrabbed.delete(r.id)
+    if (r.kind === 12) continue
     if (r.kind === 2) st.panics.splice(st.panics.indexOf(r), 1)
     else if (r.kind === 6 || r.kind === 7) slBabyForget(r)
     else { const L = st.byId.get(r.id); if (L) { L.splice(L.indexOf(r), 1); if (!L.length) st.byId.delete(r.id) } }
@@ -32340,8 +32808,12 @@ const SL_CLIPS = {
 }
 let slKit = null, slKitJob = null
 const slHalf = v => THREE.DataUtils.toHalfFloat(v)
-function slSkinPatch(tex, blend) {
+const SL_STUMP = 0.2, SL_LIMBS = [[1, 'upperarm_l'], [2, 'upperarm_r'], [4, 'thigh_l'], [8, 'thigh_r'], [16, 'Head']]
+const SL_LIMB_BONES = [[1, /^(upperarm|lowerarm|hand|grip|index|middle|ring|pinky|thumb).*_l$/], [2, /^(upperarm|lowerarm|hand|grip|index|middle|ring|pinky|thumb).*_r$/], [4, /^(thigh|calf|foot|ball).*_l$/], [8, /^(thigh|calf|foot|ball).*_r$/], [16, /^(Head|mouth)$/]]
+const slGore0 = { I: SL_LIMBS.map(() => new THREE.Matrix4()), W: SL_LIMBS.map(() => new THREE.Matrix4()), B: SL_LIMBS.map(() => 0) }
+function slSkinPatch(tex, blend, gore = slGore0) {
   return shader => {
+    shader.uniforms.slGoreI = { value: gore.I }; shader.uniforms.slGoreW = { value: gore.W }; shader.uniforms.slGoreB = { value: gore.B }
     faustLampHook(shader)
     shader.uniforms.slAnim = { value: tex }
     shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\n#ifdef USE_COLOR\n vec3 slTex = diffuseColor.rgb;\n#endif')
@@ -32355,16 +32827,38 @@ attribute vec4 slFrame;
 mat4 slBone(float i, float f) { int x = int(i) * 3, y = int(f);
   vec4 a = texelFetch(slAnim, ivec2(x, y), 0), b = texelFetch(slAnim, ivec2(x + 1, y), 0), c = texelFetch(slAnim, ivec2(x + 2, y), 0);
   return mat4(a.x, b.x, c.x, 0.0, a.y, b.y, c.y, 0.0, a.z, b.z, c.z, 0.0, a.w, b.w, c.w, 1.0); }
-mat4 slSkin(float f) { return slBone(skinIndex.x, f) * skinWeight.x + slBone(skinIndex.y, f) * skinWeight.y + slBone(skinIndex.z, f) * skinWeight.z + slBone(skinIndex.w, f) * skinWeight.w; }`)
+mat4 slSkin(float f) { return slBone(skinIndex.x, f) * skinWeight.x + slBone(skinIndex.y, f) * skinWeight.y + slBone(skinIndex.z, f) * skinWeight.z + slBone(skinIndex.w, f) * skinWeight.w; }
+attribute float slLimb;
+varying float vSlRed;
+uniform mat4 slGoreI[5];
+uniform mat4 slGoreW[5];
+uniform float slGoreB[5];
+mat4 slBoneM(float b) { return ${blend ? 'slBone(b, slFrame.x) * (1.0 - slFrame.z) + slBone(b, slFrame.y) * slFrame.z' : 'slBone(b, slFrame.x)'}; }`)
       .replace('#include <skinbase_vertex>', blend ? 'mat4 slM = slSkin(slFrame.x) * (1.0 - slFrame.z) + slSkin(slFrame.y) * slFrame.z;' : 'mat4 slM = slSkin(slFrame.x);')
       .replace('#include <skinnormal_vertex>', 'objectNormal = (slM * vec4(objectNormal, 0.0)).xyz;')
-      .replace('#include <skinning_vertex>', 'transformed = (slM * vec4(transformed, 1.0)).xyz;')
+      .replace('#include <skinning_vertex>', `float slMk = floor(slFrame.w + 0.001), slDrop = (slFrame.w - slMk) * 2.0;
+int slAll = int(slMk), slGm = slAll & int(slLimb + 0.5);
+vSlRed = 0.0;
+if (slGm != 0) {
+  int slG = slGm == 1 ? 0 : slGm == 2 ? 1 : slGm == 4 ? 2 : slGm == 8 ? 3 : 4;
+  vec4 slPl = slGoreI[slG] * vec4(transformed, 1.0);
+  slPl.y *= (slG == 4 || (slAll & 12) == 12 && slG >= 2) ? 0.0 : ${SL_STUMP.toFixed(2)};
+  if (slG == 4) slPl = vec4(0.0, 0.0, 0.0, 1.0);
+  transformed = (slBoneM(slGoreB[slG]) * slGoreW[slG] * slPl).xyz;
+  vSlRed = 1.0;
+} else transformed = (slM * vec4(transformed, 1.0)).xyz;
+transformed.y -= slDrop * 0.85;`)
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vSlRed;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.03, 0.05), vSlRed * 0.85);')
   }
 }
 function* slSkinnedSteps(g, clipSrc, want, cap, tag, out, mapImage) {
   const root = cloneSkinned(g.scene); root.updateMatrixWorld(true)
   const lods = rigLods(root).filter(Boolean); if (!lods.length) lods.push(root.getObjectByProperty('isSkinnedMesh', true))
   const m0 = lods[0], skel = m0.skeleton, nb = skel.bones.length, W = nb * 3, mixer = new THREE.AnimationMixer(root), hb = skel.bones.findIndex(b => b.name === 'Head')
+  const gore = { I: [], W: [], B: [] }
+  for (const [, name] of SL_LIMBS) { const bi = skel.bones.findIndex(b => b.name === name), inv = bi >= 0 ? skel.boneInverses[bi].clone() : new THREE.Matrix4()
+    gore.I.push(inv); gore.W.push(inv.clone().invert()); gore.B.push(Math.max(0, bi)) }
   const list = want.map(([name, fps, loop]) => { const nm = name.endsWith('_') ? name + tag : name, c = clipSrc.find(c => c.name === nm)
     return c && { name: name.replace(/_$/, ''), c, fps, loop, n: Math.max(2, Math.round(c.duration * fps) + (loop ? 0 : 1)) } }).filter(Boolean)
   const rows = list.reduce((s, l) => s + l.n, 0), data = new Uint16Array(W * rows * 4), M = new THREE.Matrix4()
@@ -32399,14 +32893,19 @@ function* slSkinnedSteps(g, clipSrc, want, cap, tag, out, mapImage) {
     geo.applyMatrix4(m.bindMatrix)
     for (const name of Object.keys(geo.attributes)) if (!['position', 'normal', 'uv', 'skinIndex', 'skinWeight', 'color'].includes(name)) geo.deleteAttribute(name)
     const frame = new THREE.InstancedBufferAttribute(new Float32Array(cap * 4), 4); frame.setUsage(THREE.DynamicDrawUsage); geo.setAttribute('slFrame', frame)
+    { const SI = geo.attributes.skinIndex, SW = geo.attributes.skinWeight, own = m.skeleton.bones.map(b => SL_LIMB_BONES.find(([, re]) => re.test(b.name))?.[0] || 0), limb = new Float32Array(geo.attributes.position.count)
+      if (SI && SW) for (let i = 0; i < limb.length; i++) { const w = { 1: 0, 2: 0, 4: 0, 8: 0, 16: 0 }
+        for (const c of ['X', 'Y', 'Z', 'W']) { const bit = own[SI['get' + c](i)]; if (bit) w[bit] += SW['get' + c](i) }
+        for (const bit of [1, 2, 4, 8, 16]) if (w[bit] >= 0.5) limb[i] = bit }
+      geo.setAttribute('slLimb', new THREE.BufferAttribute(limb, 1)) }
     const mat = m.material.clone(), blend = k === 0
     if (mapImage && mat.map) { const T = mat.map.clone(); T.source = new THREE.Source(mapImage); T.needsUpdate = true; mat.map = T }
-    mat.defines = { ...mat.defines, USE_SKINNING: '' }; mat.onBeforeCompile = slSkinPatch(tex, blend); mat.customProgramCacheKey = () => 'sl-skin' + (blend ? '-b' : '')
+    mat.defines = { ...mat.defines, USE_SKINNING: '' }; mat.onBeforeCompile = slSkinPatch(tex, blend, gore); mat.customProgramCacheKey = () => 'sl-skin' + (blend ? '-b' : '')
     const im = new THREE.InstancedMesh(geo, mat, cap); im.count = 0; im.frustumCulled = false; im.castShadow = k === 0; im.receiveShadow = true
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.setColorAt(0, new THREE.Color(1, 1, 1)); im.instanceColor.setUsage(THREE.DynamicDrawUsage)
-    if (k === 0) { const dm = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }); dm.defines = { USE_SKINNING: '' }; dm.onBeforeCompile = slSkinPatch(tex, false); dm.customProgramCacheKey = () => 'sl-skin-depth'; im.customDepthMaterial = dm }
+    if (k === 0) { const dm = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }); dm.defines = { USE_SKINNING: '' }; dm.onBeforeCompile = slSkinPatch(tex, false, gore); dm.customProgramCacheKey = () => 'sl-skin-depth'; im.customDepthMaterial = dm }
     im.userData.frame = frame; im.userData.tris = (geo.index ? geo.index.count : geo.attributes.position.count) / 3
-    const nm = new THREE.MeshNormalMaterial({ toneMapped: false }); nm.defines = { USE_SKINNING: '' }; nm.onBeforeCompile = slSkinPatch(tex, blend)
+    const nm = new THREE.MeshNormalMaterial({ toneMapped: false }); nm.defines = { USE_SKINNING: '' }; nm.onBeforeCompile = slSkinPatch(tex, blend, gore)
     nm.customProgramCacheKey = () => 'sl-skin-normal' + (blend ? '-b' : ''); im.userData.normalMaterial = nm
     ims.push(im)
   }
@@ -32540,11 +33039,12 @@ function slFrameOf(kitm, name, ct, out, i) {
   const f = u * (C.loop ? C.n : C.n - 1), a = Math.floor(f), b = C.loop ? (a + 1) % C.n : Math.min(C.n - 1, a + 1)
   out.array[i * 4] = C.row + Math.min(a, C.n - 1); out.array[i * 4 + 1] = C.row + b; out.array[i * 4 + 2] = f - a; out.array[i * 4 + 3] = 0
 }
-function slDrawSkinned(kitm, p, d, tint, scale = 1) {
+function slDrawSkinned(kitm, p, d, tint, scale = 1, gone = 0) {
   const L = STREET.qualityLod[settings.quality] || STREET.lod, k = d < L[0] ? 0 : d < L[1] ? 1 : 2, im = kitm.ims[Math.min(k, kitm.ims.length - 1)]
   const C = kitm.clips.get(p.clip), lift = C?.abs ? 0 : -(kitm.footY || 0) * p.scale * scale * Math.cos(p.roll || 0)
   const i = slSet(im, p.x, p.y + lift, p.z, p.yaw, p.scale * scale, p.roll || 0, p.pitch || 0); if (i < 0) return
   if (!(p.fw > 0 && k === 0 && slFrameFade(kitm, p, im.userData.frame, i))) slFrameOf(kitm, p.clip, p.ct, im.userData.frame, i)
+  if (gone) im.userData.frame.array[i * 4 + 3] = gone
   if (tint) im.setColorAt(i, slCol.setRGB(tint[0], tint[1], tint[2]))
 }
 const SL_NUDGE = { char: 1.1, clear: 0.5, look: 1, lookMax: 10, hold: 0.35, out: 3, outCar: 4.5, back: 0.9, max: 2.6, moving: 0.15, offFrames: 30, acc: 14 }
@@ -32718,7 +33218,7 @@ function slFrame(t, dt, obl) {
         if (p.hidden || !near(p.x, p.z, D.bike) || !seen(p.x, 1, p.z, 2.4)) continue
         const d = Math.hypot(p.x - cx, p.z - cz), lod = d < 16 ? '' : '_lod1'
         if (!p.bikeDown) slBike(kit, lod, p)
-        if (p.scale > 0.01) { if (!p.rec) p.y = 0; slFadeSet(ag, T, p, d); slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++ }
+        if (p.scale > 0.01) { if (!p.rec) p.y = 0; slFadeSet(ag, T, p, d); slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint, 1, partsGoreWord(ag.id)); people++ }
         continue
       }
       if (p.hidden || p.scale <= 0.01 || !near(p.x, p.z, D.ped) || !seen(p.x, 1, p.z, 2.2)) continue
@@ -32762,10 +33262,10 @@ function slFrame(t, dt, obl) {
     if (p.hidden || !near(p.x, p.z, D.bike) || !seen(p.x, 1, p.z, 2.4)) continue
     const d = Math.hypot(p.x - cx, p.z - cz), lod = d < 16 ? '' : '_lod1'
     if (!p.bikeDown) slBike(kit, lod, p)
-    if (!p.hidden && p.scale > 0.01) { if (!p.rec) p.y = 0; slFadeSet(ag, T, p, d); slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++ }
+    if (!p.hidden && p.scale > 0.01) { if (!p.rec) p.y = 0; slFadeSet(ag, T, p, d); slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint, 1, partsGoreWord(ag.id)); people++ }
   }
   for (const { ag } of st.exits.values()) {
-    const p = slPose(ag, T, slPoseA); if (!p.hidden && near(p.x, p.z, D.ped)) slDrawSkinned(kit.bodies[ag.body], p, Math.hypot(p.x - cx, p.z - cz), ag.tint)
+    const p = slPose(ag, T, slPoseA); if (!p.hidden && near(p.x, p.z, D.ped)) slDrawSkinned(kit.bodies[ag.body], p, Math.hypot(p.x - cx, p.z - cz), ag.tint, 1, partsGoreWord(ag.id))
   }
   if (st.lineup) slDrawLineup(kit, st.lineup, T, cx, cz)
   slDrawSky(kit, T, cx, cz)
@@ -36231,7 +36731,8 @@ GAME.msgs = { host: {
 GAME.level = { loaded() { eventWorld(); PADS = LV.pads; navQueue.length = 0; initPickups() }, grown(ci, cj) { if (navLevel === levelId) navQueue.push([ci, cj]) }, tick() { for (let n = 0; n < 4 && navQueue.length; n++) navTile(...navQueue.shift()) } }
 GAME.crater = { spec: () => smashRow()?.smash, maxR: () => Math.round(CRATER_GROW * Math.max(...[...BOTS, ...CHARS].map(R => R.smash?.r || 0)) * 10) / 10 }
 
-GAME.objectBody = (body, K) => { if (K.carry) { body.setCcdMotionThreshold(objR(K)); body.setCcdSweptSphereRadius(0.6 * objR(K)) } }
+GAME.objectBody = (body, K) => { if (K.carry) { body.setCcdMotionThreshold(objR(K)); body.setCcdSweptSphereRadius(0.6 * objR(K)) }
+  if (K.cover) { body.setCcdMotionThreshold(0.05); body.setCcdSweptSphereRadius(0.12) } }
 
 function eventAt(d, pick = settings.event) {
   if (pick === 'off') return null
@@ -38947,7 +39448,7 @@ function draw(dt, t) {
     if (!me) { frameFailed('draw', new Error('the host has no player 0')); return }
     others = [...players].filter(([id]) => id !== 0)
       .map(([id, c]) => ({ id, ...(P => P ? { x: P[0], y: P[1], z: P[2], sim: c } : { x: c.x, y: c.y, z: c.z })(drawnPose(c)), yaw: c.yaw, wy: c.wy, vx: c.vx, vz: c.vz, dead: c.dead,
-                           cid: looksCid(c), disg: c.disguised ? 1 : 0, smk: c.smk || 0, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.mantle || c.mantleFall ? 4 : smashDiving(c) ? 3 : c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: drawnChain(c, id), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
+                           cid: looksCid(c), disg: c.disguised ? 1 : 0, smk: c.smk || 0, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.mantle || c.mantleFall ? 4 : smashDiving(c) ? 3 : c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: drawnChain(c, id), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c), gm: c.gm | 0,
                            gun: c.gun, pitch: c.pitch, hp: c.hp, kills: c.kills | 0, mark: c.mark, markT: c.markT, vy: c.vy, jl: c.jLock }))
     pkl = GAME.view.pickups()
   } else {
