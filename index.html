@@ -2012,9 +2012,11 @@ const capText = t => String(t == null ? '' : t)
   .replace(/[\u0000-\u001f\u007f]/g, '')
   .trim().slice(0, CAP_MAX)
 
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g
 const cleanName = t => String(t == null ? '' : t)
-  .replace(/\u00a7./g, '').replace(/[\u0000-\u001f\u007f]/g, '')
+  .replace(/\u00a7./g, '').replace(CONTROL_CHARS, '')
   .trim().slice(0, 16)
+const cleanText = t => String(t ?? '').replace(CONTROL_CHARS, '').slice(0, 160)
 
 const CAP_TEXT = [
   'SIX SIGMA', 'CPR CERTIFIED', 'LEVEL 2', 'SUPERVISOR', 'ASK ME ABOUT KPIs',
@@ -11128,7 +11130,7 @@ async function pinnedUrl(lib, type = 'text/javascript') {
 }
 async function pinnedImport(lib) { return import(await pinnedUrl(lib)) }
 const pinnedWorker = main =>
-  new Worker(URL.createObjectURL(new Blob([pinnedUrl + '\n' + pinnedImport + '\n(' + main + ')()'])))
+  new Worker(main.url ||= URL.createObjectURL(new Blob([pinnedUrl + '\n' + pinnedImport + '\n(' + main + ')()'])))
 const LIBS = {
   peer: { url: 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js',
     sri: 'sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR', global: 'Peer' },
@@ -13819,7 +13821,7 @@ const craterHeld = cr => craters.every((e, i) => Array.isArray(cr[i]) && e.every
 function takeCraters(cr, cv) {
   if (cr !== undefined && (cv | 0) !== craterV && GAME.crater.spec()) {
     if (craterOk(cr)) { const n = craters.length, grew = craters.some((e, i) => e[2] !== cr[i][2]); craters = cr.map(e => e.slice()); craterV = cv | 0; if (cr.length > n || grew) buildCrater(n) }
-    else if (!craterBehind) sysMsg('§cRefused the host\'s craters.')
+    else if (!craterBehind && hostLine()) sysMsg('§cRefused the host\'s craters.')
   }
   craterBehind = cv !== undefined && (cv | 0) !== craterV
 }
@@ -25497,7 +25499,9 @@ const menuUp = () => modalOpen || pauseOpen || settingsOpen || mapOpen
 const IS_TOUCH = (matchMedia && matchMedia('(pointer: coarse)').matches) ||
                  ('ontouchstart' in window && navigator.maxTouchPoints > 0)
 
-function lockPointer() {
+let lockRetried = false
+function lockPointer() { lockRetried = false; askLock() }
+function askLock() {
   if (IS_TOUCH || !renderer || serving) return
   try { renderer.domElement.requestPointerLock() } catch (e) {}
 }
@@ -25564,7 +25568,7 @@ function initInput() {
     if (phase === 'playing' && !chatOpen && !menuUp()) openPause()
   })
   document.addEventListener('pointerlockerror', () => {
-    if (phase === 'playing' && !chatOpen && !modalOpen) setTimeout(lockPointer, 500)
+    if (!lockRetried && phase === 'playing' && !chatOpen && !modalOpen) { lockRetried = true; setTimeout(askLock, 500) }
   })
   addEventListener('mousemove', e => {
     if (!locked || chatOpen || menuUp()) return
@@ -25754,19 +25758,32 @@ function jitLoop(n) {
 }
 const jit = { cold: 0, best: Infinity, windows: 0, off: null }
 function jitWindow() {
-  let t = now()
-  if (!jit.windows) { jitLoop(500); jit.cold = now() - t }
-  for (let k = 0; k < 40; k++) { t = now(); jitLoop(500); jit.best = Math.min(jit.best, now() - t) }
-  const slow = jit.cold / jit.best < 6
+  let slow, t
+  try {
+
+    const runs = Array.from({ length: 20 }, (_, k) => new Function('return ' + jitLoop + '\n;void ' + (jit.windows * 20 + k))())
+    t = now(); for (const f of runs) f(500); jit.cold = (now() - t) / 20
+    for (let k = 0; k < 40; k++) runs[0](500)
+    t = now(); for (let k = 0; k < 40; k++) runs[0](500); jit.best = (now() - t) / 40
+    slow = jit.cold / jit.best < 3
+  } catch {
+    t = now()
+    if (!jit.windows) { jitLoop(500); jit.cold = now() - t }
+    for (let k = 0; k < 40; k++) { t = now(); jitLoop(500); jit.best = Math.min(jit.best, now() - t) }
+    slow = jit.cold / jit.best < 6
+  }
   if (slow && ++jit.windows < 3) return void setTimeout(jitWindow, 2000)
   jit.off = slow; jitTip()
 }
 const isEdge = () => /\bEdg\//.test(navigator.userAgent)
-let played = false
+let played = false, jitSeen = false, jitTold = false
 function jitTip() {
-  const tip = el('#jittip'), t = el('#jittip-t')
+  const tip = el('#jittip'), t = el('#jittip-t'), on = jit.off && isEdge() && !settings.jitTip
   t.title = t.textContent
-  tip.style.display = jit.off && isEdge() && !settings.jitTip && !played && phase === 'menu' ? '' : 'none'
+  tip.style.display = on && !played && phase === 'menu' ? '' : 'none'
+  jitSeen ||= tip.style.display === ''
+
+  if (on && phase === 'playing' && !jitSeen && !jitTold) { jitTold = true; sysMsg('§e' + t.textContent + ' §f' + location.protocol + '//' + location.host) }
 }
 let startLog = null
 const markStart = k => startLog?.marks.push([k, now() - startLog.t0])
@@ -25883,7 +25900,7 @@ function gpuName() {
     const gl = renderer && renderer.getContext && renderer.getContext()
     if (!gl) return ''
     const ext = gl.getExtension('WEBGL_debug_renderer_info')
-    return String((ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || '')
+    return String((ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '')
   } catch (e) { return '' }
 }
 
@@ -27535,8 +27552,9 @@ function hookRename(id, p, d) {
   const was = p.name
   let name = cleanName(d.name) || was
   if (name !== was && hookFilters.has('join')) name = hookFilter('join', { player: { ...hookPlayer(id), name }, rename: true, was }, hookJoinTake)?.player.name ?? was
+  if (name === was) return
   p.name = name; pushRoster()
-  if (name !== was && hooked['player.rename']) hookEmit('player.rename', { player: hookPlayer(id), was })
+  if (hooked['player.rename']) hookEmit('player.rename', { player: hookPlayer(id), was })
 }
 function hookMatchStart(info) {
   if (hookMatchOpen && hooked['match.end']) hookEmit('match.end', { reason: 'restart', winner: null, standings: hookStandings() })
@@ -28372,6 +28390,7 @@ let fpsCap = (n => n >= 5 && n <= 240 ? n : 0)(+new URLSearchParams(location.sea
 let lastGapMs = 0
 const ICE_GRACE_MS = 4000
 const GUEST_DEAD_MS = 12000
+const JOIN_OPEN_MS = 20000
 const GUEST_LOAD_MS = 60000
 let lastRecvAt = 0
 const lastSeen = new Map()
@@ -28392,8 +28411,34 @@ const OPENING = 'opening…', codeText = () => isHost && !roomOpen ? OPENING : r
 let outSeq = 0, lastChatSeq = new Map()
 const lastChatAt = new Map()
 const CHAT_MIN_MS = 250
+const NICK_MIN_MS = 1000, nickAt = new Map(), nickWait = new Map()
+function nickLater(id, d) {
+  const due = (nickAt.get(id) ?? -Infinity) + NICK_MIN_MS, pending = nickWait.get(id)
+  if (pending) { pending.data = d; return }
+  if (now() >= due) return nickTake(id, d)
+  const w = { data: d, timer: 0 }
+  w.timer = setTimeout(() => {
+    if (nickWait.get(id) !== w) return
+    nickWait.delete(id); nickTake(id, w.data)
+  }, Math.max(0, due - now()))
+  nickWait.set(id, w)
+}
+function nickForget(id) {
+  const w = nickWait.get(id)
+  if (w) clearTimeout(w.timer)
+  nickWait.delete(id); nickAt.delete(id)
+}
+function nickTake(id, d) {
+  const p = roster.get(id)
+  if (!p || !conns.has(id)) return
+  nickAt.set(id, now())
+  if (hookFilters.has('join') || hooked['player.rename']) return hookRename(id, p, d)
+  const name = cleanName(d.name) || p.name
+  if (name !== p.name) { p.name = name; pushRoster() }
+}
 
 const conns = new Map()
+const joining = new Map(), refusing = new Set()
 const inputs = new Map()
 const inputSeq = new Map()
 const inQ = new Map()
@@ -28609,6 +28654,13 @@ function setStatus(msg, cls) {
   box.textContent = msg
   box.className = cls || ''
 }
+const SIGNALING_DOWN = new Set(['network', 'socket-error', 'socket-closed', 'server-error'])
+function failType(e) { const type = String(e?.type || e?.message || e); console.warn('connection failure: ' + type); return type }
+function failWords(type, trying) {
+  return SIGNALING_DOWN.has(type) ? "The signaling server can't be reached right now."
+    : type === 'peer-unavailable' ? (trying ? "The room isn't open yet." : "The room isn't there.")
+    : "The room couldn't be reached."
+}
 
 function snapHz(n) { return n <= 4 ? 30 : n <= 12 ? 22 : n <= 20 ? 16 : 12 }
 function snapRateNow() {
@@ -28636,7 +28688,8 @@ function watchLink(c, id) {
   let grace = 0
   const gone = why => {
     clearTimeout(grace)
-    if (id === null) endSession('Disconnected', why, true)
+    if (conns.get(id === null ? 0 : id) !== c || !connected) return
+    if (id === null) endSession('Disconnected', why, 'lost')
     else dropGuest(id, 'dropped', 'The link to this game failed.')
   }
   pc.addEventListener('iceconnectionstatechange', () => {
@@ -28652,6 +28705,20 @@ function watchLink(c, id) {
 }
 
 const MSG_CAP = 1 << 16
+const LINK_MSG_MAX = 16299
+const FROM_HOST = { rate: 1 << 20, burst: (1 << 20) * GUEST_DEAD_MS / 1000, msgs: 512 }, FROM_GUEST = { rate: 64 << 10, burst: (64 << 10) * LINK_DEAD_MS / 1000, msgs: 256 }
+function guardLink(c, { rate, burst, msgs = Infinity }) {
+  const take = typeof c._handleDataMessage === 'function' ? c._handleDataMessage.bind(c) : null
+  if (!take) { try { c.close() } catch (e) {} ; return false }
+  let credit = burst, at = now()
+  c._handleDataMessage = e => {
+    const d = e && e.data, n = d == null ? 0 : d.byteLength ?? d.length ?? 0, t = now()
+    credit = Math.min(burst, credit + (t - at) * rate / 1000); at = t
+    if (n > LINK_MSG_MAX || (credit -= Math.max(n, rate / msgs)) < 0) { try { c.close() } catch (x) {} ; return }
+    take(e)
+  }
+  return true
+}
 function decode(d) {
   if (typeof d !== 'string') return d
   if (d.length > MSG_CAP) return null
@@ -28673,10 +28740,32 @@ function announce(raw) {
   if (isHost) broadcast({ k: 'sys', m: raw })
 }
 
+const CHURN_MS = 1000
+let churnAt = -Infinity, churnLater = 0, churnN = { joined: 0, left: 0 }, churnOne = ''
+function churnSay(name, how) {
+  if (!churnLater && now() - churnAt >= CHURN_MS) { churnAt = now(); return announce(gameText(how, { name })) }
+  churnN[how]++; churnOne = gameText(how, { name })
+  if (!churnLater) churnLater = setTimeout(churnTell, churnAt + CHURN_MS - now())
+}
+function churnTell() {
+  churnLater = 0
+  const { joined, left } = churnN, n = joined + left, told = (k, how) => k + (k > 1 ? ' players ' : ' player ') + how
+  churnN = { joined: 0, left: 0 }
+  if (!n) return
+  churnAt = now()
+  announce(n === 1 ? churnOne : '§e' + [joined && told(joined, 'joined'), left && told(left, 'left')].filter(Boolean).join(', '))
+}
+const ROSTER_BURST = 4, ROSTER_PER_S = 4
+let rosterTokens = ROSTER_BURST, rosterAt = 0, rosterLater = 0
+const rosterFill = () => { const t = now(); rosterTokens = Math.min(ROSTER_BURST, rosterTokens + (t - rosterAt) * ROSTER_PER_S / 1000); rosterAt = t }
 const rosterList = () => [...roster].map(([id, p]) => [id, p.cid, p.name, p.cap || ''])
 function pushRoster() {
-  broadcast({ k: 'roster', list: rosterList() })
+  if (rosterLater) return
+  rosterFill()
+  if (rosterTokens < 1) { rosterLater = setTimeout(rosterSend, Math.ceil((1 - rosterTokens) * 1000 / ROSTER_PER_S)); return }
+  rosterSend()
 }
+function rosterSend() { rosterLater = 0; rosterFill(); rosterTokens--; broadcast({ k: 'roster', list: rosterList() }) }
 
 function applyRoster(list) {
   const seen = new Set()
@@ -28691,11 +28780,13 @@ function applyRoster(list) {
     tracks.delete(id)
     lastChatSeq.delete('p' + id)
   }
+  for (const k of [...lastChatSeq.keys()]) if (typeof k === 'string' && !seen.has(+k.slice(1))) lastChatSeq.delete(k)
   prepareRows([...roster].map(([id, p]) => [id, p.cid]))
 }
 
 function startHost() {
   if (startingGame) return
+  stopping = false
   enforcersHostOff = false
   let citySeed
   try { citySeed = faustParseSeed(el('#host-seed')?.value ?? faustRequestedSeed) ?? landingSeed ?? crypto.getRandomValues(new Uint32Array(1))[0] }
@@ -28744,7 +28835,7 @@ function startHost() {
 
 function openHostPeer(attempt) {
   clearTimeout(relinkTimer); relinkTimer = 0; relinkTries = 0
-  peer = new Peer(ROOM_NS + roomCodeStr)
+  const hostPeer = peer = new Peer(ROOM_NS + roomCodeStr)
   peer.on('error', e => {
     if (phase === 'playing' && roomOpen) {
       if (e.type === 'unavailable-id') relinkLater()
@@ -28765,7 +28856,8 @@ function openHostPeer(attempt) {
       return
     }
     if (e.type === 'unavailable-id') { note('Could not claim a room code.', 'err'); return }
-    note('Signaling error: ' + e.type, 'err')
+    const type = failType(e)
+    note(SIGNALING_DOWN.has(type) ? failWords(type) : 'Could not open the room.', 'err')
   })
   peer.on('open', () => {
     relinkTries = 0
@@ -28778,38 +28870,51 @@ function openHostPeer(attempt) {
   })
   peer.on('disconnected', () => { if (phase !== 'menu') relinkLater() })
   peer.on('connection', c => {
+    if (stopping) { try { c.close() } catch (e) {} ; return }
     if (c.serialization !== 'json') { try { c.close() } catch (e) {} ; return }
-    const id = conns.size < MAX_PLAYERS - (serving ? 0 : 1) && takeId(), t0 = now()
-    if (!id) return void c.on('open', () => { c.send({ k: 'full', n: MAX_PLAYERS }); setTimeout(() => { try { c.close() } catch (e) {} }, 150) })
-    joinNote('joining')
+    if (!guardLink(c, FROM_GUEST)) return
+    if (hostPeer !== peer) { try { c.close() } catch (e) {} ; return }
+    const id = conns.size + joining.size < MAX_PLAYERS - (serving ? 0 : 1) && takeId(), t0 = now()
+    if (id) joining.set(id, c)
+    else if (refusing.size < MAX_PLAYERS) refusing.add(c)
+    else { try { c.close() } catch (e) {} ; return }
+    if (id) joinNote('joining')
+    const forget = () => { clearInterval(watch); refusing.delete(c); if (joining.get(id) === c) joining.delete(id) }
     const watch = setInterval(() => {
-      if (c.open || !peer || peer.destroyed) return clearInterval(watch)
-      if (now() - t0 < 15000) return
-      clearInterval(watch)
+      if (c.open) return forget()
+      if (hostPeer === peer && !hostPeer.destroyed && now() - t0 < JOIN_OPEN_MS) return
+      forget()
       const p = c.peerConnection
-      joinNote('never connected (' + (p ? 'ICE ' + p.iceConnectionState + ', link ' + p.connectionState : 'no link') + ')')
+      if (id) joinNote('never connected (' + (p ? 'ICE ' + p.iceConnectionState + ', link ' + p.connectionState : 'no link') + ')')
+      try { c.close() } catch (e) {}
     }, 1000)
     c.on('open', () => {
+      const held = id ? joining.get(id) === c : refusing.has(c)
+      forget()
+      if (!held || hostPeer !== peer) { try { c.close() } catch (e) {} ; return }
+      if (!id || conns.size >= MAX_PLAYERS - (serving ? 0 : 1)) { c.send({ k: 'full', n: MAX_PLAYERS }); setTimeout(() => { try { c.close() } catch (e) {} }, 150); return }
       conns.set(id, c)
       lastSeen.set(id, now())
       watchLink(c, id)
       c.send(welcome(id)); c.send({ k: 'roster', list: rosterList() })
       if (bcastUrl) bcastSay(c)
     })
-    c.on('data', raw => { if (!conns.has(id)) return; countDown(raw); lastSeen.set(id, now()); onHostData(id, decode(raw)) })
+    c.on('data', raw => { if (conns.get(id) !== c) return; countDown(raw); lastSeen.set(id, now()); onHostData(id, decode(raw)) })
     c.on('close', () => {
+      forget()
+      if (conns.get(id) !== c) return
       const had = conns.delete(id), p = roster.get(id)
       const gone = p && hooked['player.leave'] && players.has(id) && { player: hookWho(players.get(id)), reason: hookGone.get(id) || 'left' }
       hookGone.delete(id)
       if (players.has(id)) { clearSeat(players.get(id)); detachBody(players.get(id)) }
       players.delete(id); roster.delete(id); GAME.lifecycle.left(id); inputs.delete(id); pkSent.delete(id); tierSent.delete(id); objSent.delete(id)
-      inputSeq.delete(id); lastChatSeq.delete(id); lastChatAt.delete(id); lastSeen.delete(id)
+      inputSeq.delete(id); lastChatSeq.delete(id); lastChatAt.delete(id); lastSeen.delete(id); nickForget(id)
       inQ.delete(id); inAck.delete(id)
-      if (p) announce(gameText('left', { name: p.name }))
+      if (p) churnSay(p.name, 'left')
       if (gone) hookEmit('player.leave', gone)
       dropAvatar(id)
       pushRoster()
-      if (serving && had && !conns.size) GAME.lifecycle.empty()
+      if (serving && !stopping && had && !conns.size) GAME.lifecycle.empty()
     })
   })
 }
@@ -28822,6 +28927,7 @@ function takeId() {
   for (let n = 1; n < BOT_ID0; n++) {
     const id = nextId
     nextId = nextId + 1 < BOT_ID0 ? nextId + 1 : 1
+    if (joining.has(id)) continue
     if (!conns.has(id) && !players.has(id) && !roster.has(id) && !lastSeen.has(id)) return id
   }
   return 0
@@ -28838,7 +28944,7 @@ function relinkLater() {
   }, Math.min(30000, 1000 * Math.pow(2, relinkTries++)))
 }
 
-let serving = false, servedAt = 0
+let serving = false, servedAt = 0, stopping = false, stopTimer = 0
 
 function startServer() {
   serving = true
@@ -28868,8 +28974,10 @@ function endServing() {
 }
 
 function stopServing() {
-  broadcast({ k: 'hostgone' })
-  setTimeout(resetToMenu, 120)
+  if (stopping) return
+  stopping = true
+  broadcast(serveCode ? { k: 'hostgone', back: true } : { k: 'hostgone' })
+  stopTimer = setTimeout(() => { stopTimer = 0; resetToMenu() }, 120)
 }
 
 
@@ -28887,7 +28995,7 @@ const HOST_MSGS = {
     GAME.rows.joined(players.get(id), cid)
     inputs.set(id, { f: 0, r: 0, j: false, fire: false, yaw: 0, pitch: 0 })
     inQ.set(id, []); inAck.set(id, 0)
-    announce(gameText('joined', { name }))
+    churnSay(name, 'joined')
     pushRoster()
     if (hooked['player.join']) hookEmit('player.join', { player: hookWho(players.get(id)) })
       return
@@ -28898,9 +29006,10 @@ const HOST_MSGS = {
     const tnow = now()
     if (tnow - (lastChatAt.get(id) || 0) < CHAT_MIN_MS) return
     lastChatAt.set(id, tnow)
-    let text = String(d.m || '').slice(0, 160)
+    let text = cleanText(d.m || '')
+    if (!text) return
     if (hookFilters.has('chat') || hooked.chat) {
-      const v = hookFilter('chat', { player: hookPlayer(id), text, action: !!d.a }, (v, r) => typeof r.text === 'string' ? { ...v, text: r.text.slice(0, 160) } : v)
+      const v = hookFilter('chat', { player: hookPlayer(id), text, action: !!d.a }, (v, r) => typeof r.text === 'string' ? { ...v, text: cleanText(r.text) } : v)
       if (!v?.text) return
       text = v.text
       if (hooked.chat) hookEmit('chat', v)
@@ -28909,11 +29018,7 @@ const HOST_MSGS = {
     broadcast({ k: 'c', id, m: text, a: !!d.a, s: d.s }, id)
     return
   } },
-  nick: { apply: (id, d) => {
-    const p = roster.get(id)
-    if (p && (hookFilters.has('join') || hooked['player.rename'])) return hookRename(id, p, d)
-    if (p) { p.name = cleanName(d.name) || p.name; pushRoster() }
-  } },
+  nick: { apply: (id, d) => { nickLater(id, d) } },
   bye: { apply: (id, d) => {
     const c = conns.get(id)
     if (c) { try { c.close() } catch (e) {} }
@@ -28956,53 +29061,72 @@ function onHostData(id, d) {
   if (M) { const v = M.validate ? M.validate(d) : d; return v ? M.apply(id, v) : undefined }
 }
 
-function startJoin(code) {
-  if (phase !== 'menu') return
+function startJoin(code, again) {
+  if (phase !== 'menu' && !(again && phase === 'ended')) return
   background.cancel('world'); worldPreparing = false; landingReady = ''
   isHost = false; phase = 'connecting'
   scarsLater = false; if (!scarMesh) prepareScars()
   roomCodeStr = code.trim().toUpperCase()
   predicted = newChar(myCid, 6, 0); admitted = false; helloAt = 0; helloDue = true
+  clearTimeout(relinkTimer); relinkTimer = 0; relinkTries = 0
   const t0 = now(), stage = t => phase === 'connecting' && setStatus('Connecting… ' + t)
   stage('to the signaling server')
-  peer = new Peer()
-  peer.on('error', e => {
-    if (phase === 'playing') endSession('Disconnected', 'Connection error: ' + e.type, true)
-    else setStatus('Could not connect: ' + e.type, 'err')
+  const p = peer = new Peer()
+  const linked = () => p === peer && phase === 'playing' && !!conns.get(0)?.open
+  const watch = setInterval(() => {
+    if (p !== peer || phase !== 'connecting') return clearInterval(watch)
+    const c = conns.get(0), pc = c?.peerConnection
+    const at = !c ? 'no signaling connection' : pc ? 'ICE ' + pc.iceConnectionState + ', link ' + pc.connectionState : 'no answer from the host'
+    if (now() - t0 < 15000) return stage('(' + at + ')')
+    clearInterval(watch)
+    setStatus('Could not reach the host after 15 s (' + at + '). The room may be closed, or the network blocks a direct link.', 'err')
+    rejoinMissed('no answer')
+  }, 1000)
+  p.on('error', e => {
+    if (p !== peer || linked()) return
+    const type = failType(e)
+    if (phase === 'playing') endSession('Disconnected', failWords(type, true), 'lost')
+    else { setStatus('Could not connect. ' + failWords(type, !!rejoinTry), 'err'); rejoinMissed(type) }
   })
-  peer.on('close', () => {
-    if (phase === 'playing') endSession('Disconnected', 'The connection closed.', true)
+  p.on('disconnected', () => { if (linked()) relinkLater() })
+  p.on('close', () => {
+    if (p === peer && connected && phase === 'playing') endSession('Disconnected', 'The connection closed.', 'lost')
   })
-  peer.on('open', () => {
-    const c = peer.connect(ROOM_NS + roomCodeStr, { reliable: false, serialization: 'json' })
+  p.on('open', () => {
+    if (p !== peer) return
+    relinkTries = 0
+    if (conns.has(0)) return
+    const c = p.connect(ROOM_NS + roomCodeStr, { reliable: false, serialization: 'json' })
     conns.set(0, c)
+    if (!guardLink(c, FROM_HOST)) return
     stage('asking the host')
-    const watch = setInterval(() => {
-      if (phase !== 'connecting' || c.open) return clearInterval(watch)
-      const p = c.peerConnection, at = p ? 'ICE ' + p.iceConnectionState + ', link ' + p.connectionState : 'no answer from the host'
-      if (now() - t0 < 15000) return stage('(' + at + ')')
-      clearInterval(watch)
-      setStatus('Could not reach the host after 15 s (' + at + '). The room may be closed, or the network blocks a direct link.', 'err')
-    }, 1000)
-    c.on('error', e => setStatus('Could not connect: ' + (e && (e.type || e.message) || e), 'err'))
+    c.on('error', e => {
+      if (p !== peer || conns.get(0) !== c) return
+      const type = failType(e)
+      setStatus('Could not connect. ' + failWords(type, !!rejoinTry), 'err'); rejoinMissed(type)
+    })
     c.on('open', () => {
+      if (p !== peer || conns.get(0) !== c || phase !== 'connecting') return void c.close()
+      clearInterval(watch)
       connected = true
       watchLink(c, null)
       beginPlay()
     })
-    c.on('data', raw => { countDown(raw); onGuestData(decode(raw)) })
+    c.on('data', raw => { if (p !== peer || conns.get(0) !== c) return; countDown(raw); onGuestData(decode(raw)) })
     c.on('close', () => {
+      if (p !== peer || conns.get(0) !== c || !connected && phase !== 'connecting') return
+      if (phase === 'connecting') return rejoinMissed('no answer')
       const froze = now() - last
       if (kickedBy) endSession('Kicked', kickedBy + ' removed you from the game.', true)
       else if (droppedWhy) endSession('Disconnected', droppedWhy, true)
       else if (froze > GUEST_DEAD_MS) endSession('Disconnected', 'This page froze for ' + Math.round(froze / 1000) + ' s, longer than the host waits for word from it, so the host dropped it.' +
-        (softGL() ? ' This browser draws without graphics acceleration, which is too slow for this game here.' : ''), true)
-      else endSession('Disconnected', 'Lost connection to the host.', true)
+        (softGL() ? ' This browser draws without graphics acceleration, which is too slow for this game here.' : ''), 'lost')
+      else endSession('Disconnected', 'Lost connection to the host.', 'lost')
     })
   })
 }
 
-const LEVEL_SWITCH_MS = 1000
+const LEVEL_SWITCH_MS = 5000
 let levelSwitchAt = -Infinity, levelMissTold = false, guestLoading = null
 function guestLoad(lv, gen) {
   background.cancel('world'); worldPreparing = false; landingReady = ''
@@ -29043,6 +29167,32 @@ function hostLevel(lv, ls, lh) {
   }
 }
 
+const LINE_BURST = 40, LINE_PER_S = 20, CHAT_SEQ_MAX = 4 * MAX_PLAYERS
+let lineTokens = LINE_BURST, lineAt = 0, linesDropped = 0, linesLater = 0
+function hostLine() {
+  const t = now()
+  lineTokens = Math.min(LINE_BURST, lineTokens + (t - lineAt) * LINE_PER_S / 1000); lineAt = t
+  if (lineTokens >= 1) { lineTokens--; return true }
+  linesDropped++
+  if (!linesLater) linesLater = setTimeout(linesTell, 1000)
+  return false
+}
+function linesTell() { linesLater = 0; const n = linesDropped; linesDropped = 0; if (n) sysMsg('§8' + n + (n > 1 ? ' lines' : ' line') + ' from the host not shown') }
+let rosterNext = null, rosterTookAt = -Infinity, rosterWait = 0
+function takeRoster(list) {
+  list = Array.isArray(list) ? list : []
+  if (list.length > ENTITY_MAX) { snapDropped += list.length - ENTITY_MAX; list = list.slice(0, ENTITY_MAX) }
+  rosterNext = list
+  if (rosterWait) return
+  const due = rosterTookAt + 500 / ROSTER_PER_S - now()
+  if (due > 0) rosterWait = setTimeout(rosterTake, Math.ceil(due))
+  else rosterTake()
+}
+function rosterTake() {
+  rosterWait = 0; rosterTookAt = now()
+  const list = rosterNext; rosterNext = null
+  applyRoster(list)
+}
 const GUEST_MSGS = {
   welcome: { apply: d => {
     myId = d.id | 0
@@ -29052,7 +29202,7 @@ const GUEST_MSGS = {
     return
   } },
   roster: { apply: d => {
-    applyRoster(d.list || []); return
+    takeRoster(d.list); return
   } },
   pong: {
     validate: d => (d.s | 0) === rttSeq ? d : null,
@@ -29066,18 +29216,22 @@ const GUEST_MSGS = {
     },
   },
   lag: { apply: d => { onLag(d.n) } },
-  sys: { apply: d => { sysMsg(String(d.m || '').slice(0, 200)) } },
+  sys: { apply: d => { sysMsg(String(d.m || '').slice(0, 200)) }, validate: d => hostLine() ? d : null },
   pd: { apply: d => { perfHeard(d) } },
   kicked: { apply: d => { kickedBy = String(d.by || 'the host').slice(0, 16) } },
   dropped: { apply: d => { droppedWhy = String(d.why || 'The host let this game go.').slice(0, 240)
     setTimeout(() => { if (droppedWhy && !isHost && phase === 'playing') endSession('Disconnected', droppedWhy, true) }, 600) } },
   full: { apply: d => { endSession('Room full', 'The room takes ' + (d.n | 0) + ' players.', false) } },
-  hostgone: { apply: () => { endSession('Host left', 'The host closed the game.', true) } },
+  hostgone: { validate: d => ({ ...d, back: d.back === true }), apply: d => {
+    if (d.back) endSession('Disconnected', 'The server is restarting…', 'back')
+    else endSession('Host left', 'The host closed the game.', true) } },
   bcast: { validate: d => typeof d.u === 'string' && Number.isInteger(d.n) && d.n >= 0 && bcastOk(d.u) ? d : null, apply: d => { bcastHear(d.u, d.n) } },
   c: { apply: d => {
-    const key = 'p' + d.id
+    const key = 'p' + (d.id | 0)
     if ((lastChatSeq.get(key) || -1) >= d.s) return
     lastChatSeq.set(key, d.s)
+    if (lastChatSeq.size > CHAT_SEQ_MAX) lastChatSeq.delete(lastChatSeq.keys().next().value)
+    if (!hostLine()) return
     showChat(d.id | 0, String(d.m || '').slice(0, 160), !!d.a)
     return
   } },
@@ -29239,13 +29393,18 @@ function reconcile(a) {
 }
 
 function clearSession() {
+  connected = false
+  stopping = true
+  clearTimeout(stopTimer); stopTimer = 0
   pauseOpen = false; closeMap(); closeSettings(); helloDue = false
   perfSays.clear(); perfBubbles()
   if (isHost) hookMatchEnd('stop', null)
   endServing()
   const pe = el('#pause')
   if (pe) pe.classList.remove('open')
-  for (const [, c] of conns) { try { c.close() } catch (e) {} }
+  const closing = [...conns.values(), ...joining.values(), ...refusing]
+  conns.clear(); joining.clear(); refusing.clear()
+  for (const c of closing) { try { c.close() } catch (e) {} }
   conns.clear(); inputs.clear(); inputSeq.clear(); lastChatSeq.clear(); lastChatAt.clear()
   inQ.clear(); inAck.clear()
   for (const c of players.values()) moveReset(c)
@@ -29268,6 +29427,12 @@ function clearSession() {
   spawnObjects()
   lastRecvAt = 0; lastSeen.clear()
   levelSwitchAt = -Infinity; levelMissTold = false
+  for (const id of nickWait.keys()) nickForget(id)
+  nickAt.clear()
+  clearTimeout(rosterLater); rosterLater = 0; rosterTokens = ROSTER_BURST; rosterAt = now()
+  clearTimeout(rosterWait); rosterWait = 0; rosterNext = null; rosterTookAt = -Infinity
+  clearTimeout(churnLater); churnLater = 0; churnAt = -Infinity; churnN = { joined: 0, left: 0 }; churnOne = ''
+  clearTimeout(linesLater); linesLater = 0; linesDropped = 0; lineTokens = LINE_BURST; lineAt = now()
   outSeq = 0; spawnAvoid = []
   pending.length = 0; replaySteps = 0; reconcileErr = 0; predJump = false; tickSamples.clear()
   inqFloor.clear(); inqAt = 0; lagOwed = 0; lagGive = 0
@@ -29279,15 +29444,39 @@ function endSession(title, msg, rejoinable) {
   if (phase === 'ended') return
   phase = 'ended'
   const canRejoin = rejoinable && !!roomCodeStr
+  const again = (rejoinable === 'lost' || rejoinable === 'back') && canRejoin && !kickedBy && !droppedWhy ? roomCodeStr : ''
   try { console.warn('[maniak] session ended: ' + title + ': ' + msg) } catch (e) {}
   try { clearSession() } catch (e) { frameFailed('end of session', e) }
   el('#end-title').textContent = title
   el('#end-msg').textContent = msg
   el('#end-rejoin').style.display = canRejoin ? '' : 'none'
   show('endmodal', 1)
+  if (again) rejoinLater(again, rejoinable === 'back'); else rejoinStop()
+}
+
+const REJOIN_MS = [2000, 5000, 12000], RESTART_MS = [5000, 15000, 40000], REJOIN_SPREAD = 0.3
+const TAIL_MS = 60000, TAIL_TRIES = 30, TAIL_FOR_MS = 30 * 60000
+let rejoinTimer = 0, rejoinTry = 0, rejoinPlan = REJOIN_MS, tailEnd = 0
+function rejoinLater(code, restart) {
+  clearTimeout(rejoinTimer); rejoinTimer = 0
+  if (!rejoinTry) rejoinPlan = restart ? RESTART_MS : REJOIN_MS
+  const quick = rejoinTry < rejoinPlan.length
+  if (rejoinTry === rejoinPlan.length) tailEnd = now() + TAIL_FOR_MS
+  const wait = (quick ? rejoinPlan[rejoinTry] : TAIL_MS) * (1 + (2 * Math.random() - 1) * REJOIN_SPREAD)
+  if (!quick && (rejoinTry >= rejoinPlan.length + TAIL_TRIES || now() + wait > tailEnd)) { rejoinTry = 0; return }
+  rejoinTry++
+  if (quick) { el('#end-title').textContent = 'Reconnecting…'; el('#end-rejoin').style.display = 'none' }
+  rejoinTimer = setTimeout(() => { rejoinTimer = 0; if (phase === 'ended') startJoin(code, true) }, wait)
+}
+function rejoinStop() { clearTimeout(rejoinTimer); rejoinTimer = 0; rejoinTry = 0 }
+const rejoinMissed = type => {
+  if (!rejoinTry || phase !== 'connecting') return
+  endSession('Disconnected', failWords(type, true), 'lost')
+  if (!rejoinTry) el('#end-msg').textContent = failWords(type, false)
 }
 
 function resetToMenu() {
+  rejoinStop()
   try { clearSession() } catch (e) { frameFailed('menu', e) }
   phase = 'menu'
   roomCodeStr = ''
@@ -29313,6 +29502,7 @@ function initEndModal() {
 
 function beginPlay() {
   phase = 'playing'
+  if (rejoinTry) { rejoinStop(); show('endmodal') }
   if (!isHost) setStatus('')
   if (!startingGame) document.body.classList.remove('starting')
   played = true; jitTip()
@@ -29360,14 +29550,26 @@ function remoteAt(t) {
 const BCAST_URL_MAX = 1024, BCAST_EVERY_MS = 3000, BCAST_LEASE_MS = 10000, BCAST_BURST = 3, BCAST_REFILL_MS = 5000
 const BCAST_HZ = 15, BCAST_W = 640, BCAST_H = 360, BCAST_MAX_W = 1920, BCAST_MAX_H = 1080, BCAST_REACH = 8
 const BCAST_BEHIND_S = 10, BCAST_RETRY_MS = 5000, BCAST_RETRY_MAX_MS = 60000
+const BCAST_LIST_MAX = 8 << 20, BCAST_SEG_MAX = 16 << 20
 let bcastUrl = '', bcastN = 0, bcastSaidAt = 0, bcastTimer = 0
 const bc = { url: '', n: -1, heard: 0, tokens: BCAST_BURST, refill: 0, playing: '', video: null, hls: null, told: '',
              last: '', retries: 0, retryAt: 0, played: false }
 
+function localHost(h) {
+  if (/(^|\.)localhost\.?$|\.local\.?$/.test(h)) return true
+  const v6 = /^\[(.+)\]$/.exec(h)?.[1], m = v6 && /^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/.exec(v6)
+  if (v6 && !m) return v6 === '::' || v6 === '::1' || /^(f[cd][\da-f]{2}|fe[89ab][\da-f]):/.test(v6)
+  const ip = m ? [m[1], m[2]].flatMap(g => [parseInt(g, 16) >> 8, parseInt(g, 16) & 255]) : /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(h)?.slice(1).map(Number)
+  if (!ip) return false
+  const [a, b] = ip
+  return a === 0 || a === 10 || a === 127 || a === 100 && b >= 64 && b < 128 || a === 169 && b === 254 || a === 172 && b >= 16 && b < 32 ||
+    a === 192 && b === 168 || a === 198 && (b === 18 || b === 19)
+}
+const pageLocal = () => !/^https?:$/.test(location.protocol) || localHost(location.hostname)
 function bcastOk(u) {
   if (u === '') return true
   if (typeof u !== 'string' || u.length > BCAST_URL_MAX) return false
-  try { const p = new URL(u); return p.protocol === 'https:' && !p.username && !p.password } catch (e) { return false }
+  try { const p = new URL(u); return p.protocol === 'https:' && !p.username && !p.password && (pageLocal() || !localHost(p.hostname)) } catch (e) { return false }
 }
 const bcastOrigin = u => { try { return new URL(u).origin } catch (e) { return '' } }
 
@@ -29423,15 +29625,62 @@ function bcastPlay() {
     const H = window.Hls
     if (bc.video !== v) return
     if (!H.isSupported()) return v.canPlayType('application/vnd.apple.mpegurl') ? void (v.src = u, v.play().catch(() => {})) : fail('this browser cannot play HLS', true)
-    const h = bc.hls = new H({ lowLatencyMode: true, maxBufferLength: 8, backBufferLength: 4 })
+    const big = () => fail('it is larger than this game will load')
+    const h = bc.hls = new H({ lowLatencyMode: true, maxBufferLength: 8, backBufferLength: 4, xhrSetup: xhr => bcastCap(xhr, big), fLoader: bcastSegLoader(big) })
     h.on(H.Events.MANIFEST_PARSED, (e, d) => { const L = d.levels, side = i => Math.min(L[i].width || L[i].height || 0, L[i].height || L[i].width || 0)
       const under = L.map((l, i) => i).filter(i => side(i) <= BCAST_H)
       h.autoLevelCapping = under.length ? under.reduce((a, i) => side(i) >= side(a) ? i : a) : L.reduce((a, l, i) => side(i) < side(a) ? i : a, 0) })
-    h.on(H.Events.ERROR, (e, d) => { if (d.fatal) fail(d.type === H.ErrorTypes.NETWORK_ERROR ? 'its server does not let this game load it (CORS), or it is not there' : 'it could not be played') })
+    h.on(H.Events.ERROR, (e, d) => { if (d.fatal) fail(d.networkDetails?.bcastOver ? 'it is larger than this game will load'
+      : d.type === H.ErrorTypes.NETWORK_ERROR ? 'its server does not let this game load it (CORS), or it is not there' : 'it could not be played') })
     h.loadSource(u); h.attachMedia(v); v.play().catch(() => {})
   }, () => fail('the HLS player did not load'))
   else { v.src = u; v.play().catch(() => {}) }
   bcastFeed(v)
+}
+function bcastCap(xhr, refuse) {
+  const over = n => { if (n > (xhr.responseType === 'arraybuffer' ? BCAST_SEG_MAX : BCAST_LIST_MAX) && !xhr.bcastOver) { xhr.bcastOver = true; xhr.abort(); setTimeout(refuse) } }
+  xhr.addEventListener('readystatechange', () => { if (xhr.readyState === 2) over(+xhr.getResponseHeader('content-length') || 0) })
+  xhr.addEventListener('progress', e => over(Math.max(e.loaded, xhr.responseType === '' || xhr.responseType === 'text' ? xhr.responseText.length : 0)))
+}
+const bcastStats = () => ({ aborted: false, loaded: 0, retry: 0, total: 0, chunkCount: 0, bwEstimate: 0,
+  loading: { start: 0, first: 0, end: 0 }, parsing: { start: 0, end: 0 }, buffering: { start: 0, first: 0, end: 0 } })
+function bcastSegLoader(refuse) {
+  return class {
+    constructor() { this.stats = bcastStats(); this.context = this.callbacks = this.ctl = null; this.timer = 0; this.done = false }
+    load(context, config, callbacks) {
+      const stats = this.stats, ctl = this.ctl = new AbortController(), P = config.loadPolicy, t0 = performance.now()
+      Object.assign(this, { context, callbacks })
+      const wait = (ms, then) => { clearTimeout(this.timer); this.timer = isFinite(ms) && ms > 0 ? setTimeout(then, ms) : 0 }
+      const timedOut = () => { this.abortInternal(); this.callbacks?.onTimeout(stats, context, null) }
+      const failed = (code, text, r) => { if (stats.aborted || this.done) return; this.abortInternal(); this.done = true; this.callbacks?.onError({ code, text }, context, r, stats) }
+      stats.loading.start = t0
+      wait(P.maxTimeToFirstByteMs || P.maxLoadTimeMs, timedOut)
+      const headers = context.rangeEnd ? { Range: 'bytes=' + context.rangeStart + '-' + (context.rangeEnd - 1) } : {}
+      fetch(context.url, { headers, signal: ctl.signal, credentials: 'omit' }).then(async r => {
+        if (stats.aborted || this.done) return
+        if (!r.ok) return failed(r.status, r.statusText, r)
+        stats.loading.first = Math.max(performance.now(), t0)
+        wait(P.maxLoadTimeMs - (stats.loading.first - t0), timedOut)
+        stats.total = +r.headers.get('content-length') || 0
+        const reader = r.body.getReader(), parts = []
+        for (let c; !(c = await reader.read()).done;) {
+          if (stats.aborted) return
+          stats.loaded += c.value.byteLength
+          if (stats.loaded > BCAST_SEG_MAX) { this.abortInternal(); return void setTimeout(refuse) }
+          parts.push(c.value)
+        }
+        if (stats.aborted || this.done) return
+        const data = new Uint8Array(stats.loaded); let at = 0
+        for (const p of parts) { data.set(p, at); at += p.byteLength }
+        clearTimeout(this.timer); this.done = true; stats.loading.end = Math.max(performance.now(), stats.loading.first); stats.total ||= stats.loaded
+        this.callbacks?.onSuccess({ url: r.url, data: data.buffer, code: r.status }, stats, context, r)
+      }).catch(e => failed(0, e?.message || String(e)))
+    }
+
+    abortInternal() { clearTimeout(this.timer); if (this.done) return; this.stats.aborted = true; this.ctl?.abort() }
+    abort() { this.abortInternal(); this.callbacks?.onAbort?.(this.stats, this.context, null) }
+    destroy() { this.abortInternal(); this.callbacks = null }
+  }
 }
 function bcastFail(u, why, final) {
   if (bc.told !== u) { bc.told = u; sysMsg('§7The broadcast from ' + bcastOrigin(u) + ' cannot show here: ' + why + '.') }
@@ -38883,7 +39132,7 @@ function checkLiveness(t, own) {
     if (own) checkLiveness.credit = (checkLiveness.credit || 0) + lastGapMs
     const silent = lastRecvAt ? t - lastRecvAt : 0
     if (silent - (checkLiveness.credit || 0) > LINK_DEAD_MS || silent > 4 * LINK_DEAD_MS) {
-      endSession('Disconnected', 'The host stopped responding.', true)
+      endSession('Disconnected', 'The host stopped responding.', 'lost')
     }
     return
   }
