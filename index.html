@@ -9233,6 +9233,7 @@ FAUSTLAND_API.channels = { plan: () => faustState && faustChannels(faustState.se
 // Work runs after paint, shares one 4 ms budget, and never holds scene state over a yield.
 // card #53: time budgets in real time. A test may step performance.now as a virtual clock (memory fact:40) that advances
 // almost nothing within a task; a budget read from it never runs out and one slice runs for seconds
+let frameJsAt = 0
 const realNow = /\[native code\]/.test(Function.prototype.toString.call(performance.now)) ? performance.now.bind(performance) : () => Date.now()
 const background = (() => {
   const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [], lateCount: 0 }
@@ -9307,7 +9308,7 @@ const background = (() => {
           Promise.resolve(r.value).then(v => { j.value = v; j.waiting = false; schedule() }, e => { j.error = e; j.waiting = false; schedule() })
         } else if (r.value === 'frame' || r.value === 'wait') deferred.add(j)
       } catch (e) { finish(j, false, e) }
-      const stepMs = realNow() - t, linked = (renderer?.info.programs?.length || 0) - progs0; current = null
+      const stepMs = realNow() - t; open.bgMs = (open.bgMs || 0) + stepMs; const linked = (renderer?.info.programs?.length || 0) - progs0; current = null
       if (linked > 0 && !soft) { stats.last = j.key; stats.steps++; open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + ' +' + linked + 'p'); break }
       if ((stepMs >= 1 || linked > 0) && open.steps.length < 40) open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + (linked > 0 ? ' +' + linked + 'p' : ''))
       if (stepMs >= 50) { stats.long.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs)); if (stats.long.length > 12) stats.long.shift() }
@@ -9350,7 +9351,8 @@ const background = (() => {
       const ms = lastFrameT ? Math.round(t - lastFrameT) : 0
       gpuOpen.upKB = Math.round(gpuOpen.upKB)
       const sim = [...simMap].filter(([, v]) => v >= 1).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + Math.round(v)); simMap.clear()
-      frameLog.push({ i, t: Math.round(t), ms, draw: Math.round(draw), phase, q, ticks: simTicks, sim, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen }); simTicks = 0
+      const js = frameJsAt ? +(realNow() - frameJsAt).toFixed(1) : 0, bg = +(open.bgMs || 0).toFixed(1)
+      frameLog.push({ i, t: Math.round(t), ms, js, bg, gap: +Math.max(0, ms - js - bg).toFixed(1), draw: Math.round(draw), phase, q, ticks: simTicks, sim, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen }); simTicks = 0
       if (q >= 3 && !(gpuLog.at(-1)?.kind === 'queue' && gpuLog.at(-1).q >= q)) gpuLog.push({ t: Math.round(t), i, kind: 'queue', q })
       if (ms >= 50) gpuLog.push({ t: Math.round(t), i, kind: 'frame', ms, parts: open.parts.slice(0, 4), links: gpuOpen.links, upKB: gpuOpen.upKB })
       { const s = Math.floor(t / 1000)
@@ -35390,6 +35392,7 @@ const FRAME_LATE = 1.5
 let drawT0 = 0, frameT = 0, frameTl = 0
 function frameBody() {
   if (document.hidden || serving) return   // the ticker owns the sim then
+  frameJsAt = realNow()      // card #53: the frame's own script starts here (the frame log's js)
   // the frame's vsync time: performance.now() here is when the script got round to it, up to a few ms late and never
   // the same twice, and drawn time (t - D) moved everything drawn by that jitter times its speed
   // a late frame (a long task held it past FRAME_LATE): the vsync time is when it was due, not when it shows; then the
