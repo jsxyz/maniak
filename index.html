@@ -14082,7 +14082,7 @@ function wheelsOf(d, t, eye) {
   }
   const out = s.out, own = d.car ? d : objs.length ? objs.find(o => o.id === d.id && o.car) : null
   if (own) {
-    if (own.parked) return null
+    if (own.parked && !(own.kin && camera && Math.hypot(camera.position.x - own.x, camera.position.z - own.z) < 70)) return null
     const v = own.body.getLinearVelocity()
     rotqTo(wv, own.q, 0, 0, -1)
     const dt = t > s.t ? (t - s.t) / 1000 : 0
@@ -14333,7 +14333,7 @@ let carSweepCb = null, carSweepA = null, carSweepB = null
 function carsAtSpeed() {
   carSwept.length = 0
   for (const o of objs) {
-    if (!o.V || o.V.fly || o.away || o.heldBy !== undefined || !o.body.isActive()) continue
+    if (!o.V || o.V.fly || o.away || o.kin || o.heldBy !== undefined || !o.body.isActive()) continue
     const v = o.body.getLinearVelocity()
     if (Math.hypot(v.x(), v.z()) < (o.traffic ? DESTRUCT.trafficCrash : CAR_SWEEP.speed)) continue
     const t = o.body.getWorldTransform(), p = t.getOrigin(), q = t.getRotation()
@@ -15338,7 +15338,7 @@ function trafficKinHold(o, a) {
 }
 function kinOn(o, a) {
   const v = o.body.getLinearVelocity(), fw = rotq(o.q, [0, 0, -1])
-  a.kv = Math.hypot(v.x(), v.z()); a.kd = a.kv; a.ky = o.y; a.kYaw = Math.atan2(-fw[0], -fw[2]); a.kLat = trafficLaneLat(a.edge, o.x, o.z)
+  a.kv = Math.hypot(v.x(), v.z()); a.kd = a.kv; a.ky = o.y; a.kYaw = Math.atan2(-fw[0], -fw[2]); a.kLat = a.hw ? 0 : trafficLaneLat(a.edge, o.x, o.z)
   setParked(o, true)
   world.removeRigidBody(o.body)
   o.body.setCollisionFlags(o.body.getCollisionFlags() | 2)
@@ -15399,6 +15399,269 @@ function trafficKinStep(o, a, dt, lane) {
   posVec.setValue(x, a.ky, z); quatVec.setValue(0, Math.sin(a.kYaw / 2), 0, Math.cos(a.kYaw / 2))
   const t = o.body.getWorldTransform(); t.setOrigin(posVec); t.setRotation(quatVec); o.body.getMotionState().setWorldTransform(t)
 }
+function trafficPolyEdge(g, from, to) {
+  const n = g.points.length, pts = new Float64Array(n * 2), cum = new Float64Array(n)
+  for (let i = 0; i < n; i++) { pts[i * 2] = g.points[i][0]; pts[i * 2 + 1] = g.points[i][2] }
+  for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + Math.hypot(pts[i * 2] - pts[i * 2 - 2], pts[i * 2 + 1] - pts[i * 2 - 1])
+  const ys = new Float64Array(n)
+  for (let i = 0; i < n; i++) ys[i] = g.points[i][1]
+  const tan = new Float64Array(n * 2)
+  for (let i = 0; i < n; i++) {
+    let tx = 0, tz = 0
+    if (i > 0) { const l = cum[i] - cum[i - 1] || 1; tx += (pts[i * 2] - pts[i * 2 - 2]) / l; tz += (pts[i * 2 + 1] - pts[i * 2 - 1]) / l }
+    if (i < n - 1) { const l = cum[i + 1] - cum[i] || 1; tx += (pts[i * 2 + 2] - pts[i * 2]) / l; tz += (pts[i * 2 + 3] - pts[i * 2 + 1]) / l }
+    const m = Math.hypot(tx, tz) || 1; tan[i * 2] = tx / m; tan[i * 2 + 1] = tz / m
+  }
+  return { id: g.id, from, to, pts, cum, tan, ys, n, length: cum[n - 1], limit: g.limit, kind: 'side', hw: g.kind, lanes: g.lanes, laneWidth: g.laneWidth || 3.6, district: 'highway', width: (g.lanes || 1) * (g.laneWidth || 3.6), dx: 0, dz: 0, ox: 0, oz: 0 }
+}
+function trafficPolyAt(e, s, out) {
+  const cum = e.cum, pts = e.pts
+  let lo = 0, hi = e.n - 1
+  if (s <= 0) s = 0
+  else if (s >= e.length) s = e.length
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= s) lo = m; else hi = m }
+  const seg = cum[hi] - cum[lo], f = seg > 1e-9 ? (s - cum[lo]) / seg : 0
+  const x0 = pts[lo * 2], z0 = pts[lo * 2 + 1], x1 = pts[hi * 2], z1 = pts[hi * 2 + 1], tan = e.tan
+  let tx = tan[lo * 2] + (tan[hi * 2] - tan[lo * 2]) * f, tz = tan[lo * 2 + 1] + (tan[hi * 2 + 1] - tan[lo * 2 + 1]) * f
+  const m = Math.hypot(tx, tz) || 1
+  out.x = x0 + (x1 - x0) * f; out.z = z0 + (z1 - z0) * f; out.dx = tx / m; out.dz = tz / m; out.i = lo
+  out.y = e.ys[lo] + (e.ys[hi] - e.ys[lo]) * f; out.slope = seg > 1e-9 ? (e.ys[hi] - e.ys[lo]) / seg : 0
+  return out
+}
+function trafficHighwayBuild(G, state) {
+  const nodes = new Map(), edges = []
+  for (const n of G.nodes) nodes.set(n.id, { key: 'hw:' + n.id, x: n.x, z: n.z, y: n.y, out: [], hw: n.kind, street: n.street || null, end: n.end || null })
+  for (const g of G.edges) {
+    const a = nodes.get(g.a), b = nodes.get(g.b), e = trafficPolyEdge(g, a, b)
+    a.out.push(e); edges.push(e)
+  }
+  const byId = new Map(edges.map(e => [e.id, e]))
+  const merges = new Map()
+  for (const m of G.merges) { const e = byId.get(m.entering); if (e) merges.set(e, { through: byId.get(m.through), length: m.length, node: nodes.get(m.node) }) }
+  const diverges = new Map()
+  for (const d of G.diverges) { const n = nodes.get(d.node); if (n) diverges.set(n, { through: byId.get(d.through), leaving: byId.get(d.leaving) }) }
+  return { nodes, edges, byId, merges, diverges }
+}
+const TRAFFIC_HW = { cruise: [0.82, 1], headway: 1.2, gapMin: 6, brake: 6, accel: 1.8, comfort: 3, laneRate: 1.5, mergeGap: 2.2, mergeRelaxed: 1.2, relaxAfter: 20, goAfter: 40, exitChance: 0.25, exitPlanDist: 450, look: 120, holdBack: 68, cap: 60, nearest: 700, farthest: 1500, retire: 1800, every: 0.5, wakeTime: 0.6, wakeMin: 15, lanes: [0, 1, 1, 2], mix: ['Car', 'Car', 'Car', 'Car', 'Car', 'Sports car', 'Van', 'Van', 'Truck', 'Truck', 'Bus'] }
+const trafficHwOut = { x: 0, y: 0, z: 0, dx: 0, dz: 0, i: 0, slope: 0 }
+function trafficHwTangents(e) {
+  const n = e.n, p = e.pts
+  let i = 1; while (i < n - 1 && Math.hypot(p[i * 2] - p[0], p[i * 2 + 1] - p[1]) < 0.5) i++
+  let j = n - 2; while (j > 0 && Math.hypot(p[n * 2 - 2] - p[j * 2], p[n * 2 - 1] - p[j * 2 + 1]) < 0.5) j--
+  const a = Math.hypot(p[i * 2] - p[0], p[i * 2 + 1] - p[1]) || 1, b = Math.hypot(p[n * 2 - 2] - p[j * 2], p[n * 2 - 1] - p[j * 2 + 1]) || 1
+  e.t0 = [(p[i * 2] - p[0]) / a, (p[i * 2 + 1] - p[1]) / a]
+  e.t1 = [(p[n * 2 - 2] - p[j * 2]) / b, (p[n * 2 - 1] - p[j * 2 + 1]) / b]
+}
+function trafficHwNext(H, a) {
+  const e = a.edge, n = e.to
+  const out = n.out.filter(f => e.t1[0] * f.t0[0] + e.t1[1] * f.t0[1] > -0.5)
+  if (!out.length) return null
+  const dv = H.diverges.get(n)
+  if (dv && out.includes(dv.leaving) && out.includes(dv.through)) return a.exitPlan ? dv.leaving : dv.through
+  return out[(Math.random() * out.length) | 0]
+}
+function trafficHwLaneMap(cars) {
+  const lane = new Map()
+  for (const a of cars) { let l = lane.get(a.edge); if (!l) lane.set(a.edge, l = []); l.push(a) }
+  return lane
+}
+function trafficHwLeader(a, lane) {
+  const e = a.edge, look = TRAFFIC_HW.look + a.kv * 2
+  let best = Infinity
+  const scan = (edge, base, same) => {
+    const l = lane.get(edge); if (!l) return
+    for (const q of l) {
+      if (q === a || Math.abs(q.lat - a.lat) > 2.2 || same && q.s <= a.s) continue
+      const g = base + q.s - (same ? a.s : 0) - (q.len + a.len) / 2
+      if (g < best) best = g
+    }
+  }
+  scan(e, 0, true)
+  if (best === Infinity && e.length - a.s < look && a.next) scan(a.next, e.length - a.s, false)
+  return best
+}
+function trafficHwMergeClear(H, a, lane, relax) {
+  const mg = H.merges.get(a.edge)
+  if (!mg || !mg.through) return true
+  const te = TRAFFIC_HW.holdBack / Math.max(8, a.kv), win = relax ? TRAFFIC_HW.mergeRelaxed : TRAFFIC_HW.mergeGap, t = mg.through
+  for (const q of lane.get(t) || []) {
+    if (q.lane !== 2) continue
+    const tq = (t.length - q.s) / Math.max(q.kv, 5)
+    if (Math.abs(tq - te) < win || tq < win && tq > -1) return false
+  }
+  return true
+}
+
+function trafficHwBlock(a, people) {
+  let best = Infinity
+  const look = TRAFFIC_HW.look + a.kv * 2
+  for (const o of objs) {
+    if (!o.V || o.traffic?.hw) continue
+    const dx = o.x - a.px, dz = o.z - a.pz
+    if (dx > look || dx < -look || dz > look || dz < -look) continue
+    const f = dx * a.dx + dz * a.dz
+    if (f <= 0 || f > look || Math.abs(dx * -a.dz + dz * a.dx) > 1.7 + o.V.w / 2) continue
+    const g = f - (a.len + o.V.l) / 2
+    if (g < best) best = g
+  }
+  for (const c of people) {
+    if (c.dead > 0 || seatOf(c)) continue
+    const dx = c.x - a.px, dz = c.z - a.pz, f = dx * a.dx + dz * a.dz
+    if (f <= 0 || f > look || Math.abs(dx * -a.dz + dz * a.dx) > 2.2 + (c.r || 0.5)) continue
+    const g = f - a.len / 2 - (c.r || 0.5)
+    if (g < best) best = g
+  }
+  return best
+}
+function trafficHwContact(a, people) {
+  const reach = Math.max(TRAFFIC_HW.wakeMin, a.kv * TRAFFIC_HW.wakeTime), far = reach + 12
+  for (const o of objs) {
+    if (!o.V || o.traffic?.hw || o.id === a.id) continue
+    const dx = o.x - a.px, dz = o.z - a.pz
+    if (dx > far || dx < -far || dz > far || dz < -far) continue
+    const v = o.body.getLinearVelocity(), d = Math.hypot(dx, dz) || 1, closing = a.kv * (dx * a.dx + dz * a.dz) / d - (v.x() * dx + v.z() * dz) / d
+    if (d - (a.len + o.V.l) / 2 < Math.max(TRAFFIC_HW.wakeMin, closing * TRAFFIC_HW.wakeTime)) return true
+  }
+  for (const c of people) {
+    if (c.dead > 0 || seatOf(c)) continue
+    const dx = c.x - a.px, dz = c.z - a.pz
+    if (dx > far || dx < -far || dz > far || dz < -far) continue
+    const d = Math.hypot(dx, dz) || 1, closing = a.kv * (dx * a.dx + dz * a.dz) / d
+    if (d - a.len / 2 < Math.max(TRAFFIC_HW.wakeMin, closing * TRAFFIC_HW.wakeTime)) return true
+  }
+  return false
+}
+function trafficHwStep(H, a, dt, lane, block, out) {
+  const e = a.edge
+  let want = e.limit * a.cruiseF
+  const left = e.length - a.s
+  if (a.next) want = Math.min(want, Math.sqrt(a.next.limit * a.next.limit + 2 * TRAFFIC_HW.comfort * Math.max(0, left)))
+  const mg = H.merges.get(e)
+  if (mg && !a.go) {
+    const d = e.length - TRAFFIC_HW.holdBack - a.s
+    if (d <= 3) {
+      a.wait += dt
+      if (trafficHwMergeClear(H, a, lane, a.wait > TRAFFIC_HW.relaxAfter) || a.wait > TRAFFIC_HW.goAfter) a.go = true
+    }
+    if (!a.go) want = Math.min(want, Math.sqrt(2 * TRAFFIC_HW.comfort * Math.max(0, d - 1)))
+  }
+  const gap = Math.min(trafficHwLeader(a, lane), block)
+  if (gap < Infinity) want = Math.min(want, Math.max(0, (gap - TRAFFIC_HW.gapMin) / TRAFFIC_HW.headway))
+  a.kv = Math.max(0, a.kv + Math.max(-(TRAFFIC_HW.brake + 3) * dt, Math.min(TRAFFIC_HW.accel * dt, want - a.kv)))
+  a.s += a.kv * dt
+  while (a.s >= a.edge.length) {
+    const cur = a.edge, rox = -cur.t1[1], roz = cur.t1[0]
+    if (!a.next) { a.dead = true; a.s = cur.length; break }
+    a.s -= cur.length
+    a.edge = a.next
+    a.go = false; a.wait = 0
+    a.exitPlan = H.diverges.has(a.edge.to) && Math.random() < TRAFFIC_HW.exitChance
+    if (a.exitPlan || H.merges.has(cur) && a.edge.hw === 'highway') a.lane = 2
+    a.next = trafficHwNext(H, a)
+    const rnx = -a.edge.t0[1], rnz = a.edge.t0[0]
+    a.s = Math.max(0, a.s + a.lat * (rox * a.edge.t0[0] + roz * a.edge.t0[1]))
+    a.lat *= rox * rnx + roz * rnz
+  }
+  const ed = a.edge, tl = ed.lanes > 1 ? (a.lane - 1) * ed.laneWidth : 0
+  a.lat += Math.max(-TRAFFIC_HW.laneRate * dt, Math.min(TRAFFIC_HW.laneRate * dt, tl - a.lat))
+  trafficPolyAt(ed, a.s, out)
+}
+function trafficHwPlace(o, a, dt, out) {
+  const x = out.x - out.dz * a.lat, z = out.z + out.dx * a.lat, y = out.y + a.lift
+  a.kYaw += clamp(wrapPi(Math.atan2(-out.dx, -out.dz) - a.kYaw), -4 * dt, 4 * dt)
+  const phi = Math.atan(out.slope), cy = Math.cos(a.kYaw / 2), sy = Math.sin(a.kYaw / 2), cx = Math.cos(phi / 2), sx = Math.sin(phi / 2)
+  posVec.setValue(x, y, z); quatVec.setValue(cy * sx, sy * cx, -sy * sx, cy * cx)
+  const t = o.body.getWorldTransform(); t.setOrigin(posVec); t.setRotation(quatVec); o.body.getMotionState().setWorldTransform(t)
+  a.px = x; a.pz = z; a.dx = out.dx; a.dz = out.dz
+}
+function trafficHwInit(T) {
+  if (T.hw !== undefined) return T.hw
+  if (typeof faustHighwayGraphSteps !== 'function') return T.hw = false
+  const F = faustState
+  if (!F || !faustRoadsReady(F)) return null
+  T.hw = null
+  let G = null
+  background.run('traffic highway graph', function* () {
+    const it = faustHighwayGraphSteps(F.seed, F.S)
+    let r
+    while (!(r = it.next()).done) yield
+    G = r.value
+  }, { priority: 1, valid: () => trafficState === T }).then(() => {
+    if (trafficState !== T || !G) return
+    const H = trafficHighwayBuild(G)
+    for (const e of H.edges) trafficHwTangents(e)
+    H.road = H.edges.filter(e => e.hw === 'highway')
+    for (const e of H.road) { trafficPolyAt(e, e.length / 2, trafficHwOut); e.mx = trafficHwOut.x; e.mz = trafficHwOut.z }
+    H.cars = new Map(); H.spawnT = 0
+    T.hw = H
+  }).catch(e => { T.hw = false; frameFailed('traffic highway', e) })
+  return null
+}
+function trafficHwDrop(T, H, o, clock) {
+  trafficDetach(o, false); dropObject(o); objs.splice(objs.indexOf(o), 1); H.cars.delete(o.id)
+  T.departures.push({ id: o.id, until: clock + 12 })
+  for (const sent of objSent.values()) sent.delete(o.id)
+}
+function trafficHwAdd(T, H, e, sPos, lane, exit, cruise, name, clock) {
+  const out = trafficHwOut, k = OBJECTS.findIndex(K => K.name === name), lat = (lane - 1) * e.laneWidth
+  if (k < 0) return null
+  let id = OBJ_MAX - 1
+  while (id >= 16 && (objs.some(o => o.id === id) || T.departures.some(v => v.id === id && v.until > clock))) id--
+  if (id < 16) return null
+  trafficPolyAt(e, sPos, out)
+  const x = out.x - out.dz * lat, z = out.z + out.dx * lat, yaw = Math.atan2(-out.dx, -out.dz), o = addObject(k, [x, out.y + 1, z], id, yaw)
+  if (!o) return null
+  const lift = -o.low + 0.02
+  o.at = [x, out.y + lift, z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body)
+  const a = { hw: true, id: o.id, driver: true, ambient: true, edge: e, s: sPos, lat, lane, len: o.V.l, kv: 0, kd: 0, cruiseF: cruise, go: false, wait: 0, exitPlan: exit, lift, hp: o.hp, flee: 0, think: 0, far: true, px: x, pz: z, dx: out.dx, dz: out.dz, kYaw: yaw, ky: o.y, kLat: 0 }
+  a.next = trafficHwNext(H, a)
+  o.traffic = a; o.trafficAmbient = true
+  H.cars.set(o.id, o)
+  kinOn(o, a)
+  a.kv = e.limit * cruise; a.kYaw = yaw
+  return o
+}
+function trafficHwSpawn(T, H, people, clock) {
+  const cap = Math.max(4, Math.round(TRAFFIC_HW.cap * trafficK()))
+  if (H.cars.size >= cap || objs.length >= OBJ_MAX - 8 || !people.length) return
+  const p = people[(T.serial++) % people.length], lo = TRAFFIC_HW.nearest, hi = TRAFFIC_HW.farthest, out = trafficHwOut
+  const cands = H.road.filter(e => { const d = Math.hypot(e.mx - p.x, e.mz - p.z); return d - e.length / 2 < hi && d + e.length / 2 > lo })
+  for (let trial = 0; cands.length && trial < 6; trial++) {
+    const e = cands[(Math.random() * cands.length) | 0], sPos = Math.random() * e.length
+    trafficPolyAt(e, sPos, out)
+    if (Math.hypot(out.x - p.x, out.z - p.z) > hi || people.some(c => Math.hypot(c.x - out.x, c.z - out.z) < lo)) continue
+    const exit = H.diverges.has(e.to) && Math.random() < TRAFFIC_HW.exitChance, lane = exit ? 2 : TRAFFIC_HW.lanes[(Math.random() * 4) | 0], lat = (lane - 1) * e.laneWidth
+    const x = out.x - out.dz * lat, z = out.z + out.dx * lat
+    if ([...H.cars.values()].some(q => Math.hypot(q.traffic.px - x, q.traffic.pz - z) < 90 && Math.abs(q.traffic.lat - lat) < 2.2)) continue
+    const cruise = TRAFFIC_HW.cruise[0] + Math.random() * (TRAFFIC_HW.cruise[1] - TRAFFIC_HW.cruise[0])
+    trafficHwAdd(T, H, e, sPos, lane, exit, cruise, TRAFFIC_HW.mix[T.serial % TRAFFIC_HW.mix.length], clock)
+    return
+  }
+}
+function trafficHwTick(T, dt, people, clock) {
+  const H = trafficHwInit(T)
+  if (!H) return
+  const out = trafficHwOut, recs = []
+  for (const o of [...H.cars.values()]) {
+    const a = o.traffic
+    if (!a || !a.hw || !objs.includes(o)) { H.cars.delete(o.id); continue }
+    if (!o.kin || o.hp < a.hp - 0.1 || !o.V || o.heldBy !== undefined || o.riders.some(v => v !== undefined) || o.fuse !== undefined || o.thrownBy !== undefined || o.launchBy !== undefined || upOf(o) < 0.9 || trafficHwContact(a, people)) {
+      H.cars.delete(o.id); trafficDetach(o, o.riders.some(v => v !== undefined))
+      if (o.car && o.V) o.V.wheels.at.forEach((w, k) => o.car.setBrake(0, k))
+      continue
+    }
+    recs.push(a)
+  }
+  const lane = trafficHwLaneMap(recs)
+  for (const a of recs) {
+    const o = H.cars.get(a.id)
+    trafficHwStep(H, a, dt, lane, trafficHwBlock(a, people), out)
+    trafficHwPlace(o, a, dt, out)
+    a.hp = o.hp
+    if (a.dead || people.length && people.every(c => Math.hypot(c.x - a.px, c.z - a.pz) > TRAFFIC_HW.retire)) trafficHwDrop(T, H, o, clock)
+  }
+  if ((H.spawnT -= dt) <= 0) { H.spawnT = TRAFFIC_HW.every; trafficHwSpawn(T, H, people, clock) }
+}
 function trafficTick(dt, all) {
   if (!LV.faust) return
   if (!trafficState) trafficReset()
@@ -15413,6 +15676,8 @@ function trafficTick(dt, all) {
   const budget = Math.min(Math.max(3, Math.round(TRAFFIC.thinkBudget * scale)), Math.ceil(Math.max(1, T.cars.size - (T.kinN || 0)) * dt / thinkStep * 1.5) + 2)
   let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0, kinN = 0
   let lane = null, kinNew = []
+  const movers = []
+  for (const p of objs) if (p.V && !p.traffic && !p.kin && p.body.isActive() && speedOf(p) > 3) movers.push(p)
   parkedTick(dt, people)
   for (const o of [...T.cars.values()]) {
     if (!objs.includes(o)) { T.cars.delete(o.id); continue }
@@ -15426,7 +15691,7 @@ function trafficTick(dt, all) {
         a.hp = o.hp; a.flee = Math.max(0, a.flee - dt)
         let dMin = Infinity; for (const p of people) dMin = Math.min(dMin, Math.hypot(o.x - p.x, o.z - p.z))
         if (!people.length) dMin = 0
-        if (o.kin) { if (dMin < TRAFFIC.kinIn || trafficKinHold(o, a)) kinOff(o) }
+        if (o.kin) { if (dMin < TRAFFIC.kinIn || trafficKinHold(o, a) || movers.some(p => Math.hypot(p.x - o.x, p.z - o.z) < 20 + speedOf(p) * 0.6)) kinOff(o) }
         else if (dMin > TRAFFIC.kinOut && !a.path && !trafficKinHold(o, a) && Math.abs(trafficLaneLat(a.edge, o.x, o.z)) < 2 && clock - (a.kAt ?? -1e9) > TRAFFIC.kinCool) kinNew.push([o, a, dMin])
         const due = (a.think -= dt) <= 0
         if (due || a.far) {
@@ -15451,6 +15716,7 @@ function trafficTick(dt, all) {
   }
   kinNew.sort((p, q) => q[2] - p[2])
   for (const [o, a] of kinNew.slice(0, TRAFFIC.kinMax)) if (objs.includes(o) && o.traffic === a && !o.kin) kinOn(o, a)
+  { const t0 = performance.now(); trafficHwTick(T, dt, people, clock); background.simAdd('traffic highway', performance.now() - t0) }
   T.departures = T.departures.filter(d => d.until > clock)
   const warm = people.map(p => FAUSTLAND_API.cellAt(p.x,p.z).join(':')).join('|')
   if (warm !== T.warm) { T.warm=warm; T.queue=[...faustRange(people.map(p=>[p.x,p.z]),4)].filter(key=>!T.cells.has(key)) }
@@ -15464,7 +15730,7 @@ function trafficTick(dt, all) {
   trafficPart.rays = 0; trafficPart.round = 0; T.kinN = kinN
 }
 function trafficRows() {
-  return trafficState ? [...trafficState.cars.values()].map(o => [o.id, o.traffic?.driver ? 1 : 0, ...o.trafficExit || []]) : []
+  return trafficState ? [...trafficState.cars.values(), ...trafficState.hw?.cars?.values() || []].map(o => [o.id, o.traffic?.driver ? 1 : 0, ...o.trafficExit || []]) : []
 }
 function trafficTake(rows) {
   if (rows === undefined || !Array.isArray(rows) || rows.length > OBJ_MAX || !rows.every(r => Array.isArray(r) && (r.length === 2 || r.length === 7) && r.every(Number.isFinite) && Number.isInteger(r[0]) && r[0] >= 0 && r[0] < OBJ_MAX && (r[1] === 0 || r[1] === 1) && (r.length === 2 || r[2] >= 0 && Math.abs(r[3]) <= ARENA + 16 && Math.abs(r[4]) <= ARENA + 16 && Math.hypot(r[5],r[6]) <= 1.1)) || new Set(rows.map(r=>r[0])).size !== rows.length) return
@@ -29247,7 +29513,7 @@ function vehicleTick(list, credit, touch, dt) {
   for (const o of objs) if (o.V) {
     if (o.v0) {
       const v = o.body.getLinearVelocity(), dv = Math.hypot(v.x() - o.v0[0], v.y() - o.v0[1], v.z() - o.v0[2])
-      if (dv > 8) o.hp -= (dv - 8) * 4
+      if (dv > 8 && !o.kin) o.hp -= (dv - 8) * 4
       o.v0 = null
     }
     const B = o.V.boom
@@ -34044,7 +34310,7 @@ function dsObjectsTick(dt) {
   if (dsObjTicks++ % 3 || !objs.length) return
   const step = dt * 3
   for (const o of objs) {
-    if (!o.body || o.heldBy !== undefined) continue
+    if (!o.body || o.kin || o.heldBy !== undefined) continue
     const v = o.body.getLinearVelocity(), vx = v.x(), vy = v.y(), vz = v.z(), sp = Math.hypot(vx, vy, vz)
     if (sp < (o.traffic ? DESTRUCT.trafficCrash : DESTRUCT.object)) continue
     const ux = vx / sp, uy = vy / sp, uz = vz / sp, half = o.V ? Math.max(o.V.w || 1.8, o.V.l || 4.8) / 2 : o.R || 0.5, reach = half + sp * step + 0.3, h = []
