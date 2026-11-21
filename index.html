@@ -15652,7 +15652,9 @@ function trafficDetach(o, eject = true) {
   if (o.car) o.V.wheels.at.forEach((w, k) => { o.car.applyEngineForce(0, k); o.car.setBrake(1, k) })
 }
 function trafficTurn(a) {
-  const e = a.edge, n = a.next, r = trafficTrim(e), exit = trafficTrim(n), p = trafficPoint(e, e.length - r), q = trafficPoint(n, exit)
+  const e = a.edge, n = a.next, r = trafficTrim(e), exit = trafficTrim(n), sh = a.round?.edge === e ? a.round.shift : 0      // card #63: going round, from the shifted line
+  const p0 = trafficPoint(e, e.length - r), p = { x: p0.x - e.dz * sh, z: p0.z + e.dx * sh }, q0 = trafficPoint(n, exit)
+  const on = Math.abs(n.dx - e.dx) + Math.abs(n.dz - e.dz) < 1e-6 ? sh : 0, q = { x: q0.x - n.dz * on, z: q0.z + n.dx * on }      // straight on: it keeps the shift, and merges after
   const c = { x: p.x + e.dx * r * 0.7, z: p.z + e.dz * r * 0.7 }, d = { x: q.x - n.dx * exit * 0.7, z: q.z - n.dz * exit * 0.7 }
   a.path = Array.from({ length: 13 }, (_, i) => { const t = i / 12, s = 1 - t; return { x: s ** 3 * p.x + 3 * s * s * t * c.x + 3 * s * t * t * d.x + t ** 3 * q.x,
     z: s ** 3 * p.z + 3 * s * s * t * c.z + 3 * s * t * t * d.z + t ** 3 * q.z } }); a.index = 0
@@ -15716,32 +15718,52 @@ function trafficThink(o, dt, people) {
       return trafficThink(o, 0, people)
     }
   } else {
-    target = trafficPoint(e, clamp(along + 5 + speed * 0.5, 10, e === a.goalEdge && !a.next ? a.goalS : e.length - trafficTrim(e)))
+    target = trafficPoint(e, clamp(along + (a.round ? 3 : 5) + speed * 0.5, 10, e === a.goalEdge && !a.next ? a.goalS : e.length - trafficTrim(e)))
     if (left < 35 && (trafficJunction(e.to) || !a.next)) desired = Math.min(desired, 5 + Math.max(0, left - 18) * 0.4)
     const junction = e.to, key = junction.key
     const owner = trafficState.locks.get(key), green = !trafficSignalled(junction) || trafficSignal(junction.x, junction.z, e.dx ? 'x' : 'z') === 'green'
     const stopLine = trafficStop(e)
     const crossing = trafficJunction(junction), blockedExit = !a.urgent && crossing && a.next && (trafficExitBlocked(o, a.next) || trafficYieldBlocked(o, e, a.next) || trafficWalkersBlock(e, a.next)
       || green && owner === undefined && !a.lock && trafficOlderWaiting(o, e))
+    // card #63: an exit held ROUND.exit s by something standing in it: an ambient car takes another exit (no forever hold)
+    if (blockedExit && !a.lock && !a.route && a.wait > ROUND.exit && trafficExitBlocked(o, a.next)) {
+      const alt = trafficOtherExit(a, n => !trafficExitBlocked(o, n))
+      if (alt) { a.next = alt; return trafficThink(o, 0, people) }
+    }
     if ((!a.next && !a.goal) || (!a.urgent && crossing && !a.lock && (!green || owner !== undefined && owner !== o.id || blockedExit))) stop = Math.min(stop, Math.max(0, left - stopLine - o.V.l / 2))
     else if (!a.urgent && crossing && a.next && left < stopLine + o.V.l / 2 + 2 && !a.lock) { trafficState.locks.set(key, o.id); a.lock = key }
-    if ((a.lock || a.urgent && crossing && a.next) && left < trafficTrim(e) + 1) { trafficTurn(a); return trafficThink(o, 0, people) }
+    if ((a.lock || a.urgent && crossing && a.next) && left < trafficTrim(e) + 1) { trafficTurnFree(o, a); trafficTurn(a); return trafficThink(o, 0, people) }
   }
   // Front bumper lookahead; all people (including the Maniak), street life and other vehicles get a stopping gap.
-  let offset = 0
-  const obstacle = (x, y, z, radius, length = radius) => {
+  // card #63: going round a standing vehicle (trafficRound): the path runs R.shift m off the lane's centre; through a turn
+  // whose path was found to clear it (R.turn), only that vehicle is passed so
+  const R = a.round && (!a.path || a.round.turn) ? a.round : null
+  let offset = R ? R.shift : 0, hold = null
+  const obstacle = (x, y, z, radius, length = radius, p = null) => {
     if (Math.abs(y - o.y) > 3.5) return
     const dx = x - o.x, dz = z - o.z, f = dx * fw[0] + dz * fw[2], side = dx * -fw[2] + dz * fw[0]
     if (f <= 0 || f > 38 || Math.abs(side) > o.V.w / 2 + radius + 0.35) return
-    stop = Math.min(stop, Math.max(0, f - o.V.l / 2 - length - 2.5))
-    if (Math.abs(side) > o.V.w / 2 && !a.path && e.kind !== 'side') offset = (side > 0 ? -0.65 : 0.65)
+    // its half extent across the lane (not across this car's heading, which turns while it pulls out)
+    const pq = p?.V && rotq(p.q, [0, 0, -1]), across = pq ? Math.abs(pq[0] * -e.dz + pq[2] * e.dx) * p.V.l / 2 + Math.abs(pq[0] * e.dx + pq[2] * e.dz) * p.V.w / 2 : radius
+    let s = Math.max(0, f - o.V.l / 2 - length - 2.5)
+    // going round: what the shifted path clears doesn't hold the car, unless the car's box, swept over its next 0.5 s (0.6 m
+    // at least), would come within ROUND.clear + 0.02 m of it: then it stops there (and trafficRound backs it up to try again)
+    if (R && (!a.path || p === R.p) && Math.abs(trafficLaneLat(e, x, z) - R.shift) > o.V.w / 2 + across + 0.25) {
+      const d = Math.max(0.6, speed * 0.5)
+      if (trafficBoxGap({ x: o.x + fw[0] * d / 2, z: o.z + fw[2] * d / 2, fx: fw[0], fz: fw[2], hw: o.V.w / 2, hl: o.V.l / 2 + d / 2 },
+        pq ? { x, z, fx: pq[0], fz: pq[2], hw: p.V.w / 2, hl: p.V.l / 2 } : { x, z, fx: fw[0], fz: fw[2], hw: radius, hl: radius }) > ROUND.clear + 0.02) return
+      s = 0
+    }
+    if (s < stop) stop = s
+    if (p && (!hold || s < hold.stop)) hold = { p, stop: s, f, r: across, len: length }
+    if (Math.abs(side) > o.V.w / 2 && !a.path && e.kind !== 'side' && !R) offset = (side > 0 ? -0.65 : 0.65)
   }
   for (const c of people) if (!(c.dead > 0) && !seatOf(c)) obstacle(c.x, c.y, c.z, c.r || 0.5)
   for (const p of objs) if (p !== o && p.heldBy === undefined) {
     if (Math.abs(p.x - o.x) > 60 || Math.abs(p.z - o.z) > 60) continue          // card #86
-    if (!p.V) { obstacle(p.x, p.y, p.z, p.R); continue }
+    if (!p.V) { obstacle(p.x, p.y, p.z, p.R, p.R, p); continue }
     const f = rotq(p.q, [0, 0, -1]), along = Math.abs(f[0] * fw[0] + f[2] * fw[2]), across = Math.abs(f[0] * -fw[2] + f[2] * fw[0])
-    obstacle(p.x, p.y, p.z, across * p.V.l / 2 + along * p.V.w / 2, along * p.V.l / 2 + across * p.V.w / 2)
+    obstacle(p.x, p.y, p.z, across * p.V.l / 2 + along * p.V.w / 2, along * p.V.l / 2 + across * p.V.w / 2, p)
   }
   // card #67: street people also where they will be in 0.8 and 1.6 s (a crosser steps into the lane), and along a turn's path
   const pathGap = (x, z, r) => {
@@ -15763,7 +15785,7 @@ function trafficThink(o, dt, people) {
   // in a turn, a vehicle ahead on the turn's path (a car stopped in or just past the junction), not only ahead of the bonnet:
   // its footprint across each leg of the path, as obstacle() takes it across the bonnet's line; none beside or behind
   if (a.path) for (const p of objs) {
-    if (p === o || p.heldBy !== undefined || !p.body || !(p.V || vehicleBody(p.K)) || Math.abs(p.y - o.y) > 3.5) continue
+    if (p === o || p.heldBy !== undefined || !p.body || !(p.V || vehicleBody(p.K)) || Math.abs(p.y - o.y) > 3.5 || R && p === R.p) continue
     const dx = p.x - o.x, dz = p.z - o.z
     if (dx * fw[0] + dz * fw[2] <= o.V.l / 2 || dx * dx + dz * dz > 45 * 45) continue
     const pf = rotq(p.q, [0, 0, -1]), hl = (p.V?.l ?? 2 * p.R) / 2, hw = (p.V?.w ?? p.R) / 2
@@ -15778,9 +15800,16 @@ function trafficThink(o, dt, people) {
   }
   // Static obstacles and thrown props use real collision rays. A swerve stays within the avenue's motor lane.
   const reach = 5 + speed * speed / 10, y = o.y + 0.2
-  const rays = [-0.7, 0, 0.7].map(s => castRay(o.x - fw[2] * s + fw[0] * (o.V.l / 2 + 0.3), y,
-    o.z + fw[0] * s + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], reach, RAY_GROUP | G_OBJ) * reach)
-  if (Math.min(...rays) < reach) { stop = Math.min(stop, Math.max(0, Math.min(...rays) - 2)); if (!a.path && e.kind !== 'side') offset = rays[0] < rays[2] ? 0.65 : -0.65 }
+  const rays = (R ? [-0.35, 0, 0.35] : [-0.7, 0, 0.7]).map(s => {
+    const t = castRay(o.x - fw[2] * s + fw[0] * (o.V.l / 2 + 0.3), y, o.z + fw[0] * s + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], reach, RAY_GROUP | G_OBJ)
+    return (t < 1 && R && R.p.body && A.getPointer(rayCb.get_m_collisionObject()) === A.getPointer(R.p.body) ? 1 : t) * reach      // going round it: not the vehicle it passes
+  })
+  if (Math.min(...rays) < reach) { stop = Math.min(stop, Math.max(0, Math.min(...rays) - 2)); if (!a.path && e.kind !== 'side' && !R) offset = rays[0] < rays[2] ? 0.65 : -0.65 }
+  const round = trafficRound(o, a, e, fw, speed, stop, hold, people, dt)
+  if (round === 'plan') return trafficThink(o, 0, people)
+  if (round) return round
+  // waiting to go round (the oncoming side is busy): stop far enough back to pull out when it clears
+  if (a.roundGap && hold) stop = Math.min(stop, Math.max(0, hold.stop + 2.5 - a.roundGap))
   if (stop < Infinity) desired = Math.min(desired, Math.sqrt(Math.max(0, stop) * 6))
   const err = wrapPi(Math.atan2(o.x - target.x - -e.dz * offset, o.z - target.z - e.dx * offset) - yaw)
   if (Math.abs(err) > 0.6) desired = Math.min(desired, 4)
@@ -15806,7 +15835,7 @@ function trafficYieldBlocked(o, e, next) {
   }
   if (e.kind !== 'side' || trafficSignalled(n)) return false
   for (const p of objs) {
-    if (p === o || !p.V || p.traffic?.edge.kind === 'side' || Math.abs(p.y - o.y) > 4) continue
+    if (p === o || !p.V || p.traffic?.edge.kind === 'side' || Math.abs(p.y - o.y) > 4 || !p.traffic && speedOf(p) < 0.3) continue
     const f = rotq(p.q, [0, 0, -1]), x = n.x - p.x, z = n.z - p.z, along = x * f[0] + z * f[2]
     if (along > -p.V.l && along < 12 + speedOf(p) * 5 && Math.abs(x * -f[2] + z * f[0]) < 7) return true
   }
@@ -15814,6 +15843,135 @@ function trafficYieldBlocked(o, e, next) {
 }
 // Pure pursuit uses the actual wheelbase and the same speed-limited steering lock as driveStep.
 // The short sports chassis needs less lock for the same curve; a fixed heading-error gain oscillates.
+// card #63: traffic never waits for good behind a standing vehicle (a parked car, a wreck, his abandoned car). A car held by
+// one goes round it: an empty one at once, one somebody sits in after ROUND.sat s; never another traffic car (a queue). The
+// shift is its half width + the other's half extent across + ROUND.margin off the other's line. It keeps to its own half of
+// the road when that clears it, else crosses the centre line while the oncoming side is clear (checked every think until it
+// is alongside), at most to the oncoming lane's centre; never past the kerb. It backs up first, straight and at most 6 m,
+// when the gap is too short to pull out. Where neither side clears, it waits: an ambient car held so for ROUND.stuck s and
+// out of every player's sight is retired (trafficTick). The game has no horn. Returns 'plan' (think again), an input, or null
+const ROUND = { sat: 8, stuck: 10, margin: 0.45, ahead: 25, keep: 15, back: 6, exit: 5, clear: 0.3, cut: 0.1 }      // cut: a turn's path is followed up to 0.1 m inside
+// the gap between two boxes on the ground (m; < 0: they overlap): { x, z, fx, fz: the forward unit, hw, hl: half extents }
+function trafficBoxGap(a, b) {
+  let gap = -Infinity
+  for (const [nx, nz] of [[a.fx, a.fz], [-a.fz, a.fx], [b.fx, b.fz], [-b.fz, b.fx]]) {
+    const r = q => q.hl * Math.abs(q.fx * nx + q.fz * nz) + q.hw * Math.abs(-q.fz * nx + q.fx * nz)
+    gap = Math.max(gap, Math.abs((b.x - a.x) * nx + (b.z - a.z) * nz) - r(a) - r(b))
+  }
+  return gap
+}
+const trafficLaneLat = (e, x, z) => (x - e.from.x - e.ox) * -e.dz + (z - e.from.z - e.oz) * e.dx      // m off the lane's centre (+: -dz, dx)
+const trafficSolid = q => !!q.body && q.heldBy === undefined && (!!q.V || vehicleBody(q.K))
+// nothing in the band the shifted path takes, and nothing at all on the far side of the centre line, from beside this car to
+// `reach` m ahead (and each vehicle's own 3 s of travel beyond)
+function trafficOverClear(o, e, shift, p, reach) {
+  const oL = e.ox * -e.dz + e.oz * e.dx, toC = oL > 0 ? -1 : 1
+  for (const q of objs) {
+    if (q === o || q === p || !trafficSolid(q)) continue
+    const qw = (q.V?.w ?? 2) / 2, ql = (q.V?.l ?? 4.5) / 2, lat = trafficLaneLat(e, q.x, q.z)
+    if (Math.abs(lat - shift) > o.V.w / 2 + qw + ROUND.margin && (lat * toC + qw) < Math.abs(oL)) continue
+    const qf = (q.x - o.x) * e.dx + (q.z - o.z) * e.dz
+    if (qf > -(o.V.l / 2 + ql + 1) && qf < reach + ql + 3 * speedOf(q)) return false
+  }
+  return true
+}
+// nothing within 2.3 m behind the tail, across the car's width
+function trafficBehindClear(o, fw, people) {
+  const free = (x, z, r, len) => { const dx = x - o.x, dz = z - o.z, f = -(dx * fw[0] + dz * fw[2]), side = dx * -fw[2] + dz * fw[0]
+    return !(f > 0 && f - o.V.l / 2 - len < 2.3 && Math.abs(side) < o.V.w / 2 + r + 0.3) }
+  for (const q of objs) if (q !== o && q.body && q.heldBy === undefined && !free(q.x, q.z, q.V ? Math.max(q.V.w, q.V.l) / 2 : q.R, q.V ? Math.max(q.V.w, q.V.l) / 2 : q.R)) return false
+  for (const c of people) if (!(c.dead > 0) && !seatOf(c) && !free(c.x, c.z, c.r || 0.5, c.r || 0.5)) return false
+  return castRay(o.x - fw[0] * (o.V.l / 2 + 0.3), o.y + 0.2, o.z - fw[2] * (o.V.l / 2 + 0.3), -fw[0], 0, -fw[2], 2.3, RAY_GROUP) >= 1
+}
+// another exit for an ambient car (trafficNext's own choice, up to 8 draws) that `ok` accepts
+function trafficOtherExit(a, ok) {
+  if (a.route) return null
+  for (let i = 0; i < 8; i++) { const n = trafficNext(a); if (n && n !== a.next && ok(n)) return n }
+  return null
+}
+// a vehicle's wheelbase (m)
+const trafficBase = V => Math.max(...V.wheels.at.map(w => w[2])) - V.wheels.at[0][2]
+// the turn onto n, taken from the line `shift` m off the lane, keeps the car's box ROUND.clear m off p's box all the way, and
+// more on a bend by what its rear cuts inside (off-tracking: wheelbase^2 / 2R, about 0.9 m for a bus on a 10 m bend)
+function trafficTurnClear(o, a, n, shift, p) {
+  const t = { edge: a.edge, next: n, round: { edge: a.edge, shift } }
+  trafficTurn(t)
+  const pf = rotq(p.q, [0, 0, -1]), pb = { x: p.x, z: p.z, fx: pf[0], fz: pf[2], hw: (p.V?.w ?? 2 * p.R) / 2, hl: (p.V?.l ?? 2 * p.R) / 2 }, B = trafficBase(o.V)
+  for (let i = 0; i < t.path.length - 1; i++) {
+    const u = t.path[i], v = t.path[i + 1], w = t.path[Math.max(0, i - 1)], L = Math.hypot(v.x - u.x, v.z - u.z) || 1
+    // the bend's radius at u, from the circle through w, u, v
+    const ax = u.x - w.x, az = u.z - w.z, bx = v.x - u.x, bz = v.z - u.z, cross = Math.abs(ax * bz - az * bx)
+    const R = cross > 1e-6 ? Math.hypot(ax, az) * Math.hypot(bx, bz) * Math.hypot(v.x - w.x, v.z - w.z) / (2 * cross) : Infinity
+    if (trafficBoxGap({ x: u.x, z: u.z, fx: bx / L, fz: bz / L, hw: o.V.w / 2, hl: o.V.l / 2 }, pb) < ROUND.clear + ROUND.cut + B * B / (2 * R)) return false
+  }
+  return true
+}
+// before a turn: when a vehicle standing (not traffic) within 25 m of the junction sits on the turn onto a.next, an ambient car
+// takes another exit whose turn clears every such vehicle (none: it keeps its exit, waits, and may be retired out of sight)
+function trafficTurnFree(o, a) {
+  const e = a.edge, J = e.to, sh = a.round?.edge === e ? a.round.shift : 0
+  const near = objs.filter(q => q !== o && trafficSolid(q) && !q.traffic && speedOf(q) < 0.3 && Math.hypot(q.x - J.x, q.z - J.z) < 25)
+  if (!near.length || near.every(q => trafficTurnClear(o, a, a.next, sh, q))) return
+  const alt = trafficOtherExit(a, n => near.every(q => trafficTurnClear(o, a, n, sh, q)))
+  if (alt) a.next = alt
+}
+function trafficRound(o, a, e, fw, speed, stop, hold, people, dt) {
+  // in a turn: going round is over; held by something standing (not traffic), the clock to retiring it runs
+  if (a.path && !a.round?.turn) { a.round = null; if (speed > 0.3) a.stuck = 0; else if (hold && !hold.p.traffic && speedOf(hold.p) < 0.3) a.stuck = (a.stuck || 0) + dt; return null }
+  const R = a.round, half = o.V.w / 2, oL = e.ox * -e.dz + e.oz * e.dx, toC = oL > 0 ? -1 : 1
+  const along = (o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, lat = trafficLaneLat(e, o.x, o.z)
+  // how far ahead it takes to pull `d` m across: 1.6 x the S-bend at full lock (the steering aims 5 m ahead, not at full lock)
+  const turn = trafficBase(o.V) / Math.tan(o.V.steer), pull = d => 1.6 * 2 * Math.sqrt(turn * Math.abs(d))
+  if (R) {
+    const q = R.p, qf = (q.x - o.x) * e.dx + (q.z - o.z) * e.dz
+    R.t -= dt
+    // passed it (or it went, or this took too long): back to the lane
+    if (R.edge !== e || !objs.includes(q) || q.heldBy !== undefined || qf < -(o.V.l / 2 + R.len + 1.5) || R.t <= 0) { a.round = null; return null }
+    if (a.path) return null
+    // over the centre line: something coming before this car is alongside sends it back to its lane, to wait
+    if (R.over && qf > o.V.l / 2 + R.len && !trafficOverClear(o, e, R.shift, q, qf + R.len + 20)) { a.round = null; return null }
+    // held at the bonnet by the vehicle it goes round (too little room to pull out): back up and try again, 3 times at most
+    if (!R.back && speed < 0.3 && hold?.p === q && hold.stop < 0.3 && R.tries < 3) {
+      R.back = Math.max(1.5, Math.min(ROUND.back, pull(R.shift - lat) - (hold.f - o.V.l / 2 - hold.len))); R.from = along; R.tries++; R.t = ROUND.keep
+    }
+    if (R.back > 0) {
+      if (R.from - along >= R.back || !trafficBehindClear(o, fw, people)) R.back = 0
+      else { const v = o.body.getLinearVelocity(), go = v.x() * fw[0] + v.z() * fw[2]
+        return { f: go > 0.3 ? -1 : go < -1.5 ? 0 : -0.6, r: 0, j: false, yaw: Math.atan2(-fw[0], -fw[2]), pitch: 0 } }
+    }
+    return null
+  }
+  if (!hold || stop < hold.stop - 0.5) { if (speed > 0.3) a.stuck = 0; a.roundGap = 0; return null }
+  const p = hold.p
+  if (p.traffic || !trafficSolid(p) && !(p.R > 0.6) || speedOf(p) > 0.3 || hold.f > ROUND.ahead + speed) return null
+  if (p.riders?.some(v => v !== undefined) && a.wait < ROUND.sat) return null
+  // the margin grows with the wheelbase: a long vehicle's S-bend swings its body wider (Car 0.45 m, Truck 0.67, Bus 0.8)
+  const pl = trafficLaneLat(e, p.x, p.z), need = half + hold.r + ROUND.margin + Math.max(0, trafficBase(o.V) - 2.8) * 0.25, own = Math.abs(oL) - half - 0.15, over = 2 * Math.abs(oL)
+  const kerb = Math.max(0, (e.width || 2 * Math.abs(oL) + 3) / 2 - Math.abs(oL) - half - 0.2)
+  let waitGap = 0
+  for (const shift of [pl + need, pl - need].sort((u, v) => Math.abs(u) - Math.abs(v))) {
+    const c = shift * toC
+    if (c > over || -c > kerb) continue
+    const isOver = c > own
+    if (isOver && !trafficOverClear(o, e, shift, p, hold.f + hold.len + 20)) { waitGap ||= pull(shift - lat); continue }
+    // it stands where the car turns (the last trim of the edge): the turn, from the shifted line, must clear it too; an
+    // ambient car may take another exit whose turn does
+    if (a.next && (p.x - e.from.x) * e.dx + (p.z - e.from.z) * e.dz + hold.len > e.length - trafficTrim(e) - 1 && !trafficTurnClear(o, a, a.next, shift, p)) {
+      const alt = trafficOtherExit(a, n => trafficTurnClear(o, a, n, shift, p))
+      if (!alt) continue
+      a.next = alt
+    }
+    const turn = !!a.next && (p.x - e.from.x) * e.dx + (p.z - e.from.z) * e.dz + hold.len > e.length - trafficTrim(e) - 1
+    const gap = hold.f - o.V.l / 2 - hold.len
+    a.roundGap = 0
+    a.round = { p, shift, len: hold.len, t: ROUND.keep, over: isOver, edge: e, from: along, tries: 0, turn, back: speed < 0.3 ? Math.max(0, Math.min(ROUND.back, pull(shift - lat) - gap)) : 0 }
+    a.stuck = 0
+    return 'plan'
+  }
+  a.roundGap = waitGap
+  if (speed < 0.3) a.stuck = (a.stuck || 0) + dt
+  return null
+}
 function trafficSteer(o, err, distance, speed) {
   const W = o.V.wheels, base = Math.max(...W.at.map(a => a[2])) - W.at[0][2]
   const lock = Math.min(o.V.steer, Math.atan(base * drive(o.V, 'turn') / Math.max(speed * speed, 1)))
@@ -15912,7 +16070,7 @@ function trafficTick(dt, all) {
         o.riders[0] = driver.id; driveStep(driver, a.input); o.riders[0] = saved
       }
     }
-    if (!o.riders?.some(v => v !== undefined) && o.heldBy === undefined && people.length && people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.retire) && trafficHidden(o.x, o.z, people) && o.trafficAmbient) {
+    if (!o.riders?.some(v => v !== undefined) && o.heldBy === undefined && people.length && (people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.retire) || (o.traffic?.stuck || 0) > ROUND.stuck) && trafficHidden(o.x, o.z, people) && o.trafficAmbient) {
       trafficDetach(o, false); dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({id:o.id,until:clock+12}); T.stats.retired++
       for (const sent of objSent.values()) sent.delete(o.id)
     }
@@ -28919,6 +29077,22 @@ function motionResult(J, err) {
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   // card #75: a sequence of frames and their debug rows in one call (a promise): { n, every, width, quality }
   capture: captureFrames,
+  // card #63, a test tool (host): a car of `kind` dropped h m above the roof of the vehicle standing within 2 m of (x, z), else
+  // above the ground there, awake so it falls; its object id, or false. The cars stacking fix should slide it off level
+  dropCar(x, z, h = 3, kind = 'Car') {
+    if (!isHost || ![x, z, h].every(Number.isFinite) || objs.length >= OBJ_MAX - 8) return false
+    const k = OBJECTS.findIndex(K => K.drive && K.name.toLowerCase() === String(kind).toLowerCase())
+    if (k < 0) return false
+    const under = objs.find(q => q.V && Math.hypot(q.x - x, q.z - z) < 2), hit = []
+    staticRay(x, 300, z, 0, -1, 0, 600, hit)
+    const y = under ? under.y + under.V.h / 2 + h : (hit.length ? hit[1] : 0) + h, yaw = under ? Math.atan2(-rotq(under.q, [0, 0, -1])[0], -rotq(under.q, [0, 0, -1])[2]) : 0
+    objSeeds[objs.length] = (Math.random() * 1e9) | 0
+    placeObject(k, [x, y, z], yaw)
+    const o = objs.at(-1)
+    if (!o?.V) return false
+    o.body.setActivationState(1); o.body.activate()
+    return o.id
+  },
   // card #78: a crater for tests (host, Faustland): as a leap smash makes it, at the surface height y; true if it fits
   crater(x, z, r = 2.4, y = 0) { return isHost && LV.faust && [x, z, r, y].every(Number.isFinite) ? addCrater(x, z, r, y) : false },
   // card #84: the sewers, read only: plan() (nodes, edges, manholes, hash), near(x, z, r), cover(x, z), isOpen(id), built, drawn, deep, covers, programs, stats, floorAt(x, z)
