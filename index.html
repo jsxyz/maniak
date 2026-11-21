@@ -27808,6 +27808,12 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
       hookCheck([id, ux, uz, power, dmg].every(Number.isFinite) && power >= 0 && power <= 40 && dmg >= 0 && dmg <= 1000, 'knock(id, ux, uz, power 0-40, dmg 0-1000) needs numbers')
       return GAME.streetLife.knock(id, ux, uz, power, dmg)
     },
+    // card #101: killBird(flockId, i, ux, uz) kills the i-th bird of flocks()' flock flockId, hit from (ux, uz): a test
+    killBird(flockId, i, ux = 1, uz = 0) {
+      hookCheck(isHost, 'Only the host can use test commands.')
+      hookCheck([flockId, i, ux, uz].every(Number.isFinite) && i >= 0 && i < 32, 'killBird(flockId, i 0-31, ux, uz) needs numbers')
+      return GAME.streetLife.killBird(flockId, i, ux, uz)
+    },
     view(p, t) {
       hookCheck(isHost, 'Only the host can use test commands.')
       const v3 = a => Array.isArray(a) && a.length === 3 && a.every(Number.isFinite)
@@ -29898,6 +29904,7 @@ function partsAfter(all, dt, credit) {
       if (p.down || P.struck.has('s' + ag.id) || Math.hypot(p.x - h.x, p.z - h.z) > h.r + 0.6) return
       P.struck.add('s' + ag.id); slKnock(ag, p, h.vx, h.vz, sp * 0.3, by, T, undefined, undefined, undefined, partsImpact(PARTS.person.mass, sp), FLUNG_G(), 3)          // card #101: as a character it meets
     })
+    if (slState && LV.faust && h.y - h.h - h.r < 0.4) slBirdsNear(h.x, h.z, h.r + 0.2, T, (f, i) => slBirdKill(f, i, by, h.vx, h.vz, T))          // card #101: birds he comes down on
   }
   // street people in flight: what they meet on the way, the glass they go through, a pram's blast where it comes down
   for (let i = partsFlights.length - 1; i >= 0; i--) {
@@ -29926,6 +29933,7 @@ function partsAfter(all, dt, credit) {
       if (ag.id === r.id || q.down || F.struck.has('s' + ag.id) || Math.hypot(q.x - p.x, q.z - p.z) > 0.9) return
       F.struck.add('s' + ag.id); slKnock(ag, q, r.vx, r.vz, sp * 0.3, by, T, undefined, undefined, undefined, FG.dmg * clamp(sp / 25, 0.5, 1.3), FLUNG_G(), 3)          // card #101: as a character it meets
     })
+    if (p.y < 1.2) slBirdsNear(p.x, p.z, 0.7, T, (f, i) => slBirdKill(f, i, by, r.vx, r.vz, T))          // card #101: birds a body comes down on
   }
   for (const o of objs) if (o.thrownBy === undefined && o.puntDmg !== undefined) o.puntDmg = undefined
 }
@@ -29964,6 +29972,8 @@ function partsSweep(all, credit) {
       if (partsSegDist([was[0], 0, was[2]], [now3[0], 0, now3[2]], [p.x, 0, p.z], [p.x, 0, p.z]) > 0.4 + R) return
       o.struck.add('s' + ag.id); slKnock(ag, p, dir[0], dir[2], Math.max(1, D * 0.05), by, T, undefined, undefined, undefined, D, -1, 3)          // card #101: as a character it meets
     })
+    if (slState && LV.faust && Math.min(was[1], now3[1]) - R < 0.3) slBirdsNear((was[0] + now3[0]) / 2, (was[2] + now3[2]) / 2, Math.hypot(now3[0] - was[0], now3[2] - was[2]) / 2 + 1, T, (f, i, q) => {
+      if (partsSegDist([was[0], 0, was[2]], [now3[0], 0, now3[2]], [q.x, 0, q.z], [q.x, 0, q.z]) <= 0.15 + R) slBirdKill(f, i, by, dir[0], dir[2], T) })          // card #101: birds it skims
     for (const q of objs) {
       if (q === o || !q.V || o.struck.has('o' + q.id) || q.heldBy !== undefined) continue
       if (partsSegDist(was, now3, [q.x, q.y, q.z], [q.x, q.y, q.z]) > (q.R || objR(q.K)) * 0.7 + R) continue
@@ -30023,6 +30033,20 @@ function partsFlyAt(r, tau, o, H = 0.9) {
 const partsEase = u => u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u)
 const partsWrap = a => Math.atan2(Math.sin(a), Math.cos(a))
 const partsTurnS = d => Math.max(0.15, Math.abs(d) * 0.36 / Math.PI)
+// fix 55d: the held poses and the flight's first clip frame, from the street clips (root space: y up, +z his front). A body is
+// held in the death clip at 0.5 s (#101), its root 0.57 m lower; the living in the cower, pitched 0.15 rad forward
+const PARTS_REL = { T: 0.4, C: [0.3, -0.45], dead: { c: [1.0, -0.08], tilt: 1.50, low: 0.57 }, live: { c: [0.57, 0], tilt: 2.53, low: 0 } }
+function partsRelease(r, ag, u, H, yaw, th, o) {
+  const e = partsEase(u), w = 1 - e, P = slDeathOf(ag.id, r.t - 1) ? PARTS_REL.dead : PARTS_REL.live, [Cy, Cz] = PARTS_REL.C
+  const sY = Math.sin(yaw), cY = Math.cos(yaw), s0 = Math.sin(r.yaw0 ?? yaw), c0 = Math.cos(r.yaw0 ?? yaw)
+  // C under pitch A and yaw: its offset from the root
+  const off = A => { const ly = Cy * Math.cos(A) - Cz * Math.sin(A), lz = Cy * Math.sin(A) + Cz * Math.cos(A); return [lz * sY, ly, lz * cY] }
+  // at the release: the held body's centre less the flight's (pitch 0, the held yaw), both from the flight's first root
+  const dy = Math.max(0, r.y0 - H - P.low) - (r.y0 - H), Dz = P.c[1] - Cz
+  const D = [Dz * s0, dy + P.c[0] - Cy, Dz * c0]
+  const a = off(th), ps = th + P.tilt * w, b = off(ps)
+  o.x += a[0] + D[0] * w - b[0]; o.y += a[1] + D[1] * w - b[1]; o.z += a[2] + D[2] * w - b[2]; o.pitch = ps
+}
 // the pose under record 8 or 9 (slDetached hands them here); after landing, a knock-down's lie, get-up and run
 function partsStreetPose(ag, r, t, o) {
   const dog = ag.kind === SL_K.stray, tau = (t - r.t) / 1000, H = dog ? 0.3 : 0.9
@@ -30059,8 +30083,9 @@ function partsStreetPose(ag, r, t, o) {
     // the clip runs on into the knock-down's (ct 0.32 as it lands); a dog rolls onto its side as the knock-down has it then
     o.clip = dog ? 'flinch' : 'knockback'; o.ct = dog ? 0.3 : 0.25 + 0.07 * tau / tl
     if (dog) { o.roll = 0.2 * Math.PI * tau / tl; o.y += Math.sin(o.roll) * 0.22 }
-    // a body leaves his hands from where #101 holds one (the death clip's slump, 0.57 m lower), rising onto the flight over 0.25 s
-    else if (!r.what && tau < 0.25 && slDeathOf(ag.id, r.t - 1)) o.y = Math.max(0, o.y - 0.57 * (1 - partsEase(tau / 0.25)))
+    // card #55, fix 55d (QA #62): the release as drawn. Over the first 0.4 s the lying clip's body (centre C, local) turns up
+    // from the held pose's torso angle about its own centre, and that centre eases onto the flight from the held body's
+    else if (!r.what && tau < PARTS_REL.T) partsRelease(r, ag, tau / PARTS_REL.T, H, yaw, th, o)
     return
   }
   // landed: as a knock-down from where it came down
@@ -30068,6 +30093,7 @@ function partsStreetPose(ag, r, t, o) {
   // itself it faced heading 0, a snap on the landing frame)
   const land = r.land ||= { kind: 1, id: r.id, key: r.key, t: r.t + (r.tl - STREET.knockS * 1000 * 0.4), x: r.x1 + Math.sin(r.yaw) * 1e-3, z: r.z1 + Math.cos(r.yaw) * 1e-3, x1: r.x1, z1: r.z1, x2: r.x2, z2: r.z2 }
   o.rec = land; slDetached(ag, land, t, o); o.rec = r
+  if (!dog && !r.what && tau < PARTS_REL.T) partsRelease(r, ag, tau / PARTS_REL.T, H, o.yaw, o.pitch || 0, o)          // fix 55d
   if (ag.kind === SL_K.cyclist) o.bikeDown = r.from ? [r.from.x, r.from.z, r.from.yaw] : [r.x0, r.z0, r.yaw]
   if (ag.kind === SL_K.pram) o.pramAt = r.from ? [r.from.x, r.from.z, r.from.yaw] : null
 }
@@ -31345,7 +31371,7 @@ function slRider(L, R, t, o) {
 
 // ---- records: what the host decides, played the same on every client. kind 1 knocked down, 2 panic (an area), 3 pigeons
 // scattered, 4 a driver out of a taken car, 5 got out of the way (one agent). Wire form: [kind, id, t, x, z, ...]
-const SL_REC = { knock: 1, panic: 2, scatter: 3, exit: 4, dodge: 5, stagger: 10, death: 11 }
+const SL_REC = { knock: 1, panic: 2, scatter: 3, exit: 4, dodge: 5, stagger: 10, death: 11, bird: 13 }
 function slAddRec(a, local) {
   const st = slState; if (!st) return null
   const key = a[0] + ':' + a[1] + ':' + Math.round(a[2])
@@ -31360,6 +31386,7 @@ function slAddRec(a, local) {
   if (r.kind === 11) { r.x1 = a[5]; r.z1 = a[6]; r.cause = a[7]; r.gun = a[8]          // card #101: a death
     let ag = null; try { ag = partsAgent(r.id) } catch (e) {}
     for (const f of slDeathFns) try { f(r, ag) } catch (e) {} }
+  if (r.kind === 13) { r.x1 = a[5]; r.z1 = a[6]; r.yaw = a[7]; for (const f of slBirdFns) try { f(r) } catch (e) {} }          // card #101: a bird's death
   if (r.kind === 8 || r.kind === 9) partsRecParse(r, a)          // card #55
   st.rec.set(key, r)
   if (r.kind !== 2) { const L = st.byId.get(r.id) || st.byId.set(r.id, []).get(r.id); L.push(r); L.sort((p, q) => p.t - q.t) }
@@ -31370,7 +31397,7 @@ function slAddRec(a, local) {
 }
 function slPrune(t) {
   const st = slState
-  for (const [k, r] of st.rec) if (t - r.t > (r.kind === 11 || r.kind === 9 && !r.what && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {          // card #101: a death longer, and a body's throws (they place it)
+  for (const [k, r] of st.rec) if (t - r.t > (r.kind === 11 || r.kind === 13 || r.kind === 9 && !r.what && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {          // card #101: a death longer, and a body's throws (they place it)
     st.rec.delete(k); st.exits.delete(k)
     if (r.kind === 8 && partsGrabbed.get(r.id) === r) partsGrabbed.delete(r.id)
     if (r.kind === 2) st.panics.splice(st.panics.indexOf(r), 1)
@@ -31987,10 +32014,14 @@ function slAim(shooter, list, viewT, G) {
     if (ag.kind === SL_K.pram && !slPramGone(ag, T)) add.push({ ...add.at(-1), pram: true, id: -1000 - add.length,
       x: p.x + Math.sin(p.yaw) * STREET.pramBack, z: p.z + Math.cos(p.yaw) * STREET.pramBack, y: 0.55, r: 0.45, h: 0.25 })
   })
+  // card #101: birds on the ground, a small sphere each (within 40 m); one hit drops one
+  slBirdsNear(shooter.x, shooter.z, Math.min(reach, 40), T, (f, i, q) => add.push({ street: true, bird: true, flock: f, i, id: -1000 - add.length, x: q.x, y: 0.1, z: q.z, r: 0.14, h: 0.02,
+    hp: 1e9, dead: 0, prot: 0, axis: AXIS_UP, grounded: true, cid: 0 }))
   return add.length ? list.concat(add) : list
 }
 function slStruck(c, h, G, ux, uy, uz) {
   if (!isHost || !slState) return
+  if (h.bird) return slBirdKill(h.flock, h.i, c, ux, uz, tickAt || now())          // card #101: a bird
   const T = tickAt || now(), power = Math.max(1, (G?.knock ?? 6) * 0.35 + (G?.dmg ?? 10) * 0.03)
   // card #45: which part of a pram's agent was struck (its pram, or its mother), and how hard
   slHit.part = h.agent.kind === SL_K.pram ? (h.pram ? 'pram' : 'mother') : null; slHit.dmg = slSwingDmg(c, h, G, T)          // card #101: a swing is one blow
@@ -32043,7 +32074,7 @@ function slWireOut() {
 }
 function slWireIn(d) {
   if (isHost || !slState || !Array.isArray(d.sl) || d.sl.length > 400) return
-  for (const a of d.sl) if (Array.isArray(a) && a.length >= 5 && a.every(Number.isFinite) && (a.length <= 12 && (a[0] >= 1 && a[0] <= 5 || a[0] === 10 && (a.length === 7 || a.length === 8) || a[0] === 11 && a.length === 9) || partsRecOk(a))) slAddRec(a, true)
+  for (const a of d.sl) if (Array.isArray(a) && a.length >= 5 && a.every(Number.isFinite) && (a.length <= 12 && (a[0] >= 1 && a[0] <= 5 || a[0] === 10 && (a.length === 7 || a.length === 8) || a[0] === 11 && a.length === 9 || a[0] === 13 && a.length === 8) || partsRecOk(a))) slAddRec(a, true)
 }
 
 // ---- drawing: each model's clips baked into a bone texture (a 3x4 matrix per joint per frame, root space), skinned on the
@@ -32493,30 +32524,77 @@ function slBikeDown(kit, lod, bx, bz, yaw, fall = 1) {
   { const [x, y, z] = at(0, B.bb[1], B.bb[2]); slSet(kit.parts['bike_crank' + lod], x, y, z, yaw, 1, R) }
   for (const side of [1, -1]) { const [x, y, z] = at(side > 0 ? -B.pedalOut : B.pedalOut, B.bb[1] - side * B.crank, B.bb[2]); slSet(kit.parts['bike_pedal' + lod], x, y, z, yaw, 1, R) }
 }
-// a ground flock: pecking, looking about, a few steps; after a scatter, up and round and back down
+// a ground flock: pecking, looking about, a few steps; after a scatter, up and round and back down. Card #101: a bird's pose is
+// slBirdAt (the host's hits read it too); a dead bird is drawn where it fell (slDeadBirdPose) until it has faded
+function slFlockScatter(f, T) { return slState.byId.get(f.id)?.findLast?.(r => r.t <= T && T - r.t < 40000) }
+function slBirdAt(f, i, b, T, sc, q) {
+  const ph = T / 1000 + b.ph, wob = Math.sin(ph * b.w * 6)
+  let x = f.x + Math.cos(b.a + 0.3 * Math.sin(ph * b.w)) * b.r, z = f.z + Math.sin(b.a + 0.3 * Math.sin(ph * b.w)) * b.r, y = 0
+  let yaw = b.a + ph * 0.3 + wob * 0.8, clip = (Math.floor(ph / 3) + i) % 3 === 0 ? 'walk' : (Math.floor(ph / 2.3) + i) % 2 ? 'peck' : 'idle', ct = ph, pitch = 0
+  if (sc) {
+    const tau = (T - sc.t) / 1000 - (i % 5) * 0.06, away = Math.atan2(x - sc.x, z - sc.z) + (slRnd(f.id, i) - 0.5) * 1.2
+    if (tau > 0 && tau < b.back + 4) {
+      const up = Math.min(1, tau / 1.4), cr = 9 + (i % 4) * 2.5, w = 0.45 + (i % 3) * 0.08
+      const ox = Math.sin(away) * 14, oz = Math.cos(away) * 14
+      const ang = away + Math.PI + tau * w * (i % 2 ? 1 : -1)
+      let fx = f.x + ox + Math.sin(ang) * cr * up, fz = f.z + oz + Math.cos(ang) * cr * up, fy = (3 + (i % 5) * 1.6) * up + (1 - up) * tau * 3
+      const land = Math.max(0, Math.min(1, (tau - b.back) / 4))
+      x = x + (fx - x) * (1 - land) * Math.min(1, tau * 2); z = z + (fz - z) * (1 - land) * Math.min(1, tau * 2); y = Math.max(0, fy * (1 - land))
+      yaw = ang + (i % 2 ? Math.PI / 2 : -Math.PI / 2); pitch = up < 1 ? -0.5 : 0
+      clip = land > 0.3 || (Math.floor(tau / 2.5) + i) % 3 === 2 ? 'glide' : 'fly'; ct = tau * 1.1
+    }
+  }
+  q.x = x; q.y = y; q.z = z; q.yaw = yaw; q.clip = clip; q.ct = ct; q.pitch = pitch; q.roll = 0; q.scale = 1
+  return q
+}
 function slDrawFlock(kit, f, T, d) {
-  const sc = slState.byId.get(f.id)?.findLast?.(r => r.t <= T && T - r.t < 40000)
+  const sc = slFlockScatter(f, T)
   const q = slPoseB; q.scale = 1; q.roll = 0
   for (const [i, b] of f.birds.entries()) {
-    const ph = T / 1000 + b.ph, wob = Math.sin(ph * b.w * 6)
-    let x = f.x + Math.cos(b.a + 0.3 * Math.sin(ph * b.w)) * b.r, z = f.z + Math.sin(b.a + 0.3 * Math.sin(ph * b.w)) * b.r, y = 0
-    let yaw = b.a + ph * 0.3 + wob * 0.8, clip = (Math.floor(ph / 3) + i) % 3 === 0 ? 'walk' : (Math.floor(ph / 2.3) + i) % 2 ? 'peck' : 'idle', ct = ph, pitch = 0
-    if (sc) {
-      const tau = (T - sc.t) / 1000 - (i % 5) * 0.06, away = Math.atan2(x - sc.x, z - sc.z) + (slRnd(f.id, i) - 0.5) * 1.2
-      if (tau > 0 && tau < b.back + 4) {
-        const up = Math.min(1, tau / 1.4), cr = 9 + (i % 4) * 2.5, w = 0.45 + (i % 3) * 0.08
-        const ox = Math.sin(away) * 14, oz = Math.cos(away) * 14
-        const ang = away + Math.PI + tau * w * (i % 2 ? 1 : -1)
-        let fx = f.x + ox + Math.sin(ang) * cr * up, fz = f.z + oz + Math.cos(ang) * cr * up, fy = (3 + (i % 5) * 1.6) * up + (1 - up) * tau * 3
-        const land = Math.max(0, Math.min(1, (tau - b.back) / 4))
-        x = x + (fx - x) * (1 - land) * Math.min(1, tau * 2); z = z + (fz - z) * (1 - land) * Math.min(1, tau * 2); y = Math.max(0, fy * (1 - land))
-        yaw = ang + (i % 2 ? Math.PI / 2 : -Math.PI / 2); pitch = up < 1 ? -0.5 : 0
-        clip = land > 0.3 || (Math.floor(tau / 2.5) + i) % 3 === 2 ? 'glide' : 'fly'; ct = tau * 1.1
-      }
-    }
-    q.x = x; q.y = y; q.z = z; q.yaw = yaw; q.clip = clip; q.ct = ct; q.pitch = pitch
-    slDrawSkinned(kit.pigeon, q, d + y, null, b.s)
+    const dr = slBirdDeath(f, i, T)
+    if (dr) { if (!slDeadBirdPose(dr, T, q)) continue }
+    else slBirdAt(f, i, b, T, sc, q)
+    slDrawSkinned(kit.pigeon, q, d + q.y, null, b.s)
   }
+  q.scale = 1; q.roll = 0
+}
+// card #101: everything is killable, birds too (the ruling: a small hit sphere on the ground; they drop when hit). A bird's death is
+// record 13 [13, its id, t, x, z, x1, z1, heading]: its id 0x4000000 + flock id x 32 + its place in the flock; host-made, on the wire
+const slBirdId = (f, i) => 0x4000000 + f.id * 32 + i
+const slBirdFns = []          // GAME.streetLife.on('bird', fn): fn(record) on every machine as a bird's death is added
+function slBirdDeath(f, i, T) { const own = slState.byId.get(slBirdId(f, i)); if (own) for (const r of own) if (r.kind === 13 && r.t <= T && T - r.t < STREET.deadS * 1000) return r; return null }
+// a dead bird (#72: it drops with a tumble and lies on its side with a wing out, not stiff): thrown 0.5-1 m by the hit in a 0.3 m
+// hop, rolling over (360 - 50 deg in 0.55 s, at most 28 deg a frame), the glide clip's wings spread; then on its side, 50 deg over
+// (the glide pose's wing tips are 0.24 m out: at 90 deg the lower would go a quarter metre into the pavement; at 50 it lies along
+// the ground and the upper stands out); still, then faded at STREET.bodyS
+const SL_BIRD_DEAD = { tumble: 0.55, hop: 0.3, roll: 0.87, lie: 0.02 }
+function slDeadBirdPose(r, T, q) {
+  const tau = (T - r.t) / 1000, B = SL_BIRD_DEAD, u = clamp(tau / B.tumble, 0, 1), e = u * (2 - u), s = u * u * (3 - 2 * u)
+  q.x = r.x + (r.x1 - r.x) * e; q.z = r.z + (r.z1 - r.z) * e; q.y = B.hop * Math.sin(Math.PI * u) + B.lie * u
+  q.yaw = r.yaw; q.roll = (2 * Math.PI - B.roll) * s; q.pitch = 0.4 * Math.sin(Math.PI * u)
+  q.clip = 'glide'; q.ct = clamp(tau, 0, B.tumble) * 1.1
+  const g = tau - STREET.bodyS; q.scale = g > 0 ? Math.max(0, 1 - g) : 1
+  return q.scale > 0
+}
+// ground birds alive within R of (x, z) at T: fn(flock, i, its pose) (what a hit can reach)
+const slBirdTmp = { x: 0, y: 0, z: 0, yaw: 0, clip: 'idle', ct: 0, pitch: 0, roll: 0, scale: 1 }
+function slBirdsNear(x, z, R, T, fn) {
+  if (!slState) return
+  slFlocksNear(x, z, R + 2, f => { const sc = slFlockScatter(f, T)
+    for (const [i, b] of f.birds.entries()) { if (slBirdDeath(f, i, T)) continue
+      const q = slBirdAt(f, i, b, T, sc, slBirdTmp); if (q.y <= 0.05 && Math.hypot(q.x - x, q.z - z) <= R) fn(f, i, { ...q }) } })
+}
+// the host: a bird hit from direction (ux, uz) dies, if it is on the ground and alive; the rest of its flock goes up
+function slBirdKill(f, i, by, ux, uz, T) {
+  if (!isHost || !slState) return false
+  const Tr = Math.round(T), b = f.birds[i]
+  if (!b || slBirdDeath(f, i, Tr)) return false
+  const q = slBirdAt(f, i, b, T, slFlockScatter(f, T), slBirdTmp)
+  if (q.y > 0.05) return false
+  const id = slBirdId(f, i), n = Math.hypot(ux, uz) || 1, [x1, z1] = slRunTo(q.x, q.z, ux / n, uz / n, 0.5 + slRnd(id, Tr) * 0.5)
+  slAddRec([SL_REC.bird, id, Tr, slR2(q.x), slR2(q.z), slR2(x1), slR2(z1), slR2(q.yaw)])
+  slScatter(f, q.x, q.z, T)
+  return true
 }
 const SL_SKY = 6
 function slDrawSky(kit, T, cx, cz) {
@@ -32597,11 +32675,15 @@ GAME.streetLife = {
     slAround(x, z, r, T ?? slNow(), (ag, p) => out.push({ id: ag.id, kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: +p.x.toFixed(3), z: +p.z.toFixed(3), yaw: +p.yaw.toFixed(3), clip: p.clip, mode: p.mode, rec: p.rec?.kind || 0, down: p.down, dead: !!p.dead, hp: slHpNow(ag, T ?? slNow()), y: +p.y.toFixed(3), roll: +(p.roll || 0).toFixed(3),
       pram: ag.kind === SL_K.pram ? [slR2(p.x + Math.sin(p.yaw) * STREET.pramBack * p.scale), slR2(p.z + Math.cos(p.yaw) * STREET.pramBack * p.scale), slR2(p.yaw)] : undefined })); return out },
   clock: () => slNow(),
-  flocks(x, z, r = 40) { const out = []; if (slState) slFlocksNear(x, z, r, f => out.push({ id: f.id, x: f.x, z: f.z, n: f.birds.length, out: f.out || [0, 1] })); return out },
+  flocks(x, z, r = 40) { const out = []; if (slState) slFlocksNear(x, z, r, f => out.push({ id: f.id, x: f.x, z: f.z, n: f.birds.length, out: f.out || [0, 1], dead: f.birds.filter((b, i) => slBirdDeath(f, i, slNow())).length, birds: f.birds.map((b, i) => { const T = slNow(), q = slBirdAt(f, i, b, T, slFlockScatter(f, T), {}); return [slR2(q.x), slR2(q.z), slR2(q.y), slBirdDeath(f, i, T) ? 1 : 0] }) })); return out },
   records: () => slState ? [...slState.rec.values()].map(r => r.a) : [],
   lineup(x, z, yaw = 0, opts = {}) { if (slState) slState.lineup = x === null ? null : { x, z, yaw, T0: slNow(), ...opts } },
   // card #101: fn(record, agent) as each death record is added, on every machine; returns what removes it
-  on(type, fn) { if (type !== 'death' || typeof fn !== 'function') return () => {}; slDeathFns.push(fn); return () => { const i = slDeathFns.indexOf(fn); if (i >= 0) slDeathFns.splice(i, 1) } },
+  on(type, fn) { const L = type === 'death' ? slDeathFns : type === 'bird' ? slBirdFns : null; if (!L || typeof fn !== 'function') return () => {}; L.push(fn); return () => { const i = L.indexOf(fn); if (i >= 0) L.splice(i, 1) } },
+  // card #101: a bird of a flock (flocks()' id, its place in the flock) killed as a hit from (ux, uz) would (host; false if it is in the air or dead)
+  killBird(flockId, i, ux = 1, uz = 0) { if (!isHost || !slState) return false; const T = tickAt || now(); let f = null
+    for (const c of players.values()) if (!f) slFlocksNear(c.x, c.z, 200, g => { if (g.id === flockId) f = g })
+    return !!f && slBirdKill(f, i, null, ux, uz, T) },
   knock(id, ux = 1, uz = 0, power = 4, dmg) { if (!isHost || !slState) return false; const T = tickAt || now(); let done = false
     for (const c of players.values()) slAround(c.x, c.z, 200, T, (ag, p) => { if (ag.id === id && !done) { slKnock(ag, p, ux, uz, power, null, T, undefined, undefined, undefined, dmg, -1, 6); done = true } }); return done },
   panic: (x, z) => isHost && slState && slPanic(x, z, tickAt || now()),
@@ -34561,6 +34643,7 @@ function slPramBlast(e, credit) {
     slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
     try { slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }          // card #101
   }
+  slBirdsNear(at[0], at[2], B.radius, T, (f, i, q) => slBirdKill(f, i, by, q.x - at[0] || 0.01, q.z - at[2], T))          // card #101: the birds in it
   slPanic(at[0], at[2], T)
   const seed = Math.random() * 2 ** 31 | 0, B_ = slBabyOf(slState)
   tracers.push([r2(at[0]), r2(at[1]), r2(at[2]), SL_PRAM_HIT.ring, 0, -1, -1, 6, by?.id ?? -1, 0, OBJ_MAX + (B_.booms++ % SL_BOOM_IDS), seed])
