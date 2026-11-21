@@ -37104,7 +37104,7 @@ const WEATHER_LOOKS = { plain: true, ink: false, realistic: false }
 const FOG = { near: 8, far: 160, density: 5, bank: 0.18, tint: 0x3a4655, tintK: 0.7, curve: 0.8 }
 // loose paper in the wind: flat bits tumbling along the street ahead of the gusts, a ribbon mesh of its own (the rain's program)
 const PAPER = { n: 14, box: 34, size: [0.3, 0.21], from: 0.15, full: 0.6, drift: 0.8, colour: { plain: [0.46, 0.45, 0.4], ink: [0.02, 0.02, 0.03], realistic: [0.2, 0.19, 0.17] } }
-const rainState = { group: null, streaks: null, splashes: null, T: 0, ox: 0, oz: 0, px: 0, pz: 0, pT: 0, cover: 1, coverTo: 1, coverAt: 0, n: 0, m: 0, lit: null,
+const rainState = { group: null, streaks: null, splashes: null, T: 0, ox: 0, oz: 0, px: 0, pz: 0, pT: 0, cover: 1, coverTo: 1, indoor: 0, indoorTo: 0, wall: [40, 40, 40, 40], coverAt: 0, n: 0, m: 0, lit: null,
   a: null, s: null }
 function rainBuild() {
   const rnd = (seed => () => (seed = Math.imul(seed ^ seed >>> 15, 2246822519) + 0x6d2b79f5 | 0, ((seed ^ seed >>> 13) >>> 0) / 4294967296))(0x7a1e5)
@@ -37129,21 +37129,44 @@ function rainBuild() {
 }
 const rainWrap = (v, w) => v - Math.floor(v / w) * w
 // the rain's frame: dt s, the camera, the player's feet (the splashes' ground)
-// a roof overhead (an awning, a bridge, a ceiling) keeps the rain and the wind off: looked for at 6 Hz, eased (rainState.cover 1 open .. 0.12 roofed)
+// a roof overhead keeps the rain and the wind off, looked for at 6 Hz and eased: rainState.cover 1 open .. 0.12 under an awning or a bridge. Indoors (the
+// interior system's camera, or a ceiling within 7 m with walls near on three sides or both sides of a tunnel: a room, a club, a sewer) the rain is gone
+// inside the room over ~0.3 s: R.indoor 0..1, and R.wall the distances to the walls (+x, -x, +z, -z) so rain beyond them, seen through a window or a door, stays
+const ROOM = { ceil: 7, near: 25, tunnel: 8, ray: 40 }
 function weatherCover(dt) {
   const R = rainState, c = camera.position, t = performance.now()
-  if (t - R.coverAt > 160) { R.coverAt = t; try { R.coverTo = staticRay(c.x, c.y + 0.3, c.z, 0, 1, 0, 30) < 29.5 ? 0.12 : 1 } catch (e) { R.coverTo = 1 } }
+  if (t - R.coverAt > 160) {
+    R.coverAt = t
+    try {
+      const up = staticRay(c.x, c.y + 0.3, c.z, 0, 1, 0, 30), under = up < 29.5
+      let room = !!faustIn?.camera
+      if (under || room) {
+        const W = R.wall, y = c.y, K = ROOM.ray
+        W[0] = staticRay(c.x, y, c.z, 1, 0, 0, K); W[1] = staticRay(c.x, y, c.z, -1, 0, 0, K); W[2] = staticRay(c.x, y, c.z, 0, 0, 1, K); W[3] = staticRay(c.x, y, c.z, 0, 0, -1, K)
+        if (up < ROOM.ceil) room = room || W.filter(v => v < ROOM.near).length >= 3 || (W[0] < ROOM.tunnel && W[1] < ROOM.tunnel) || (W[2] < ROOM.tunnel && W[3] < ROOM.tunnel)
+      }
+      R.indoorTo = room ? 1 : 0; R.coverTo = room ? 1 : under ? 0.12 : 1
+    } catch (e) { R.coverTo = 1; R.indoorTo = 0 }
+  }
   R.cover += (R.coverTo - R.cover) * (1 - Math.exp(-dt * 4))
+  R.indoor += (R.indoorTo - R.indoor) * (1 - Math.exp(-dt * 10))
+}
+// the share of something at (rx, rz) from the camera that is inside the room: 1 inside the walls, 0 beyond them (a window's view), soft over half a metre
+function weatherInside(rx, rz) {
+  const R = rainState
+  if (R.indoor < 0.01) return 0
+  const lim = Math.abs(rx) > Math.abs(rz) ? (rx > 0 ? R.wall[0] : R.wall[1]) : (rz > 0 ? R.wall[2] : R.wall[3]), d = Math.sqrt(rx * rx + rz * rz), k = Math.min(1, Math.max(0, (d - lim + 0.3) / 0.6))
+  return R.indoor * (1 - k)
 }
 // the wind's push on a character's cape: m/s added to his speed, as if the air he runs into (a headwind lifts it, a tail wind lays it down)
 function weatherPush(a) {
   if (!(weather.wind > 0.02) || !WEATHER_LOOKS[activeLook]) return 0
   const yaw = a.mesh?.rotation?.y || 0, head = -(weather.windX * -Math.sin(yaw) + weather.windZ * -Math.cos(yaw))
-  return Math.max(-3, Math.min(6, head * 0.6)) * (0.3 + 0.7 * rainState.cover)
+  return Math.max(-3, Math.min(6, head * 0.6)) * (0.3 + 0.7 * rainState.cover) * (1 - rainState.indoor)
 }
 function paperDraw(dt, fx, look) {
   const R = rainState, c = camera.position, P = R.p, K = PAPER, col = K.colour[activeLook] || K.colour.plain, alt = activeLook === 'ink' ? [0.92, 0.92, 0.9] : col
-  const wind = weather.wind, ease = Math.min(1, Math.max(0, (wind - K.from) / (K.full - K.from))), n = Math.round(K.n * fx * ease * (0.4 + 0.6 * R.cover))
+  const wind = weather.wind, ease = Math.min(1, Math.max(0, (wind - K.from) / (K.full - K.from))), n = Math.round(K.n * fx * ease * (0.4 + 0.6 * R.cover) * (1 - R.indoor))
   R.paper.visible = n > 0
   if (!n) return
   R.px += weather.windX * K.drift * dt; R.pz += weather.windZ * K.drift * dt; R.pT += dt
@@ -37189,7 +37212,7 @@ function rainDraw(dt, level, fx, look) {
     pa[k] = px - sx; pa[k + 1] = py - sy; pa[k + 2] = pz - sz; pa[k + 3] = px + sx; pa[k + 4] = py + sy; pa[k + 5] = pz + sz
     pa[k + 6] = tx - sx; pa[k + 7] = ty - sy; pa[k + 8] = tz - sz; pa[k + 9] = tx + sx; pa[k + 10] = ty + sy; pa[k + 11] = tz + sz
     // gone near the lens and at the box's edge, thinner with the reach
-    const near = Math.min(1, Math.max(0, (dist - 0.7) / 2.5)), far = 1 - Math.min(1, Math.max(0, (dist - 14) / 16)), a = amax * A.a[i] * near * far
+    const near = Math.min(1, Math.max(0, (dist - 0.7) / 2.5)), far = 1 - Math.min(1, Math.max(0, (dist - 14) / 16)), a = amax * A.a[i] * near * far * (1 - weatherInside(rx, rz))
     const q = i * 16, col = i & 1 ? col1 : col0
     ka[q] = col[0]; ka[q + 1] = col[1]; ka[q + 2] = col[2]; ka[q + 3] = a
     ka[q + 4] = col[0]; ka[q + 5] = col[1]; ka[q + 6] = col[2]; ka[q + 7] = a
@@ -37204,7 +37227,7 @@ function rainDraw(dt, level, fx, look) {
     const u0 = R.T / Sp.t[i] + Sp.p[i], cyc = Math.floor(u0), u = u0 - cyc
     if (Sp.c[i] !== cyc) { Sp.c[i] = cyc; const h = weatherHash(i * 7919 + 13, cyc); Sp.x[i] = c.x + (((h & 0xffff) / 65535) * 2 - 1) * RAIN.reach; Sp.z[i] = c.z + ((((h >>> 16) & 0xffff) / 65535) * 2 - 1) * RAIN.reach }
     const r = RAIN.ring[0] + (RAIN.ring[1] - RAIN.ring[0]) * u, r0 = r * 0.7, d = Math.hypot(Sp.x[i] - c.x, Sp.z[i] - c.z)
-    const a = Math.min(1, amax * 2) * (1 - u) * (1 - u) * Math.min(1, d / 2.5) * (1 - Math.min(1, Math.max(0, (d - 8) / 7)))
+    const a = Math.min(1, amax * 2) * (1 - u) * (1 - u) * Math.min(1, d / 2.5) * (1 - Math.min(1, Math.max(0, (d - 8) / 7))) * (1 - weatherInside(Sp.x[i] - c.x, Sp.z[i] - c.z))
     for (let k = 0; k < 8; k++) {
       const ang = k * Math.PI / 4, ca = Math.cos(ang), sa = Math.sin(ang), o = i * 48 + k * 6, q = i * 64 + k * 8
       spa[o] = Sp.x[i] + ca * r0; spa[o + 1] = gy + 0.03; spa[o + 2] = Sp.z[i] + sa * r0; spa[o + 3] = Sp.x[i] + ca * r; spa[o + 4] = gy + 0.03; spa[o + 5] = Sp.z[i] + sa * r
@@ -37243,12 +37266,12 @@ function weatherSound() {
   if (!sfxLive()) { sfxRain = null; return }
   const t = actx.currentTime, R = rainState
   if (sfxRain && sfxRain.end <= t) sfxRain = null
-  const live = !!WEATHER_LOOKS[activeLook], want = live && weather.rain > 0.04 ? (0.15 + 0.85 * weather.rain) * (0.3 + 0.7 * R.cover) : 0
+  const live = !!WEATHER_LOOKS[activeLook], want = live && weather.rain > 0.04 ? (0.15 + 0.85 * weather.rain) * (0.3 + 0.7 * R.cover * (1 - 0.7 * R.indoor)) : 0
   if (want > 0) {
     if (!sfxRain || sfxRain.off) sfxRain = playSound('Rain', { cat: 'world', lvl: 0.05, span: Infinity })      // starts quietly and is eased up
     if (sfxRain) { sfxRain.off = false; sfxRain.end = t + 0.25; for (const s of sfxRain.srcs) { try { s.stop(sfxRain.end) } catch (e) {} } sfxRain.out.gain.setTargetAtTime(want * (SOUNDS.Rain.vol ?? 1), t, 0.4) }
   } else if (sfxRain && !sfxRain.off) { sfxRain.off = true; sfxCut(sfxRain, t) }
-  if (live) for (const b of weather.thunder) playSound('Thunder', { cat: 'world', lvl: clamp(1.1 - b.dist / 3200, 0.25, 1) * (0.5 + 0.5 * R.cover) * (0.7 + 0.3 * b.power), dist: b.dist })
+  if (live) for (const b of weather.thunder) playSound('Thunder', { cat: 'world', lvl: clamp(1.1 - b.dist / 3200, 0.25, 1) * (0.5 + 0.5 * R.cover * (1 - 0.6 * R.indoor)) * (0.7 + 0.3 * b.power), dist: b.dist })
 }
 // once a frame, after the state: the look's share of the weather
 function weatherLook(dt) {
