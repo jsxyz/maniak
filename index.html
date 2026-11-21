@@ -11987,7 +11987,7 @@ function parkFar() {
 // a parked car out of the world back in, without the forces anything gathered on it out there (Bullet clears them only in the world)
 function inWorld(o) {
   if (!o.away) return
-  o.away = false; o.body.clearForces(); world.addRigidBody(o.body, ...COLLIDE.object); awaySig = ''
+  o.away = false; o.body.clearForces(); world.addRigidBody(o.body, ...collideFor(o.K)); awaySig = ''
 }
 
 // rays hit per-chunk triangle copies of the boxes: Bullet's float32 ray vs a box can pass through near a face
@@ -12236,7 +12236,7 @@ function addObject(k, at, id, yaw = 0) {
   body.setRestitution(K.bounce || 0); body.setFriction(K.friction || 0)
   if (K.damp) body.setDamping(...K.damp)
   if (K.roll) body.setRollingFriction(K.roll)
-  world.addRigidBody(body, ...COLLIDE.object)
+  world.addRigidBody(body, ...collideFor(K))
   GAME.objectBody(body, K)
   const o = { k, id, K, at, body, shape, row: '', R: objR(K),
               x: at[0], y: at[1], z: at[2], q, off: [0, 0, 0], seed: seedOf(id) }
@@ -12351,8 +12351,13 @@ function inSight(c, o) {
 }
 const G_STATIC = 2, G_CAPSULE = 32, G_OBJ = 64      // capsules skip group 1: a car's wheel rays pass people
 // [group, mask] per body kind. Wheel rays (group 1) hit only ray copies: vs a City-wide box a ray misses
-const COLLIDE = { capsule: [G_CAPSULE, -2], object: [G_OBJ, -1], static: [G_STATIC, -1 ^ G_STATIC ^ 1], pad: [G_PAD, PAD_ASK],
+const COLLIDE = { capsule: [G_CAPSULE, -2], object: [G_OBJ, -1], vehicle: [G_OBJ, -1 ^ 1], static: [G_STATIC, -1 ^ G_STATIC ^ 1], pad: [G_PAD, PAD_ASK],
   ray: [RAY_GROUP, RAY_CAST | 1], solid: [RAY_GROUP | G_STATIC, -1 ^ G_STATIC], crown: [CROWN_GROUP, RAY_CAST], hub: [0, 0] }
+// vehicles (cars and wrecks) skip group 1, the vehicle raycaster's: one car's wheel rays pass another car, so a car never
+// climbs on to another's hull on its wheels (the hulls still meet, and the game's own rays still hit them)
+let vehicleWrecks = null
+const vehicleBody = K => !!K && (!!K.drive || (vehicleWrecks ??= new Set(VEHICLES.map(V => V.wreck).filter(Boolean))).has(K.name))
+const collideFor = K => vehicleBody(K) ? COLLIDE.vehicle : COLLIDE.object
 // 1 cm margin: Bullet's 4 cm default floats it off the floor
 function hullShape(pts) {
   const s = new A.btConvexHullShape()
@@ -12375,7 +12380,7 @@ function handOf(c, o, out) {
 function holdBy(o, c) {
   inWorld(o)
   if (c && o.heldBy === undefined) world.removeRigidBody(o.body)
-  if (!c && o.heldBy !== undefined) world.addRigidBody(o.body, ...COLLIDE.object)
+  if (!c && o.heldBy !== undefined) world.addRigidBody(o.body, ...collideFor(o.K))
   o.heldBy = c ? c.id : undefined
 }
 function liftUp(o, c) {
@@ -12552,7 +12557,7 @@ function setParked(o, parked) {
   world.removeRigidBody(o.body)
   o.body.setCollisionShape(s); if (!parked && o.V.inertia) inertia.setValue(...o.V.inertia); else s.calculateLocalInertia(o.K.mass, inertia)
   o.body.setMassProps(o.K.mass, inertia); o.body.updateInertiaTensor()
-  world.addRigidBody(o.body, ...COLLIDE.object)
+  world.addRigidBody(o.body, ...collideFor(o.K))
   if (parked) world.removeAction(o.car); else { world.addAction(o.car); o.body.activate() }
   A.destroy(inertia); o.parked = parked
 }
@@ -12771,12 +12776,47 @@ function carSweep(L) {
     if (moved) teleportBody(o.body, x, y, z)
   }
 }
+// car hulls never stack (a reported case: a car on top of another preventing it from moving). A contact
+// between two vehicles whose normal is more up than across (|y| over UNSTACK.normal) means one rides on the other. The upper
+// one slides off in the horizontal plane, away from the other's centre, at UNSTACK.push m/s at least: it stops rising, its
+// roll and pitch spin are held at 0 (it leaves level, so it lands on its wheels), and its friction is 0 until it is clear (a
+// loaded car dragged across a roof would tip the car under it over)
+const UNSTACK = { normal: 0.6, push: 3 }, unstackBy = new Map(), unstackHeld = new Map(), unstackNow = new Set()
+function carUnstack() {
+  const D = world.getDispatcher(), n = D.getNumManifolds()
+  unstackNow.clear()
+  if (n) {
+    unstackBy.clear()
+    for (const o of objs) if (o.body && (o.V || vehicleBody(o.K))) unstackBy.set(A.getPointer(o.body), o)
+    for (let i = 0; i < n; i++) {
+      const m = D.getManifoldByIndexInternal(i), k = m.getNumContacts()
+      if (!k) continue
+      const a = unstackBy.get(A.getPointer(m.getBody0())), b = a && unstackBy.get(A.getPointer(m.getBody1()))
+      if (!b) continue
+      let up = 0
+      for (let j = 0; j < k; j++) { const p = m.getContactPoint(j); if (p.getDistance() < 0.03) up = Math.max(up, Math.abs(p.get_m_normalWorldOnB().y())) }
+      if (up < UNSTACK.normal) continue
+      const [hi, lo] = a.y >= b.y ? [a, b] : [b, a]
+      if (unstackNow.has(hi)) continue
+      unstackNow.add(hi)
+      if (!unstackHeld.has(hi)) { unstackHeld.set(hi, hi.body.getFriction()); hi.body.setFriction(0) }
+      let dx = hi.x - lo.x, dz = hi.z - lo.z, d = Math.hypot(dx, dz)
+      if (d < 0.05) { const r = rotq(hi.q, [1, 0, 0]); dx = r[0]; dz = r[2]; d = Math.hypot(dx, dz) || 1 }
+      dx /= d; dz /= d
+      const v = hi.body.getLinearVelocity(), along = v.x() * dx + v.z() * dz, add = Math.max(0, UNSTACK.push - along)
+      velVec.setValue(v.x() + dx * add, Math.min(v.y(), 0), v.z() + dz * add); hi.body.setLinearVelocity(velVec)
+      velVec.setValue(0, hi.body.getAngularVelocity().y(), 0); hi.body.setAngularVelocity(velVec); hi.body.activate()
+    }
+  }
+  for (const [o, f] of unstackHeld) if (!unstackNow.has(o)) { if (o.body && objs.includes(o)) o.body.setFriction(f); unstackHeld.delete(o) }
+}
 function stepPhysics(dt) {
   padLaunch()
   for (const o of objs) if (o.V && o.body.isActive()) { const v = o.body.getLinearVelocity(); o.v0 = [v.x(), v.y(), v.z()] }
   const swept = carsAtSpeed()
   world.stepSimulation(dt, 0)            // 0 substeps: exactly one step of dt
   carSweep(swept)
+  carUnstack()
   holdObjects()
   partsHoldChars()
   stepObjects()
@@ -13035,6 +13075,22 @@ function trafficThink(o, dt, people) {
     obstacle(c.x, y, c.z, r)
     if (c.kind !== 'cyclist' && Math.hypot(c.vx || 0, c.vz || 0) > 0.3) for (const s of [0.8, 1.6]) obstacle(c.x + c.vx * s, y, c.z + c.vz * s, r)
     if (a.path) pathGap(c.x, c.z, r)
+  }
+  // in a turn, a vehicle ahead on the turn's path (a car stopped in or just past the junction), not only ahead of the bonnet:
+  // its footprint across each leg of the path, as obstacle() takes it across the bonnet's line; none beside or behind
+  if (a.path) for (const p of objs) {
+    if (p === o || p.heldBy !== undefined || !p.body || !(p.V || vehicleBody(p.K)) || Math.abs(p.y - o.y) > 3.5) continue
+    const dx = p.x - o.x, dz = p.z - o.z
+    if (dx * fw[0] + dz * fw[2] <= o.V.l / 2 || dx * dx + dz * dz > 45 * 45) continue
+    const pf = rotq(p.q, [0, 0, -1]), hl = (p.V?.l ?? 2 * p.R) / 2, hw = (p.V?.w ?? p.R) / 2
+    let px = o.x, pz = o.z, s = 0
+    for (let i = a.index; i < a.path.length && s <= 38; i++) {
+      const q = a.path[i], sx = q.x - px, sz = q.z - pz, L = Math.hypot(sx, sz)
+      if (L < 1e-3) continue
+      const ux = sx / L, uz = sz / L, al = Math.abs(pf[0] * ux + pf[2] * uz), ac = Math.abs(pf[0] * -uz + pf[2] * ux), u = clamp((p.x - px) * ux + (p.z - pz) * uz, 0, L)
+      if (Math.hypot(px + ux * u - p.x, pz + uz * u - p.z) < o.V.w / 2 + ac * hl + al * hw + 0.35) { stop = Math.min(stop, Math.max(0, s + u - o.V.l / 2 - (al * hl + ac * hw) - 2.5)); break }
+      s += L; px = q.x; pz = q.z
+    }
   }
   // Static obstacles and thrown props use real collision rays. A swerve stays within the avenue's motor lane.
   const reach = 5 + speed * speed / 10, y = o.y + 0.2
@@ -27343,7 +27399,7 @@ function boom(o, list, credit) {
   const s = rng() * Math.PI * 2; velVec.setValue(Math.cos(s) * 2, 0, Math.sin(s) * 2); o.body.setAngularVelocity(velVec)
   // a wreck draws no wheels: its body is the bare hull, the one a guest builds for it
   world.removeRigidBody(o.body); o.body.setCollisionShape(o.shape); o.shape.calculateLocalInertia(m, impVec)
-  o.body.setMassProps(m, impVec); o.body.updateInertiaTensor(); world.addRigidBody(o.body, ...COLLIDE.object)
+  o.body.setMassProps(m, impVec); o.body.updateInertiaTensor(); world.addRigidBody(o.body, ...collideFor(o.K))
 }
 
 function strikeObjects(list, dt, touch, credit) {
