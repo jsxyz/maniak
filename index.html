@@ -1557,6 +1557,9 @@ const MANIAK_GAITS = {
   live: [MANIAK_GAIT_WALK, { clip: 'maniak_run', pace: 2.265, ph: 0.975, l: [0.975, 0.308], r: [0.475, 0.808] }, { clip: 'maniak_sprint', pace: 5.867, ph: 0.967, l: [0.967, 0.175], r: [0.467, 0.658] }],
   A: [MANIAK_GAIT_WALK, { clip: 'maniak_run_a', pace: 2.265, ph: 0.992, l: [0.992, 0.183], r: [0.492, 0.683] }, { clip: 'maniak_sprint_a', pace: 5.867, ph: 0.983, l: [0.983, 0.2], r: [0.55, 0.725] }],
   B: [MANIAK_GAIT_WALK, { clip: 'maniak_run_b', pace: 2.265, ph: 0, l: [0, 0.4], r: [0.483, 0.917] }, { clip: 'maniak_sprint_b', pace: 5.867, ph: 0, l: [0, 0.267], r: [0.492, 0.767] }],
+  // the first sprint (the shared library's, as in the first release with his model, unchanged): its foot planted at his
+  // speed (pace measured on his skeleton), nothing added over it (plain: rigGait adds no lean, bank or head turn)
+  first: Object.assign([MANIAK_GAIT_WALK, { clip: 'maniak_run_b', pace: 2.265, ph: 0, l: [0, 0.4], r: [0.483, 0.917] }, { clip: 'sprint', pace: 5.25, ph: 0.042, l: [0.042, 0.208], r: [0.592, 0.75] }], { plain: true }),
   C: [MANIAK_GAIT_WALK, { clip: 'maniak_run_c', pace: 2.265, ph: 0.992, l: [0.992, 0.408], r: [0.5, 0.925] }, { clip: 'maniak_sprint_c', pace: 5.867, ph: 0, l: [0, 0.267], r: [0.458, 0.8] }],
 }
 const MODELS = {
@@ -1579,7 +1582,7 @@ const MODELS = {
     gaits: { runAt: 1.35, sprintAt: 3.016, band: 0.06, rates: { walk: [0.55, 2.2], run: [0.55, 1.45], sprint: [0.48, 1.6] } }, plants: [0, 0.5],
     // card #89: on the move his gaits blend by speed on one shared cycle, not switched (rigGaitBlend): gaitSet, one of
     // MANIAK_GAITS (gaitPick; /sprint switches it on this machine)
-    gaitSets: MANIAK_GAITS, gaitSet: MANIAK_GAITS.B, gaitPick: 'B',
+    gaitSets: MANIAK_GAITS, gaitSet: MANIAK_GAITS.first, gaitPick: 'first',
     // card #89, his weight on the move (rigGait): he leans into speeding up (lean rad per m/s² of his drawn speed's change,
     // at most fwd) and sits back braking (at most back, his hips down sit m), banks into a turn (bank x atan(v w / g), the
     // lean a runner's turn asks, at most bankMax rad), each eased over ease s (the speed's change over accT s, the turn's
@@ -23469,11 +23472,12 @@ function rigGait(a, R, M, dt, air) {
     v: a.v || 0, acc: 0, yaw: a.mesh.rotation.y, om: 0, pitch: 0, roll: 0, sit: 0, feet: { l: foot(), r: foot() },
     V: Array.from({ length: 10 }, () => new THREE.Vector3()), Q: Array.from({ length: 3 }, () => new THREE.Quaternion()) }
   const v = a.v || 0, yaw = a.mesh.rotation.y, on = !air && !a.hold ? R.gw || 0 : 0, ease = Math.min(1, dt / F.ease)
+  const feel = M.gaitSet?.plain ? 0 : on      // (a plain set: its clips as they are, only the planted feet held)
   S.acc += ((v - S.v) / dt - S.acc) * Math.min(1, dt / F.accT); S.v = v
   S.om += (wrapPi(yaw - S.yaw) / dt - S.om) * Math.min(1, dt / F.turnT); S.yaw = yaw
-  S.pitch += (on * clamp(S.acc * F.lean, F.back, F.fwd) - S.pitch) * ease
-  S.roll += (on * clamp(Math.atan(v * S.om / 9.81) * F.bank, -F.bankMax, F.bankMax) - S.roll) * ease
-  S.sit += (on * clamp(-S.acc / 24, 0, 1) * F.sit - S.sit) * ease
+  S.pitch += (feel * clamp(S.acc * F.lean, F.back, F.fwd) - S.pitch) * ease
+  S.roll += (feel * clamp(Math.atan(v * S.om / 9.81) * F.bank, -F.bankMax, F.bankMax) - S.roll) * ease
+  S.sit += (feel * clamp(-S.acc / 24, 0, 1) * F.sit - S.sit) * ease
   const L = S.feet
   if (!(on > 0) && !(L.l.k > 0) && !(L.r.k > 0) && !L.l.stand && !L.r.stand && Math.abs(S.pitch) + Math.abs(S.roll) + S.sit < 1e-3) return
   for (const [b, q] of S.bones) q.copy(b.quaternion)
@@ -39147,14 +39151,14 @@ function gaitPick(key) {
   const M = MODELS.maniak; if (!MANIAK_GAITS[key]) return false
   M.gaitSet = MANIAK_GAITS[key]; M.gaitPick = key
   for (const a of avatars.values()) { const R = a.rig; if (R?.M === M && R.gaitAct) { for (const x of R.gaitAct) x.stop(); R.gaitAct = null } }      // the blend takes the new clips at its next frame
-  try { localStorage.setItem('maniak.gait.v1', key) } catch (e) {}
+  try { localStorage.setItem('maniak.gait.v2', key) } catch (e) {}
   return true
 }
-try { const k = localStorage.getItem('maniak.gait.v1'); if (MANIAK_GAITS[k]) { MODELS.maniak.gaitSet = MANIAK_GAITS[k]; MODELS.maniak.gaitPick = k } } catch (e) {}
-Object.assign(GAME.commands, { sprint: { args: 'A|B|C|live', help: 'his run and sprint on this machine: the three candidate sets (card #89) or live, the one before them', run: a => {
-  const w = String(a || '').trim(), key = w.toLowerCase() === 'live' ? 'live' : w.toUpperCase()
-  if (!w) return sysMsg('§7Run and sprint: §f' + MODELS.maniak.gaitPick + ' §7(/sprint A, B, C or live)')
-  sysMsg(gaitPick(key) ? '§7Run and sprint: §f' + key : '§cUsage: §f/sprint A|B|C|live')
+try { const k = localStorage.getItem('maniak.gait.v2'); if (MANIAK_GAITS[k]) { MODELS.maniak.gaitSet = MANIAK_GAITS[k]; MODELS.maniak.gaitPick = k } } catch (e) {}
+Object.assign(GAME.commands, { sprint: { args: 'first|A|B|C|live', help: 'his run and sprint on this machine: first (the first sprint), the three candidate sets of card #89, or live (the one before them)', run: a => {
+  const w = String(a || '').trim(), key = ['live', 'first'].includes(w.toLowerCase()) ? w.toLowerCase() : w.toUpperCase()
+  if (!w) return sysMsg('§7Run and sprint: §f' + MODELS.maniak.gaitPick + ' §7(/sprint first, A, B, C or live)')
+  sysMsg(gaitPick(key) ? '§7Run and sprint: §f' + key : '§cUsage: §f/sprint first|A|B|C|live')
 } } })
 Object.assign(GAME.commands, { motion: { args: '[seconds] [radius]', help: 'host only, test tooling: record every frame and list the glitched ones (jumps, velocity flips, motion at rest)', run: motionCommand } })
 // card #75: /go <x> <z> | <thing> [walk|run|sprint], on foot by the bots' way; any real key or click stops it
