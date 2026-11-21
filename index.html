@@ -30217,16 +30217,26 @@ function partsRelease(r, ag, u, H, yaw, th, o) {
 // card #55, fix 55e (QA #62): a body grabbed from where it lies. The lying pose (the death clip's end: centre 0.1 m up, 0.89 m
 // behind its root, torso -83 deg) to #101's held slump (the death clip at 0.5 s: centre 1.0 m up, torso 15 deg): over 0.4 s the
 // slump turns up about its own centre from lying, and that centre rises from the lying body's (at most about 12 deg and 0.15 m a frame)
-const PARTS_LIE = { c: [0.1, -0.89], tilt: -1.71 }
+const PARTS_LIE = { c: [0.1, -0.89], axis: -83 * Math.PI / 180 }
+// card #55, fix 55f (QA #62): the death clip from 1.0 s back to 0.5 s, his fall reversed: [ct, centre y, centre z, torso deg]
+// (hips-to-head midpoint and angle, from the clip's own keys)
+const PARTS_RISE = [[1.0, 0.24, -0.85, -60], [0.9, 0.475, -0.72, -27], [0.8, 0.82, -0.465, -8], [0.7, 0.96, -0.245, 5], [0.6, 1.005, -0.125, 12], [0.5, 1.025, -0.085, 15]]
+function partsRiseAt(ct) {
+  const T = PARTS_RISE; let i = 0
+  while (i < T.length - 2 && ct < T[i + 1][0]) i++
+  const a = T[i], b = T[i + 1], f = clamp((a[0] - ct) / (a[0] - b[0]), 0, 1)
+  return [a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, (a[3] + (b[3] - a[3]) * f) * Math.PI / 180]
+}
 function partsGrabRise(ag, r, t, o) {
   const u = (t - r.t) / 1000 / PARTS_REL.T
   if (u >= 1 || u < 0 || r.what || ag.kind === SL_K.stray || o.clip !== 'death' || o.ct > 1 || !slDeathOf(ag.id, r.t)) return
-  const e = partsEase(u), w = 1 - e, [hy, hz] = PARTS_REL.dead.c, [ly, lz] = PARTS_LIE.c
+  const E = PARTS_RISE.at(-1), e = partsEase(u), w = 1 - e, ct = 1.0 - 0.5 * e, [cy, cz, ax] = partsRiseAt(ct), [ly, lz] = PARTS_LIE.c
   const off = (yaw, A, Cy, Cz) => { const y = Cy * Math.cos(A) - Cz * Math.sin(A), z = Cy * Math.sin(A) + Cz * Math.cos(A); return [z * Math.sin(yaw), y, z * Math.cos(yaw)] }
-  const P = o.pitch || 0, h = off(o.yaw, P, hy, hz), l = off(r.yaw, 0, ly, lz)
+  const P = o.pitch || 0, h = off(o.yaw, P, E[1], E[2]), l = off(r.yaw, 0, ly, lz)
+  // the centre: from the lying body's to the held one's; the torso: from lying to the held slump's, the clip's own angle made up by the pitch
   const Bx = (o.x + h[0]) * e + (r.x + l[0]) * w, By = (o.y + h[1]) * e + l[1] * w, Bz = (o.z + h[2]) * e + (r.z + l[2]) * w
-  const A = P + PARTS_LIE.tilt * w, b = off(o.yaw, A, hy, hz)
-  o.x = Bx - b[0]; o.y = Math.max(0, By - b[1]); o.z = Bz - b[2]; o.pitch = A
+  const A = PARTS_LIE.axis * w + (E[3] * Math.PI / 180 + P) * e - ax, b = off(o.yaw, A, cy, cz)
+  o.ct = ct; o.x = Bx - b[0]; o.y = Math.max(0, By - b[1]); o.z = Bz - b[2]; o.pitch = A
 }
 // the pose under record 8 or 9 (slDetached hands them here); after landing, a knock-down's lie, get-up and run
 function partsStreetPose(ag, r, t, o) {
