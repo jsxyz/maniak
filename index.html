@@ -7860,9 +7860,13 @@ function faustShopKind(lot, side) {
   for (let i = 0; i < 6; i++) { if (r < mix[i]) return FAUST_VAR_KINDS[i]; r -= mix[i] }
   return 'plain'
 }
-function faustShopTypes(g, lot) {
+function faustShopTypes(g0, lot) {
   const { x, z, w, d } = lot, f = z + d + 0.28, V = FAUST_VAR, S = FAUST_NIGHT.shops
   if (lot.district === 'industrial' || lot.stop) return
+  // what stands on the shop windows is drawn without its inside (-z) face, and a dark glass pane stands behind each window: from inside a shop the
+  // street windows are dark glass, not glowing rectangles (#72, from inside the stores)
+  const g = { box: (b, c, gl, sk) => g0.box(b, c, gl, (sk || 0) | 32), tri: (a, b, c, t) => g0.tri(a, b, c, t), get room() { return g0.room } }
+  if (!lot.venue || lot.venue === 'liquor' || lot.venue === 'conv') for (const side of [-1, 1]) g0.box(faustBox(x + side * w * 0.45, 1.7, f - 0.045, 1.22, 1.17, 0.004), 0x0a0e14, 0, 31)
   if (lot.venue === 'liquor' || lot.venue === 'conv') { faustVenueFront(g, lot); return }      // card #99 (A's club has a front of its own)
   if (lot.venue) return
   for (const side of [-1, 1]) {
@@ -8066,7 +8070,7 @@ function faustNeonWord(g, word, cx, cy, z, hw, col, tall) {
   }
 }
 function faustVenueFront(g, lot) {
-  if (g.room !== undefined && g.room < 3500) return
+  if (g.room !== undefined && g.room < 4500) return
   const { x, z, w, d } = lot, f = z + d + 0.28, liquor = lot.venue === 'liquor', h = cityHash(lot.seed ^ 0x73746f72)
   const names = FAUST_STORE_NAMES[lot.venue][h % 4]
   const cols = liquor ? [0xff3a50, 0xffb347] : [[0x4aff7a, 0x2ac8ff, 0xffb347][(h >>> 4) % 3], 0xff9a3a]
@@ -8092,6 +8096,30 @@ function faustVenueFront(g, lot) {
       if (k) faustNeonWord(g, 'OPEN', cx, 0.78, f + 0.1, 0.38, 0xff5a3a)
     }
     faustNeonWord(g, names[k], cx, 3.55, f + 0.25, 1.22, cols[k], true)
+  }
+  faustVenueBlade(g, lot, f, liquor ? 0xff3a50 : 0xffb347)
+}
+// A projecting neon sign at one store: a blade on a bracket at the outer edge of the right window, standing 0.6 m out from the wall, over 2.4 m up
+// (clear of the walking paths and of a tower's marquee), so a store can be found from up the street: a lit bottle outline (liquor) or OPEN
+// stacked (convenience), on a dark board seen face-on along the street.
+function faustVenueBlade(g, lot, f, col) {
+  const x = lot.x + lot.w * 0.45 + 1.62, zc = f + 0.38, liquor = lot.venue === 'liquor'
+  g.box(faustBox(x, 4.0, f + 0.15, 0.02, 0.02, 0.15), 0x252d37)
+  if (liquor) {
+    g.box(faustBox(x, 3.3, zc, 0.03, 0.9, 0.24), 0x0b0f16)
+    const e = 0.022, t = 3.2
+    // the body (a rectangle 0.34 wide, 0.7 tall), a neck and a cap, in neon outline
+    for (const [y, hy] of [[2.75, 0], [3.4, 0]]) g.box(faustBox(x + 0.034, y, zc, 0.01, e, 0.17), col, 3.0)
+    for (const s of [-1, 1]) g.box(faustBox(x + 0.034, 3.075, zc + s * 0.17, 0.01, 0.34, e), col, 3.0)
+    for (const s of [-1, 1]) g.box(faustBox(x + 0.034, 3.62, zc + s * 0.07, 0.01, 0.22, e), col, 3.0)
+    g.box(faustBox(x + 0.034, 3.84, zc, 0.01, e, 0.09), col, 3.0); g.box(faustBox(x + 0.034, 3.45, zc, 0.01, 0.02, 0.1), col, 2.0)
+    for (const s of [-1, 1]) g.box(faustBox(x - 0.034, 3.075, zc + s * 0.17, 0.01, 0.34, e), col, 3.0)
+  } else {
+    const cell = 0.07, word = 'OPEN', h = word.length * 6 * cell
+    g.box(faustBox(x, 4.0 - h / 2, zc, 0.03, h / 2 + 0.05, 0.2), 0x0b0f16)
+    for (let k = 0; k < word.length; k++) { const rows = FAUST_GLYPHS[word[k]]
+      for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) if (rows[r] >> (2 - c) & 1)
+        for (const sd of [-1, 1]) g.box(faustBox(x + sd * 0.034, 3.95 - (k * 6 + r) * cell - cell / 2, zc + (c - 1) * cell, 0.01, cell * 0.42, cell * 0.42), col, 3.0) }
   }
 }
 // ---------------------------------------------------------------- end city variation
