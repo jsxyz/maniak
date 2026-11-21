@@ -29831,7 +29831,7 @@ function partsFling(ag, at, v, T, what, by, H) {
   const n = Math.hypot(v[0], v[2]) || 1, [x2, z2] = slRunTo(px, pz, v[0] / n + (slRnd(ag.id, T) - 0.5) * 0.8, v[2] / n + (slRnd(T, ag.id) - 0.5) * 0.8, 22)
   const yaw = Math.hypot(v[0], v[2]) > 0.01 ? Math.atan2(v[0], v[2]) : (players.get(by)?.yaw ?? 0) + (ag.kind === SL_K.stray ? Math.PI / 2 : 0)          // card #101: a drop keeps the heading he held it at (it was 0: a snap)
   const r = slAddRec([9, ag.id, T, slR2(x0), slR2(z0), slR2(y0), slR2(v[0]), slR2(v[1]), slR2(v[2]), Math.round(tw * 1000), Math.round(tl * 1000),
-    slR2(px), slR2(pz), slR2(x2), slR2(z2), slR2(yaw), what | 0, by])
+    slR2(px), slR2(pz), slR2(x2), slR2(z2), slR2(yaw), what | 0, by, slR2((players.get(by)?.yaw ?? yaw) + (ag.kind === SL_K.stray ? Math.PI / 2 : 0))])          // card #55, fix 55c: the yaw it was held at
   if (r) r.wall = wall
   return r
 }
@@ -29980,10 +29980,10 @@ const partsCentre = (ag, what) => what ? 0.45 : ag?.kind === SL_K.stray ? 0.3 : 
 // record fields: 8 [8, id, t, x, z, by, yaw, what]; 9 [9, id, t, x0, z0, y0, vx, vy, vz, tw ms, tl ms, x1, z1, x2, z2, yaw, what, by]
 function partsRecParse(r, a) {
   if (r.kind === 8) { r.by = a[5] | 0; r.yaw = a[6]; r.what = a[7] | 0; if (!slState?.byId.get(r.id)?.some(q => q.kind === 9 && q.t >= r.t)) partsGrabbed.set(r.id, r) }
-  else if (r.kind === 9) { [r.x0, r.z0, r.y0, r.vx, r.vy, r.vz, r.tw, r.tl, r.x1, r.z1, r.x2, r.z2, r.yaw, r.what, r.by] = a.slice(3, 18); r.what |= 0
+  else if (r.kind === 9) { [r.x0, r.z0, r.y0, r.vx, r.vy, r.vz, r.tw, r.tl, r.x1, r.z1, r.x2, r.z2, r.yaw, r.what, r.by] = a.slice(3, 18); r.what |= 0; r.yaw0 = a.length > 18 ? a[18] : r.yaw
     const g = partsGrabbed.get(r.id); if (g && g.t <= r.t) { r.from = g; partsGrabbed.delete(r.id) } }
 }
-const partsRecOk = a => (a[0] === 8 && a.length === 8 || a[0] === 9 && a.length === 18) && a.every(Number.isFinite)
+const partsRecOk = a => (a[0] === 8 && a.length === 8 || a[0] === 9 && (a.length === 18 || a.length === 19)) && a.every(Number.isFinite)
 const partsGrabbed = new Map()
 function partsStreetHeldBy(id) {
   const T = slNow()
@@ -30018,6 +30018,11 @@ function partsFlyAt(r, tau, o, H = 0.9) {
   o.x = wx + (r.x1 - wx) * f; o.z = wz + (r.z1 - wz) * f; o.y = Math.max(H, wy + 0.5 * GRAV * u * u)
   return o
 }
+// card #55, fix 55c (#72): nothing snaps between walking, the hold, the flight and the lie. A smoothstep; a turn of d rad takes
+// 0.36 s for 180 deg (about 25 deg a frame at its fastest), at least 0.15 s
+const partsEase = u => u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u)
+const partsWrap = a => Math.atan2(Math.sin(a), Math.cos(a))
+const partsTurnS = d => Math.max(0.15, Math.abs(d) * 0.36 / Math.PI)
 // the pose under record 8 or 9 (slDetached hands them here); after landing, a knock-down's lie, get-up and run
 function partsStreetPose(ag, r, t, o) {
   const dog = ag.kind === SL_K.stray, tau = (t - r.t) / 1000, H = dog ? 0.3 : 0.9
@@ -30031,8 +30036,9 @@ function partsStreetPose(ag, r, t, o) {
     const h = partsHolder(r.by, partsHolderTmp)
     if (!h) { o.x = r.x; o.z = r.z; o.y = 0; o.yaw = r.yaw; o.clip = dog ? 'flinch' : 'cower'; o.ct = tau; o.pramAt = ag.kind === SL_K.pram ? [r.x, r.z, r.yaw] : null; return }
     const C = { r: 0.48, h: 0.5 }, p = partsCarryAt(r.by, h.x, h.y, h.z, h.yaw, C, dog ? 'chest' : 'scruff', dog ? 0.3 : 0.32, [0, 0, 0])
-    o.x = p[0]; o.z = p[2]; o.y = Math.max(0, p[1] - H); o.yaw = h.yaw + (dog ? Math.PI / 2 : 0)
-    o.clip = dog ? 'flinch' : 'cower'; o.ct = dog ? 0.25 : tau; o.pitch = dog ? 0 : -0.15
+    const yw = h.yaw + (dog ? Math.PI / 2 : 0), dy = partsWrap(yw - r.yaw), e = partsEase(tau / Math.max(0.2, Math.hypot(p[0] - r.x, p[2] - r.z) * 0.42))
+    o.x = r.x + (p[0] - r.x) * e; o.z = r.z + (p[2] - r.z) * e; o.y = Math.max(0, p[1] - H) * e; o.yaw = r.yaw + dy * partsEase(tau / partsTurnS(dy))          // fix 55c: lifted, not popped
+    o.clip = dog ? 'flinch' : 'cower'; o.ct = dog ? 0.25 : tau; o.pitch = dog ? 0 : -0.15 * e
     if (ag.kind === SL_K.pram) o.pramAt = [r.x, r.z, r.yaw]
     if (ag.kind === SL_K.cyclist) { o.bikeDown = [r.x, r.z, r.yaw]; o.wheel = 0 }
     return
@@ -30042,11 +30048,19 @@ function partsStreetPose(ag, r, t, o) {
   if (ag.kind === SL_K.cyclist) { o.bikeDown = r.from ? [r.from.x, r.from.z, r.from.yaw] : [r.x0, r.z0, r.yaw]; o.wheel = 0 }
   if (tau < tl) {
     const c = partsFlyAt(r, tau, partsTmp, H), spin = Math.hypot(r.vx, r.vy, r.vz) > 3 ? GRAB.punt.spin * 0.45 : 0
-    const th = (dog ? -1 : 1) * spin * tau, s = Math.sin(th), k = Math.cos(th)
-    o.yaw = r.yaw; o.pitch = th
+    // fix 55c (#72): whole turns, the nearest number to its spin, ending on the landing frame (flat, as the knock-down takes it
+    // over); backward, so the head comes down last and never through the ground
+    const th = -2 * Math.PI * Math.round(spin * tl / (2 * Math.PI)) * tau / tl, s = Math.sin(th), k = Math.cos(th)
+    // fix 55c (#72): from the yaw it was held at to the flight's heading, over the first 0.36 s (or the flight, if shorter)
+    const y0 = r.yaw0 ?? r.yaw, dy = partsWrap(r.yaw - y0), yaw = y0 + dy * partsEase(tau / Math.min(tl, partsTurnS(dy)))
+    o.yaw = yaw; o.pitch = th
     // the root is at the feet: put the turning body's centre on the flight
-    o.x = c.x - Math.sin(r.yaw) * H * s; o.z = c.z - Math.cos(r.yaw) * H * s; o.y = c.y - H * k
-    o.clip = dog ? 'flinch' : 'knockback'; o.ct = dog ? 0.3 : 0.25 + Math.min(0.5, tau * 0.4)
+    o.x = c.x - Math.sin(yaw) * H * s; o.z = c.z - Math.cos(yaw) * H * s; o.y = c.y - H * k
+    // the clip runs on into the knock-down's (ct 0.32 as it lands); a dog rolls onto its side as the knock-down has it then
+    o.clip = dog ? 'flinch' : 'knockback'; o.ct = dog ? 0.3 : 0.25 + 0.07 * tau / tl
+    if (dog) { o.roll = 0.2 * Math.PI * tau / tl; o.y += Math.sin(o.roll) * 0.22 }
+    // a body leaves his hands from where #101 holds one (the death clip's slump, 0.57 m lower), rising onto the flight over 0.25 s
+    else if (!r.what && tau < 0.25 && slDeathOf(ag.id, r.t - 1)) o.y = Math.max(0, o.y - 0.57 * (1 - partsEase(tau / 0.25)))
     return
   }
   // landed: as a knock-down from where it came down
