@@ -6292,24 +6292,73 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
       for (const lat of [-8, -2.7, 2.7, 8]) part(lat, -5, 4.3, 0.95, 19.2, 19.45, T.lamp, -1, false)
       for (const sg of [-1, 1]) { part(sg * 17, -26, 0.15, 0.15, 0, 4.5, T.pole, 0, false); part(sg * 17, -26, 0.5, 0.5, 4.5, 5.1, T.lamp, -1, false) }
     }
-    if (look) {
-      const [cx, cz] = pos(0, -12), P = (lat, t, y) => { const [x, z] = pos(lat, t); return [x, y, z] }, nW = D.notch - 1
-      if (mine(cx, cz)) {
-        emit.face(P(-nW, -4, sill + 0.35), P(nW, -4, sill + 0.35), P(nW, -10, sill + 0.35), P(-nW, -10, sill + 0.35), [0, 1, 0], 0xfff1d6, false, 0.55)
-        emit.face(P(-nW, -10, sill + 0.35), P(nW, -10, sill + 0.35), P(nW, -22, 0.35), P(-nW, -22, 0.35), [0.55, 0.83, 0.1], 0xfff1d6, false, 0.55)
-        for (let lat = -nW + 2.5; lat < nW; lat += 5) emit.face(P(lat - 0.5, -10, sill + 0.4), P(lat + 0.5, -10, sill + 0.4), P(lat + 0.5, -22, 0.4), P(lat - 0.5, -22, 0.4), [0.55, 0.83, 0.1], 0x9fb3b8, false, 0.2)
-      }
-      // the chute's white water breaking into the pool: scattered, rotated flecks and ragged clumps, thinning out from the chute's foot (not stripes, not a slab)
-      for (let k = 0, h = 0x5eed1; k < 46; k++) {
-        const r = () => ((h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) + 0x9e3779b9 | 0) >>> 8) / 16777216
-        const clump = k < 9, lat = (r() - 0.5) * (clump ? 12 : 22), t = -29 - (clump ? r() * 4.5 : r() * r() * 12), a = (clump ? 0.9 + r() * 1.3 : 0.25 + r() * 0.6), b = a * (0.35 + r() * 0.5), th = r() * Math.PI
-        const [fx, fz] = pos(lat, t); if (!mine(fx, fz)) continue
-        const c = Math.cos(th), sn = Math.sin(th), Q = (x, y) => P(lat + x * c - y * sn, t + x * sn + y * c, -0.55)
-        const bright = !clump && r() < 0.3
-        emit.face(Q(-a, -b), Q(a, -b), Q(a, b), Q(-a, b), [0, 1, 0], bright ? 0xc4d3d6 : 0x7f9499, false, bright ? 0.22 : 0.1)
-      }
-    }
+    // (the spillway's chute and the plunge pool's foam are meshes of their own: faustWaterSpill)
   }
+}
+// the dam's spillway water as two meshes of their own for the water look to dress (FAUST_WATER.dress; its shader animates them): the CHUTE (info.kind 'chute': a sheet down
+// the notch's face and its runout to the plunge pool; vertex colour = the base tint: a white core, darker wet edges, streaked) and the FOAM (info.kind 'foam': ragged blobs with
+// a near-white heart and the surroundings' tint at the edge (a mask), at the lip, in streaks down the chute, a boil at its toe, blobs thinning out in the pool and broken ring arcs
+// spreading from the toe). info: { id, kind, level, flow: [x, z] unit vector downstream, speed m/s }. World coordinates, deterministic from the dam's place. [{ geo, info }]
+function faustWaterSpill(seed, S, b) {
+  const K = FAUST_WATER, D = K.dam, dm = b.dam, c0 = b.caps[0], sill = b.level - D.sill, nW = D.notch - 1, hx = Math.cos(dm.ang), hz = Math.sin(dm.ang)
+  const pos = (lat, t) => { const d = c0[4] - t, a = dm.ang + lat / d; return [c0[0] + Math.cos(a) * d, c0[1] + Math.sin(a) * d] }
+  const ys = t => t > -10 ? sill + 0.35 : t > -22 ? 0.35 + sill * (1 - (-t - 10) / D.face) : t > -26.5 ? 0.35 : t > -29 ? 0.35 - 0.85 * (-t - 26.5) / 2.5 : -0.5
+  const slopeN = t => { const s = (ys(t + 0.5) - ys(t - 0.5)), l = Math.hypot(s, 1); return [hx * s / l, 1 / l, hz * s / l] }
+  const rnd = genRng(Math.round(dm.cx * 7 + dm.cz * 13) ^ 0x5f0a3), lerp = (p, q, k) => p + (q - p) * k, up = [0, 1, 0]
+  const C = h => { const c = new THREE.Color(h); return [c.r, c.g, c.b] }, mix = (p, q, k) => [lerp(p[0], q[0], k), lerp(p[1], q[1], k), lerp(p[2], q[2], k)]
+  const lat16 = Array.from({ length: 256 }, () => rnd()), vn = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi, g = (p, q) => lat16[((p & 15) << 4) | (q & 15)], sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy)
+    return lerp(lerp(g(xi, yi), g(xi + 1, yi), sx), lerp(g(xi, yi + 1), g(xi + 1, yi + 1), sx), sy) }
+  const mk = () => ({ P: [], N: [], C: [], G: [] }), chute = mk(), foam = mk(), water = C(K.tint.water)
+  const tri = (m, p, q, r) => {      // each vertex { p: [x, y, z], n, c, g }; wound to face up
+    const ux = q.p[0] - p.p[0], uy = q.p[1] - p.p[1], uz = q.p[2] - p.p[2], vx = r.p[0] - p.p[0], vy = r.p[1] - p.p[1], vz = r.p[2] - p.p[2]
+    if (uz * vx - ux * vz < 0) { const t = q; q = r; r = t }
+    for (const v of [p, q, r]) { m.P.push(...v.p); m.N.push(...v.n); m.C.push(...v.c); m.G.push(v.g) }
+  }
+  // the chute: rows down the flow, 20 columns across
+  const T = [-4, -7, -10], nc = 20
+  for (let k = 1; k <= 12; k++) T.push(-10 - k)
+  T.push(-24.25, -26.5, -27.75, -29)
+  const grid = T.map((t, ri) => { const row = []
+    for (let c = 0; c <= nc; c++) {
+      const lat = -nW + 2 * nW * c / nc, e = Math.abs(lat) / nW, [x, z] = pos(lat, t), tail = t < -26.5 ? (-t - 26.5) / 2.5 : 0
+      let col = mix(C(0xeaf2f3), C(0x4f6a73), Math.pow(e, 2.4)); const st = 0.8 + 0.3 * vn(c * 0.55 + 3.1, ri * 0.22); col = col.map(v => Math.min(1, v * st))
+      row.push({ p: [x, ys(t), z], n: slopeN(t), c: mix(col, water, tail), g: (0.42 - 0.3 * e * e) * (1 - tail) })
+    }
+    return row })
+  for (let ri = 0; ri < T.length - 1; ri++) for (let c = 0; c < nc; c++) { tri(chute, grid[ri][c], grid[ri + 1][c], grid[ri + 1][c + 1]); tri(chute, grid[ri][c], grid[ri + 1][c + 1], grid[ri][c + 1]) }
+  // foam blobs: a fan of n ragged spokes round a bright heart (flat is a fixed height, null follows the chute)
+  const blob = (lat, t, rl, rt, ang, flat, lift, core, rim, gc, gr, n = 9) => {
+    const ca = Math.cos(ang), sa = Math.sin(ang), ring = []
+    for (let k = 0; k < n; k++) { const th = (k + (rnd() - 0.5) * 0.5) / n * 6.2832, rr = 0.55 + rnd() * 0.6, x = Math.cos(th) * rl * rr, y = Math.sin(th) * rt * rr; ring.push([lat + x * ca - y * sa, t + x * sa + y * ca]) }
+    const V = (l2, t2, c, g) => { const [x, z] = pos(l2, t2); return { p: [x, (flat === null ? ys(t2) : flat) + lift, z], n: flat === null ? slopeN(t2) : up, c, g } }, mid = V(lat, t, core, gc)
+    for (let k = 0; k < n; k++) tri(foam, mid, V(ring[k][0], ring[k][1], rim, gr), V(ring[(k + 1) % n][0], ring[(k + 1) % n][1], rim, gr))
+  }
+  const white = C(0xf4f8f8), spume = C(0xdbe6e7), wet = C(0xb4c8cd), edge = C(0x9fb6bc)
+  for (let k = 0; k < 9; k++) blob((rnd() * 2 - 1) * (nW - 1), -10.2 - rnd() * 2.4, 0.5 + rnd() * 0.8, 0.4 + rnd() * 0.5, rnd() * 3.14, null, 0.06, white, wet, 0.3, 0.12)        // the lip
+  for (let k = 0; k < 14; k++) blob((rnd() * 2 - 1) * (nW - 1.5), -13 - rnd() * 8.5, 0.25 + rnd() * 0.3, 1.4 + rnd() * 1.6, (rnd() - 0.5) * 0.4, null, 0.06, white, edge, 0.3, 0.1)  // streaks down the face
+  for (let k = 0; k < 9; k++) blob((rnd() * 2 - 1) * (nW - 1), -22.5 - rnd() * 4, 1 + rnd() * 1.1, 0.8 + rnd() * 0.8, rnd() * 3.14, null, 0.08, white, wet, 0.32, 0.12)       // the boil at the toe
+  for (let k = 0; k < 22; k++) {                                                                                                                                              // the pool
+    const v = 0.5 + rnd() * rnd() * 14, near = v < 4
+    blob((rnd() - 0.5) * (9 + v * 1.2), -26.5 - v, (near ? 0.8 : 0.35) + rnd() * (near ? 1.2 : 0.8), (near ? 0.7 : 0.3) + rnd() * 0.7, rnd() * 3.14, -0.55, 0, near ? white : spume, water, near ? 0.3 : 0.2, 0.03)
+  }
+  const arc = (r, w, a0, a1, core, g) => {      // a broken ring's arc: three rows (the water's tint, the foam, the water's tint) across a band, its ends tapered
+    const m = Math.max(2, Math.ceil((a1 - a0) / 0.22)), vv = []
+    for (let k = 0; k <= m; k++) { const th = lerp(a0, a1, k / m), wt = 0.35 + 0.65 * Math.sin(Math.PI * k / m), jit = 1 + 0.3 * Math.sin(k * 1.7 + r)
+      vv.push([-1, 0, 1].map(o => { const rr = r + o * w * 0.5 * wt * jit, [x, z] = pos(rr * Math.sin(th), -26.5 - rr * Math.cos(th)); return { p: [x, -0.55, z], n: up, c: o ? water : core, g: o ? 0.02 : g } })) }
+    for (let k = 0; k < m; k++) for (let q = 0; q < 2; q++) { tri(foam, vv[k][q], vv[k + 1][q], vv[k + 1][q + 1]); tri(foam, vv[k][q], vv[k + 1][q + 1], vv[k][q + 1]) }
+  }
+  for (let q = 0; q < 4; q++) for (let a = -1.5; a < 1.45;) {
+    const len = 0.35 + rnd() * 0.55; arc(3.5 + q * 3.6 + (rnd() - 0.5) * 0.8, (1.1 - q * 0.18) * (0.6 + rnd() * 0.6), a, Math.min(1.5, a + len), mix(spume, C(0x8fa3a8), q / 3.5), 0.26 - q * 0.04); a += len + 0.12 + rnd() * 0.3
+  }
+  const out = []
+  for (const [m, kind, speed] of [[chute, 'chute', 9], [foam, 'foam', 1.5]]) {
+    if (!m.G.length) continue
+    const g = new THREE.BufferGeometry(), n = m.G.length
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(m.P), 3)); g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(m.N), 3))
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2)); g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(m.C), 3)); g.setAttribute('faustGlow', new THREE.BufferAttribute(new Float32Array(m.G), 1))
+    out.push({ geo: g, info: { id: b.id, kind, level: b.level, flow: [hx, hz], speed } })
+  }
+  return out
 }
 // a cell's water surfaces, one per body it holds: [{ geo, info: { id, kind, level }, rim }]. A 17 x 17 grid (6 m) at the body's level with position, normal (up) and
 // color (the tint) only; the quads kept are those a corner of which has its bed under the level (a reservoir's: under the level the rain can raise it to, and within
@@ -6414,6 +6463,13 @@ function faustWaterFrame() {
         worldGroup.add(m); v.surf.push(m); if (sf.rim) { v.rise.push([m, sf.rim]); m.position.y = faustWaterRise(sf.rim) }
       }
     }, { valid: () => faustState === F && F.waterLooks === V && V.get(key) === v }).catch(e => frameFailed('water', e))
+  }
+  for (const b of w.bodies) if (b.dam) {         // a dam's chute and foam (their own meshes, dressed by the water look), with the cells' looks
+    const key = 'dam:' + b.id, i = Math.floor(b.dam.x / 96), j = Math.floor(b.dam.z / 96)
+    if (V.has(key) || dist(i, j) > reach) continue
+    const v = { i, j, mesh: null, surf: [], rise: [] }
+    for (const sp of faustWaterSpill(F.seed, F.S, b)) { const m = new THREE.Mesh(sp.geo, F.materials.stone); m.receiveShadow = true; m.userData.water = sp.info; FAUST_WATER.dress?.(m, sp.info); worldGroup.add(m); v.surf.push(m) }
+    V.set(key, v)
   }
 }
 // the map (#68): the bodies, the river's centre line, the docks
