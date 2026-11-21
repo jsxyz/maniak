@@ -2380,7 +2380,7 @@ const RADIO_START = -1          // a vehicle's station until a driver tunes it: 
 // B or RADIO in a vehicle changes station, and a driver's last station goes with them into the next vehicle. A station
 // plays its tracks in turn; a track is an audio URL (MP3 plays everywhere) or { url, end }: on to the next at `end` s
 const RADIO = [
-  { name: 'Faustland FM', art: RIG_BASE + 'radio_neverend.6a165c51.webp', tracks: [RIG_BASE + 'radio_neverend.fad81de3.mp3'] },
+  { name: 'Faustland FM', art: RIG_BASE + 'm.7b7d39a4.bin', tracks: [RIG_BASE + 'm.6d02df71.bin'] },
 ]          // a station's art: its cover, shown under its name while it plays
 
 const TICK = 1 / 60
@@ -28891,6 +28891,13 @@ function sfxJet(on, who) {
 // one element per track, kept: one download a session; radioAt: the track each station is on
 const radio = { on: -1, k: 0, tried: 0, fail: 0, a: null, end: Infinity, car: undefined }, radioEls = new Map(), radioAt = new Map()
 let radioOf = new Map()
+const radioBlobs = new Map(), radioArt = new Map()
+const radioBlob = (url, type) => {
+  if (!url.endsWith('.bin')) return Promise.resolve(url)
+  if (!radioBlobs.has(url)) radioBlobs.set(url, fetch(url).then(r => r.ok ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).blob() : Promise.reject(new Error(r.status)))
+    .then(b => URL.createObjectURL(new Blob([b], { type }))))
+  return radioBlobs.get(url)
+}
 function radioSeat() {                 // [vehicle, drives, station]
   if (isHost) { const o = objs.find(o => o.V && o.riders.includes(myId)); return o && [o.id, o.riders[0] === myId, o.radio] }
   for (const [k, p] of objSeats) if (p === myId) return [k >> 3, !(k & 7), radioOf.get(k >> 3) ?? RADIO_START]
@@ -28903,8 +28910,10 @@ function radioTick() {
   hud('invehicle', document.body, '.invehicle', !!s && phase === 'playing')
   hud('radio', el('#radio'), 'textContent', !s || !RADIO.length ? '' : RADIO[s[2]] ? RADIO[s[2]].name + (radio.fail && radio.on === s[2] ? ' — unavailable' : '') : 'Radio off')
   const art = s && RADIO[s[2]]?.art && !(radio.fail && radio.on === s[2]) ? RADIO[s[2]].art : ''          // the station's cover while it plays
-  hud('radioart', el('#radioart'), 'backgroundImage', art ? `url("${art}")` : 'none')
-  hud('radioartOn', document.body, '.radioart', !!art)
+  if (art && !radioArt.has(art)) { radioArt.set(art, ''); radioBlob(art, 'image/webp').then(u => radioArt.set(art, u), () => {}) }
+  const artUrl = art && radioArt.get(art)
+  hud('radioart', el('#radioart'), 'backgroundImage', artUrl ? `url("${artUrl}")` : 'none')
+  hud('radioartOn', document.body, '.radioart', !!artUrl)
   if (want !== radio.on) { radio.on = want; radio.k = radioAt.get(want) ?? 0; radio.tried = 0; radioPlay() }
   if (radio.a) radio.a.volume = settings.volume ** 2 * SFX_HEAD
 }
@@ -28926,7 +28935,7 @@ function radioPlay(fail) {
   let a = radioEls.get(url)
   if (!a) {
     radioEls.set(url, a = document.createElement('audio'))
-    a.src = url
+    radioBlob(url, 'audio/mpeg').then(u => { a.src = u; if (a === radio.a) a.play().catch(() => {}) }, () => a === radio.a && radioNext(1))
     a.onerror = () => a === radio.a && radioNext(1)
     a.onended = () => a === radio.a && radioNext(0)
     a.ontimeupdate = () => { if (a === radio.a && a.currentTime >= radio.end) { a.currentTime = 0; radioNext(0) } }
