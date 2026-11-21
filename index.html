@@ -35161,7 +35161,13 @@ function slLoadKit() {
 // card #98: the dancers' colour map as an image (null when it will not load: the dancers then wear the dress body as it is)
 const SL_DANCER_MAP = 'dancer_dress.3c267a1c.webp'
 function slDancerMap() {
-  return new Promise(ok => { const img = new Image(); img.crossOrigin = 'anonymous'; img.onload = () => ok(img); img.onerror = () => ok(null); img.src = RIG_BASE + SL_DANCER_MAP })
+  const small = IS_TOUCH || settings.quality === 'low'          // a phone or a weak machine: the same map at 512 px (1.4 MB decoded with mips, not 12.6)
+  return new Promise(ok => { const img = new Image(); img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      if (!small) return ok(img)
+      try { const c = document.createElement('canvas'); c.width = c.height = 512; c.getContext('2d').drawImage(img, 0, 0, 512, 512); ok(c) } catch (e) { ok(img) }
+    }
+    img.onerror = () => ok(null); img.src = RIG_BASE + SL_DANCER_MAP })
 }
 function* slKitSteps([anims, street, ...rest]) {
   const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon, stag, perf, dmap] = rest.slice(STREET.bodies.length)
