@@ -7432,9 +7432,9 @@ function faustShopGlass(batch, B, V) {
     if (typeof dsState === 'object' && dsState?.all?.has(w.key)) continue
     const h = cityHash(B.seed ^ Math.imul(w.face * 32 + w.bay + 7, 0x85ebca6b)), lit = faustPieceLit(B.seed, B.venue, w.face, w.piece), cool = (h >>> 8 & 1) === 1, blinds = (h >>> 10) % 100 < 55 ? 1 : 0.55
     const a = Math.round(batch.count * 3), sg = w.face === 0 || w.face === 2 ? 1 : -1, fwd = w.face === 0 || w.face === 3
-    const quad = (u0, u1, y0, y1, off, tint, gb, gt) => {
+    const quad = (u0, u1, y0, y1, off, tint, gb, gt, back) => {
       const P = (u, y) => w.face < 2 ? [u, y, w.plane + sg * off] : [w.plane + sg * off, y, u]
-      const q = fwd ? [P(u0, y0), P(u1, y0), P(u1, y1), P(u0, y1)] : [P(u1, y0), P(u0, y0), P(u0, y1), P(u1, y1)]
+      const q = fwd !== !!back ? [P(u0, y0), P(u1, y0), P(u1, y1), P(u0, y1)] : [P(u1, y0), P(u0, y0), P(u0, y1), P(u1, y1)]
       batch.tri(q[0], q[1], q[2], tint, null, [gb, gb, gt]); batch.tri(q[0], q[2], q[3], tint, null, [gb, gt, gt])
     }
     quad(w.a0, w.a1, w.y0, w.y1, 0.012, S.dark, 0, 0)
@@ -7442,7 +7442,7 @@ function faustShopGlass(batch, B, V) {
       const u0 = w.a0 + 0.12, u1 = w.a1 - 0.12, y0 = w.y0 + 0.12, y1 = w.y1 - 0.12, np = u1 - u0 > 4.2 ? 3 : 2, gt = cool ? 0.2 : 0.5, tint = S.windows[cool ? 1 : 0]
       for (let i = 0; i < np; i++) quad(u0 + (u1 - u0) * i / np + 0.05, u0 + (u1 - u0) * (i + 1) / np - 0.05, y0, y1, 0.024, tint, gt * 0.35, gt)
       const pitch = 0.26, n = Math.floor((y1 - y0) * blinds / pitch)
-      for (let k = 0; k < n; k++) quad(u0, u1, y1 - (k + 1) * pitch + 0.09, y1 - k * pitch, 0.034, S.dark, 0, 0)
+      for (let k = 0; k < n; k++) { quad(u0, u1, y1 - (k + 1) * pitch + 0.09, y1 - k * pitch, 0.034, S.dark, 0, 0); quad(u0, u1, y1 - (k + 1) * pitch + 0.09, y1 - k * pitch, -0.01, S.dark, 0, 0, true) }
     }
   V.set(w.key, [a, Math.round(batch.count * 3)])
   }
@@ -8658,7 +8658,7 @@ function* faustVisualSteps(c) {
   for (const s of faustTelescreens(P)) { if (ornament.room < 1000) break; faustTeleFrame(ornament, s); teles.push(s) }
   { const skipped = [], before = Math.round(ornament.count * 3), V = P.glassV = new Map()
     for (let i = 0; i < glassLots.length; i += 2) { const B = glassLots[i + 1], n = inWindows(B, 0).length
-      if (ornament.room < n * 100 + 64) skipped.push(P.lots.indexOf(glassLots[i])); else faustShopGlass(ornament, B, V) }
+      if (ornament.room < n * 150 + 64) skipped.push(P.lots.indexOf(glassLots[i])); else faustShopGlass(ornament, B, V) }
     if (FAUST_GLASS_STATS.length < 400) FAUST_GLASS_STATS.push({ ci: c.ci, cj: c.cj, lots: glassLots.length / 2, vertsBefore: before, vertsAfter: Math.round(ornament.count * 3), skipped }) }
   const root = new THREE.Group()
   for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
