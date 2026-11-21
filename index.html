@@ -5547,6 +5547,7 @@ function* faustChanPiece(ch, k, emit, look) {
   }
   if (!river) for (const side of [-1, 1]) f(P(s0, side * 9 - 0.2, fl + 0.012), P(s1, side * 9 - 0.2, fl + 0.012), P(s1, side * 9 + 0.2, fl + 0.012), P(s0, side * 9 + 0.2, fl + 0.012), [0, 1, 0], T.joint, false, 0)
   for (const side of [-1, 1]) patch(side, (s0 + s1) / 2, tOf(D * 0.825), hs, s1 - s0, T.damp, 0, 0.01)
+  if (river) for (const side of [-1, 1]) { patch(side, (s0 + s1) / 2, tOf(2.4), tOf(3.5), s1 - s0, 0x1b282c, 0, 0.014); patch(side, (s0 + s1) / 2, tOf(2.1), tOf(2.4), s1 - s0, 0x2b3a3d, 0, 0.012) }      // #72: a dark wet band at the waterline, a damp edge above it
   for (let n = 0; n < 28; n++) {
     const h = faustMix(0x73747261 ^ ch.n, k * 32 + n, ch.u), side = (h & 1) ? 1 : -1, s = k * 96 - 46 + ((h >>> 1) % 92), t0 = ((h >>> 9) % 3) * 0.3, t1 = tOf((5 + ((h >>> 12) % 4)) * D / 8), w = 0.6 + ((h >>> 16) % 4) * 0.2, t = t1 - t0
     if (s < s0 + 1 || s > s1 - 1) continue
@@ -6066,7 +6067,10 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
     if (dep < -0.01) for (const b of rims) {       // above the ground: a reservoir's mound, its dam
       const c = b.caps[0], d = Math.hypot(x - c[0], z - c[1]), t = c[4] - d
       if (t > 0) return wetCol(x, z, b.level + dep)
-      if (t > -45 && b.dam && faustWaterDamLat(b.dam, c, x, z, d) < K.dam.lat + 25) return t > -10 ? DT[2] : Math.floor(-dep / 2) & 1 ? DT[0] : DT[1]
+      if (t > -23 && b.dam) {
+        const lat = faustWaterDamLat(b.dam, c, x, z, d), wl = Math.max(0, Math.min(1, (lat - 100) / 40)), wy = Math.max(0, Math.min(1, -dep / 1.5))
+        if (wl < 1 && wy > 0) return faustWaterMix2(fieldTint(x, z), t > -10 ? DT[2] : Math.floor(-dep / 2) & 1 ? DT[0] : DT[1], (1 - wl) * wy)
+      }
     }
     return wetCol(x, z, dep)
   }
@@ -6135,14 +6139,20 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
       for (const e of [-1, 1]) part(lat + e * 1.3, 12, 17, 0.08, crest + 0.5, crest + 1.5, st[1], 0, true)
       if (look) {
         part(lat, 32, 0.3, 0.3, 37, 37.8, T.lamp, -1, false)
+        for (const y of [17, 20, 26.5]) for (const e of [-1, 1]) for (const q of [-1.2, 1.2]) { const h = y < 24 ? 4.05 : 3.05; part(lat + q, 32 + e * h, 0.05, 0.45, y, y + 1.2, T.lamp, -1, false); part(lat + e * h, 32 + q, 0.45, 0.05, y, y + 1.2, T.lamp, -1, false) }
         for (const e of [-1, 1]) { part(lat, 32 + e * 4.05, 0.05, 1.6, 2, 7, 0x0b0e12, 0, false); part(lat + e * 4.05, 32, 1.6, 0.05, 2, 7, 0x0b0e12, 0, false) }
       }
     }
     if (look) {
+      for (let lat = -120; lat <= 120; lat += 24) if (Math.abs(lat) > 18) { part(lat, -10.6, 0.1, 0.1, crest, crest + 4.2, T.pole, 0, false); part(lat, -10.6, 0.3, 0.3, crest + 4.2, crest + 4.8, T.lamp, -1, false) }
+      for (const lat of [-8, -2.7, 2.7, 8]) part(lat, -5, 4.3, 0.95, 19.2, 19.45, T.lamp, -1, false)
+      for (const sg of [-1, 1]) { part(sg * 17, -26, 0.15, 0.15, 0, 4.5, T.pole, 0, false); part(sg * 17, -26, 0.5, 0.5, 4.5, 5.1, T.lamp, -1, false) }
+    }
+    if (look) {
       const [cx, cz] = pos(0, -12), P = (lat, t, y) => { const [x, z] = pos(lat, t); return [x, y, z] }, nW = D.notch - 1
       if (mine(cx, cz)) {
-        emit.face(P(-nW, -4, sill + 0.35), P(nW, -4, sill + 0.35), P(nW, -10, sill + 0.35), P(-nW, -10, sill + 0.35), [0, 1, 0], 0xe3eef0, false, 0.45)
-        emit.face(P(-nW, -10, sill + 0.35), P(nW, -10, sill + 0.35), P(nW, -22, 0.35), P(-nW, -22, 0.35), [0.55, 0.83, 0.1], 0xe3eef0, false, 0.45)
+        emit.face(P(-nW, -4, sill + 0.35), P(nW, -4, sill + 0.35), P(nW, -10, sill + 0.35), P(-nW, -10, sill + 0.35), [0, 1, 0], 0xfff1d6, false, 0.95)
+        emit.face(P(-nW, -10, sill + 0.35), P(nW, -10, sill + 0.35), P(nW, -22, 0.35), P(-nW, -22, 0.35), [0.55, 0.83, 0.1], 0xfff1d6, false, 0.95)
         for (let lat = -nW + 2.5; lat < nW; lat += 5) emit.face(P(lat - 0.5, -10, sill + 0.4), P(lat + 0.5, -10, sill + 0.4), P(lat + 0.5, -22, 0.4), P(lat - 0.5, -22, 0.4), [0.55, 0.83, 0.1], 0x9fb3b8, false, 0.2)
       }
       if (mine(dm.pool[0], dm.pool[1])) emit.face([dm.pool[0] - 13, -0.6, dm.pool[1] - 13], [dm.pool[0] + 13, -0.6, dm.pool[1] - 13], [dm.pool[0] + 13, -0.6, dm.pool[1] + 13], [dm.pool[0] - 13, -0.6, dm.pool[1] + 13], [0, 1, 0], 0xdfeaec, false, 0.3)
