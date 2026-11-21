@@ -3791,9 +3791,11 @@ function faustInterior(plan, li) {
   }
   const kinds = { core: ['lobby', 'lobby', 'lobby', 'shop', 'bar', 'diner'], civic: ['lobby', 'lobby', 'lobby', 'lobby', 'bar'],
     tenement: ['hall', 'hall', 'hall'], industrial: ['warehouse'] }
-  const ground = H >= 120 || plan.layout === 1 ? 'lobby' : pick(kinds[style] || ['lobby'])
+  // card #78: a lot's venue (liquor | conv | club, from the plan) makes its ground storey that kind; a tenement's street unit for a store
+  const venue = ['liquor', 'conv', 'club'].includes(lot.venue) ? lot.venue : null
+  const ground0 = H >= 120 || plan.layout === 1 ? 'lobby' : pick(kinds[style] || ['lobby']), ground = venue && !(style === 'tenement' && venue !== 'club') ? venue : ground0
   // a tenement's street front: a unit either side of its hallway (a shop, a bar or a diner), behind its shopfront bays
-  const unit = style === 'tenement' ? pick(['shop', 'shop', 'bar', 'diner']) : null, unit2 = style === 'tenement' ? pick(['shop', 'shop', 'bar', 'diner']) : null
+  const unit0 = style === 'tenement' ? pick(['shop', 'shop', 'bar', 'diner']) : null, unit = venue && venue !== 'club' && style === 'tenement' ? venue : unit0, unit2 = style === 'tenement' ? pick(['shop', 'shop', 'bar', 'diner']) : null
   const upper = style === 'tenement' ? 'flat' : style === 'industrial' ? 'store' : 'office'
   // the street door: the middle of the front (+z) face; a shed's is the wicket in its left loading door
   const dx = style === 'industrial' ? x - 0.6 * w : x
@@ -3818,7 +3820,7 @@ function faustInterior(plan, li) {
     piers.push([b.cx - b.ex, b.cx + b.ex, door ? 4.6 : b.cy - b.ey, b.cy + b.ey, b.cz - b.ez, b.cz + b.ez].map(inCm))
   })
   const B = { version: 2, id: plan.ci + ' ' + plan.cj + ' ' + li, ci: plan.ci, cj: plan.cj, li, slot, chunk: plan.ci * plan.S + plan.cj, seed: lot.seed, style, gothic, stop: !!stop,
-    x, z, w, d, H, ground, unit, unit2, upper, door, core, storeys, masses, solids, piers, roof: { y: H, exit: !stop }, ...lot.landmark === 'cathedral' ? { landmark: 'cathedral' } : {} }
+    x, z, w, d, H, ground, unit, unit2, upper, door, core, storeys, masses, solids, piers, roof: { y: H, exit: !stop }, ...lot.landmark === 'cathedral' ? { landmark: 'cathedral' } : {}, ...venue ? { venue, ...lot.club ? { club: lot.club } : {} } : {} }
   B.hash = inHash(B)
   return B
 }
@@ -3881,7 +3883,7 @@ function inWindows(B, k) {
 function faustStorey(B, k) {
   const K = FAUST_IN, s = B.storeys[k], P = s.plate, y = s.y, n = B.storeys.length, last = k === n - 1, C = B.core, ST = K.stair
   const rng = genRng(B.seed ^ Math.imul(k + 1, 0x2c1b3c6d)), pick = list => list[rng() * list.length | 0], chance = p => rng() < p
-  const boxes = [], ramps = [], lights = [], rooms = [], nodes = [], edges = [], posters = []
+  const boxes = [], ramps = [], lights = [], rooms = [], nodes = [], edges = [], posters = [], spots = []
   const ceil = y + K.storey - K.slab, Y1 = ceil        // the ceiling's underside
   let lanes = null, laneHeld = null     // the windows' lanes and what tall stands in each (set with the fittings, below)
   const box = (x0, x1, y0, y1, z0, z1, t, more) => { if (x1 - x0 > 0.005 && y1 - y0 > 0.005 && z1 - z0 > 0.005) boxes.push(inBox((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2, { t, ...more }))
@@ -3916,7 +3918,7 @@ function faustStorey(B, k) {
     box(P.x0, P.x1, y0, y1, C.z1, P.z1, t, more); box(P.x0, P.x1, y0, y1, P.z0, C.z0, t, more)
     box(P.x0, C.x0, y0, y1, C.z0, C.z1, t, more); box(C.x1, P.x1, y0, y1, C.z0, C.z1, t, more)
   }
-  const floorTint = { lobby: IN_TINT.marble, shop: IN_TINT.tile, bar: IN_TINT.wood, diner: IN_TINT.tile, hall: IN_TINT.lino, warehouse: IN_TINT.concrete,
+  const floorTint = { lobby: IN_TINT.marble, shop: IN_TINT.tile, bar: IN_TINT.wood, diner: IN_TINT.tile, liquor: IN_TINT.wood, conv: IN_TINT.tile, club: IN_TINT.carpet, hall: IN_TINT.lino, warehouse: IN_TINT.concrete,
     office: IN_TINT.lino, flat: IN_TINT.woodLight, store: IN_TINT.concrete }[type] || IN_TINT.lino
   if (k === 0) slabParts(-0.04, 0.06, floorTint, { f: 4, m: type === 'lobby' ? 1 : 0, r: -1 })
   else slabParts(y - K.slab, y, floorTint, { f: 4, c: 1, m: type === 'lobby' ? 1 : 0, r: -1 })
@@ -3924,7 +3926,7 @@ function faustStorey(B, k) {
   slabParts(Y1, y + K.storey, IN_TINT.plaster, last ? { f: 8, r: -1 } : { f: 8, c: 1, r: -1 })
   // ---- the outer walls' inside: piers between the window bays, a sill and a head round each window (the glass is the
   // facade #3 draws, seen from inside it is not drawn: back faces), no outer face; colliders are the shell's, not these
-  const wallTint = { lobby: IN_TINT.stone, shop: IN_TINT.plaster, bar: IN_TINT.wood, diner: IN_TINT.cream, warehouse: IN_TINT.concrete,
+  const wallTint = { lobby: IN_TINT.stone, shop: IN_TINT.plaster, bar: IN_TINT.wood, diner: IN_TINT.cream, liquor: IN_TINT.woodLight, conv: IN_TINT.cream, club: IN_TINT.red, warehouse: IN_TINT.concrete,
     store: IN_TINT.concrete }[type] || (chance(0.5) ? IN_TINT.plaster : IN_TINT.plasterCool)
   const wins = inWindows(B, k)
   const T = K.wall
@@ -4132,7 +4134,7 @@ function faustStorey(B, k) {
   ]
   const roomKinds = { office: ['office', 'office', 'office', 'pool', 'meeting', 'records'], flat: ['bed', 'living', 'kitchen', 'bed', 'living'],
     store: ['store'], lobby: ['shop', 'shop', 'office'], shop: ['storeroom', 'office'], bar: ['storeroom', 'kitchen'], diner: ['kitchen', 'storeroom'],
-    hall: ['bed', 'living', 'kitchen'], warehouse: ['store'] }
+    hall: ['bed', 'living', 'kitchen'], warehouse: ['store'], liquor: ['storeroom', 'storeroom', 'office'], conv: ['storeroom', 'office'], club: ['storeroom', 'storeroom'] }
   const ringNodes = []     // [node, along the ring]
   const lobbyFront = []    // a lobby's nodes on its street side, by its side doors: linked to the street door's inside
   let hallMain = null      // a hall's main aisle nodes
@@ -4282,12 +4284,12 @@ function faustStorey(B, k) {
     const lit = kind === 'lobby' || kind === 'hallway' || chance({ office: 0.75, pool: 0.85, meeting: 0.6, records: 0.5, bed: 0.55, living: 0.8, kitchen: 0.75 }[kind] ?? 0.95)
     R.lit = lit
     const warm = { office: 0xffe0b0, pool: 0xdce8ff, meeting: 0xffe6c0, records: 0xd0dcf0, shop: 0xfff0d8, bar: 0xffb070, diner: 0xf4f8ff,
-      lobby: 0xffd8a0, hallway: 0xffcf90, bed: 0xffc880, living: 0xffc880, kitchen: 0xf0f0e0 }[kind] || 0xffe0b0
+      lobby: 0xffd8a0, hallway: 0xffcf90, bed: 0xffc880, living: 0xffc880, kitchen: 0xf0f0e0, liquor: 0xffb878, conv: 0xeaf4ff, club: 0xff4a78 }[kind] || 0xffe0b0
     const lamps = Math.max(1, Math.round(area / 22)), gx = Math.max(1, Math.round(Math.sqrt(lamps * w / d))), gz = Math.max(1, Math.round(lamps / gx))
     for (let i = 0; i < gx; i++) for (let j = 0; j < gz; j++) {
       const lx = R.x0 + w * (i + 0.5) / gx, lz = R.z0 + d * (j + 0.5) / gz
       if (lx > C.x0 - 0.5 && lx < C.x1 + 0.5 && lz > C.z0 - 0.5 && lz < C.z1 + 0.5) continue
-      if (lit) light(lx, y + 3.2, lz, r, kind === 'lobby' ? 1.6 : kind === 'bar' ? 0.9 : 1.2, warm)
+      if (lit) light(lx, y + 3.2, lz, r, kind === 'lobby' ? 1.6 : kind === 'bar' || kind === 'club' ? 0.9 : 1.2, warm)
       if (kind === 'lobby') {            // a stepped Deco pendant
         box(lx - 0.02, lx + 0.02, y + 3.0, Y1, lz - 0.02, lz + 0.02, IN_TINT.brass, { m: 1 })
         box(lx - 0.45, lx + 0.45, y + 2.75, y + 3.0, lz - 0.45, lz + 0.45, lit ? 0xfff0d0 : IN_TINT.paper, { m: lit ? 2 : 0, r })
@@ -4322,7 +4324,7 @@ function faustStorey(B, k) {
         if (q === 4) break
         for (let g = u0 + 0.06; g < u1 - 0.2;) {
           const len = Math.min(u1 - 0.06 - g, 0.3 + rng() * 0.4), gh = 0.14 + rng() * 0.26
-          const tint = goods ? pick([0x9a3b2c, 0x2f5c8a, 0xd8c49a, 0x4f7a3a, 0xb9852e, 0xe1e0d8, 0x6b3f6e]) : pick([0x7a6040, 0x6a6a64, 0x8c7c5c])
+          const tint = goods === 'liquor' ? pick([0x2f5c3a, 0x8a5a24, 0xc9b27a, 0xb8c0c0, 0x6b2a2a, 0x3a3f66, 0x4a7a3a]) : goods ? pick([0x9a3b2c, 0x2f5c8a, 0xd8c49a, 0x4f7a3a, 0xb9852e, 0xe1e0d8, 0x6b3f6e]) : pick([0x7a6040, 0x6a6a64, 0x8c7c5c])
           if (rng() < 0.85) slab(g, g + len, depth0 + dir * 0.08, depth0 + dir * (dep - 0.05), sy, sy + gh, tint, front | 4)
           g += len + 0.03
         }
@@ -4420,6 +4422,125 @@ function faustStorey(B, k) {
       }
       for (let q = 0; q < Math.round(area / 9); q++) inner(0.8, 0.8, (x0, x1, z0, z1) => table(x0, x1, z0, z1, true), true)
       posters.push({ x: R.x1 - 0.01, y: fy + 1.9, z: (R.z0 + R.z1) / 2, w: 0.8, h: 1.1, face: 2, p: 'poster' })
+    } else if (kind === 'club') {
+      // a strip club (card #78): a bar counter along the side wall away from the stage (the stores' counter: the lane behind it for the
+      // bartender, the back bar of bottles, a pink neon), then the stage etc.
+      const c0 = R.z0 + 0.4, c1 = R.z1 - 1.9, doorOn = x => (R.aprons || []).some(q => q[0] <= x + 0.05 && q[1] >= x - 0.05 && q[2] < c1 && q[3] > c0)
+      let left = B.club ? B.club.stage > 0 : !doorOn(R.x0) || doorOn(R.x1)
+      if (Math.abs(B.door.x - (left ? R.x1 : R.x0)) < 7) left = !left      // the stage end is never the street door's (a shed's wicket is off centre)
+      const wx = left ? R.x0 : R.x1, sx = left ? 1 : -1, X = v => wx + sx * v, face = left ? 1 : 2
+      const glass = lanes.some(q => Math.min(X(0), X(2.4)) < q[1] && Math.max(X(0), X(2.4)) > q[0] && c0 < q[3] && c1 > q[2])
+      const dd = glass ? 2.4 : 2.05, mid = (c0 + c1) / 2, bx2 = (p, q, y0, y1, z0, z1, t, o) => box(Math.min(X(p), X(q)), Math.max(X(p), X(q)), y0, y1, z0, z1, t, o)
+      if (c1 - c0 >= 1.5 && w > 9 && !doorOn(wx)) {
+        bx2(dd - 0.35, dd + 0.35, fy, fy + 1.1, c0, c1, IN_TINT.wood, { c: 1, f: 63 ^ 8 }); bx2(dd - 0.4, dd + 0.4, fy + 1.1, fy + 1.15, c0, c1, IN_TINT.marbleDark, { m: 1 })
+        bx2(dd + 0.35, dd + 0.45, fy + 0.15, fy + 0.2, c0, c1, IN_TINT.brass, { m: 1 })
+        bx2(0.06, 0.46, fy, fy + 2.4, c0, c1, IN_TINT.dark, { c: 1 })
+        for (const gy of [1.25, 1.7, 2.15]) for (let q = c0 + 0.1; q < c1 - 0.2;) {
+          const len = 0.12 + rng() * 0.12, h = 0.2 + rng() * 0.14
+          bx2(0.46, 0.5, fy + gy, fy + gy + h, q, q + len, pick([0x2f5c3a, 0x8a5a24, 0xc9b27a, 0xb8c0c0, 0x6b2a2a, 0x3a3f66]), { m: 1, f: face | 4, p: 'bottle' })
+          q += len + 0.05 + rng() * 0.08
+        }
+        bx2(0.07, 0.1, fy + 2.5, fy + 2.7, mid - 1.0, mid + 1.0, 0xff3a8c, { m: 2, r }); light(X(0.9), fy + 2.3, mid, r, 0.8, 0xff5a9a)
+        for (let q = c0 + 0.5; q < c1 - 0.3; q += 0.8) { bx2(dd + 0.6, dd + 0.96, fy + 0.7, fy + 0.78, q - 0.18, q + 0.18, IN_TINT.red); bx2(dd + 0.74, dd + 0.82, fy, fy + 0.7, q - 0.04, q + 0.04, IN_TINT.steel, { m: 1 }) }
+        take(Math.min(X(0), X(dd + 1.1)), Math.max(X(0), X(dd + 1.1)), R.z0, R.z1)
+        take(Math.min(X(0), B.door.x), Math.max(X(0), B.door.x), c1 - 0.3, R.z1)
+        spots.push({ kind: 'bartender', x: X((0.46 + dd - 0.35) / 2), y: fy, z: mid, face: [sx, 0] })
+      }
+      {
+        // a strip club's room (card #78, no figures: furnishings and spots only; the people are #63's): the stage on the side the plan says
+        // (lot.club.stage), at the end of the room away from the bar, a runway into the room, two poles, footlights, a curtain behind the
+        // stage, booths along the walls, the bartender's, the bouncer's and the patrons' spots in S.spots
+        const fx = left ? R.x1 : R.x0, fs = -sx, FX = v => fx + fs * v, faceTo = fs > 0 ? 1 : 2, sz0 = R.z0 + 0.5, sz1 = R.z1 - 0.7, sh = 0.5, zm = (sz0 + sz1) / 2
+        const sb = (p, q, y0, y1, z0, z1, t, o) => box(Math.min(FX(p), FX(q)), Math.max(FX(p), FX(q)), y0, y1, z0, z1, t, o)
+        if (sz1 - sz0 > 2.4 && w > 9) {
+          const rl = Math.max(1.5, Math.min(4.5, Math.abs(B.door.x - fx) - 3.4 - 2.4)), rz0 = zm - 0.5, rz1 = zm + 0.5
+          sb(0, 3.4, fy, fy + sh, sz0, sz1, IN_TINT.woodLight, { c: 1, f: 63 ^ 8 }); sb(0, 3.4, fy + sh, fy + sh + 0.02, sz0, sz1, IN_TINT.red, { m: 1, f: 4 })
+          sb(3.4, 3.4 + rl, fy, fy + sh, rz0, rz1, IN_TINT.woodLight, { c: 1, f: 63 ^ 8 }); sb(3.4, 3.4 + rl, fy + sh, fy + sh + 0.02, rz0, rz1, IN_TINT.red, { m: 1, f: 4 })
+          for (let a = sz0 + 0.2; a < sz1 - 0.1; a += 0.45) if (a + 0.12 < rz0 || a > rz1) sb(3.4, 3.46, fy + sh - 0.14, fy + sh - 0.04, a, a + 0.12, 0xff7ab0, { m: 2, r })
+          for (let a = 3.9; a < 3.4 + rl - 0.1; a += 0.5) for (const zz of [rz0 - 0.04, rz1]) sb(a, a + 0.12, fy + sh - 0.14, fy + sh - 0.04, zz, zz + 0.04, 0xff7ab0, { m: 2, r })
+          // the curtain behind the stage and two poles from the boards to the ceiling
+          sb(0.02, 0.1, fy + sh, fy + 3.0, sz0, sz1, 0x7a1830, { f: faceTo | 4 }); sb(0.02, 0.1, fy + 3.0, Y1, sz0, sz1, IN_TINT.dark, { f: faceTo })
+          const pz = [zm - 0.9, zm + 0.9]
+          for (const z of pz) sb(1.7, 1.78, fy + sh, Y1, z - 0.04, z + 0.04, IN_TINT.steel, { m: 1 })
+          light(FX(1.8), fy + 2.6, zm, r, 0.9, 0xff6aa0)
+          take(Math.min(FX(0), FX(3.4 + rl)), Math.max(FX(0), FX(3.4 + rl)), sz0 - 0.3, sz1 + 0.3)
+          spots.push({ kind: 'stage', x: FX(1.7), y: fy + sh, z: zm, face: [-fs, 0] }, ...pz.map(z => ({ kind: 'pole', x: FX(1.9), y: fy + sh, z, face: [-fs, 0] })))
+        }
+        // booths along the walls: a bench, its back, a table with a lamp; the seats are spots
+        place(1.9, 1.5, Math.max(2, Math.round(area / 18)), (x0, x1, z0, z1, side) => {
+          const along = side < 2, near = side === 0 || side === 2, dsg = near ? 1 : -1, wall = side === 0 ? z0 : side === 1 ? z1 : side === 2 ? x0 : x1
+          const cb = (a0, a1, e0, e1, y0, y1, t, o) => { const [p0, p1] = [wall + dsg * e0, wall + dsg * e1].sort((m, n) => m - n); along ? box(a0, a1, y0, y1, p0, p1, t, o) : box(p0, p1, y0, y1, a0, a1, t, o) }
+          const u0 = along ? x0 : z0, u1 = along ? x1 : z1, front = [16, 32, 1, 2][side]
+          cb(u0, u1, 0.04, 0.6, fy, fy + 0.45, IN_TINT.leather, { c: 1, f: 63 ^ 8 }); cb(u0, u1, 0, 0.2, fy + 0.45, fy + 1.1, IN_TINT.leather, { f: 63 ^ 8 })
+          cb(u0 + 0.3, u1 - 0.3, 0.95, 1.5, fy + 0.7, fy + 0.74, IN_TINT.dark, { c: 1, m: 1 }); cb((u0 + u1) / 2 - 0.05, (u0 + u1) / 2 + 0.05, 1.2, 1.3, fy + 0.74, fy + 0.82, 0xff8ab8, { m: 2, r })
+          const ua = [u0 + 0.55, u1 - 0.55]
+          for (const u of ua) spots.push({ kind: 'seat', x: along ? u : wall + dsg * 0.35, y: fy + 0.45, z: along ? wall + dsg * 0.35 : u, face: along ? [0, dsg] : [dsg, 0] })
+        })
+      }
+      for (let q = 0; q < Math.round(area / 12); q++) inner(0.8, 0.8, (x0, x1, z0, z1) => table(x0, x1, z0, z1, true), true)
+      spots.push({ kind: 'bouncer', x: B.door.x + 0.7, y: fy, z: R.z1 - 0.9, face: [0, -1] })
+      for (const [px, pz] of [[B.door.x + 2.4, R.z1 - 1.6], [B.door.x - 2.4, R.z1 - 1.6]]) if (clear(px - 0.5, px + 0.5, pz - 0.5, pz + 0.5, true)) spots.push({ kind: 'patron', x: px, y: fy, z: pz, face: [0, 1] })
+    } else if (kind === 'liquor' || kind === 'conv') {
+      // a store (card #78): a counter along a side wall (the bar's rule: not the wall a side door is in, clear of a window's lane), the clerk's
+      // lane behind it against a back bar, the till at its street end, the bell over the street door; liquor: bottle walls, a cold case and a
+      // crate stack; convenience: aisles of tins and boxes across the room, a cooler, a magazine rack, cigarettes behind the counter. S.spots
+      // (clerk, till, counter, bell, customer) are for the people (#63); the back bar's bottles carry p: 'bottle' for the props (#46, #81)
+      const liq = kind === 'liquor', c0 = R.z0 + 0.4, c1 = R.z1 - 1.9, doorOn = x => (R.aprons || []).some(q => q[0] <= x + 0.05 && q[1] >= x - 0.05 && q[2] < c1 && q[3] > c0)
+      const left = !doorOn(R.x0) || doorOn(R.x1), wx = left ? R.x0 : R.x1, sx = left ? 1 : -1, X = v => wx + sx * v, face = left ? 1 : 2
+      const glass = lanes.some(q => Math.min(X(0), X(2.4)) < q[1] && Math.max(X(0), X(2.4)) > q[0] && c0 < q[3] && c1 > q[2])
+      const dd = glass ? 2.4 : 2.05, mid = (c0 + c1) / 2, bx2 = (p, q, y0, y1, z0, z1, t, o) => box(Math.min(X(p), X(q)), Math.max(X(p), X(q)), y0, y1, z0, z1, t, o)
+      const bottleTints = [0x2f5c3a, 0x8a5a24, 0xc9b27a, 0xb8c0c0, 0x6b2a2a, 0x3a3f66, 0x4a7a3a]
+      const gondola = (x0, x1, zc) => { shelves(x0, x1, zc - 0.5, zc, true, 1); shelves(x0, x1, zc, zc + 0.5, true, 0); take(x0, x1, zc - 0.5, zc + 0.5) }
+      const cooler = (x0, x1, z0, z1, side) => {     // an open-fronted cold case on a wall: boards of bottles or cans under a light strip
+        const alongX = side < 2, wall = side === 0 ? z0 : side === 1 ? z1 : side === 2 ? x0 : x1, dirv = side === 0 || side === 2 ? 1 : -1, front = [16, 32, 1, 2][side]
+        const u0 = alongX ? x0 : z0, u1 = alongX ? x1 : z1, dep = alongX ? z1 - z0 : x1 - x0
+        const cb = (a0, a1, e0, e1, y0, y1, t, o) => { const [p0, p1] = [wall + dirv * e0, wall + dirv * e1].sort((m, n) => m - n); alongX ? box(a0, a1, y0, y1, p0, p1, t, o) : box(p0, p1, y0, y1, a0, a1, t, o) }
+        box(x0, x1, fy, fy + 2.0, z0, z1, IN_TINT.steel, { c: 1, n: 1 })
+        cb(u0, u1, 0, 0.05, fy, fy + 1.95, IN_TINT.steel, { f: front }); cb(u0, u0 + 0.04, 0, dep, fy, fy + 1.95, IN_TINT.steel, { f: front | (alongX ? 3 : 48) | 4 }); cb(u1 - 0.04, u1, 0, dep, fy, fy + 1.95, IN_TINT.steel, { f: front | (alongX ? 3 : 48) | 4 })
+        cb(u0, u1, 0, dep, fy + 1.95, fy + 2.0, IN_TINT.steel, { f: 63 ^ 8 }); cb(u0 + 0.1, u1 - 0.1, dep - 0.12, dep - 0.06, fy + 1.86, fy + 1.92, 0xe8f4ff, { m: 2, r })
+        for (let q = 0; q < 4; q++) {
+          const gy = fy + 0.25 + q * 0.4
+          cb(u0 + 0.04, u1 - 0.04, 0.05, dep, gy - 0.04, gy, IN_TINT.shelf, { f: front | 4 })
+          for (let g = u0 + 0.1; g < u1 - 0.15; g += 0.18 + rng() * 0.1) cb(g, g + 0.12, 0.1, 0.3, gy, gy + 0.3, liq ? pick(bottleTints) : pick([0xc8c8c0, 0xb02a2a, 0x2a5a9a, 0xd0a030]), { m: 1, f: front | 4 })
+        }
+      }
+      if (c1 - c0 >= 1.5 && w > 5.6 && !doorOn(wx)) {
+        bx2(dd - 0.35, dd + 0.35, fy, fy + 1.05, c0, c1, IN_TINT.wood, { c: 1, f: 63 ^ 8 }); bx2(dd - 0.4, dd + 0.4, fy + 1.05, fy + 1.1, c0, c1, liq ? IN_TINT.marbleDark : IN_TINT.cream, { m: 1 })
+        bx2(dd + 0.35, dd + 0.45, fy + 0.15, fy + 0.2, c0, c1, IN_TINT.brass, { m: 1 })
+        const tz = c1 - 0.5
+        bx2(dd - 0.22, dd + 0.18, fy + 1.1, fy + 1.34, tz - 0.25, tz + 0.25, IN_TINT.brass, { m: 1 }); bx2(dd - 0.2, dd + 0.16, fy + 1.34, fy + 1.55, tz - 0.2, tz - 0.1, IN_TINT.dark)
+        // the back bar on the wall behind the counter: three rows, spirits or cigarettes and sweets
+        bx2(0.06, 0.46, fy, fy + 2.4, c0, c1, IN_TINT.dark, { c: 1 })
+        for (const gy of [1.25, 1.7, 2.15]) for (let q = c0 + 0.1; q < c1 - 0.2;) {
+          const len = 0.12 + rng() * 0.12, h = 0.2 + rng() * 0.14
+          if (liq) bx2(0.46, 0.5, fy + gy, fy + gy + h, q, q + len, pick(bottleTints), { m: 1, f: face | 4, p: 'bottle' })
+          else bx2(0.46, 0.5, fy + gy, fy + gy + 0.16, q, q + len + 0.1, pick([0xb02a2a, 0xe8e0c8, 0x2a4a8a, 0xd0a030]), { f: face | 4 })
+          q += len + 0.05 + rng() * 0.08
+        }
+        light(X(0.9), fy + 2.3, mid, r, 0.9, liq ? 0xff6a50 : 0xe8f4ff)
+        take(Math.min(X(0), X(dd + 1.1)), Math.max(X(0), X(dd + 1.1)), R.z0, R.z1)      // the whole strip: the lane behind the counter stays open
+        take(Math.min(X(0), B.door.x), Math.max(X(0), B.door.x), c1 - 0.3, R.z1)         // and the way along the street wall from the lane's end to the door
+        spots.push({ kind: 'clerk', x: X((0.46 + dd - 0.35) / 2), y: fy, z: mid, face: [sx, 0] }, { kind: 'till', x: X(dd), y: fy + 1.1, z: tz, face: [-sx, 0] },
+          { kind: 'counter', x: X(dd + 0.9), y: fy, z: tz - 0.3, face: [-sx, 0] })
+      }
+      // the bell over the street door
+      box(B.door.x - 0.08, B.door.x + 0.08, fy + 2.62, fy + 2.78, R.z1 - 0.2, R.z1 - 0.04, IN_TINT.brass, { m: 1, p: 'bell' })
+      spots.push({ kind: 'bell', x: B.door.x, y: fy + 2.7, z: R.z1 - 0.1, face: [0, -1] })
+      if (liq) {
+        place(1.8, 0.5, Math.max(3, Math.round((w + d) / 2.2)), (x0, x1, z0, z1, side) => shelves(x0, x1, z0, z1, 'liquor', side))
+        place(2.4, 0.7, 1, cooler)
+        inner(1.2, 1.2, (x0, x1, z0, z1) => { box(x0, x1, fy, fy + 0.55, z0, z1, IN_TINT.crate, { c: 1 }); box(x0 + 0.1, x1 - 0.1, fy + 0.55, fy + 1.0, z0 + 0.1, z1 - 0.1, IN_TINT.crate, { c: 1 }); box(x0 + 0.2, x1 - 0.2, fy + 1.0, fy + 1.4, z0 + 0.2, z1 - 0.2, IN_TINT.crate, { c: 1 }) })
+      } else {
+        // two runs of aisles across the room, a gap between the runs and 1.3 m between rows, the street end and both side walls clear
+        const ax0 = left ? R.x0 + dd + 1.2 : R.x0 + 1.0, ax1 = left ? R.x1 - 1.0 : R.x1 - dd - 1.2, runs = ax1 - ax0 > 5 ? [[ax0, (ax0 + ax1) / 2 - 0.7], [(ax0 + ax1) / 2 + 0.7, ax1]] : [[ax0, ax1]]
+        for (let zc = R.z0 + 1.9; zc + 0.5 < R.z1 - 2.8; zc += 2.3) for (const [a, b] of runs) if (b - a > 1.4 && clear(a, b, zc - 0.5, zc + 0.5)) gondola(a, b, zc)
+        place(2.4, 0.7, 1, cooler)
+        place(1.8, 0.5, Math.max(2, Math.round((w + d) / 3.2)), (x0, x1, z0, z1, side) => shelves(x0, x1, z0, z1, true, side))
+        place(0.9, 0.4, 1, (x0, x1, z0, z1) => { box(x0, x1, fy, fy + 1.5, z0, z1, IN_TINT.steel, { c: 1 }); for (let q = 0; q < 3; q++) for (let g = x0 + 0.05; g < x1 - 0.2; g += 0.22) box(g, g + 0.18, fy + 0.5 + q * 0.32, fy + 0.74 + q * 0.32, z0 - 0.01, z0 + 0.02, pick([0xb02a2a, 0x2a4a8a, 0xd0a030, 0x3f5a4a, 0xe8e0c8]), { f: 16 | 32 }) })
+      }
+      posters.push({ x: left ? R.x1 - 0.01 : R.x0 + 0.01, y: fy + 2.1, z: (R.z0 + R.z1) / 2, w: 0.7, h: 1.0, face: left ? 2 : 1, p: liq ? 'spirits' : 'open' })
+      // customers' spots: only where the room has nothing taken (the kit's own clearance)
+      for (const [px, pz] of [[B.door.x - 2.4, R.z1 - 1.6], [B.door.x + 2.4, R.z1 - 1.6], [(R.x0 + R.x1) / 2, R.z0 + 1.2]]) if (clear(px - 0.5, px + 0.5, pz - 0.5, pz + 0.5, true)) spots.push({ kind: 'customer', x: px, y: fy, z: pz, face: [0, 1] })
     } else if (kind === 'diner') {
       // the counter along the right wall with its stools and the coffee urn, booths along the front windows
       // its counter along the right wall (the left if a side door is in the right one) with its stools and the coffee urn
@@ -4532,7 +4653,7 @@ function faustStorey(B, k) {
     const t = 0.01, [ex, ez] = q.face & 3 ? [t, q.w / 2] : [q.w / 2, t]
     boxes.push(inBox(q.x, q.y, q.z, ex, q.h / 2, ez, { t: 0xffffff, m: 3, p: q.p, f: q.face }))
   }
-  const S = { version: 1, k, y, plate: P, type, rooms, boxes, ramps, lights, nodes, edges }
+  const S = { version: 1, k, y, plate: P, type, rooms, boxes, ramps, lights, nodes, edges, ...spots.length ? { spots } : {} }
   S.hash = inHash(S)
   return S
 }
@@ -8896,12 +9017,14 @@ FAUSTLAND_API.interiors = {
   windows: (id, k) => { const i = inIdOfSlot(id); return i ? inWindowsOf(inBuilding(i), k) : [] },
   building: id => { const i = inIdOfSlot(id); return i ? inBuilding(i) : null }, at: (x, y, z) => inAt(x, y, z),
   get open() { return [...faustIn.open.keys()] }, get stats() { return { ...faustIn.stats } },
+  // card #78: a building's venue spots on its ground storey, for the people ([{ kind, x, y, z, face: [fx, fz] }]): a store's clerk, till, counter, bell, customers
+  spots: id => { const i = inIdOfSlot(id); return i ? [...inStorey(inBuilding(i), 0).spots || []] : [] },
 }
 // ---- drawing: a storey is up to three meshes (matte and lit, polished, posters) of indexed boxes; each vertex carries the
 // light its room's lamps give it (baked when it is built), which the interior material takes as its indirect light. The
 // moon's direct term is cut out of it (it would shine through the floors), the point lights stay: inside, the city's two
 // street-lamp lights move to the nearest lamps of the camera's storey, so characters take the room's light.
-const IN_POSTERS = ['faust', 'poster', 'poster2', 'poster3', 'notice', 'menu', 'lift', 'poster4', 'up', 'down']
+const IN_POSTERS = ['faust', 'poster', 'poster2', 'poster3', 'notice', 'menu', 'lift', 'poster4', 'up', 'down', 'open', 'spirits']
 function inMaterials() {
   if (faustIn.mats) return faustIn.mats
   const patch = m => {
@@ -8961,6 +9084,8 @@ function inPosterAtlas() {
   // the cab's call panels: brass, an arrow and its word
   for (const [i, up] of [[8, true], [9, false]]) cell(i, () => { g.fillStyle = '#8a6a2e'; g.fillRect(0, 0, 256, 384); g.fillStyle = '#1a1612'; g.fillRect(16, 16, 224, 352)
     g.fillStyle = '#f0d890'; g.beginPath(); g.moveTo(128, up ? 70 : 250); g.lineTo(200, up ? 190 : 130); g.lineTo(56, up ? 190 : 130); g.fill(); words([up ? 'UP' : 'DOWN'], up ? 280 : 70, 54, '#f0d890') })
+  cell(10, () => { g.fillStyle = '#16100e'; g.fillRect(0, 0, 256, 384); g.shadowColor = '#ff2a2a'; g.shadowBlur = 16; words(['OPEN'], 100, 70, '#ff4a4a'); g.shadowBlur = 0; words(['ALL NIGHT'], 190, 34, '#f0e0c0'); words(['COFFEE', 'PAPERS', 'SMOKES'], 250, 24, '#e8d8a8', 1.3); frame('#ff4a4a', 6) })
+  cell(11, () => { g.fillStyle = '#12241a'; g.fillRect(0, 0, 256, 384); words(['SPIRITS'], 90, 52, '#e8c860'); words(['WINE', 'ALE'], 170, 34, '#e8d8a8', 1.2); words(['CASH ONLY', 'NO CREDIT'], 280, 22, '#c8b888', 1.3); frame('#e8c860', 6) })
   return cv
 }
 // a growing indexed mesh of box faces with baked light
