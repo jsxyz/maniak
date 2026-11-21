@@ -42446,7 +42446,7 @@ const weatherLit = () => WEATHER_LOOKS[activeLook] ? weather.flash : 0      // t
 // The look decides the shading through the uniform uLook (0 Plain, 1 Ink, 2 Realistic): Plain a flat tint with the moon and the lamps' glints;
 // Ink flat dark with inked ripple lines (the Ink shader reads waterInkTone); Realistic mirrors the sky and, through the alpha the screen-space reflection pass reads
 // (1 - reflectivity), the lamps and neon. No textures, no new geometry, one program (the materials differ only in their amplitude).
-const WATER = { rough: 0.2, roughReal: 0.025, reflect: 0.9, ripple: 0.04, ring: { cell: 1.2, speed: 0.45, width: 0.025 } }
+const WATER = { streak: 3.0, rough: 0.2, roughReal: 0.025, reflect: 0.9, ripple: 0.04, ring: { cell: 1.2, speed: 0.45, width: 0.025 } }
 const waterU = { sky: { value: new THREE.Color(0.1, 0.14, 0.2) }, time: { value: 0 }, look: { value: 0 }, rain: { value: 0 }, waveN: { value: 0 }, waveW: { value: [0, 0, 0, 0] },
   waveA: { value: [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()] } }
 const waterMats = new Map()
@@ -42467,14 +42467,21 @@ vec3 waterWave(vec2 p) {
 }
 `
 const WATER_FRAG = `
-uniform float uTime, uRain, uLook, uWhite; uniform vec3 uSky, uFlow;
+uniform float uTime, uRain, uLook, uWhite, uLampRef; uniform vec3 uSky, uFlow;
 varying vec3 vWaterP; varying float vWaterH;
 float waterHash(vec2 p) { p = fract(p * vec2(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }
+// the larger, slower swell, in another direction from the fine ripples, with its own slow drift: it carries to the far water, and it alone shapes the lamps' streaks
+vec2 waterSwell(vec2 p) {
+  float a3 = dot(p, vec2(0.94, -0.34)) * 1.9 - uTime * 0.55, a4 = dot(p, vec2(-0.5, -0.87)) * 3.1 + uTime * 0.4;
+  return vec2(0.94, -0.34) * cos(a3) * ${(WATER.ripple * 1.5).toFixed(4)} + vec2(-0.5, -0.87) * cos(a4) * ${(WATER.ripple * 0.9).toFixed(4)};
+}
 // the little ripples: two crossing trains, and the rain's rings; xy the height's gradient on the water, z the rings' mask
 vec3 waterRipple(vec2 p) {
   vec2 g = vec2(0.0);
+  float near = 1.0 - smoothstep(22.0, 85.0, distance(vWaterP, cameraPosition));      // the fine ripples fade out with distance: far water goes smooth and glossy
   float a1 = dot(p, vec2(0.6, 0.8)) * 7.0 - uTime * 1.3, a2 = dot(p, vec2(-0.8, 0.6)) * 11.0 + uTime * 1.7;
-  g += vec2(0.6, 0.8) * cos(a1) * ${WATER.ripple.toFixed(4)} + vec2(-0.8, 0.6) * cos(a2) * ${(WATER.ripple * 0.6).toFixed(4)};
+  g += (vec2(0.6, 0.8) * cos(a1) * ${WATER.ripple.toFixed(4)} + vec2(-0.8, 0.6) * cos(a2) * ${(WATER.ripple * 0.6).toFixed(4)}) * near;
+  g += waterSwell(p);
   float ring = 0.0;
   if (uRain > 0.01) {
     vec2 cell = floor(p * ${(1 / WATER.ring.cell).toFixed(4)});
@@ -42498,11 +42505,45 @@ float waterWhite(vec2 q, float mask) {
   float a = waterNoise(vec2(across * 1.7, along * 0.30 - uTime * sp * 0.30));
   float b = waterNoise(vec2(across * 4.3 + 7.0, along * 0.80 - uTime * sp * 0.85));
   float c = waterNoise(vec2(across * 9.0 + 3.0, along * 1.70 - uTime * sp * 1.60));
-  return smoothstep(0.42, 0.78, a * 0.45 + b * 0.35 + c * 0.25 + mask * 0.55 - 0.18);
+  // mask 0..1 is the vertex colour's brightness (the heart of a patch of foam near 1, its rim near the water's dark): it shifts the noise's threshold, it does not
+  // saturate it, so a white core still breaks into streaks that scroll
+  return smoothstep(0.40, 0.62, a * 0.45 + b * 0.35 + c * 0.25 + (mask - 0.5) * 0.45);
 }
 float waterStroke(float p, float width) { float d = abs(fract(p) - 0.5), aa = max(fwidth(p), 0.02); return 1.0 - smoothstep(width - aa, width + aa, d); }
 `
 const WATER_WHITE = { chute: 1, foam: 1 }
+// the street lamps' reflection: the ray the eye sees reflected off a (broadened) wavy normal, followed up to the lamp heads' height, where the lamp grid
+// (faustLampGrid, the same cells the lamps' own light reads) says which lamps are near it; a lamp the ray passes within its glow radius lights the pixel.
+// The ripple's tilt is stretched along the view so the glints smear into the long, broken, wavering streaks of a lamp on night water, and more in rain.
+const WATER_STREAK = `
+// where the flat water would mirror each lamp, and a streak from that: for the pixel's mirror ray (flat water), the lamp grid says which lamps it passes near at the lamp heads'
+// height; the miss is split into across the view (the streak's width, with a slow wander by the swell) and along it (the streak's length, longer in rain), broken into
+// shimmering pieces by a travelling pattern. Deterministic in the room clock, no normal noise, so the streak is one long wavering bar under each lamp.
+vec3 waterLampStreak(vec3 P, vec3 V, vec3 N) {
+  if (faustLampArea.w <= 0.0) return vec3(0.0);
+  vec3 r = vec3(V.x, -V.y, V.z);
+  if (r.y < 0.03) return vec3(0.0);
+  float tq = (${FAUST_NIGHT.lamps.head.toFixed(2)} - P.y) / r.y;
+  vec3 Q = P + r * tq;
+  vec2 g = (Q.xz - faustLampArea.xy) * faustLampArea.z;
+  if (min(g.x, g.y) < 0.0 || max(g.x, g.y) >= faustLampArea.w) return vec3(0.0);
+  vec2 vp = normalize(V.xz + vec2(0.0001)), side = vec2(-vp.y, vp.x);
+  ivec2 cell = ivec2(int(g.x) * ${FAUST_NIGHT.grid.k}, int(g.y));
+  float acc = 0.0, lenA = 14.0 - 2.0 * uRain;      // calm water: long, thin, clean columns; rain breaks them wider, shorter and more wavering
+  for (int i = 0; i < ${FAUST_NIGHT.grid.k}; i++) {
+    vec4 lamp = texelFetch(faustLampGrid, cell + ivec2(i, 0), 0);
+    if (lamp.w <= 0.0) break;
+    float tl = (lamp.y - P.y) / r.y;
+    vec2 miss = P.xz + r.xz * tl - lamp.xz;
+    float along = dot(miss, vp), lat = dot(miss, side);
+    float wander = (0.15 + 0.40 * uRain) * sin(along * 0.9 + uTime * 1.3 + lat * 2.0) + (0.09 + 0.09 * uRain) * sin(along * 2.3 - uTime * 2.1);
+    float wl = 0.20 + 0.12 * uRain + 0.015 * tl;
+    float broken = 1.0 - (0.25 + 0.51 * uRain) * (0.5 - 0.5 * sin(along * 1.7 - uTime * 1.0 + 6.0 * waterSwell(P.xz).x));
+    acc += lamp.w / uLampRef * exp(-(lat + wander) * (lat + wander) / (wl * wl)) * exp(-along * along / (lenA * lenA)) * broken / (1.0 + 0.0006 * tl * tl);
+  }
+  return faustLampLight.rgb * acc * ${WATER.streak.toFixed(3)} * (1.0 - smoothstep(130.0, 175.0, distance(P.xz, cameraPosition.xz)));
+}
+`
 function waterMaterialFor(kind, info) {
   const white = !!WATER_WHITE[kind]
   let m = white ? null : waterMats.get(kind)
@@ -42513,20 +42554,20 @@ function waterMaterialFor(kind, info) {
   if (kind === 'foam') { m.transparent = true; m.depthWrite = false; m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -2 }      // foam lies on the surface: it fades out at its edge by its vertex colour
   m.onBeforeCompile = shader => {
     faustLampHook(shader, 'pbr')        // the lamps' light as three's own direct light, so each lamp glints on the water
-    Object.assign(shader.uniforms, { uTime: waterU.time, uLook: waterU.look, uRain: waterU.rain, uSky: waterU.sky, uWhite, uFlow, uWaveN: waterU.waveN, uWaveW: waterU.waveW, uWaveA: waterU.waveA, uAmp: amp })
+    Object.assign(shader.uniforms, { uTime: waterU.time, uLook: waterU.look, uRain: waterU.rain, uSky: waterU.sky, uLampRef: { value: FAUST_NIGHT.lamps.candela }, uWhite, uFlow, uWaveN: waterU.waveN, uWaveW: waterU.waveW, uWaveA: waterU.waveA, uAmp: amp })
     shader.vertexShader = WATER_VERT + shader.vertexShader
       .replace('#include <beginnormal_vertex>', 'vec3 waterWorld = (modelMatrix * vec4(position, 1.0)).xyz; vec3 waterW = waterWave(waterWorld.xz);\n#include <beginnormal_vertex>\n objectNormal = normalize(vec3(-waterW.y, 1.0, -waterW.z));')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n transformed.y += waterW.x; vWaterP = waterWorld; vWaterH = waterW.x;')
-    shader.fragmentShader = WATER_FRAG + shader.fragmentShader
-      .replace('#include <color_fragment>', '#include <color_fragment>\n float waterFoam = 0.0; if (uWhite > 0.5) { waterFoam = waterWhite(vWaterP.xz, dot(vColor.rgb, vec3(0.3333)) * 2.0); diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.9, 0.92), waterFoam); if (uWhite > 1.5) diffuseColor.a = smoothstep(0.3, 1.1, dot(vColor.rgb, vec3(0.3333)) * 2.0) * (0.45 + 0.55 * waterFoam); }')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += vec3(0.20, 0.23, 0.26) * waterFoam;')
+    shader.fragmentShader = WATER_FRAG + shader.fragmentShader.replace('#include <common>', '#include <common>\n' + WATER_STREAK)
+      .replace('#include <color_fragment>', '#include <color_fragment>\n float waterFoam = 0.0; if (uWhite > 0.5) { waterFoam = waterWhite(vWaterP.xz, dot(vColor.rgb, vec3(0.3333))); diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.9, 0.92), waterFoam); if (uWhite > 1.5) diffuseColor.a = smoothstep(0.12, 0.5, dot(vColor.rgb, vec3(0.3333))) * (0.25 + 0.75 * waterFoam); }')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += vec3(0.07, 0.08, 0.09) * waterFoam;')
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = uWhite > 0.5 ? mix(0.9, 0.4, 1.0 - waterFoam) : uLook > 1.5 ? ' + WATER.roughReal.toFixed(4) + ' : ' + WATER.rough.toFixed(4) + ';')
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
  vec3 waterR = waterRipple(vWaterP.xz);
  normal = normalize(normal + mat3(viewMatrix) * vec3(-waterR.x, 0.0, -waterR.y));
  float waterInkTone = 0.045 + 0.9 * max(waterFoam, max(waterStroke(vWaterH * 14.0 + dot(vWaterP.xz, vec2(0.6, 0.8)) * 1.5 - uTime * 0.2 + waterR.x * 8.0, 0.045), min(1.0, waterR.z * 3.0)));`)
       .replace('#include <opaque_fragment>', '#include <opaque_fragment>\n if (uLook > 1.5 && uWhite < 0.5) gl_FragColor.a = ' + (1 - WATER.reflect).toFixed(4) + ';      // the reflection pass reads 1 - reflectivity here')
-      .replace('#include <opaque_fragment>', 'if (uLook < 0.5) outgoingLight += uSky * pow(1.0 - max(dot(normalize(vViewPosition), normal), 0.0), 3.0);      // Plain: the sky at grazing angles, so it reads as water\n#include <opaque_fragment>')
+      .replace('#include <opaque_fragment>', 'vec3 waterStreak = uLook < 1.5 && uWhite < 0.5 ? waterLampStreak(vWaterP, normalize(vWaterP - cameraPosition), normal) : vec3(0.0);\n waterInkTone = min(1.0, waterInkTone + dot(waterStreak, vec3(0.6)));\n if (uLook < 0.5 && uWhite < 0.5) outgoingLight += uSky * pow(1.0 - max(dot(normalize(vViewPosition), normal), 0.0), 3.0) + waterStreak;      // Plain: the sky at grazing angles and the lamps streaks\n#include <opaque_fragment>')
   }
   m.customProgramCacheKey = () => 'faust-water-1'
   if (!white) waterMats.set(kind, m)
@@ -42583,12 +42624,16 @@ function waterTestPatch(x, z, size = 24, y = -0.7, kind = 'lake') {
   if (waterTest) { worldGroup.remove(waterTest); waterTest.geometry.dispose(); waterTest = null }
   if (!size) return null
   const n = 16, pos = [], nor = [], col = [], idx = [], tint = new THREE.Color(FAUST_WATER.tint.water)
-  for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) { pos.push(x + (i / n - 0.5) * size, y, z + (j / n - 0.5) * size); nor.push(0, 1, 0); col.push(tint.r, tint.g, tint.b) }
+  const core = new THREE.Color(0xeaf2f3), edge = new THREE.Color(0x4f6a73), c2 = new THREE.Color()
+  for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) {
+    pos.push(x + (i / n - 0.5) * size, y, z + (j / n - 0.5) * size); nor.push(0, 1, 0)
+    if (WATER_WHITE[kind]) { c2.copy(edge).lerp(core, 1 - Math.abs(2 * i / n - 1)); col.push(c2.r, c2.g, c2.b) } else col.push(tint.r, tint.g, tint.b)      // a white core fading to wet edges, as the dam's chute is coloured
+  }
   for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const a = j * (n + 1) + i; idx.push(a, a + n + 1, a + 1, a + 1, a + n + 1, a + n + 2) }
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx)
   waterTest = new THREE.Mesh(g, waterMaterialFor(kind)); waterTest.frustumCulled = false
-  worldGroup.add(waterTest); waterTest.userData.water = { kind, level: y }; waterDress(waterTest, waterTest.userData.water)
+  worldGroup.add(waterTest); waterTest.userData.water = { kind, level: y, flow: [0, 1], speed: 9 }; waterDress(waterTest, waterTest.userData.water)
   return waterTest
 }
 function draw(dt, t) {
