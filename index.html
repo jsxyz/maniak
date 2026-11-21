@@ -17449,8 +17449,8 @@ function realSwap(R, s, tier, undo) {
   if (signals?.material?.color) put(signals.material, 'color', R.signalGlow)
   put(s, 'fog', R.fog); put(s, 'environment', R.env.texture)
   const hemi = s.children.find(o => o.isHemisphereLight)
-  if (hemi) put(hemi, 'intensity', REAL_SKY.hemi + RAIN.flash.real[0] * weather.flash * (WEATHER_LOOKS.realistic ? 1 : 0) * (weatherReduced ? RAIN.flash.reduced : 1))      // card #85: a lightning flash, 0..1
-  if (sunLight) put(sunLight, 'intensity', REAL_SKY.moonLight + RAIN.flash.real[1] * weather.flash * (WEATHER_LOOKS.realistic ? 1 : 0) * (weatherReduced ? RAIN.flash.reduced : 1))
+  if (hemi) put(hemi, 'intensity', REAL_SKY.hemi + RAIN.flash.real[0] * weather.flash * (WEATHER_LOOKS.realistic ? 1 : 0))      // card #85: a lightning flash, 0..1
+  if (sunLight) put(sunLight, 'intensity', REAL_SKY.moonLight + RAIN.flash.real[1] * weather.flash * (WEATHER_LOOKS.realistic ? 1 : 0))
   for (const l of F?.localLights || []) put(l, 'intensity', 0)
   s.add(R.lampGroup); undo.push([null, () => s.remove(R.lampGroup)])
   // the sky in the same light: the night environment on the globe and Faust's head (#19's PBR model), the dome behind
@@ -34935,15 +34935,22 @@ function weatherFlash(b, t) {
   const pulse = (at, peak, tau) => d >= at ? peak * Math.exp(-(d - at) / tau) : 0
   return Math.min(1, b.power * Math.max(pulse(0, 1, 70), pulse(160, 0.55, 90), pulse(340, 0.3, 120)))
 }
+// reduced motion: one flash a bolt, rising over 70 ms and falling with tau 110 ms, at 0.6 of the bolt's power
+function weatherFlashSoft(b, t) {
+  const d = t - b.start
+  if (d < 0 || d > 900) return 0
+  const up = Math.min(1, d / 70)
+  return 0.6 * b.power * (up * up * (3 - 2 * up)) * (d < 70 ? 1 : Math.exp(-(d - 70) / 110))
+}
 // the flash at time t, and the bolts whose thunder falls in (t0, t]
-function weatherSky(seed, t, ov, t0) {
+function weatherSky(seed, t, ov, t0, soft) {
   const w = Math.floor(t / WEATHER.bolt)
   let flash = 0
   const thunder = []
   for (let j = 0; j <= 3; j++) {
     const b = weatherBolt(seed, w - j, ov)
     if (!b) continue
-    if (j <= 1) flash = Math.max(flash, weatherFlash(b, t))
+    if (j <= 1) flash = Math.max(flash, soft ? weatherFlashSoft(b, t) : weatherFlash(b, t))
     if (t0 !== undefined && b.thunderAt > t0 && b.thunderAt <= t) thunder.push(b)
   }
   return { flash, thunder }
@@ -34964,7 +34971,7 @@ const weatherSeed = () => levelGen ? levelGen.seed >>> 0 : 0
 function weatherFrame(dt = 1 / 60) {
   const t = trafficClock() * 1000, seed = weatherSeed(), S = weatherAt(seed, t, weatherOv), W = weatherWind(seed, t, S.wind)
   const last = weatherLastT >= 0 && t - weatherLastT < 1500 && t >= weatherLastT ? weatherLastT : undefined   // a jump in the clock fires no old thunder
-  const sky = weatherSky(seed, t, weatherOv, last)
+  const sky = weatherSky(seed, t, weatherOv, last, weatherReduced)
   Object.assign(weather, S, { wetness: S.wet, flash: weatherForce ?? sky.flash, thunder: sky.thunder, gust: W.gust, windX: W.x, windZ: W.z, t, override: weatherOv })
   weatherLastT = t
   weatherLook(dt)
@@ -35025,7 +35032,7 @@ const RAIN_LOOK = { plain: { c: [0.8, 0.88, 1], a: 1, alt: null }, ink: { c: [0.
 const RAIN = { streaks: 1100, splashes: 120, box: 28, top: 16, bottom: 7, speed: [10, 15], len: [1.3, 2.6], width: 0.016, alpha: 0.5, colour: [0.8, 0.88, 1],
   ring: [0.1, 0.5], life: [0.3, 0.6], reach: 14, sky: 0x10151b, skyK: 0.35, lit: 0.35, litHemi: 0.18, damp: 0.1, windFrom: 0.15,
   // lightning, each 0..1 times weather.flash (itself at most 1): Plain and Ink's sun and sky light up by these shares, the sky toward skyC; Realistic's moon and ambient add these
-  flash: { sun: 1.2, hemi: 3, sky: 0.8, skyC: 0xdfe8ff, real: [0.5, 0.8], reduced: 0.35 } }
+  flash: { sun: 1.2, hemi: 3, sky: 0.8, skyC: 0xdfe8ff, real: [0.5, 0.8] } }
 // fog banks: weather.fog 0..1 pulls the linear fog (Plain, Ink) in from where it was to FOG.near..FOG.far and thickens Realistic's
 // exponential fog by up to FOG.density times; the bank's thickness drifts (±FOG.bank) with where he stands and with time
 // which looks show the weather: Plain passed #72; Ink and Realistic are switched on as each passes (a test may set gameHooks.weather.looks.ink = true)
@@ -35153,9 +35160,8 @@ function weatherFog() {
   else if (f.isFogExp2) f.density = REAL_SKY.fogDensity * (1 + FOG.density * g)
   return g
 }
-const weatherReduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches      // a player who asks for less motion gets a flash a third as strong
+const weatherReduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches      // a player who asks for less motion gets one soft flash a bolt (weatherFlashSoft), no flicker
 function weatherLights(k, fogK, flash) {
-  flash *= weatherReduced ? RAIN.flash.reduced : 1
   const R = rainState, F = RAIN.flash, L = R.lit ||= { sun: 0, hemi: 0, sunSet: -1, hemiSet: -1, hemiLight: null, scene: null, sky: new THREE.Color(), grey: new THREE.Color(RAIN.sky), tint: new THREE.Color(FOG.tint), flash: new THREE.Color(F.skyC), on: false, bg: null, fog: null }
   if (L.scene !== scene) { L.scene = scene; L.hemiLight = scene.children.find(n => n.isHemisphereLight) || null; L.sunSet = L.hemiSet = -1 }
   if (sunLight) { if (L.sunSet < 0 || Math.abs(sunLight.intensity - L.sunSet) > 1e-6) L.sun = sunLight.intensity; sunLight.intensity = L.sunSet = L.sun * (1 - RAIN.lit * k + F.sun * flash) }
