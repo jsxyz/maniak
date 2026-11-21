@@ -4863,10 +4863,10 @@ function faustRoadsMapLayer() {
 // rail's own pylons then stand on the bridges' decks (the avenues' medians).
 const FAUST_CHAN = { version: 1, depth: 8, top: 28, floor: 18, lip: 2, wall: 0.9, gutter: [1.2, 2.5, 0.25], water: 0.12, cut: 30, deck: 14.4, thick: 1.4,
   span: 33, foot: 2.6, ramp: { w: 7, land: 4 }, keep: 8, reach: 240, look: 900, ground: -0.02, part: 1000,
-  tint: { bank: 0x5d6168, floor: 0x45494f, gutter: 0x2b2f35, lip: 0x76797e, wall: 0x7a7872, cap: 0x97948b, joint: 0x25282d, damp: 0x383d42, sheen: 0x5b7a88, deckTop: 0x242a33, walk: 0x737983,
+  tint: { bank: 0x6c7078, floor: 0x45494f, gutter: 0x2b2f35, lip: 0x76797e, wall: 0x7a7872, cap: 0x97948b, joint: 0x1f2226, damp: 0x30353a, stainTop: 0x39413f, stainMid: 0x2b3534, stainToe: 0x1c2524, sheen: 0x5b7a88, deckTop: 0x242a33, walk: 0x737983,
     under: 0x5c6168, fascia: 0x7c7f84, stone: 0x8d8a82, stoneDark: 0x6e6c66, pier: 0x827f78, flute: 0x5f5d57, water: 0x142b36, mark: 0xb4a77d, lamp: 0xffb35a, pole: 0x30353c,
     ramp: 0x838890, drain: 0x07090c, collar: 0x8a8f95, stain: 0x2c3a38, paint: [0xd23a5a, 0x36c2c9, 0xe6c43a, 0x8f4ad8, 0x56d36a, 0xeeeeee, 0xf0803c] },
-  glow: { bank: 0.24, floor: 0.17, wall: 0.25, under: 0.3, paint: 0.55, water: 0.2 } }
+  glow: { bank: 0.3, floor: 0.17, wall: 0.25, under: 0.3, paint: 0.55, water: 0.2 } }
 let faustChanMemo = null
 // the plan: { list: [channel], rects: [{a0, a1, b0, b1}] (the ground cut by each), cells: Map 'gx gz' -> channel, hash, version }
 // channel: { id, n, axis (0: runs along x, 1: along z), u (its row's or column's cell index), c (its middle's coordinate),
@@ -5059,16 +5059,16 @@ function* faustChanPiece(ch, k, emit, look) {
   // expansion joints: dark lines across the floor and banks every 6 m, two along the floor
   for (let q = Math.ceil(s0 / 6) * 6; q < s1; q += 6) {
     for (const side of [-1, 1]) {
-      f(P(q - 0.07, side * 2.5, fl + 0.012), P(q + 0.07, side * 2.5, fl + 0.012), P(q + 0.07, side * K.floor, fl + 0.012), P(q - 0.07, side * K.floor, fl + 0.012), [0, 1, 0], T.joint, false, 0)
-      patch(side, q, 0, hs, 0.14, T.joint, 0, 0.012)
+      f(P(q - 0.2, side * 2.5, fl + 0.012), P(q + 0.2, side * 2.5, fl + 0.012), P(q + 0.2, side * K.floor, fl + 0.012), P(q - 0.2, side * K.floor, fl + 0.012), [0, 1, 0], T.joint, false, 0)
+      patch(side, q, 0, hs, 0.4, T.joint, 0, 0.012)
     }
   }
-  for (const side of [-1, 1]) f(P(s0, side * 9 - 0.07, fl + 0.012), P(s1, side * 9 - 0.07, fl + 0.012), P(s1, side * 9 + 0.07, fl + 0.012), P(s0, side * 9 + 0.07, fl + 0.012), [0, 1, 0], T.joint, false, 0)
+  for (const side of [-1, 1]) f(P(s0, side * 9 - 0.2, fl + 0.012), P(s1, side * 9 - 0.2, fl + 0.012), P(s1, side * 9 + 0.2, fl + 0.012), P(s0, side * 9 + 0.2, fl + 0.012), [0, 1, 0], T.joint, false, 0)
   for (const side of [-1, 1]) patch(side, (s0 + s1) / 2, tOf(6.6), hs, s1 - s0, T.damp, 0, 0.01)
-  for (let n = 0; n < 14; n++) {
-    const h = faustMix(0x73747261 ^ ch.n, k * 32 + n, ch.u), side = (h & 1) ? 1 : -1, s = k * 96 - 46 + ((h >>> 1) % 92), t0 = ((h >>> 9) % 3) * 0.3, t1 = tOf(3 + ((h >>> 12) % 5))
+  for (let n = 0; n < 28; n++) {
+    const h = faustMix(0x73747261 ^ ch.n, k * 32 + n, ch.u), side = (h & 1) ? 1 : -1, s = k * 96 - 46 + ((h >>> 1) % 92), t0 = ((h >>> 9) % 3) * 0.3, t1 = tOf(5 + ((h >>> 12) % 4)), w = 0.6 + ((h >>> 16) % 4) * 0.2, t = t1 - t0
     if (s < s0 + 1 || s > s1 - 1) continue
-    patch(side, s, t0, t1, 0.35 + ((h >>> 16) % 4) * 0.2, T.stain, 0, 0.02)
+    patch(side, s, t0, t0 + t * 0.4, w * 0.7, T.stainTop, 0, 0.02); patch(side, s, t0 + t * 0.4, t0 + t * 0.75, w, T.stainMid, 0, 0.022); patch(side, s, t0 + t * 0.75, t1, w * 1.1, T.stainToe, 0, 0.024)
   }
   for (const o of ch.outfalls) if (o.kind === 'wall' && Math.floor((o.s + 48) / 96) === k) {
     const t = tOf(6.5)
