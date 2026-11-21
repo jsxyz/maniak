@@ -16257,6 +16257,43 @@ function parkedDark(o) {
   const [a, b] = k.split(' ')
   return Math.abs(o.x - a / 2) + Math.abs(o.z - b / 2) < PARKED.moved + 0.25
 }
+// A parked car's lamps off (#62's Realistic frames): emission 0, and its lenses unlit glass. PARKED_LENS.cells: [column, row,
+// colour] of the palette's lens cells (the cells the emissive map lights: headlamp, tail, amber, marker); rough: their gloss
+// (the ORM map's green) when off. The copies: one per paint texture, one of the ORM map, made once
+const PARKED_LENS = { cells: [[2, 1, 0x3e3d3a], [3, 1, 0x380806], [4, 1, 0x3c2507], [5, 1, 0x403c34]], rough: 0.55, made: new Map() }
+const parkedLensLit = new WeakMap()          // a material: its own map, roughnessMap and metalnessMap, while it wears the off copies
+function parkedLensCopy(t, orm) {
+  if (!t?.image || typeof document === 'undefined') return t
+  let c = PARKED_LENS.made.get(t)
+  if (!c) {
+    const cv = document.createElement('canvas'), w = cv.width = t.image.width; cv.height = t.image.height
+    const g = cv.getContext('2d', { willReadFrequently: true }), cell = w / 8
+    g.drawImage(t.image, 0, 0)
+    for (const [i, j, col] of PARKED_LENS.cells) {
+      if (orm) { const px = g.getImageData(i * cell, j * cell, cell, cell); for (let k = 0; k < px.data.length; k += 4) px.data[k + 1] = Math.round(PARKED_LENS.rough * 255); g.putImageData(px, i * cell, j * cell) }
+      else { g.fillStyle = '#' + col.toString(16).padStart(6, '0'); g.fillRect(i * cell, j * cell, cell, cell) }
+    }
+    c = new THREE.CanvasTexture(cv)
+    c.colorSpace = t.colorSpace; c.flipY = t.flipY; c.wrapS = t.wrapS; c.wrapT = t.wrapT
+    c.magFilter = c.minFilter = THREE.NearestFilter; c.generateMipmaps = false
+    PARKED_LENS.made.set(t, c)
+  }
+  return c
+}
+// a car view's lamps: off (dark) or its own, on each of its materials that carries the vehicle lamps
+function parkedLamps(view, dark) {
+  view.traverse(c => {
+    const m = c.isMesh && c.material
+    if (!m?.userData.vehicleLamps) return
+    m.emissiveIntensity = dark ? 0 : PERIOD.lamp
+    const lit = parkedLensLit.get(m)
+    if (dark && !lit) {
+      parkedLensLit.set(m, { map: m.map, rough: m.roughnessMap, metal: m.metalnessMap })
+      m.map = parkedLensCopy(m.map, false); m.roughnessMap = parkedLensCopy(m.roughnessMap, true)
+      m.metalnessMap = m.metalnessMap === parkedLensLit.get(m).rough ? m.roughnessMap : parkedLensCopy(m.metalnessMap, true)
+    } else if (!dark && lit) { m.map = lit.map; m.roughnessMap = lit.rough; m.metalnessMap = lit.metal; parkedLensLit.delete(m) }
+  })
+}
 // ---------------------------------------------------------------- Road traffic (host authoritative)
 // Simulation is separate from the seeded city: graph edges come from its motor lanes. No player slots are used.
 // Traffic uses ordinary Bullet cars and object snapshots. The bounded `tf` roster adds lifecycle + driver state only.
@@ -25730,7 +25767,7 @@ function drawObjects(list, wheelsAt = () => null) {
       // card #63: a standing car past PARKED.shadow m casts no sun shadow (the depth pass would draw every parked car twice)
       if (W && Q) { const sh = m.children[0].visible || d <= PARKED.shadow; if (m.userData.sh !== sh) { m.userData.sh = sh; m.traverse(c => { if (c.isMesh) c.castShadow = sh }) } }
       // card #63 (#72): a parked car's head and tail lamps dark, on its view's own materials (emissiveIntensity is a uniform: the same program)
-      if (W && Q) { const dark = parkedDark(o); if (m.userData.dark !== dark) { m.userData.dark = dark; m.traverse(c => { if (c.isMesh && c.material?.userData.vehicleLamps) c.material.emissiveIntensity = dark ? 0 : PERIOD.lamp }) } }
+      if (W && Q) { const dark = parkedDark(o); if (m.userData.dark !== dark) { m.userData.dark = dark; parkedLamps(m, dark) } }
       if (carDentable(o)) for (const v of m.children) if (v.visible) carDress(v, o)      // card #57: its shown look (and LOD) cut
       continue
     }
