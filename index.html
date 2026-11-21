@@ -15420,7 +15420,7 @@ const objFirst = new Map()          // guest: first-seen spot of an unseeded obj
 // guest: the seeds of a chunk's parked spots from its plan, before that chunk grows here; each chunk once a level
 const plannedCells = new Set()
 function planSpots(x, z) {
-  if (LV.faust) return
+  if (LV.faust) return parkedSeeds(x, z)      // card #63: Faustland's parked cars, from the plan
   const G = LV.grow, ci = Math.floor((x + ARENA) / 96), cj = Math.floor((z + ARENA) / 96), cell = ci + ' ' + cj
   if (!G || !(ci >= 0 && ci < G.S && cj >= 0 && cj < G.S) || grown.has(cell) || plannedCells.has(cell)) return
   plannedCells.add(cell)
@@ -16054,6 +16054,166 @@ function stepPhysics(dt) {
   stepObjects()
 }
 
+// ---------------------------------------------------------------- Parked cars (card #63, a621a3c7)
+// City side streets, both sides: parallel, the kerb side PARKED.off m off the pavement tile's edge (PARKED.kerb m from the road's
+// centre line), a slot every PARKED.pitch m. None within PARKED.end m of an avenue junction (its crossings run 11.45-18.55 m out),
+// PARKED.mid m of the mid-cell crossing, or by a hydrant, bus shelter, manhole, alley mouth, club door or queue, vacant site or dock.
+// Filled from the seed by district (PARKED.fill: the one table to turn up). Pure in (seed, S, cell): host
+// and guests lay out the same cars. Avenues carry their bike lane at the kerb, so none park there; plazas, flood channels,
+// highways and the diagonal boulevard have none (yet). Suburb streets keep builder B's box cars (plan.parked).
+const PARKED = { fill: { core: 0.5, tenement: 0.45, civic: 0.35, industrial: 0.22 }, kerb: 9.2, off: 0.5, pitch: 6.5, end: 20, mid: 10,
+  hydrant: 3, shelter: 15, manhole: 2, alley: 6, venue: 3, site: 21, dock: 15, near: 70, far: 100, perPlayer: 16, perTick: 1, every: 0.1,
+  lane: 0.4, post: 4.8, postLat: 0, moved: 0.5, shadow: 22, fleet: [['Car', 1], ['Sports car', 0.5], ['Van', 0.6], ['Truck', 0.4]] }
+const PARKED_KIND = 86          // its dedicated-server records: a slot left for good (GAME.destruction.kind)
+const parkedHash = (...v) => { let h = 2166136261; for (const n of v) { h = Math.imul(h ^ (n | 0), 16777619); h ^= h >>> 13 } return h >>> 0 }
+let parkedDocks = null          // { seed, S, pts }: the water's docks, once a world
+function faustKerbCars(seed, S, ci, cj, P) {
+  if (!P || P.plaza || P.chan) return []
+  const K = PARKED, out = [], sew = faustSewers(seed, S), tot = K.fleet.reduce((n, f) => n + f[1], 0)
+  if (parkedDocks?.seed !== seed || parkedDocks.S !== S) parkedDocks = { seed, S, pts: faustWater(seed, S).bodies.flatMap(b => (b.docks || []).map(d => [d.x, d.z])) }
+  const props = P.props || [], hyd = props.filter(p => p.k === 'hydrant').map(p => [p.x, p.z]), shel = props.filter(p => p.k === 'busstop').map(p => [p.x, p.z])
+  const mouths = (P.alleys || []).flatMap(a => (a.segs || []).flatMap(g => [[a.x, g.z0], [a.x, g.z1]]))
+  const doors = P.lots.flatMap(l => l.club ? [l.club.door, l.club.bouncer, ...l.club.queue] : []), sites = (P.sites || []).map(t => [t.x, t.z])
+  // every lane's box (the diagonal boulevard's cross side streets): a car keeps PARKED.lane m clear of each
+  // posts at the kerb: every prop and lamp post standing near a kerb (PARKED.postLat m of the road's centre line or less). Street
+  // life's walkers detour round a post on its street side, level for SL_CLEAR.lead m either side and easing over SL_CLEAR.ease m,
+  // their walked dogs up to 1.07 m further out, onto the road: no car within PARKED.post m (plus half its length) along of one
+  const posts = [...props.map(p => [p.x, p.z]), ...faustLampSites(P).flatMap(l => [[l.x, l.z], [l.x + l.nx * 1.8, l.z + l.nz * 1.8]])]
+  const lanes = P.lanes.map(l => { const [a, b] = l.path, L = Math.hypot(b[0] - a[0], b[2] - a[2]) || 1; return [(a[0] + b[0]) / 2, (a[2] + b[2]) / 2, (b[0] - a[0]) / L, (b[2] - a[2]) / L, l.width / 2, L / 2] })
+  const boxGap = (a, b) => { let g = -Infinity; for (const [nx, nz] of [[a[2], a[3]], [-a[3], a[2]], [b[2], b[3]], [-b[3], b[2]]]) { const r = q => q[5] * Math.abs(q[2] * nx + q[3] * nz) + q[4] * Math.abs(-q[3] * nx + q[2] * nz); g = Math.max(g, Math.abs((b[0] - a[0]) * nx + (b[1] - a[1]) * nz) - r(a) - r(b)) } return g }
+  P.roads.forEach((r, ri) => {
+    if (r.avenue || r.width !== 8) return
+    const ax = r.a[0], az = r.a[2], L = Math.hypot(r.b[0] - ax, r.b[2] - az), dx = (r.b[0] - ax) / L, dz = (r.b[2] - az) / L
+    for (const side of [-1, 1]) for (const [s0, s1] of [[K.end, L / 2 - K.mid], [L / 2 + K.mid, L - K.end]])
+      for (let n = 0, sa = s0 + K.pitch / 2; sa + K.pitch / 2 <= s1 + 1e-6; n++, sa += K.pitch) {
+        const h = parkedHash(seed, ci, cj, ri, side, s0, n)
+        if ((h & 0xffff) / 65536 >= (K.fill[P.district] ?? 0)) continue
+        let t = (h >>> 16) / 65536 * tot; const f = K.fleet.find(q => (t -= q[1]) < 0) || K.fleet[0], V = VEHICLE_SHAPES[f[0]]
+        const hw = V.w / 2, hl = V.l / 2, cx0 = ax + dx * sa, cz0 = az + dz * sa
+        if (posts.some(([px, pz]) => { const u = (px - ax) * dx + (pz - az) * dz, v = ((px - ax) * -dz + (pz - az) * dx) * side; return v > 0 && v < K.postLat && Math.abs(u - sa) < hl + K.post })) continue
+        const lat = side * (K.kerb - K.off - hw), x = cx0 - dz * lat, z = cz0 + dx * lat
+        const near = (pts, d) => pts.some(p => Math.hypot(p[0] - x, p[1] - z) < d)
+        if (near(hyd, hl + K.hydrant) || near(shel, K.shelter) || near(mouths, hl + K.alley) || near(doors, hl + K.venue) || near(sites, K.site + hl)
+          || near(parkedDocks.pts, K.dock) || faustSewNear(sew, x, z, hl + K.manhole) || lanes.some(l => boxGap([x, z, dx, dz, hw, hl], l) < K.lane)) continue
+        out.push({ x, z, yaw: Math.atan2(-dx, -dz) + (parkedHash(h, 7) & 1 ? Math.PI : 0), hl, hw, kind: f[0], seed: parkedHash(h, 0x5eed),
+          slot: ci + ' ' + cj + ' ' + ri + ' ' + side + ' ' + s0 + ' ' + n, ci, cj, place: out.length })
+      }
+  })
+  return out
+}
+// a city cell's slots, cached a world
+let parkedCells = new Map(), parkedCellsSeed = null
+function parkedCellRows(ci, cj) {
+  const F = faustState
+  if (!F || !(ci >= 0 && ci < F.S && cj >= 0 && cj < F.S)) return []
+  if (parkedCellsSeed !== F.seed + ' ' + F.S) { parkedCells = new Map(); parkedCellsSeed = F.seed + ' ' + F.S }
+  const key = ci + ' ' + cj
+  if (!parkedCells.has(key)) parkedCells.set(key, faustKerbCars(F.seed, F.S, ci, cj, faustGet(ci, cj).plan))
+  return parkedCells.get(key)
+}
+// every parked car with its centre in the world box [x0, x1] x [z0, z1]: the city's rows and builder B's suburb box cars (kind 'box'),
+// one row shape { x, z, yaw, hl, hw, ... } for street life
+function faustParked(x0, z0, x1, z1) {
+  const F = faustState, out = []
+  if (!F) return out
+  const A = F.S * 48, inBox = r => r.x >= x0 && r.x <= x1 && r.z >= z0 && r.z <= z1
+  for (let ci = Math.floor((x0 + A) / 96); ci <= Math.floor((x1 + A) / 96); ci++) for (let cj = Math.floor((z0 + A) / 96); cj <= Math.floor((z1 + A) / 96); cj++)
+    for (const r of parkedCellRows(ci, cj)) if (inBox(r)) out.push(r)
+  const roads = faustRoadsReady(F), Pt = FAUST_RINGS.sub.pitch
+  if (roads) for (let bi = Math.floor(x0 / Pt); bi <= Math.floor(x1 / Pt); bi++) for (let bj = Math.floor(z0 / Pt); bj <= Math.floor(z1 / Pt); bj++) {
+    const b = faustSubBlock(F.seed, F.S, roads, bi, bj)
+    if (b.exists) for (const r of b.parked || []) if (inBox(r) && !out.some(q => Math.hypot(q.x - r.x, q.z - r.z) < 0.1)) out.push({ ...r, kind: 'box' })
+  }
+  return out
+}
+// the host's parked cars: real objects near the players, retired far from them, their slots left for good once touched
+let parkedState = null
+function parkedVacate(r) {
+  const Pk = parkedState
+  if (!Pk || !r || Pk.vacated.has(r.slot)) return
+  Pk.vacated.add(r.slot)
+  if (Pk.kind && typeof dsBreak === 'function') dsBreak(PARKED_KIND, dsUncode(PARKED_KIND, r.ci * faustState.S + r.cj, r.place), 1)
+}
+function parkedRecord(key) {
+  const F = faustState
+  if (!F) return null
+  const code = key - PARKED_KIND * 4294967296, chunk = Math.floor(code / 1024), place = code - chunk * 1024, ci = Math.floor(chunk / F.S), cj = chunk - ci * F.S
+  const r = parkedCellRows(ci, cj)[place]
+  return r ? { chunk, at: [r.x, 0, r.z], p: { slot: r.slot } } : null
+}
+function parkedTick(dt, people) {
+  if (!isHost || !LV.faust || !faustState || !world) return
+  const K = PARKED, T = trafficState, F = faustState
+  if (parkedState?.world !== F.seed + ' ' + F.S) parkedState = { world: F.seed + ' ' + F.S, live: new Map(), vacated: new Set(), t: 0, kind: false }
+  const Pk = parkedState
+  if (!Pk.kind && GAME.destruction?.kind) { Pk.kind = true; GAME.destruction.kind(PARKED_KIND, { record: parkedRecord, apply: rec => Pk.vacated.add(rec.p.slot), undo: rec => Pk.vacated.delete(rec.p.slot) }) }
+  if ((Pk.t -= dt) > 0 || !people.length) return
+  Pk.t = K.every
+  const clock = trafficClock()
+  // the quality and density the game runs at (trafficK, as the traffic does: low and medium 0.5, and any scale-down a touch or
+  // low-end device gets) thins the parked cars: a fixed share of the slots (by their seed), a nearer reach, a smaller cap
+  const q = Math.min(1, trafficK()), near = K.near * (q < 1 ? 0.75 : 1), cap = Math.max(4, Math.round(K.perPlayer * q))
+  // the live ones: touched (moved, entered, hit, burning, held) leaves its slot for good and lives on as any car; untouched and
+  // past PARKED.far m of everyone, retired (PARKED.perTick a tick, never a street at once)
+  let retired = 0
+  for (const [slot, o] of [...Pk.live]) {
+    const r = o.parkRow
+    if (!objs.includes(o)) { Pk.live.delete(slot); parkedVacate(r); continue }
+    if (!o.V || o.hp < o.V.hp - 0.01 || o.fuse !== undefined || o.heldBy !== undefined || o.riders.some(v => v !== undefined) || Math.hypot(o.x - r.x, o.z - r.z) > K.moved) {
+      Pk.live.delete(slot); delete o.parkRow; parkedVacate(r); continue
+    }
+    // past PARKED.far m of everyone, or (the quality turned down) outside the share or the nearer reach: retired
+    if (retired < K.perTick && (people.every(p => Math.hypot(p.x - o.x, p.z - o.z) > K.far) || q < 1 && ((r.seed & 0xffff) / 65536 >= q || people.every(p => Math.hypot(p.x - o.x, p.z - o.z) > near + 10)))) {
+      dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({ id: o.id, until: clock + 12 }); delete objSeeds[o.id]
+      for (const sent of objSent.values()) sent.delete(o.id)
+      Pk.live.delete(slot); retired++
+    }
+  }
+  // new ones: the free slots within reach of a player, nearest first, PARKED.perTick a tick, the cap near each player
+  const want = [], A = F.S * 48
+  for (const p of people) {
+    let mine = 0
+    for (const o of Pk.live.values()) if (Math.hypot(o.x - p.x, o.z - p.z) < near) mine++
+    if (mine >= cap) continue
+    for (let ci = Math.floor((p.x - near + A) / 96); ci <= Math.floor((p.x + near + A) / 96); ci++) for (let cj = Math.floor((p.z - near + A) / 96); cj <= Math.floor((p.z + near + A) / 96); cj++)
+      for (const r of parkedCellRows(ci, cj)) {
+        if (Pk.live.has(r.slot) || Pk.vacated.has(r.slot) || (r.seed & 0xffff) / 65536 >= q) continue
+        const d = Math.hypot(r.x - p.x, r.z - p.z)
+        if (d < near) want.push([d, r])
+      }
+  }
+  want.sort((a, b) => a[0] - b[0])
+  let made = 0
+  for (const [, r] of want) {
+    if (made >= K.perTick || objs.length >= OBJ_MAX - 64) break
+    if (Pk.live.has(r.slot) || objs.some(o => o.body && Math.hypot(o.x - r.x, o.z - r.z) < r.hl + 2.5)) continue      // something stands there now
+    const k = OBJECTS.findIndex(Q => Q.name === r.kind)
+    let id = OBJ_MAX - 1; while (id >= 16 && (objs.some(o => o.id === id) || T.departures.some(v => v.id === id && v.until > clock))) id--
+    if (id < 16 || k < 0) break
+    faustEnsure([[r.x, r.z]]); objSeeds[id] = r.seed
+    const o = addObject(k, [r.x, 1, r.z], id, r.yaw)
+    if (!o) { delete objSeeds[id]; continue }
+    o.at = [r.x, -o.low + 0.02, r.z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body); o.body.setActivationState(CF_SLEEPING)
+    o.parkRow = r; T.cars.set(o.id, o); o.trafficAmbient = false; Pk.live.set(r.slot, o); made++
+  }
+}
+// a guest's seeds for the parked cars about (x, z) (planSpots' Faustland half): keyed by the slot, as the host spawns them there
+function parkedSeeds(x, z) {
+  const F = faustState
+  if (!F) return
+  const A = F.S * 48, ci = Math.floor((x + A) / 96), cj = Math.floor((z + A) / 96)
+  for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) for (const r of parkedCellRows(i, j)) parked.set(Math.round(2 * r.x) + ' ' + Math.round(2 * r.z), r.seed)
+}
+// A parked car nobody has moved keeps its lamps dark (#72). The host: still in its slot (parkRow, cleared when it's moved,
+// entered, hit, burning or held). A guest: first seen on a parked slot, still within PARKED.moved + 0.25 m of it, nobody in it
+function parkedDark(o) {
+  if (o.id === undefined) return false
+  if (isHost) return o.parkRow !== undefined
+  const k = objFirst.get(o.id)
+  if (k === undefined || !parked.has(k) || seatedIn(o.id)) return false
+  const [a, b] = k.split(' ')
+  return Math.abs(o.x - a / 2) + Math.abs(o.z - b / 2) < PARKED.moved + 0.25
+}
 // ---------------------------------------------------------------- Road traffic (host authoritative)
 // Simulation is separate from the seeded city: graph edges come from its motor lanes. No player slots are used.
 // Traffic uses ordinary Bullet cars and object snapshots. The bounded `tf` roster adds lifecycle + driver state only.
@@ -16687,6 +16847,7 @@ function trafficTick(dt, all) {
   if (!trafficState) trafficReset()
   const t = performance.now(), T = trafficState, people = all.filter(c => !c.bot && c.owner === undefined && c.body), clock = trafficClock()
   let thinks = 0          // card #86: this tick's thinks
+  parkedTick(dt, people)      // card #63: the city's parked cars (host)
   for (const o of [...T.cars.values()]) {
     if (!objs.includes(o)) { T.cars.delete(o.id); continue }
     const a = o.traffic
@@ -25417,6 +25578,10 @@ function drawObjects(list, wheelsAt = () => null) {
         if (rolling) for (let i = 0; i < W.at.length; i++) Q ? periodWheelOut(Q, d, posed[i].pos, posed[i].quat, W.r) : wheelOut(posed[i].pos, posed[i].quat, W.r)
       }
       if (Q) for (const c of m.children) if (c.visible) periodPick(c, d)
+      // card #63: a standing car past PARKED.shadow m casts no sun shadow (the depth pass would draw every parked car twice)
+      if (W && Q) { const sh = m.children[0].visible || d <= PARKED.shadow; if (m.userData.sh !== sh) { m.userData.sh = sh; m.traverse(c => { if (c.isMesh) c.castShadow = sh }) } }
+      // card #63 (#72): a parked car's head and tail lamps dark, on its view's own materials (emissiveIntensity is a uniform: the same program)
+      if (W && Q) { const dark = parkedDark(o); if (m.userData.dark !== dark) { m.userData.dark = dark; m.traverse(c => { if (c.isMesh && c.material?.userData.vehicleLamps) c.material.emissiveIntensity = dark ? 0 : PERIOD.lamp }) } }
       if (carDentable(o)) for (const v of m.children) if (v.visible) carDress(v, o)      // card #57: its shown look (and LOD) cut
       continue
     }
