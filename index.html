@@ -28745,6 +28745,9 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   capture: captureFrames,
   // card #78: a crater for tests (host, Faustland): as a leap smash makes it, at the surface height y; true if it fits
   crater(x, z, r = 2.4, y = 0) { return isHost && LV.faust && [x, z, r, y].every(Number.isFinite) ? addCrater(x, z, r, y) : false },
+  // card #84: the sewers, read only: plan() (nodes, edges, manholes, hash), near(x, z, r), cover(x, z), isOpen(id), built, drawn, deep, covers, programs, stats, floorAt(x, z)
+  get sewers() { const S = FAUSTLAND_API.sewers; return S && { plan: S.plan, near: S.near, cover: S.cover, isOpen: S.isOpen, unit: S.unit, floorAt: S.floorAt, get built() { return S.built }, get drawn() { return S.drawn },
+    get deep() { return S.deep }, get covers() { return S.covers }, get programs() { return S.programs }, get stats() { return S.stats }, config: S.config } },
   // card #85: the weather: .state (live), .at(ms, seed), .schedule(seed, from, to, step), .set(kind, strength) (host)
   get weather() { return weatherApi() },
   // card #75: frame by frame, what moved wrongly near the host: await gameHooks.motion({ ms: 5000, radius: 40 }); the last result is gameHooks.motion.last
@@ -36770,6 +36773,11 @@ const testTools = (() => {
     return out
   }
   const ALIAS = { highways: 'highway', viaduct: 'highway', motorway: 'highway', overpass: 'interchange', junction: 'interchange', stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
+  // card #84: the manholes of the cells round c, each with a spot 3.2 m south of it facing it; E there climbs down, E held rips the cover off
+  NEAR.manhole = c => { const F = faustState; if (!F) return []; const plan = faustSewers(F.seed, F.S), out = [], ci = Math.floor(c.x / 96), cj = Math.floor(c.z / 96)
+    for (let i = ci - 3; i <= ci + 3; i++) for (let j = cj - 3; j <= cj + 3; j++) for (const m of plan.byCell.get(i + ' ' + j) || [])
+      out.push({ x: m.x, z: m.z, y0: 0, what: 'manhole ' + m.id + (m.kind === 'e' ? ' (over a tunnel running along ' + (plan.edges[m.ref].axis ? 'z' : 'x') + ')' : ' (over a chamber)'), spot: { x: m.x, z: m.z + 3.2, face: [0, -1] } })
+    return out }
   const things = () => Object.keys(NEAR).filter(k => k !== 'brokenwindow').join(', ') + ', window broken'
   // card #9 (asked for the site's panel, whose player is a guest of a dedicated server): /tp <name> <x> <z> moves a named player (the full
   // name, or a prefix only one starts with) the way a respawn or a rescue does: setCharPos in tpTo, so the player's own prediction snaps and does
