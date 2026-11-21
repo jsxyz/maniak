@@ -25609,7 +25609,7 @@ function motionFrame() {
   if (t - J.t0 > J.ms) return J.done()
   const i = J.n++, c = camera.position, ticks = pageLife.hostAttempts, r3 = v => Math.round(v * 1000) / 1000
   J.frames.push([i, r3(t - J.t0), J.last === null ? 0 : r3(t - J.last), J.lastTicks === undefined ? 0 : ticks - J.lastTicks, r3(drawAlpha), Math.round(drawnT()), Math.round(tickAt), r3(c.x), r3(c.y), r3(c.z)])
-  J.last = t; J.lastTicks = ticks
+  J.last = t; J.lastTicks = ticks; (J.dclk ||= []).push(drawnT())   // the drawn clock, unrounded, per frame (index = frame i)
   const NAN = NaN, ptr = new Map(), tracked = new Map(), put = (key, kind, name, d, p, v, flags, body) => {
     if (body) tracked.set(A.getPointer(body), { key, kind, name })
     let T = J.tracks.get(key); if (!T) J.tracks.set(key, T = { key, kind, name, rows: [], d2: Math.hypot(d[0] - me.x, d[2] - me.z) })
@@ -25683,9 +25683,10 @@ function motionResult(J, err) {
         for (const k of cur) if (!was.has(k)) add(r, 'contact-appeared', 'now touching ' + k, { other: k })
         for (const k of was) if (!cur.has(k)) add(r, 'contact-vanished', 'no longer touching ' + k, { other: k })
         const dts = Math.max((r[1] - prev[1]) / 1000, 1e-4), sx = r[2] - prev[2], sy = r[3] - prev[3], sz = r[4] - prev[4], len = Math.hypot(sx, sy, sz)
-        const has = r[8] === r[8], speed = has ? Math.hypot(r[8], r[9], r[10]) : null, expected = has ? speed * dts : step ? step.len : 0, held = r[11] & 3
+        const dd = J.dclk ? (J.dclk[r[0]] - J.dclk[prev[0]]) / 1000 : NaN, dtd = dd >= 0 && dd < 1 ? dd : dts   // the clock the draw ran on: a frame with no physics tick still advances it
+        const has = r[8] === r[8], speed = has ? Math.hypot(r[8], r[9], r[10]) : null, expected = has ? speed * dtd : step ? step.len : 0, held = r[11] & 3
         const pl = r[5] === r[5] && prev[5] === prev[5] ? Math.hypot(r[5] - prev[5], r[6] - prev[6], r[7] - prev[7]) : null
-        if (len > expected + J.jump) add(r, 'jump', 'drawn jumped ' + r3(len) + ' m (' + r3(expected) + ' m expected from its speed)' + (pl !== null ? ' while the body moved ' + r3(pl) + ' m' : ''), { step: r3(len), expected: r3(expected), body: pl === null ? null : r3(pl), dy: r3(sy) })
+        if (len > expected + J.jump) add(r, 'jump', 'drawn jumped ' + r3(len) + ' m (' + r3(expected) + ' m expected from its speed over the drawn clock\'s ' + r3(dtd * 1000) + ' ms)' + (pl !== null ? ' while the body moved ' + r3(pl) + ' m' : ''), { step: r3(len), expected: r3(expected), body: pl === null ? null : r3(pl), dy: r3(sy) })
         // velocity sign flips: the body's, else the drawn step's
         const v = has ? [r[8], r[9], r[10]] : [sx / dts, sy / dts, sz / dts]
         if (vprev) for (const [k, ax] of [[0, 'x'], [1, 'y'], [2, 'z']]) if (Math.abs(v[k]) >= J.flip && Math.abs(vprev[k]) >= J.flip && v[k] * vprev[k] < 0)
