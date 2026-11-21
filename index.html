@@ -37080,7 +37080,7 @@ function weatherApi() {
     looks: WEATHER_LOOKS,      // which looks show the weather: Plain on; set .ink / .realistic = true to see them before they pass review
     lights: () => ({ look: activeLook, on: !!WEATHER_LOOKS[activeLook], flash: +weather.flash.toFixed(3), reduced: weatherReduced, sun: sunLight && +sunLight.intensity.toFixed(3), hemi: rainState.lit?.hemiLight && +rainState.lit.hemiLight.intensity.toFixed(3),
       sky: scene?.background?.isColor ? scene.background.getHex() : null, fog: scene?.fog ? { near: scene.fog.near, far: scene.fog.far, density: scene.fog.density, color: scene.fog.color.getHex() } : null, wet: +weather.wet.toFixed(3) }),
-    drops: () => ({ streaks: rainState.n, splashes: rainState.m, cover: +rainState.cover.toFixed(2), shown: !!rainState.group?.visible, inScene: rainState.group?.parent === scene, buf: renderer?.domElement.height, paper0: (a => a && Number.isFinite(a[0]) ? [0, 1, 2].map(k => (a[k] + a[3 + k] + a[6 + k] + a[9 + k]) / 4) : null)(rainState.paper?.geometry.attributes.position.array) }),
+    drops: () => ({ indoor: +rainState.indoor.toFixed(2), wall: rainState.wall.slice(), streaks: rainState.n, splashes: rainState.m, cover: +rainState.cover.toFixed(2), shown: !!rainState.group?.visible, inScene: rainState.group?.parent === scene, buf: renderer?.domElement.height, paper0: (a => a && Number.isFinite(a[0]) ? [0, 1, 2].map(k => (a[k] + a[3 + k] + a[6 + k] + a[9 + k]) / 4) : null)(rainState.paper?.geometry.attributes.position.array) }),
     force: v => { weatherForce = v === null ? null : clamp(+v || 0, 0, 1); return weatherForce },      // for a capture: hold the flash at v (0..1) on this page, null releases it
     bolts: (from, to) => { const out = []; for (let w = Math.floor(from / WEATHER.bolt); w <= Math.floor(to / WEATHER.bolt); w++) { const b = weatherBolt(weatherSeed(), w, weatherOv); if (b) out.push(b) } return out },
     set: (kind, s = 0.8, instant = false) => isHost && (kind === 'auto' || Object.hasOwn(WEATHER.levels, kind)) ? (weatherSet(kind, s), instant && (weatherOv.t0 -= WEATHER.fade), true) : false,      // instant: a test's, no fade
@@ -37138,14 +37138,16 @@ function weatherCover(dt) {
   if (t - R.coverAt > 160) {
     R.coverAt = t
     try {
-      const up = staticRay(c.x, c.y + 0.3, c.z, 0, 1, 0, 30), under = up < 29.5
+      // the ray up and four more 2 m around it: a roof is what they mostly hit; one fire escape or washing line over an alley is not (its share of the cover is a fifth)
+      const up = staticRay(c.x, c.y + 0.3, c.z, 0, 1, 0, 30), around = [[2, 0], [-2, 0], [0, 2], [0, -2]].map(([ox, oz]) => staticRay(c.x + ox, c.y + 0.3, c.z + oz, 0, 1, 0, 30))
+      const all = [up, ...around], under = up < 29.5, covered = all.filter(v => v < 29.5).length / 5, roofed = all.filter(v => v < ROOM.ceil - 0.01).length >= 4
       let room = !!faustIn?.camera
       if (under || room) {
         const W = R.wall, y = c.y, K = ROOM.ray
         W[0] = staticRay(c.x, y, c.z, 1, 0, 0, K); W[1] = staticRay(c.x, y, c.z, -1, 0, 0, K); W[2] = staticRay(c.x, y, c.z, 0, 0, 1, K); W[3] = staticRay(c.x, y, c.z, 0, 0, -1, K)
-        if (up < ROOM.ceil) room = room || W.filter(v => v < ROOM.near).length >= 3 || (W[0] < ROOM.tunnel && W[1] < ROOM.tunnel) || (W[2] < ROOM.tunnel && W[3] < ROOM.tunnel)
+        if (roofed) room = room || W.filter(v => v < ROOM.near).length >= 3 || (W[0] < ROOM.tunnel && W[1] < ROOM.tunnel) || (W[2] < ROOM.tunnel && W[3] < ROOM.tunnel)
       }
-      R.indoorTo = room ? 1 : 0; R.coverTo = room ? 1 : under ? 0.12 : 1
+      R.indoorTo = room ? 1 : 0; R.coverTo = room ? 1 : 1 - 0.88 * covered
     } catch (e) { R.coverTo = 1; R.indoorTo = 0 }
   }
   R.cover += (R.coverTo - R.cover) * (1 - Math.exp(-dt * 4))
