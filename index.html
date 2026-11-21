@@ -24051,6 +24051,41 @@ function capePose(R, from, to = R.cape.length - 1) {
     b.updateMatrixWorld(true)
   }
 }
+// (a phone: the cape thrown off his back in long bars across the screen, and never back) the wall's width and
+// shift follow their targets critically damped at CAPE_WALL_RATE; stepped once a solve, that diverges past a step of 0.83 /
+// CAPE_WALL_RATE (28 ms: a phone's 30 fps, or a middle-distance cape solved every other frame), so each solve's step is
+// taken in pieces of at most half of 1 / CAPE_WALL_RATE (one piece at 60 Hz and over, as before)
+const capeFv = [0, 0]
+function capeFollow(x, v, t, hs) {
+  const n = Math.max(1, Math.ceil(hs * CAPE_WALL_RATE * 2 - 1e-9)), dt = hs / n, w2 = CAPE_WALL_RATE * CAPE_WALL_RATE
+  for (let i = 0; i < n; i++) { v += (w2 * (t - x) - 2 * CAPE_WALL_RATE * v) * dt; x += v * dt }
+  capeFv[0] = x; capeFv[1] = v
+  return capeFv
+}
+// and after each frame, a cape whose state isn't a number, or is past anything the cloth can do (more than a full turn, a
+// width past what the cloth has, a shift aside of more than CAPE_GUARD_SHIFT m (a wall's: 0.22 m at most), a bone more than
+// CAPE_GUARD m from the bone the cape hangs from (0.72 m at most)), is hung back on his back as new that frame
+// (R.capeResets counts them)
+const CAPE_GUARD = 1.5, CAPE_GUARD_SHIFT = 0.6, capeGa = new THREE.Vector3(), capeGb = new THREE.Vector3()
+function capeGuard(R, S) {
+  const fin = Number.isFinite
+  let bad = !(fin(R.capeOff) && fin(R.capeSw) && fin(R.capeSwV) && fin(R.capePh ?? 0) && fin(R.capeFl ?? 0) && fin(R.capeTw ?? 0))
+  for (const A of [R.capeW, R.capeCv, R.capeCt, R.capeGw, R.capeGwv, R.capeGt, R.capeGd, R.capeCd]) if (A && !bad) bad = !A.every(fin)
+  capeGa.setFromMatrixPosition(R.cape[0].parent.matrixWorld)
+  for (let k = 0; k < R.cape.length && !bad; k++)
+    bad = !(Math.abs(R.capeT[k]) <= 2 * Math.PI && R.capeG[k] > 0 && R.capeG[k] < 4 && Math.abs(R.capeCs?.[k] ?? 0) <= CAPE_GUARD_SHIFT &&
+      capeGb.setFromMatrixPosition(R.cape[k].matrixWorld).distanceTo(capeGa) <= CAPE_GUARD)
+  if (!bad) return false
+  R.capeT.fill(0); R.capeW.fill(0); R.capeG.fill(1)
+  for (const A of [R.capeCs, R.capeCv, R.capeCt, R.capeGwv, R.capeGd, R.capeCd]) A?.fill(0)
+  for (const A of [R.capeGw, R.capeGt, R.capeSide]) A?.fill(1)
+  R.capeLo?.fill(-Infinity); R.capeHi?.fill(Infinity)
+  R.capeOff = R.capeSw = R.capeSwV = R.capePh = R.capeFl = R.capeTw = 0; R.capeWallAt = -1e9
+  capePose(R, 0); if (S) capeSkinPts(S)
+  R.capeCalm = (R.capeClock || 0) + 0.3      // (and for 0.3 s its pushes leave it no speed: hung back inside him, it isn't flung out)
+  R.capeResets = (R.capeResets || 0) + 1
+  return true
+}
 function rigCape(a, R, dt) {
   if (!R.cape.length || !dt || !capePoints(R)) return
   const M = R.M, v = Math.max(0, (a.v || 0) + weatherPush(a)), h = Math.min(dt, 0.05), bend = M.capeBend || [1, 0.55, 0.75]
@@ -24129,7 +24164,7 @@ function rigCape(a, R, dt) {
     if (seated && R.capeT[k] > CAPE_SEAT) { R.capeT[k] = CAPE_SEAT; R.capeW[k] = Math.min(R.capeW[k], 0) }
     capePose(R, k, k)
   })
-  if (!solve) return
+  if (!solve) { capeGuard(R, S); return }
   // the ground under him while he stands, kneels or lies on it (not in the air); seated, the cushion under him (12 cm below
   // his hips), so the cloth gathers on the seat rather than hanging through it and the car's floor
   const skin = M.capeSkin ?? 0.025, floor = seated ? capeP.setFromMatrixPosition(R.bones.get('pelvis').matrixWorld).y - 0.12 : R.wasAir ? null : a.mesh.position.y - a.spec.h - a.spec.r
@@ -24241,10 +24276,9 @@ function rigCape(a, R, dt) {
           const Wt = R.capeGt ||= R.cape.map(() => 1)
           Wt[k] = want < Wt[k] ? Math.max(want, Wt[k] - CAPE_WALL_IN * hs) : Math.min(want, Wt[k] + CAPE_WALL_OUT * hs)
           Ct[k] += Math.max(-CAPE_WALL_IN * 0.5 * hs, Math.min(CAPE_WALL_IN * 0.5 * hs, wantC - Ct[k]))
-          const w2 = CAPE_WALL_RATE * CAPE_WALL_RATE
-          Wv[k] += (w2 * (Wt[k] - Wg[k]) - 2 * CAPE_WALL_RATE * Wv[k]) * hs; Wg[k] += Wv[k] * hs
-          Cv[k] += (w2 * (Ct[k] - Cs[k]) - 2 * CAPE_WALL_RATE * Cv[k]) * hs
-          let nc = Cs[k] + Cv[k] * hs
+          { const f = capeFollow(Wg[k], Wv[k], Wt[k], hs); Wg[k] = f[0]; Wv[k] = f[1] }
+          const fc = capeFollow(Cs[k], Cv[k], Ct[k], hs); Cv[k] = fc[1]
+          let nc = fc[0]
           g = Math.max(floorG, Math.min(Wg[k], gather))
           // (the wall itself, eased: a third of what still reaches into it each solve, so it's drawn out over 3-4 frames)
           const hard = solve(CAPE_WALL_HARD, 0)
@@ -24264,7 +24298,7 @@ function rigCape(a, R, dt) {
         } else {
           g = Math.max(floorG, Math.min(gather, wide)); Wg[k] = g; Wv[k] = 0; (R.capeGt ||= R.cape.map(() => 1))[k] = g; if (R.capeGd) R.capeGd[k] = 0; if (R.capeCd) R.capeCd[k] = 0
           // (away from walls, any shift goes back to the middle the same way)
-          if (Cs[k] || Cv[k]) { const w2 = CAPE_WALL_RATE * CAPE_WALL_RATE; Ct[k] = 0; Cv[k] += (w2 * (0 - Cs[k]) - 2 * CAPE_WALL_RATE * Cv[k]) * hs; shift = Math.abs(Cs[k] + Cv[k] * hs) < 1e-4 && Math.abs(Cv[k]) < 1e-3 ? 0 : Cs[k] + Cv[k] * hs; if (!shift) Cv[k] = 0 }
+          if (Cs[k] || Cv[k]) { Ct[k] = 0; const f = capeFollow(Cs[k], Cv[k], 0, hs); Cv[k] = f[1]; shift = Math.abs(f[0]) < 1e-4 && Math.abs(Cv[k]) < 1e-3 ? 0 : f[0]; if (!shift) Cv[k] = 0 }
         }
         if (shift !== null && Math.abs(shift - Cs[k]) > 1e-5) { Cs[k] = shift; capePose(R, k); capeSkinPts(S); moved = true }
         if (Math.abs(g - R.capeG[k]) > 0.002) { R.capeG[k] = g; capePose(R, k); capeSkinPts(S); moved = true }
@@ -24306,7 +24340,7 @@ function rigCape(a, R, dt) {
         if (lift) {
           R.capeT[k] += lift
           // (at speed the cloth keeps the push's speed, so when his body stops pushing it carries on and the spring slows it)
-          if (lift > 0) { lo[k] = R.capeT[k]; hi[k] = Math.max(hi[k], lo[k]); R.capeW[k] = Math.max(R.capeW[k], (run || walls) && !dying && !ground ? Math.max(run, walls ? 1 : 0) * lift / hs : 0) }
+          if (lift > 0) { lo[k] = R.capeT[k]; hi[k] = Math.max(hi[k], lo[k]); R.capeW[k] = Math.max(R.capeW[k], (run || walls) && !dying && !ground && !(R.capeClock < R.capeCalm) ? Math.max(run, walls ? 1 : 0) * lift / hs : 0) }
           else { hi[k] = R.capeT[k]; lo[k] = Math.min(lo[k], hi[k]); R.capeW[k] = Math.min(R.capeW[k], 0) }
           capePose(R, k); capeSkinPts(S); moved = true
         }
@@ -24330,6 +24364,7 @@ function rigCape(a, R, dt) {
     }
     if (best) { R.capeSw -= best; R.capeSwV = 0; capePose(R, 0); capeSkinPts(S) }
   }
+  capeGuard(R, S)
 }
 // The cape's shading (#72). The model's one material is a dark, rough dielectric everywhere, and the cape is two layers
 // of it (out, and the lining toward his back). Narrow and square behind him, the cape is often seen edge-on, where the
