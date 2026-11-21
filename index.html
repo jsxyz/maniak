@@ -8852,10 +8852,27 @@ function faustDisposeSky() {
   F.skyScene.clear(); F.skyScene = null; F.skyCamera = null; F.skyBeams = []; F.headMesh = null
   F.skyHead?.geometry.dispose(); F.skyStand?.dispose(); F.skyOccluder = F.skyStand = F.skyHead = F.skyBounds = null
 }
+function faustGlobeShader(real) {
+  const look = real ? `
+      outgoingLight = diffuseColor.rgb * (vec3(0.383, 0.521, 0.8) * 2.0 * max(globeK, 0.0) + vec3(0.237, 0.317, 0.446) * (0.025 + 0.025 * globeN.y)
+        + vec3(0.44, 0.256, 0.128) * 0.16 * clamp(0.3 * globeN.z - 0.7 * globeN.y, 0.0, 1.0) + 0.064);` : `
+      float globeShade = 0.94 * (1.0 - smoothstep(-0.12, 0.25, globeK)) * mix(1.0, 0.4, smoothstep(0.2, 0.85, -globeK));
+      outgoingLight = mix(diffuseColor.rgb * (0.28 + 0.72 * pow(max(globeK, 0.0), 0.8) + 0.42 * smoothstep(0.05, 0.75, -globeK)), vec3(0.012, 0.014, 0.02), globeShade);`
+  return shader => {
+    shader.vertexShader = 'varying vec3 faustGlobeNormal;\n' + shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
+      faustGlobeNormal = mat3(modelMatrix) * normal;`)
+    shader.fragmentShader = 'varying vec3 faustGlobeNormal;\n' + shader.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+      vec3 globeN = normalize(faustGlobeNormal);
+      float globeK = dot(globeN, vec3(-0.7754, 0.4985, 0.3877));
+      reflectedLight.directDiffuse = diffuseColor.rgb * (0.1 + 0.9 * max(globeK, 0.0));
+      reflectedLight.indirectDiffuse = reflectedLight.directSpecular = reflectedLight.indirectSpecular = vec3(0.0);
+      totalEmissiveRadiance = vec3(0.0);`).replace('#include <opaque_fragment>', look + '\n#include <opaque_fragment>')
+  }
+}
 function faustGlobeMap() {
   const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 512
   const g = cv.getContext('2d'), at = ([lon, lat]) => [(lon + 180) / 360 * 1024, (90 - lat) / 180 * 512]
-  g.fillStyle = '#324357'; g.fillRect(0, 0, 1024, 512)
+  g.fillStyle = '#7b98c0'; g.fillRect(0, 0, 1024, 512)
   const continents = [
     [[-168,65],[-145,70],[-130,58],[-115,53],[-105,58],[-90,70],[-60,52],[-53,45],[-72,40],[-80,25],[-96,18],[-106,23],[-120,34],[-126,48],[-150,57]],
     [[-82,12],[-70,10],[-58,6],[-48,-2],[-35,-7],[-40,-22],[-51,-31],[-58,-44],[-68,-55],[-75,-45],[-72,-29],[-80,-11]],
@@ -8868,18 +8885,18 @@ function faustGlobeMap() {
   ]
   for (const land of continents) {
     g.beginPath(); land.forEach((p, i) => { const [x, y] = at(p); i ? g.lineTo(x, y) : g.moveTo(x, y) }); g.closePath()
-    g.fillStyle = '#c5cbd0'; g.fill(); g.strokeStyle = '#263747'; g.lineWidth = 3; g.stroke()
-    g.save(); g.clip(); g.strokeStyle = '#8798a4'; g.lineWidth = 1
+    g.fillStyle = '#e3e6e4'; g.fill(); g.strokeStyle = '#27384a'; g.lineWidth = 3; g.stroke()
+    g.save(); g.clip(); g.strokeStyle = '#b4bec6'; g.lineWidth = 1
     for (let x = -512; x < 1024; x += 12) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 512, 512); g.stroke() }
     g.restore()
   }
-  g.strokeStyle = 'rgba(210,220,222,0.22)'; g.lineWidth = 1.5
+  g.strokeStyle = 'rgba(93,113,134,0.55)'; g.lineWidth = 1.5
   for (let lon = -180; lon <= 180; lon += 30) { const x = at([lon, 0])[0]; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 512); g.stroke() }
   for (let lat = -60; lat <= 60; lat += 30) { const y = at([0, lat])[1]; g.beginPath(); g.moveTo(0, y); g.lineTo(1024, y); g.stroke() }
   const map = new THREE.CanvasTexture(cv); map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4; map.userData.faustOwned = true
   return map
 }
-const FAUST_GLOBE_FILE = 'faust_globe.1d0f00c9.png'
+const FAUST_GLOBE_FILE = 'faust_globe.36f65fbf.png'
 let faustGlobeBlob = null
 function faustGlobeBytes() {
   const get = base => fetch(base + FAUST_GLOBE_FILE).then(r => r.ok ? r.blob() : Promise.reject(new Error('HTTP ' + r.status)))
@@ -8900,7 +8917,7 @@ function faustGlobeUpgrade(globe) {
     renderer.initTexture(map); yield 'frame'
     if (!alive()) { map.dispose(); return false }
     const old = material.map
-    material.map = material.emissiveMap = map
+    material.map = map
     old?.dispose()
     return true
   }, { valid: alive, gpu: true }).catch(e => { console.warn('Faust globe: keeping the angular map,', e?.message || e); return false })
@@ -9018,15 +9035,8 @@ function faustMonument() {
   for (const side of [-1, 1]) polygon([[side * 12, 302, 39], [side * 47, 315, 30], [side * 48, 292, 23], [side * 27, 282, 45]], 0x596575)
   const globeGeometry = faustGlobeGeometry()
   const globeMap = faustGlobeMap()
-  const globe = new THREE.Mesh(globeGeometry, new THREE.MeshStandardMaterial({ map: globeMap, emissiveMap: globeMap, color: 0xd7dfe3, roughness: 0.95, metalness: 0.05, emissive: 0x8093a8, emissiveIntensity: 0.18, fog: false }))
-  globe.material.onBeforeCompile = shader => {
-    shader.vertexShader = 'varying vec3 faustGlobeNormal; varying vec3 faustGlobePosition;\n' + shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
-      faustGlobeNormal = mat3(modelMatrix) * normal;
-      faustGlobePosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`)
-    shader.fragmentShader = 'varying vec3 faustGlobeNormal; varying vec3 faustGlobePosition;\n' + shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-      vec3 globeFlood = normalize(vec3(-1400.0, 500.0, -800.0) - faustGlobePosition);
-      totalEmissiveRadiance += diffuseColor.rgb * max(0.0, dot(normalize(faustGlobeNormal), globeFlood)) * 1.3;`)
-  }
+  const globe = new THREE.Mesh(globeGeometry, new THREE.MeshStandardMaterial({ map: globeMap, fog: false }))
+  globe.material.onBeforeCompile = faustGlobeShader(false)
   globe.material.customProgramCacheKey = () => 'faust-globe-flood-1'
   globe.material.userData.inkGlobe = true
   far.add(globe)
@@ -18584,23 +18594,24 @@ function inkPrepare(root) {
           float base = inkLuma(diffuseColor.rgb);
           float light = inkLuma(reflectedLight.directDiffuse + reflectedLight.indirectDiffuse) / max(base, 0.0001);
           ${!paper && !sky ? 'light = max(light, 0.22 + 0.40 * max(0.0, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)))));' : ''}
-          float tone = light < 0.08 ? 0.012 : light < 0.20 ? 0.55 : light < 0.40 ? 0.82 : 0.97;
+          float tone = ${globe ? 'light < 0.08 ? 0.012 : 0.97' : 'light < 0.08 ? 0.012 : light < 0.20 ? 0.55 : light < 0.40 ? 0.82 : 0.97'};
           float pigment = smoothstep(0.006, ${paper ? '0.025' : '0.14'}, base);
           tone *= mix(0.025, 1.0, pigment);
+          ${globe ? 'tone *= mix(0.55, 1.0, smoothstep(0.45, 0.65, base));' : ''}
           vec3 eye = normalize(-inkViewPosition);
           float facing = abs(dot(normal, eye));
           float rim = (1.0 - smoothstep(0.13, 0.25, facing)) * smoothstep(0.0002, 0.004, length(fwidth(normal)));
           float keyLight = dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)));
           if (${paper || sky ? 'false' : 'true'} && base < 0.035) tone = keyLight > 0.55 && facing > 0.18 && facing < 0.27 ? 0.95 : 0.003;
           vec3 n = abs(cross(dFdx(inkPoint), dFdy(inkPoint)));
-          vec2 pen = n.y > max(n.x, n.z) ? inkPoint.xz : n.x > n.z ? inkPoint.zy : inkPoint.xy;
+          vec2 pen = ${globe ? 'vec2(dot(inkPoint, vec3(0.2096, 0.8384, 0.5031)), dot(inkPoint, vec3(0.9776, -0.1685, -0.1264)))' : 'n.y > max(n.x, n.z) ? inkPoint.xz : n.x > n.z ? inkPoint.zy : inkPoint.xy'};
           float spacing = ${globe ? '56.0' : sky ? '24.0' : paper ? '0.30' : '0.065'};
-          float hatch = inkStroke((pen.x + pen.y * 0.62) / spacing, 0.11);
-          float crossHatch = inkStroke((pen.x - pen.y * 0.86) / (spacing * 1.27), 0.09);
+          float hatch = inkStroke((pen.x + pen.y * 0.62) / spacing, ${globe ? 'light < 0.20 ? 0.3 : 0.14' : '0.11'});
+          float crossHatch = inkStroke((pen.x - pen.y * 0.86) / (spacing * 1.27), ${globe ? '0.2' : '0.09'});
           float middle = step(0.08, light) * (1.0 - step(0.40, light));
           float strokes = max(hatch, crossHatch * (1.0 - step(0.20, light)));
           float unresolved = smoothstep(0.10, 0.18, fwidth((pen.x + pen.y * 0.62) / spacing));
-          float coverage = light < 0.20 ? 0.34 : 0.22;
+          float coverage = ${globe ? 'light < 0.20 ? 0.76 : 0.28' : 'light < 0.20 ? 0.34 : 0.22'};
           strokes = mix(strokes, coverage, unresolved);
           float paving = step(max(n.x, n.z), n.y) * (1.0 - step(0.2, inkPoint.y));
           tone = mix(tone, 0.004, strokes * middle * (1.0 - paving));
@@ -19437,15 +19448,7 @@ function realPlaceLamps(R, cam, n) {
 }
 function realGlobeMaterial(orig) {
   const m = orig.clone(), key = orig.customProgramCacheKey()
-  m.emissiveIntensity = orig.emissiveIntensity * 0.35; m.color.multiplyScalar(0.8)
-  m.onBeforeCompile = shader => {
-    shader.vertexShader = 'varying vec3 faustGlobeNormal; varying vec3 faustGlobePosition;\n' + shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
-      faustGlobeNormal = mat3(modelMatrix) * normal;
-      faustGlobePosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`)
-    shader.fragmentShader = 'varying vec3 faustGlobeNormal; varying vec3 faustGlobePosition;\n' + shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-      vec3 globeFlood = normalize(vec3(-1400.0, 500.0, -800.0) - faustGlobePosition);
-      totalEmissiveRadiance += diffuseColor.rgb * max(0.0, dot(normalize(faustGlobeNormal), globeFlood)) * 0.4;`)
-  }
+  m.onBeforeCompile = faustGlobeShader(true)
   m.customProgramCacheKey = () => key + '|real-globe-1'
   return m
 }
