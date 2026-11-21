@@ -38668,7 +38668,7 @@ vec3 waterLampStreak(vec3 P, vec3 V, vec3 N) {
   if (min(g.x, g.y) < 0.0 || max(g.x, g.y) >= faustLampArea.w) return vec3(0.0);
   vec2 vp = normalize(V.xz + vec2(0.0001)), side = vec2(-vp.y, vp.x);
   ivec2 cell = ivec2(int(g.x) * ${FAUST_NIGHT.grid.k}, int(g.y));
-  float acc = 0.0, lenA = 14.0 - 2.0 * uRain;
+  float acc = 0.0, lenA = (14.0 - 2.0 * uRain) * (uLook > 0.5 && uLook < 1.5 ? 1.7 : 1.0);
   for (int i = 0; i < ${FAUST_NIGHT.grid.k}; i++) {
     vec4 lamp = texelFetch(faustLampGrid, cell + ivec2(i, 0), 0);
     if (lamp.w <= 0.0) break;
@@ -38676,7 +38676,7 @@ vec3 waterLampStreak(vec3 P, vec3 V, vec3 N) {
     vec2 miss = P.xz + r.xz * tl - lamp.xz;
     float along = dot(miss, vp), lat = dot(miss, side);
     float wander = (0.15 + 0.40 * uRain) * sin(along * 0.9 + uTime * 1.3 + lat * 2.0) + (0.09 + 0.09 * uRain) * sin(along * 2.3 - uTime * 2.1);
-    float wl = 0.20 + 0.12 * uRain + 0.015 * tl;
+    float wl = (0.20 + 0.12 * uRain + 0.015 * tl) * (uLook > 0.5 && uLook < 1.5 ? 0.7 : 1.0);
     float broken = 1.0 - (0.25 + 0.51 * uRain) * (0.5 - 0.5 * sin(along * 1.7 - uTime * 1.0 + 6.0 * waterSwell(P.xz).x));
     acc += lamp.w / uLampRef * exp(-(lat + wander) * (lat + wander) / (wl * wl)) * exp(-along * along / (lenA * lenA)) * broken / (1.0 + 0.0006 * tl * tl);
   }
@@ -38712,11 +38712,11 @@ function waterMaterialFor(kind, info) {
   float wRow = wDepth / 2.4 + 0.12 * sin(wLat * 0.25), wPx = max(fwidth(wRow), 0.0001), wF = fract(wRow), wId = floor(wRow);
   float wFade = (1.0 - smoothstep(0.30, 0.55, wPx)) * (1.0 - smoothstep(110.0, 200.0, wDepth));
   float wSeg = wLat / 1.8 + waterHash(vec2(wId, 1.0)), wSegId = floor(wSeg), wT = fract(wSeg);
-  float wLen = 0.40 + 0.22 * waterHash(vec2(wId, 3.0)), wKeep = step(waterHash(vec2(wSegId, wId)), mix(0.28, 0.9, smoothstep(10.0, 90.0, wDepth)));
+  float wLen = 0.40 + 0.22 * waterHash(vec2(wId, 3.0)), wBand = smoothstep(0.46, 0.58, waterNoise(vec2(wId * 0.45, 7.0))), wKeep = step(waterHash(vec2(wSegId, wId)), mix(0.14, 0.40, smoothstep(10.0, 90.0, wDepth))) * wBand;
   float wThin = smoothstep(0.0, wPx * 0.8, wF) * (1.0 - smoothstep(wPx * 1.1, wPx * 1.9, wF));
   float wRip = wThin * step(wT, wLen) * sin(clamp(wT / wLen, 0.0, 1.0) * 3.1416) * wKeep * wFade;
   waterInkRefl = smoothstep(0.0, wPx * 0.8, wF) * (1.0 - smoothstep(wPx * 2.4, wPx * 3.4, wF)) * wFade;
-  float wRing = 0.0;
+  float wRing = 0.0, wRingW = max(length(vec2(fwidth(wLat), fwidth(wDepth) * 3.0)) * 0.7, 0.02);
   if (uRain > 0.01) {
    vec2 wCell = floor(vec2(wLat, wDepth) / 3.2);
    for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
@@ -38724,20 +38724,20 @@ function waterMaterialFor(kind, info) {
     if (waterHash(c) > uRain * 0.22) continue;
     float per = 0.9 + 0.6 * waterHash(c + 17.0), t = fract(uTime / per + waterHash(c + 5.0));
     vec2 centre = (c + vec2(waterHash(c + 3.1), waterHash(c + 9.7))) * 3.2, d = vec2(wLat - centre.x, (wDepth - centre.y) * 3.0);
-    float r = length(d), w = max(fwidth(r), 0.02);
+    float r = length(d), w = wRingW;
     wRing = max(wRing, (1.0 - t) * (1.0 - smoothstep(0.0, w * 1.4, abs(r - t * 1.5))));
    }
   }
-  waterInkTone = 0.015 + 0.9 * max(waterFoam, max(wRip, wRing * wFade));
+  waterInkTone = 0.015 + 0.9 * max(waterFoam, max(wRip * 0.42, wRing * wFade * 0.5));
  }`)
       .replace('#include <opaque_fragment>', '#include <opaque_fragment>\n if (uLook > 1.5 && uWhite < 0.5) gl_FragColor.a = ' + (1 - WATER.reflect).toFixed(4) + ';')
-      .replace('#include <opaque_fragment>', 'vec3 waterStreak = uLook < 1.5 && uWhite < 0.5 ? waterLampStreak(vWaterP, normalize(vWaterP - cameraPosition), normal) : vec3(0.0);\n waterInkTone = max(waterInkTone, smoothstep(0.10, 0.45, dot(waterStreak, vec3(0.6))) * waterInkRefl);\n if (uLook < 0.5 && uWhite < 0.5) outgoingLight += uSky * pow(1.0 - max(dot(normalize(vViewPosition), normal), 0.0), 3.0) + waterStreak;\n#include <opaque_fragment>')
+      .replace('#include <opaque_fragment>', 'vec3 waterStreak = uLook < 1.5 && uWhite < 0.5 ? waterLampStreak(vWaterP, normalize(vWaterP - cameraPosition), normal) : vec3(0.0);\n waterInkTone = max(waterInkTone, smoothstep(0.06, 0.30, dot(waterStreak, vec3(0.6))) * waterInkRefl);\n if (uLook < 0.5 && uWhite < 0.5) outgoingLight += uSky * pow(1.0 - max(dot(normalize(vViewPosition), normal), 0.0), 3.0) + waterStreak;\n#include <opaque_fragment>')
   }
   m.customProgramCacheKey = () => 'faust-water-1'
   if (!white) waterMats.set(kind, m)
   return m
 }
-const WATER_LOOKS = { plain: true, ink: false, realistic: false }
+const WATER_LOOKS = { plain: true, ink: true, realistic: false }
 const waterMeshes = new Set()
 let waterSeen = ''
 function waterPick(mesh) {
