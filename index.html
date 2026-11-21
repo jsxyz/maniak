@@ -33825,7 +33825,8 @@ function slVenue(cell, P, ci, cj) {
 // it out (#18's lots, doors, front paths and pavements): walkers out of a front door, down the path, along the pavement and home; a dog
 // walker and a pram along it. Houses, garages and fences are the cell's bodies. Ids 0x1000000 + ((bi + 128) * 256 + (bj + 128)) * 32 + k
 // #72: built at most one every gap ms, on a ring cell already planned in the background (force: at once; slRunTo's runs)
-const SL_SUB = { porch: 0.8, lane: 0.59, lane2: 0.1, inset: 1, walkers: 4, dogs: 1, prams: 1, stop: [6, 20], max: 24, walk: [30, 110], gap: 25 }
+const SL_SUB = { porch: 0.8, lane: 0.59, lane2: 0.1, inset: 1, walkers: 4, dogs: 1, prams: 1, stop: [6, 20], max: 24, walk: [30, 110], gap: 25,
+  ride: { share: 0.5, kerb: 0.5, corner: 0.8, cornerV: 2.0, up: 8, down: 6, swing: 8, clear: 0.65, near: 2 } }          // card #91 increment 2: the riders (slSubRideRoute)
 function slSubCell(bi, bj, force) {
   const key = 'sub ' + bi + ' ' + bj, st = slState
   let cell = st.cells.get(key)
@@ -33836,7 +33837,7 @@ function slSubCell(bi, bj, force) {
   const C = FAUST_RINGS.cell, i = Math.floor((bi + 0.5) * FAUST_RINGS.sub.pitch / C), j = Math.floor((bj + 0.5) * FAUST_RINGS.sub.pitch / C)
   if (faustRingBand(F.seed, F.S, i, j) !== 'suburb') { (st.subNone ||= new Set()).add(key); return null }          // faustSubBlock's own test
   const at = performance.now()
-  if (!force && (at - (st.subAt ?? -Infinity) < SL_SUB.gap || !F.ringPlans?.has(i + ' ' + j))) return null          // #72: wait a frame or two
+  if (!force && (at - (st.subAt ?? -Infinity) < SL_SUB.gap || slSubNeed(bi, bj, i, j).some(k => !F.ringPlans?.has(k)))) return null          // #72: wait a frame or two (card #91: for each ring cell whose streets bound the block)
   const plan = faustRoadsReady(F)
   if (!plan) return null                       // the roads plan is still being made: try again next time
   st.subAt = at
@@ -33869,7 +33870,85 @@ function slSubCell(bi, bj, force) {
     return slLoop(pts, v, 0, null, -rng() * 3e5) }
   for (let w = 0; w < Math.round(SL_SUB.dogs * Math.min(1, fill * 1.5)) && k < SL_SUB.max; w++) cell.agents.push({ id: id(k++), kind: SL_K.walker, body: body(), tint: tint(), route: along(speed()) })
   for (let w = 0; w < Math.round(SL_SUB.prams * Math.min(1, fill * 1.5)) && k < SL_SUB.max; w++) cell.agents.push({ id: id(k++), kind: SL_K.pram, body: 3 + (rng() < 0.5 ? 0 : 1), tint: tint(), route: along(STREET.pram) })
+  // card #91 increment 2: a rider round the block on its streets (one block in SL_SUB.ride.share, where all four sides have one): slot 24
+  if (rng() < SL_SUB.ride.share && slSubRound(F, plan, bi, bj)) {
+    const v = STREET.ride[0] + rng() * (STREET.ride[1] - STREET.ride[0])
+    cell.agents.push({ id: id(24), kind: SL_K.cyclist, v, body: rng() * 3 | 0, tint: [0.8 + rng() * 0.3, 0.8 + rng() * 0.3, 0.8 + rng() * 0.3], route: slSubRideRoute(B, slSubParked(F, plan, B, bi, bj), v, -rng() * 3e5) })
+  }
   return slKeep(cell)
+}
+// card #91 increment 2: the ring cells whose streets bound a block: its own, and the next cell east or north where that side's street
+// is on the cell's edge (a street's line, its asphalt and builder B's cars on it are the cell's its line starts)
+function slSubNeed(bi, bj, i, j) {
+  const P = FAUST_RINGS.sub.pitch, C = FAUST_RINGS.cell, out = [i + ' ' + j]
+  if (Math.floor((bi + 1) * P / C) !== i) out.push((i + 1) + ' ' + j)
+  if (Math.floor((bj + 1) * P / C) !== j) out.push(i + ' ' + (j + 1))
+  return out
+}
+// card #91 increment 2: the cars parked at a block's kerbs (builder B's): faustSubBlock's (its own cell's), with those of a next cell
+// that owns its east or north street (within 3 m of the block's rect: that street's near side, the block's kerb)
+function slSubParked(F, plan, B, bi, bj) {
+  const P = FAUST_RINGS.sub.pitch, C = FAUST_RINGS.cell, i = Math.floor((bi + 0.5) * P / C), j = Math.floor((bj + 0.5) * P / C), [x0, z0, x1, z1] = B.rect, out = (B.parked || []).slice()
+  for (const k of slSubNeed(bi, bj, i, j).slice(1)) { const [a, b] = k.split(' ').map(Number)
+    for (const q of faustRingPlan(F, plan, a, b).parked || []) if (q.x > x0 - 3 && q.x < x1 + 3 && q.z > z0 - 3 && q.z < z1 + 3) out.push(q) }
+  return out
+}
+// card #91 increment 2: a block with a street along all four sides (faustRingStreets: a side's line is in the list of the ring cell
+// it starts, so the north and east ones may be the next cell's)
+function slSubRound(F, plan, bi, bj) {
+  const P = FAUST_RINGS.sub.pitch, C = FAUST_RINGS.cell, i = Math.floor((bi + 0.5) * P / C), j = Math.floor((bj + 0.5) * P / C), memo = new Map()
+  const list = (a, b) => { const k = a + ' ' + b; let L = memo.get(k); if (!L) memo.set(k, L = faustRingStreets(F.seed, F.S, plan, a, b)); return L }
+  const has = (alongZ, c, a, b) => list(a, b).some(s => (s.a[0] === s.b[0]) === alongZ && Math.abs((alongZ ? s.a[0] : s.a[1]) - c) < 0.01)
+  return has(false, bj * P, i, Math.floor(bj * P / C)) && has(false, (bj + 1) * P, i, Math.floor((bj + 1) * P / C)) &&
+    has(true, bi * P, Math.floor(bi * P / C), j) && has(true, (bi + 1) * P, Math.floor((bi + 1) * P / C), j)
+}
+// card #91 increment 2: a rider's way round his block (faustSubBlock's B): each side SL_SUB.ride.kerb m off its kerb (the rect's
+// edge), the block on his right; round each car parked at that kerb (parked: slSubParked's { x, z, yaw, hl, hw }, yaw 0 along x) swung out to
+// ride.clear m past its inner side over its length and a metre each end, swinging out and in over ride.swing m; a zone within
+// ride.near m of a corner (with its swing) runs on round the corner, zones within two swings of each other merge. The kerb corners
+// on ride.corner m arcs (tangent to the two sides' lines, in the road for any offsets), at ride.cornerV, eased down over ride.down m
+// before and up over ride.up m after. A route (mode 3, ride; speed per segment) from just past the south-west corner
+function slSubRideRoute(B, parked, v, t0) {
+  const Rd = SL_SUB.ride, [x0, z0, x1, z1] = B.rect, R = Rd.corner, vc = Rd.cornerV, half = FAUST_RINGS.sub.street
+  const smooth = u => u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u)
+  // the sides in his order: [the kerb's start corner, heading, outward normal (away from the block), length]
+  const sides = [[[x0, z0], [1, 0], [0, -1], x1 - x0], [[x1, z0], [0, 1], [1, 0], z1 - z0], [[x1, z1], [-1, 0], [0, 1], x1 - x0], [[x0, z1], [0, -1], [-1, 0], z1 - z0]]
+  const zones = sides.map(([K, d, o, L]) => {
+    const zs = []
+    for (const c of parked) {
+      const rx = c.x - K[0], rz = c.z - K[1], s = rx * d[0] + rz * d[1], out = rx * o[0] + rz * o[1], ax = Math.cos(c.yaw || 0), az = Math.sin(c.yaw || 0)
+      const along = c.hl * Math.abs(ax * d[0] + az * d[1]) + c.hw * Math.abs(-az * d[0] + ax * d[1]), across = c.hl * Math.abs(ax * o[0] + az * o[1]) + c.hw * Math.abs(-az * o[0] + ax * o[1])
+      if (out > 0 && out < half && s + along > -half && s - along < L + half) zs.push([s - along - 1, s + along + 1, out + across + Rd.clear])
+    }
+    zs.sort((a, b) => a[0] - b[0])
+    const m = []
+    for (const z of zs) { const p = m.at(-1); if (p && z[0] - p[1] < 2 * Rd.swing) { p[1] = Math.max(p[1], z[1]); p[2] = Math.max(p[2], z[2]) } else m.push(z.slice()) }
+    for (const z of m) { if (z[0] - Rd.swing < Rd.near) z[0] = -half; if (z[1] + Rd.swing > L - Rd.near) z[1] = L + half }
+    return m
+  })
+  const wAt = (k, s) => { let w = Rd.kerb; for (const [a, b, wz] of zones[k]) w = Math.max(w, Rd.kerb + (wz - Rd.kerb) * Math.min(smooth((s - a + Rd.swing) / Rd.swing), smooth((b + Rd.swing - s) / Rd.swing))); return w }
+  const wS = sides.map((sd, k) => wAt(k, 0)), wE = sides.map((sd, k) => wAt(k, sd[3]))
+  const at = (k, s, w) => { const [K, d, o] = sides[k]; return [K[0] + d[0] * s + o[0] * w, K[1] + d[1] * s + o[1] * w] }
+  const pts = []          // [x, z, the speed of the segment from it]
+  for (let k = 0; k < 4; k++) {
+    const L = sides[k][3], sa = R - wE[(k + 3) % 4], sb = L + wS[(k + 1) % 4] - R
+    const vAt = s => s < sa + Rd.up ? vc + (v - vc) * Math.max(0, (s - sa) / Rd.up) : s > sb - Rd.down ? vc + (v - vc) * Math.max(0, (sb - s) / Rd.down) : v
+    const ss = [sa, sb]
+    for (let i = 1; i < 12; i++) ss.push(sa + Rd.up * i / 12, sb - Rd.down * i / 12)          // the ramps in twelfths: speed steps of about 0.3 m/s
+    for (const [a, b] of zones[k]) for (let i = 0; i <= 6; i++) ss.push(a - Rd.swing + Rd.swing * i / 6, b + Rd.swing * i / 6)
+    const S = [...new Set(ss.filter(s => s >= sa && s <= sb).map(s => Math.round(s * 1000) / 1000))].sort((a, b) => a - b).filter((s, i, A) => !i || s - A[i - 1] > 0.25 || s === sb)
+    for (let i = 0; i < S.length; i++) { const s = S[i], n = S[i + 1]; pts.push([...at(k, s, wAt(k, s)), n === undefined ? vc : vAt((s + n) / 2)]) }
+    // the corner to the next side: an arc tangent to this side's line (offset wE[k]) and the next's (wS[k + 1])
+    const d = sides[k][1], k2 = (k + 1) % 4, [K2, d2, o2] = sides[k2], o = sides[k][2]
+    const Q = [K2[0] + o[0] * wE[k] + o2[0] * wS[k2], K2[1] + o[1] * wE[k] + o2[1] * wS[k2]], Cc = [Q[0] - R * d[0] + R * d2[0], Q[1] - R * d[1] + R * d2[1]]
+    for (let i = 1; i < 6; i++) { const f = i * Math.PI / 12; pts.push([Cc[0] + R * (-d2[0] * Math.cos(f) + d[0] * Math.sin(f)), Cc[1] + R * (-d2[1] * Math.cos(f) + d[1] * Math.sin(f)), vc]) }
+  }
+  const keys = []; let t = 0
+  for (let i = 0; i <= pts.length; i++) {
+    const p = pts[i % pts.length]; keys.push([t, p[0], p[1], 3, p[2]])
+    if (i < pts.length) { const q = pts[(i + 1) % pts.length]; t += Math.hypot(q[0] - p[0], q[1] - p[1]) / p[2] }
+  }
+  return slRoute(keys, t, t0)
 }
 // a block's pavement as walking lines: faustSubBlock's strips (one along each side that has one, merged if split), their centre
 // lines joined at the corners in order round the block (south west to east, east south to north, north east to west, west north to
@@ -34237,7 +34316,7 @@ function slPose(ag, t, o) {
   o.y = 0; o.scale = 1; o.down = false; o.hidden = false; o.rec = null; o.lieRoll = 0; o.roll = 0; o.pitch = 0; o.dead = false; o.fw = 0
   const r = ag.kind === SL_K.exit ? slRecFor(ag, t) || ag.r : slRecFor(ag, t)          // card #101: an exit's knock-down or death shows
   // the schedule's pose first (cyclists from their line)
-  if (ag.kind === SL_K.cyclist) slRider(ag.line, ag, t, o)
+  if (ag.kind === SL_K.cyclist && !ag.route) slRider(ag.line, ag, t, o)          // card #91: a suburb rider (a route) is slAmbient's
   else if (ag.kind !== SL_K.exit) slAmbient(ag, t, o)
   const amb = !r
   if (amb && ag.y) o.y = ag.y
@@ -34698,7 +34777,9 @@ function slHostTick() {
     if (sp > 80) continue
     // below 3 m/s (the step-aside's own pace) only riders can close that fast: others are the step-aside's
     const slow = sp < 3.0, riders = (x, z, R, T, fn) => { for (const Ln of slLinesNear(x, z, R)) for (const ag of Ln.riders) {
-      ag.line = Ln; slPose(ag, T, slAroundPose); if (!slAroundPose.hidden && Math.abs(slAroundPose.x - x) < R && Math.abs(slAroundPose.z - z) < R) fn(ag, slAroundPose, null) } }
+      ag.line = Ln; slPose(ag, T, slAroundPose); if (!slAroundPose.hidden && Math.abs(slAroundPose.x - x) < R && Math.abs(slAroundPose.z - z) < R) fn(ag, slAroundPose, null) }
+      for (const cell of slSubCellsIn(x - R, z - R, x + R, z + R, [])) for (const ag of cell.agents) if (ag.kind === SL_K.cyclist) {          // card #91: the suburbs' riders
+        slPose(ag, T, slAroundPose); if (!slAroundPose.hidden && Math.abs(slAroundPose.x - x) < R && Math.abs(slAroundPose.z - z) < R) fn(ag, slAroundPose, cell) } }
     ;(slow ? riders : slAround)((c.x + prev[0]) / 2, (c.z + prev[1]) / 2, L / 2 + 2.5, T, (ag, p) => {
       if (p.down || ag.kind === SL_K.exit && p.rec?.t > T - 500) return
       const gap = (qx, qz) => { const u = L > 1e-6 ? clamp(((qx - prev[0]) * mx + (qz - prev[1]) * mz) / (L * L), 0, 1) : 0; return Math.hypot(prev[0] + mx * u - qx, prev[1] + mz * u - qz) }
@@ -34756,7 +34837,8 @@ function slRoadList() {
       const q = slPose(ag, T + 6000, slRoadFuture)
       if (!q.hidden && Math.hypot(q.x - p.x, q.z - p.z) < 80) ahead = [q.x, q.z]
     }
-    list.push({ id: ag.id, x: p.x, y: p.y, z: p.z, ahead, radius: ag.kind === SL_K.cyclist ? 0.9 : ag.kind === SL_K.pram ? 0.8 : 0.45,
+    list.push({ id: ag.id, x: p.x, y: p.y, z: p.z, ahead, radius: ag.kind === SL_K.cyclist ? (ag.route ? 0.45 : 0.9) : ag.kind === SL_K.pram ? 0.8 : 0.45,          // card #91: a suburb rider at the kerb: cars pass him
+     
       vx: Math.sin(p.yaw) * p.v, vz: Math.cos(p.yaw) * p.v, kind: ag.kind === SL_K.cyclist ? 'cyclist' : ag.kind === SL_K.pram ? 'pram' : ag.kind === SL_K.stray ? 'dog' : 'ped' })
   }, quiet)
   st.road = { T, list }
@@ -35216,6 +35298,16 @@ function slFrame(t, dt, obl) {
     for (const ag of cell.agents) {
       if (ag.rank >= qn && !ag.venue && !st.byId.has(ag.id)) continue          // thinned by the quality setting (never someone a record is about, nor a venue's own people: card #99)
       const p = slPose(ag, T, slPoseA)
+      if (ag.kind === SL_K.cyclist) {          // card #91: a suburb rider (his own route round his block): drawn as the lines' riders are
+        p.bikeDown = p.rec?.kind === 1 || p.rec?.kind === 8 || p.rec?.kind === 9 ? p.bikeDown : null
+        if (p.bikeDown) { const [bx, bz, by] = p.bikeDown, d = Math.hypot(bx - cx, bz - cz)
+          if (near(bx, bz, D.bike) && seen(bx, 0.4, bz, 1.6)) slBikeDown(kit, d < 16 ? '' : '_lod1', bx, bz, by, p.bikeDown[3] ?? 1) }
+        if (p.hidden || !near(p.x, p.z, D.bike) || !seen(p.x, 1, p.z, 2.4)) continue
+        const d = Math.hypot(p.x - cx, p.z - cz), lod = d < 16 ? '' : '_lod1'
+        if (!p.bikeDown) slBike(kit, lod, p)
+        if (p.scale > 0.01) { if (!p.rec) p.y = 0; slFadeSet(ag, T, p, d); slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++ }
+        continue
+      }
       if (p.hidden || p.scale <= 0.01 || !near(p.x, p.z, D.ped) || !seen(p.x, 1, p.z, 2.2)) continue
       const nudged = slNudge(ag, p, pushers, cell, dt)
       const d = Math.hypot(p.x - cx, p.z - cz)
