@@ -2538,7 +2538,7 @@ const FAUST = { cell: 96, lid: 3800, world: 16000, navTop: 1200, detail: 2, phys
     // to glare at the city. Card #95: the whole bust (face, hair, the gorget that ends it) floats clear of the globe, at least
     // 30 m from its surface (offline, from every LOD's own vertices). lod: lod0..lod2 from these distances (m)
     // stop: the bust's ellipsoid (metres, the model's frame: from position, before the pitch), where Realistic's light shafts stop
-    model: { file: 'faust_head.bd62acb8.glb', position: [0, 1490, -1230], pitch: 0.18, lod: [0, 700, 1700], stop: { centre: [2.6, -41.5, -12.1], radii: [404.8, 504.3, 441.0] } },
+    model: { file: 'faust_head.e90c7772.glb', position: [0, 1490, -1230], pitch: 0.18, lod: [0, 1000], stop: { centre: [2.6, -41.5, -12.1], radii: [404.8, 504.3, 441.0] } },
     // cold floodlights from the city below (from: metres from the head), so the face reads from the street: a raking key
     // from below one side models the brow, nose and jaw against the moon's key from above the other; a weak frontal fill
     floods: [{ color: 0xb4ccff, intensity: 1.4, from: [1100, -1300, 1500] }, { color: 0xb4ccff, intensity: 0.35, from: [0, -1400, 2400] }] } }
@@ -4808,8 +4808,9 @@ function faustTris(g) {
   for (let i = 0; i < n; i++) { const j = ix ? ix.getX(i) : i; out[3 * i] = p.getX(j); out[3 * i + 1] = p.getY(j); out[3 * i + 2] = p.getZ(j) }
   return out
 }
-// Faust's head's collider: the sculpt's own lod1, placed as FAUST.head.model places it. Its 40,000 triangles lie within
-// 0.2 m of the near model at the median (0.8 m at the 90th percentile; lod2 is 1.9 m off, a convex decomposition worse).
+// Faust's head's collider: the sculpt's own lod1, placed as FAUST.head.model places it. Its 60,000 triangles (card #95) lie
+// within 1.2 m of the near model on the face, eyes and gorget, bridging grooves up to 15 m deep between the hair's locks
+// (lod2 is up to 9 m off on the face; a convex decomposition is worse).
 // Only lod1's two buffers are decoded, never the textures, so the dedicated server stays light. Every machine loads it in
 // the background (faustSolids); until it lands there, the head isn't solid on that machine (870 m up, out of reach at the start).
 let faustHeadTrisMemo = null, faustHeadBound = null, faustHeadFetch = null, faustHeadBytesMemo = null
@@ -4865,7 +4866,7 @@ function* faustSolidSteps(name, tris, per, solid) {
   for (let i = 0, n = 0; i < tris.length; i += per * 9, n++) { addChunk([], name + ' ' + n, tris.subarray(i, i + per * 9), null, solid); yield }
 }
 // The fields from the city's edge out to the world's (1 km tiles, a solid walked and driven on, its own ray copy), the
-// edges' ray copies, the globe and the head (lod1, 40,000 triangles). The city's floor box keeps its size: a crater tiles
+// edges' ray copies, the globe and the head (lod1, 60,000 triangles). The city's floor box keeps its size: a crater tiles
 // it 96 m apiece. Nothing here is near the spawn, so it all builds in the background after the start, nearest first.
 let faustSolidsGen = 0
 function faustSolids() {
@@ -9337,6 +9338,7 @@ function faustHeadLoad() {
       mesh.matrix.copy(mesh.matrixWorld); mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale)
       if (material) mesh.material = material
       mesh.material.fog = false; mesh.castShadow = mesh.receiveShadow = false
+      mesh.material.userData.inkSky = true          // card #95: Ink draws it as part of the sky set (inkPrepare), not as a city object
       lod.addLevel(mesh, distance)
     })
     lod.position.fromArray(M.position); lod.rotation.x = M.pitch; lod.updateMatrixWorld(true)
@@ -18250,7 +18252,7 @@ function inkPrepare(root) {
       const character = !!(o.geometry?.attributes.skinIndex && o.geometry?.attributes.skinWeight)
       const signal = typeof trafficLights !== 'undefined' && o === trafficLights?.lamps
       const facade = m === faustState?.materials?.facade || m === faustState?.materials?.far
-      const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene, cloud = !!m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe, groundLight = !!m.userData.inkGroundLight, vehicleLamp = m.name === 'vehicle-headlamp' || m.name === 'vehicle-taillamp' || !!m.userData.vehicleLamps, vehicleLamps = !!m.userData.vehicleLamps
+      const paper = Object.values(faustState?.materials || {}).includes(m), sky = root === faustState?.skyScene || !!m.userData.inkSky, cloud = !!m.isSpriteMaterial && sky, globe = !!m.userData.inkGlobe, groundLight = !!m.userData.inkGroundLight, vehicleLamp = m.name === 'vehicle-headlamp' || m.name === 'vehicle-taillamp' || !!m.userData.vehicleLamps, vehicleLamps = !!m.userData.vehicleLamps
       m.onBeforeCompile = function(shader, r) {
         before.call(this, shader, r)
         // A material whose onBeforeCompile was copied from an Ink material carries an Ink wrapper already, and that
