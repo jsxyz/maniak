@@ -29559,12 +29559,12 @@ function partsNear(c, verb, reach = GRAB.reach) {
       out.push({ kind: 'person', src: 'char', ref: h, gap, R: h.r, mass: PARTS.person.mass })
     }
     if (slState && LV.faust) slAround(c.x, c.z, reach + 2.5, tickAt || now(), (ag, p) => {
-      if (p.down || p.hidden || p.scale < 0.6 || ag.kind === SL_K.exit || ag.kind === SL_K.cyclist && p.rec) return
-      if (p.rec && p.rec.kind !== 2 && p.rec.kind !== 5) return
+      if (p.down && !p.dead || p.hidden || p.scale < 0.6 || ag.kind === SL_K.exit || ag.kind === SL_K.cyclist && p.rec && !p.dead) return          // card #101: bodies too
+      if (p.rec && p.rec.kind !== 2 && p.rec.kind !== 5 && p.rec.kind !== 11) return
       const dog = ag.kind === SL_K.stray, R = dog ? 0.3 : 0.32
       const gap = Math.hypot(p.x - c.x, p.z - c.z) - c.r - R
       if (gap <= reach && Math.abs(c.y - c.h - c.r) < 1.2) out.push({ kind: dog ? 'dog' : 'passerby', src: 'street', ref: { ag, pose: { ...p }, what: 0 }, gap, R, mass: PARTS[dog ? 'dog' : 'passerby'].mass })
-      if (ag.kind === SL_K.pram && !(GAME.streetLife?.gone?.(ag.id))) {
+      if (ag.kind === SL_K.pram && !p.dead && !(GAME.streetLife?.gone?.(ag.id))) {
         const px = p.x + Math.sin(p.yaw) * STREET.pramBack, pz = p.z + Math.cos(p.yaw) * STREET.pramBack, g2 = Math.hypot(px - c.x, pz - c.z) - c.r - 0.45
         if (g2 <= reach) out.push({ kind: 'pram', src: 'street', ref: { ag, pose: { ...p }, what: 1 }, gap: g2, R: 0.45, mass: PARTS.pram.mass })
       }
@@ -29768,6 +29768,10 @@ function partsLetGoHost(c, held, how, credit) {
     const L = how === 'drop' ? { v: [0, 0, 0], speed: 0, yaw: c.yaw } : partsLaunch(c, how, PARTS[s.kind].mass)
     const H = partsCentre(s.ag, s.what); at[1] = Math.max(at[1], H + 0.05)
     const r = partsFling(s.ag, at, L.v, T, s.what, c.id, H)
+    // card #101: the punt or the throw hurts (the Punt row's damage, half the Flung row's, as for characters); a kill is the death
+    // record with no throw of its own: the flight is the record 9, and the body lies where that comes down
+    if (r && how !== 'drop' && !s.what && !slDeathOf(s.ag.id, T)) { const gi = how === 'punt' ? PUNT_G() : FLUNG_G(), n = L.speed || 1
+      slHurt(s.ag, { x: at[0], z: at[2], down: false }, L.v[0] / n, L.v[2] / n, 0, c, T, 0, how === 'punt' ? GUNS[gi].dmg : GUNS[gi].dmg * 0.5, gi, 3) }
     if (how === 'punt') partsKickFx(c, at)
     if (r && how !== 'drop') partsFlights.push({ ag: s.ag, rec: r, by: c.id, struck: new Set([c.id]), how, wall: r.wall })
     partsEmit(how, c, held, s.ag)
@@ -29804,7 +29808,7 @@ function partsFling(ag, at, v, T, what, by, H) {
   }
   const fall = Math.max(0, py - H), tl = tw + Math.sqrt(2 * fall / -g)
   const n = Math.hypot(v[0], v[2]) || 1, [x2, z2] = slRunTo(px, pz, v[0] / n + (slRnd(ag.id, T) - 0.5) * 0.8, v[2] / n + (slRnd(T, ag.id) - 0.5) * 0.8, 22)
-  const yaw = Math.atan2(v[0], v[2])
+  const yaw = Math.hypot(v[0], v[2]) > 0.01 ? Math.atan2(v[0], v[2]) : (players.get(by)?.yaw ?? 0) + (ag.kind === SL_K.stray ? Math.PI / 2 : 0)          // card #101: a drop keeps the heading he held it at (it was 0: a snap)
   const r = slAddRec([9, ag.id, T, slR2(x0), slR2(z0), slR2(y0), slR2(v[0]), slR2(v[1]), slR2(v[2]), Math.round(tw * 1000), Math.round(tl * 1000),
     slR2(px), slR2(pz), slR2(x2), slR2(z2), slR2(yaw), what | 0, by])
   if (r) r.wall = wall
@@ -29831,7 +29835,7 @@ function partsHoldChars() {
     const s = c.parts?.st
     if (!s) continue
     s.t += TICK
-    if (c.dead > 0 || seatOf(c) || s.t >= GRAB.slipStreet) partsLetGoHost(c, { src: 'street', kind: s.kind }, 'drop')
+    if (c.dead > 0 || seatOf(c) || s.t >= (!s.what && slDeathOf(s.ag.id, Math.round(tickAt || now())) ? STREET.backS - 5 : GRAB.slipStreet)) partsLetGoHost(c, { src: 'street', kind: s.kind }, 'drop')          // card #101: a body doesn't struggle free
   }
 }
 // applyIntent's first word for a body that is held: it does nothing but struggle (each fresh press of jump, attack or use
@@ -29871,7 +29875,7 @@ function partsAfter(all, dt, credit) {
     }
     if (slState && LV.faust && h.y - h.h - h.r < 2.2) slAround(h.x, h.z, 2, T, (ag, p) => {
       if (p.down || P.struck.has('s' + ag.id) || Math.hypot(p.x - h.x, p.z - h.z) > h.r + 0.6) return
-      P.struck.add('s' + ag.id); slKnock(ag, p, h.vx, h.vz, sp * 0.3, by, T)
+      P.struck.add('s' + ag.id); slKnock(ag, p, h.vx, h.vz, sp * 0.3, by, T, undefined, undefined, undefined, partsImpact(PARTS.person.mass, sp), FLUNG_G(), 3)          // card #101: as a character it meets
     })
   }
   // street people in flight: what they meet on the way, the glass they go through, a pram's blast where it comes down
@@ -29899,7 +29903,7 @@ function partsAfter(all, dt, credit) {
     }
     if (p.y < 2.6) slAround(p.x, p.z, 2, T, (ag, q) => {
       if (ag.id === r.id || q.down || F.struck.has('s' + ag.id) || Math.hypot(q.x - p.x, q.z - p.z) > 0.9) return
-      F.struck.add('s' + ag.id); slKnock(ag, q, r.vx, r.vz, sp * 0.3, by, T)
+      F.struck.add('s' + ag.id); slKnock(ag, q, r.vx, r.vz, sp * 0.3, by, T, undefined, undefined, undefined, FG.dmg * clamp(sp / 25, 0.5, 1.3), FLUNG_G(), 3)          // card #101: as a character it meets
     })
   }
   for (const o of objs) if (o.thrownBy === undefined && o.puntDmg !== undefined) o.puntDmg = undefined
@@ -29937,7 +29941,7 @@ function partsSweep(all, credit) {
     if (slState && LV.faust && Math.min(was[1], now3[1]) < 2.6) slAround((was[0] + now3[0]) / 2, (was[2] + now3[2]) / 2, Math.hypot(now3[0] - was[0], now3[2] - was[2]) / 2 + 2, T, (ag, p) => {
       if (p.down || o.struck.has('s' + ag.id)) return
       if (partsSegDist([was[0], 0, was[2]], [now3[0], 0, now3[2]], [p.x, 0, p.z], [p.x, 0, p.z]) > 0.4 + R) return
-      o.struck.add('s' + ag.id); slKnock(ag, p, dir[0], dir[2], Math.max(1, D * 0.05), by, T)
+      o.struck.add('s' + ag.id); slKnock(ag, p, dir[0], dir[2], Math.max(1, D * 0.05), by, T, undefined, undefined, undefined, D, -1, 3)          // card #101: as a character it meets
     })
     for (const q of objs) {
       if (q === o || !q.V || o.struck.has('o' + q.id) || q.heldBy !== undefined) continue
@@ -30025,7 +30029,9 @@ function partsStreetPose(ag, r, t, o) {
     return
   }
   // landed: as a knock-down from where it came down
-  const land = r.land ||= { kind: 1, id: r.id, key: r.key, t: r.t + (r.tl - STREET.knockS * 1000 * 0.4), x: r.x1, z: r.z1, x1: r.x1, z1: r.z1, x2: r.x2, z2: r.z2 }
+  // card #101: facing the flight's heading (from 1 mm ahead: a knock-down faces back along its own slide; from the landing point
+  // itself it faced heading 0, a snap on the landing frame)
+  const land = r.land ||= { kind: 1, id: r.id, key: r.key, t: r.t + (r.tl - STREET.knockS * 1000 * 0.4), x: r.x1 + Math.sin(r.yaw) * 1e-3, z: r.z1 + Math.cos(r.yaw) * 1e-3, x1: r.x1, z1: r.z1, x2: r.x2, z2: r.z2 }
   o.rec = land; slDetached(ag, land, t, o); o.rec = r
   if (ag.kind === SL_K.cyclist) o.bikeDown = r.from ? [r.from.x, r.from.z, r.from.yaw] : [r.x0, r.z0, r.yaw]
   if (ag.kind === SL_K.pram) o.pramAt = r.from ? [r.from.x, r.from.z, r.from.yaw] : null
@@ -31329,7 +31335,7 @@ function slAddRec(a, local) {
 }
 function slPrune(t) {
   const st = slState
-  for (const [k, r] of st.rec) if (t - r.t > (r.kind === 11 ? STREET.deadS * 1000 : STREET.keepMs)) {          // card #101: a death longer
+  for (const [k, r] of st.rec) if (t - r.t > (r.kind === 11 || r.kind === 9 && !r.what && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {          // card #101: a death longer, and a body's throws (they place it)
     st.rec.delete(k); st.exits.delete(k)
     if (r.kind === 8 && partsGrabbed.get(r.id) === r) partsGrabbed.delete(r.id)
     if (r.kind === 2) st.panics.splice(st.panics.indexOf(r), 1)
@@ -31343,7 +31349,11 @@ function slRecFor(ag, t) {
   const st = slState, back = STREET.backS * 1000
   let best = null
   const own = st.byId.get(ag.id)
-  if (own) for (const r of own) if (r.kind === 11 && r.t <= t && t - r.t < STREET.deadS * 1000) return r          // card #101: the dead stay dead
+  // card #101: the dead stay dead; a hold (8) or a throw (9) of the body (not of its pram) wins while it is on: a hold until it
+  // ends, a throw until its landing tumble ends (then the body lies where it came down: slDeadLanding)
+  const dr = own && slDeathOf(ag.id, Math.round(t))          // at the ms its record was made (kill1c: hp and dead flip in the same tick)
+  if (dr) { let q = null; for (const r of own) if ((r.kind === 8 || r.kind === 9) && !r.what && r.t <= t && (!q || r.t >= q.t)) q = r
+    return q && (q.kind === 8 ? t - q.t < back : t < q.t + q.tl + STREET.knockS * 600) ? q : dr }
   if (own) for (const r of own) if (r.t <= t && t - r.t < back && (r.kind !== 10 || t - r.t < slStaggerLen(ag, r)) && (!best || r.t > best.t)) best = r          // a stagger lasts its out, hold and walk back
   for (const p of st.panics) {
     if (p.t > t || t - p.t >= back || best && best.t >= p.t || ag.kind === SL_K.cyclist || ag.kind === SL_K.exit) continue
@@ -31576,12 +31586,18 @@ function slSwimPose(r, wl, q, o, H, dog, face) {
 }
 // the pose under a record
 function slDetached(ag, r, t, o) {
-  if (r.kind === 8 || r.kind === 9) return partsStreetPose(ag, r, t, o)          // card #55: held, flung
+  if (r.kind === 8 || r.kind === 9) { partsStreetPose(ag, r, t, o); if (!r.what && slDeathOf(ag.id, t)) slDeadHeld(ag, r, t, o); return }          // card #55: held, flung (#101: a body)
   if (r.kind === 10) return slStaggerPose(ag, r, t, o)          // card #67: a stagger, still on its feet
   const tau = (t - r.t) / 1000, H = ag.body >= 3 ? 1.66 : 1.78, S = STREET
   const dog = ag.kind === SL_K.stray
   if (r.kind === 1 || r.kind === 4 || r.kind === 11) {          // card #101: a death (11) is a knock-down that never gets up
     if (r.kind === 11 && typeof slDeadInWater === 'function' && slDeadInWater(ag, r, t, o)) { slDeadFade(tau, o); return }          // #94: afloat
+    // card #101: thrown or dropped after it died, or flying as it died (#55's record 9): it lies where it came down
+    if (r.kind === 11) { const q = slDeadLanding(ag, r, t)
+      if (q) { o.x = q.x1; o.z = q.z1; o.y = 0; o.yaw = q.yaw; o.clip = dog ? 'idle' : 'death'; o.ct = 2.39; o.down = true; if (dog) { o.roll = Math.PI / 2; o.y = 0.22 }
+        if (ag.kind === SL_K.cyclist) { o.bikeDown = q.from ? [q.from.x, q.from.z, q.from.yaw] : [q.x0, q.z0, q.yaw]; o.wheel = 0 }
+        if (ag.kind === SL_K.pram) o.pramAt = q.from ? [q.from.x, q.from.z, q.from.yaw] : null
+        slDeadFade(tau, o); return } }
     // killed as he lay (cause + 32): his knock-down goes on as it was, only he never gets up (no jump back to lying)
     if (r.kind === 11 && r.cause & 32) { const kr = r.kr !== undefined ? r.kr : (r.kr = (slState.byId.get(ag.id) || []).filter(q => q.kind === 1 && q.t <= r.t).at(-1) || null)
       if (kr) { r.as ||= { kind: 11, t: kr.t, x: kr.x, z: kr.z, x1: kr.x1, z1: kr.z1, bike: kr.bike, cause: 1, tb: kr.tb }; slDetached(ag, r.as, t, o); o.scale = 1; o.hidden = false; slDeadFade(tau, o); return } }
@@ -31730,6 +31746,18 @@ function slHpNow(ag, T) { if (!isHost || !slState) return null; if (slDeathOf(ag
 const slDeathFns = []          // GAME.streetLife.on('death', fn): fn(record, agent) on every machine as a death record is added
 // the body lies for STREET.bodyS, then fades out where it lies
 function slDeadFade(tau, o) { o.dead = true; o.down = true; const g = tau - STREET.bodyS; if (g > 0) { o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 } }
+// a body's latest throw (#55's record 9, not its pram's) still on at the death or begun after it, landed by t: it lies where that came down
+function slDeadLanding(ag, r, t) { const own = slState.byId.get(ag.id); let q = null
+  if (own) for (const x of own) if (x.kind === 9 && !x.what && x.t + x.tl <= t && x.t + x.tl + STREET.knockS * 600 > r.t && (!q || x.t > q.t)) q = x
+  return q }
+// a body under #55's hold or flight: dead; held, still (#55's held pose, no struggle in it); its holder gone, lying where it was taken
+function slDeadHeld(ag, r, t, o) {
+  o.dead = true
+  if (r.kind !== 8) return
+  const dog = ag.kind === SL_K.stray
+  if (partsHolder(r.by, partsHolderTmp)) { o.ct = dog ? 0.25 : 0; return }
+  o.y = 0; o.pitch = 0; o.clip = dog ? 'idle' : 'death'; o.ct = 2.39; if (dog) { o.roll = Math.PI / 2; o.y = 0.22 }
+}
 // a hit's damage (host): true when it killed (the death record is made: thrown as the knock-down would be)
 function slHurt(ag, p, ux, uz, power, by, T, fling, dmg, gun, cause) {
   const st = slState, H = st.hp || (st.hp = new Map()), h = H.get(ag.id)
@@ -34469,7 +34497,7 @@ function slPramBlast(e, credit) {
   slAround(at[0], at[2], B.radius, T, (ag, p) => { const d = Math.hypot(p.x - at[0], p.z - at[2]); if (d < B.radius && !p.down) caught.push([ag, { ...p }, d]) })
   for (const [ag, p, d] of caught) {
     slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
-    try { slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T) } finally { slHit.part = null; slHit.dmg = Infinity }
+    try { slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }          // card #101
   }
   slPanic(at[0], at[2], T)
   const seed = Math.random() * 2 ** 31 | 0, B_ = slBabyOf(slState)
