@@ -39500,14 +39500,15 @@ function boatCrewDraw(o, K, v) {
   if (C.pelvis) { C.root.updateMatrixWorld(true); C.pelvis.getWorldPosition(C.hip); C.inst.position.y += p[1] + 0.1032 - C.hip.y - (st === 2 ? 0.12 : 0) }
   C.root.visible = true
 }
-// ---- a boat's wake (#72): a foam trail on the water from its stern, one strip per boat. Across it, seven lanes: its two edges are
-// bright lines (feathered out to nothing on either side) that diverge behind it into a V as they age (their half-width grows at
-// WAKE.spread of its speed when laid, the Kelvin wedge), dim water between them, and in the middle the screw's wash, bright at
-// the stern and gone within WAKE.wash s; along it the foam is broken (each sample a little brighter or dimmer), and all of it
-// fades over WAKE.life s. Spray off the bow once it planes. Drawn with the blob shadows' own material (RGBA vertex colours,
-// transparent, two-sided, no depth write), so it compiles no new shader program
-const WAKE = { n: 48, every: 0.05, life: 2.4, spread: 0.36, start: 0.42, edge: 0.55, between: 0.1, mid: 0.45, wash: 0.9, feather: 0.35, lane: 0.45,
-  break: 0.3, back: 0.25, lift: 0.04, min: 1.2, col: [0.93, 0.95, 0.96] }
+// ---- a boat's wake (#72): a foam trail on the water from its stern, one strip per boat, nine points across each sample. Its two
+// arms are narrow foam lines (WAKE.arm m either side of their line, growing a little as they age) that diverge behind it into a V
+// (their half-width grows at WAKE.spread of its speed when laid, the Kelvin wedge), broken into dashes and flecks along their length
+// (WAKE.dash: so many samples lit, one dark, each a little brighter or dimmer); the water between them is all but unlit (WAKE.between);
+// right behind the stern its screw's churn, white, about its beam wide, gone within WAKE.wash s. All of it fades over WAKE.life s.
+// Spray off the bow once it planes. Drawn with the blob shadows' own material (RGBA vertex colours, transparent, two-sided, no depth
+// write), so it compiles no new shader program
+const WAKE = { n: 48, every: 0.05, life: 2.4, spread: 0.36, start: 0.42, arm: 0.1, armGrow: 0.06, edge: 0.6, between: 0.03, churn: 0.5, churnW: 0.35,
+  churnGrow: 0.6, wash: 0.9, dash: 3, dark: 0.1, break: 0.4, back: 0.25, lift: 0.04, min: 1.2, col: [0.93, 0.95, 0.96] }
 function boatWake(o, K, H, v) {
   const live = objs.find(x => x.id === o.id), b = live?.body, S = BOAT_SHAPES[K.model || K.name], T = now() / 1000, tr = v.trail ||= { pts: [], mesh: null, seq: 0 }
   while (tr.pts.length && T - tr.pts[0].t > WAKE.life) tr.pts.shift()
@@ -39517,10 +39518,11 @@ function boatWake(o, K, H, v) {
     const sx = o.x - fx * (S.l / 2 + WAKE.back), sz = o.z - fz * (S.l / 2 + WAKE.back), top = floatTop(sx, sz, renderT || now()), keel = o.y - H.at[1]
     const wet = top === top && keel <= top + 0.3 && keel + S.d >= top - 1.2          // its stern in the water, and not deep under it
     if (wet && sp >= WAKE.min) {
-      v.stern = { x: sx, z: sz, y: top + WAKE.lift, rx: -fz, rz: fx, w: S.b * WAKE.start, sp: Math.min(sp, 25), k: clamp((sp - WAKE.min) / 8, 0.25, 1), n: 1 }
+      v.stern = { x: sx, z: sz, y: top + WAKE.lift, rx: -fz, rz: fx, w: S.b * WAKE.start, c: S.b * WAKE.churnW, sp: Math.min(sp, 25), k: clamp((sp - WAKE.min) / 8, 0.25, 1), n: 1 }
       if (T - (v.wakeT || 0) >= WAKE.every) {
         v.wakeT = T; tr.seq++
-        const n = 1 - WAKE.break / 2 + WAKE.break * ((Math.imul(tr.seq ^ (o.id ?? 0) * 0x9e3779b1, 0x85ebca6b) >>> 0) / 4294967296)      // broken foam
+        const r = (Math.imul(tr.seq ^ (o.id ?? 0) * 0x9e3779b1, 0x85ebca6b) >>> 0) / 4294967296          // its fleck: a little brighter or dimmer
+        const n = tr.seq % (WAKE.dash + 1) === WAKE.dash ? WAKE.dark : 1 - WAKE.break / 2 + WAKE.break * r      // every (dash + 1)th sample dark: the dashes
         tr.pts.push({ ...v.stern, t: T, n }); if (tr.pts.length > WAKE.n) tr.pts.shift()
       }
     }
@@ -39532,9 +39534,9 @@ function boatWake(o, K, H, v) {
   }
   boatTrailDraw(tr, v.stern, T)
 }
-// the strip: seven points across each sample (out, edge, between, middle, between, edge, out on the other side), from the oldest
-// sample to where its stern is now
-const WAKE_ACROSS = 7
+// the strip, nine points across each sample (out, arm, in, the churn's edge, the middle, the churn's edge, in, arm, out), from the
+// oldest sample to where its stern is now
+const WAKE_ACROSS = 9
 function boatTrailDraw(tr, stern, T) {
   const list = stern ? [...tr.pts, { ...stern, t: T }] : tr.pts, A = WAKE_ACROSS
   if (list.length < 2) { if (tr.mesh) tr.mesh.visible = false; return }
@@ -39551,11 +39553,12 @@ function boatTrailDraw(tr, stern, T) {
   if (tr.mesh.parent !== objGroup) objGroup.add(tr.mesh)
   const pos = tr.mesh.geometry.attributes.position, col = tr.mesh.geometry.attributes.color, [r, g, bl] = WAKE.col
   list.forEach((p, i) => {
-    const age = Math.max(0, T - p.t), w = p.w + age * p.sp * WAKE.spread, fade = Math.pow(Math.max(0, 1 - age / WAKE.life), 1.5) * p.k * p.n
-    const f = WAKE.feather * (1 + age), wash = Math.max(0, 1 - age / WAKE.wash), lane = w * WAKE.lane
+    const age = Math.max(0, T - p.t), w = p.w + age * p.sp * WAKE.spread, a = WAKE.arm + WAKE.armGrow * age, fade = Math.pow(Math.max(0, 1 - age / WAKE.life), 1.5) * p.k
+    const wash = Math.max(0, 1 - age / WAKE.wash), c = clamp(p.c + WAKE.churnGrow * age, 0.05, Math.max(0.06, w - a - 0.05))
+    const arm = WAKE.edge * fade * p.n, low = WAKE.between * fade, mid = Math.max(low, WAKE.churn * wash * fade), cEdge = Math.max(low, 0.3 * mid)
     // across: [offset from the middle, opacity]
-    const X = [[-w - f, 0], [-w, WAKE.edge], [-lane, WAKE.between], [0, WAKE.mid * wash + WAKE.between * (1 - wash)], [lane, WAKE.between], [w, WAKE.edge], [w + f, 0]]
-    X.forEach(([d, a], j) => { pos.setXYZ(i * A + j, p.x + p.rx * d, p.y, p.z + p.rz * d); col.setXYZW(i * A + j, r, g, bl, a * fade) })
+    const X = [[-w - a, 0], [-w, arm], [-w + a, low], [-c, cEdge], [0, mid], [c, cEdge], [w - a, low], [w, arm], [w + a, 0]]
+    X.forEach(([d, al], j) => { pos.setXYZ(i * A + j, p.x + p.rx * d, p.y, p.z + p.rz * d); col.setXYZW(i * A + j, r, g, bl, al) })
   })
   tr.mesh.geometry.setDrawRange(0, (list.length - 1) * (A - 1) * 6)
   pos.needsUpdate = true; col.needsUpdate = true
