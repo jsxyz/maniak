@@ -8785,7 +8785,7 @@ function faustHouse(g, b, tint, B) {
   g.box(faustBox(b.cx, top - cap / 2, b.cz, b.ex, cap / 2, b.ez), tint)
 }
 const inHouseDoor = B => B.core.stairX + (2 * FAUST_IN.stair.width + FAUST_IN.stair.well) / 2
-const FAUST_SKY = 5
+const FAUST_SKY = 5, FAUST_FAR_TILE = 4
 function faustSkyBoxes(lot) {
   const { x, z, height: H, mass, seed, stop } = lot
   if (mass.length < 3 || lot.district === 'industrial' || lot.district === 'tenement') return lot.skyMass
@@ -8795,32 +8795,61 @@ function faustSkyBoxes(lot) {
   return [m0, m1, m2, faustBox(x, (H + top) / 2, z, m2.ex * 0.6, (top - H) / 2, m2.ez * 0.6), faustBox(x, top + spire / 2, z, 0.6, spire / 2, 0.6)]
 }
 function faustSkyCell(c, visible) {
-  const sky = faustState.skyline
+  const sky = faustState.skyline?.userData.cells[c.ci * faustState.S + c.cj]
   faustIn.doorsDirty = true; if (faustIn.mode) visible = true
   if (!sky) return
-  const pose = new THREE.Object3D(), offset = (c.ci * faustState.S + c.cj) * FAUST_SKY * 4
+  const pose = new THREE.Object3D(), { mesh, offset } = sky
   for (let i = 0; i < FAUST_SKY * 4; i++) {
     const b = c.plan.lots[i / FAUST_SKY | 0] && faustSkyBoxes(c.plan.lots[i / FAUST_SKY | 0])[i % FAUST_SKY]
     if (visible && b) { pose.position.set(b.cx, b.cy, b.cz); pose.scale.set(b.ex * 2, b.ey * 2, b.ez * 2) }
     else { pose.position.set(0, -100, 0); pose.scale.set(0, 0, 0) }
-    pose.updateMatrix(); sky.setMatrixAt(offset + i, pose.matrix)
+    pose.updateMatrix(); mesh.setMatrixAt(offset + i, pose.matrix)
   }
-  sky.instanceMatrix.addUpdateRange(offset * 16, FAUST_SKY * 4 * 16); sky.instanceMatrix.needsUpdate = true
+  mesh.instanceMatrix.addUpdateRange(offset * 16, FAUST_SKY * 4 * 16); mesh.instanceMatrix.needsUpdate = true
 }
 function faustSkyline() { return drain(faustSkylineSteps()) }
 function* faustSkylineSteps() {
-  const F = faustState, sky = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), F.materials.far, F.S * F.S * FAUST_SKY * 4)
-  sky.instanceMatrix.setUsage(THREE.DynamicDrawUsage); F.skyline = sky
-  const col = new THREE.Color()
+  const F = faustState, sky = F.skyline = new THREE.Group(), tiles = new Map(), geometry = new THREE.BoxGeometry(1, 1, 1)
+  sky.name = 'far-buildings'; sky.userData.cells = []; F.farDraws = []
+  const col = new THREE.Color(), point = new THREE.Vector3(), T = FAUST_FAR_TILE
   for (let x = 0; x < F.S; x++) for (let z = 0; z < F.S; z++) {
     if ((x * F.S + z) % 8 === 0) yield
-    const plan = faustPlan(F.seed, x, z, F.S)
+    const plan = faustPlan(F.seed, x, z, F.S), key = (x / T | 0) + ' ' + (z / T | 0)
+    let mesh = tiles.get(key)
+    if (!mesh) {
+      mesh = new THREE.InstancedMesh(geometry, F.materials.far, T * T * FAUST_SKY * 4)
+      mesh.count = 0; mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+      mesh.boundingBox = new THREE.Box3(); mesh.boundingSphere = new THREE.Sphere()
+      mesh.userData.farBox = mesh.boundingBox; mesh.name = 'far-buildings ' + key
+      tiles.set(key, mesh); sky.add(mesh); F.farDraws.push(mesh)
+    }
+    const offset = mesh.count; mesh.count += FAUST_SKY * 4
+    sky.userData.cells[x * F.S + z] = { mesh, offset }
     faustSkyCell({ ci: x, cj: z, plan }, true)
-    for (let i = 0; i < FAUST_SKY * 4; i++) { const lot = plan.lots[i / FAUST_SKY | 0]; col.setHex(lot && faustSkyBoxes(lot).length === FAUST_SKY && i % FAUST_SKY > 2 ? i % FAUST_SKY === 3 ? FAUST_DECO.crown : FAUST_DECO.steel : faustWall(lot)); sky.setColorAt((x * F.S + z) * FAUST_SKY * 4 + i, col) }
+    for (let i = 0; i < FAUST_SKY * 4; i++) {
+      const lot = plan.lots[i / FAUST_SKY | 0], boxes = lot && faustSkyBoxes(lot), b = boxes?.[i % FAUST_SKY]
+      col.setHex(lot && boxes.length === FAUST_SKY && i % FAUST_SKY > 2 ? i % FAUST_SKY === 3 ? FAUST_DECO.crown : FAUST_DECO.steel : faustWall(lot))
+      mesh.setColorAt(offset + i, col)
+      if (b) mesh.boundingBox.expandByPoint(point.set(b.cx - b.ex, b.cy - b.ey, b.cz - b.ez)).expandByPoint(point.set(b.cx + b.ex, b.cy + b.ey, b.cz + b.ez))
+    }
   }
-  sky.instanceMatrix.clearUpdateRanges(); sky.instanceMatrix.needsUpdate = true
-  sky.computeBoundingSphere(); sky.receiveShadow = false; sky.castShadow = false
+  for (const mesh of tiles.values()) {
+    mesh.instanceMatrix.clearUpdateRanges(); mesh.instanceMatrix.needsUpdate = true
+    if (mesh.boundingBox.isEmpty()) mesh.count = 0
+    else mesh.boundingBox.expandByScalar(1).getBoundingSphere(mesh.boundingSphere)
+  }
   worldGroup.add(sky)
+}
+function faustFarCull(cam) {
+  if (!culling || !faustState?.farDraws) return
+  const end = scene.fog?.isFog ? Math.min(cam.far, scene.fog.far) : cam.far, e = cam.matrixWorldInverse.elements
+  for (const mesh of faustState.farDraws) {
+    const b = mesh.userData.farBox
+    mesh.visible = !b.isEmpty() && cullT.v.intersectsBox(b)
+    if (!mesh.visible) continue
+    const x = e[2] > 0 ? b.max.x : b.min.x, y = e[6] > 0 ? b.max.y : b.min.y, z = e[10] > 0 ? b.max.z : b.min.z
+    mesh.visible = -(e[2] * x + e[6] * y + e[10] * z + e[14]) < end
+  }
 }
 function faustRender(render, s, cam) {
   const F = faustState
@@ -9141,7 +9170,7 @@ function faustAlleySteam() {
 function faustAtmosphereFrame() { faustAlleySteam(); faustFieldsFrame(); faustRoadsFrame(); faustRingsFrame(); faustRingTreesNear(); faustChanFrame(); faustWaterFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
 function faustFarLights() { return drain(faustFarLightsSteps()) }
 function* faustFarLightsSteps() {
-  const F = faustState, lights = faustBatch(F.S * F.S * 48), warnings = []
+  const F = faustState, tiles = new Map(), T = FAUST_FAR_TILE
   const cv = document.createElement('canvas'); cv.width = 64; cv.height = 32
   const ctx = cv.getContext('2d'), gradient = ctx.createRadialGradient(32, 16, 1, 32, 16, 19)
   gradient.addColorStop(0, 'rgba(255,240,210,1)'); gradient.addColorStop(0.2, 'rgba(255,205,125,0.8)'); gradient.addColorStop(1, 'rgba(255,160,65,0)')
@@ -9157,7 +9186,10 @@ function* faustFarLightsSteps() {
   const mm = x => Math.round(x * 1000) / 1000
   for (let ci = 0; ci < F.S; ci++) for (let cj = 0; cj < F.S; cj++) {
     if ((ci * F.S + cj) % 8 === 0) yield
-    const plan = faustPlan(F.seed, ci, cj, F.S)
+    const plan = faustPlan(F.seed, ci, cj, F.S), key = (ci / T | 0) + ' ' + (cj / T | 0)
+    let tile = tiles.get(key)
+    if (!tile) tiles.set(key, tile = { lights: faustBatch(T * T * 48), warnings: [] })
+    const { lights, warnings } = tile
     for (const road of plan.roads) {
       const dx = road.b[0] - road.a[0], dz = road.b[2] - road.a[2], length = Math.hypot(dx, dz), nx = -dz / length, nz = dx / length
       for (const side of road.avenue ? [-1, 1] : [1]) {
@@ -9169,9 +9201,20 @@ function* faustFarLightsSteps() {
     }
     for (const lot of plan.lots) if (lot.district === 'industrial') for (const b of lot.mass.slice(1)) warnings.push(b.cx, b.cy + b.ey + 0.6, b.cz)
   }
-  material.side = THREE.DoubleSide; worldGroup.add(new THREE.Mesh(lights.geometry(), material))
-  const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(warnings, 3))
-  worldGroup.add(new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xff3925, size: 3, sizeAttenuation: true, transparent: true, opacity: 0.95, depthWrite: false, toneMapped: false })))
+  material.side = THREE.DoubleSide
+  const warningMaterial = new THREE.PointsMaterial({ color: 0xff3925, size: 3, sizeAttenuation: true, transparent: true, opacity: 0.95, depthWrite: false, toneMapped: false })
+  const add = (mesh, name) => {
+    mesh.name = name; mesh.geometry.computeBoundingBox()
+    mesh.userData.farBox = mesh.geometry.boundingBox.clone().expandByScalar(2)
+    F.farDraws.push(mesh); worldGroup.add(mesh)
+  }
+  for (const [key, { lights, warnings }] of tiles) {
+    if (lights.count) add(new THREE.Mesh(lights.geometry(), material), 'far-road-lights ' + key)
+    if (warnings.length) {
+      const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(warnings, 3))
+      add(new THREE.Points(geometry, warningMaterial), 'far-warning-lights ' + key)
+    }
+  }
 }
 
 const FAUST_FIELDS = { plot: 160, reach: 2600, step: 480, hedge: 2.5, tints: [0x2b3527, 0x3a3128, 0x464232, 0x30392a], hedgeTint: 0x1a2118 }
@@ -18701,7 +18744,7 @@ function requestLook(name) {
     let success = false
     try {
       const Q = QUALITY[settings.quality] || QUALITY.high
-      const ratio = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : Q.ratio) * GOV_LEVELS[govLevel].d * (softGL() ? SOFT_SCALE : 1) * (LOOKS[name]?.scale?.(settings.quality) ?? 1)
+      const ratio = Math.min(devicePixelRatio || 1, Q.ratio, IS_TOUCH ? 1.5 : Infinity) * GOV_LEVELS[govLevel].d * (softGL() ? SOFT_SCALE : 1) * (LOOKS[name]?.scale?.(settings.quality) ?? 1)
       const w = Math.floor(innerWidth * ratio), h = Math.floor(innerHeight * ratio)
       if (name === 'realistic') {
         background.mark('real init')
@@ -20459,6 +20502,7 @@ function cullView(cam) {
   if (LV.faust) faustAtmosphereFrame()
   for (const o of culled.splice(0)) o.visible = true
   cullFrom(cam)
+  if (LV.faust) faustFarCull(cam)
   drawSeen()
   try { teleFrame() } catch (e) { frameFailed('telescreens', e) }
   if (screensDirty) try { screensDraw() } catch (e) { frameFailed('screens', e) }
@@ -25912,7 +25956,7 @@ function applySettings() {
   const Q = QUALITY[settings.quality] || QUALITY.high
   fxStride = Q.fx >= 1 ? 1 : Math.max(2, Math.round(1 / Q.fx))
   if (renderer) {
-    const want = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1.5 : Q.ratio) * GOV_LEVELS[govLevel].d * (softGL() ? SOFT_SCALE : 1) * (LOOKS[activeLook || 'plain']?.scale?.(settings.quality) ?? 1)
+    const want = Math.min(devicePixelRatio || 1, Q.ratio, IS_TOUCH ? 1.5 : Infinity) * GOV_LEVELS[govLevel].d * (softGL() ? SOFT_SCALE : 1) * (LOOKS[activeLook || 'plain']?.scale?.(settings.quality) ?? 1)
     if (Math.abs(renderer.getPixelRatio() - want) > 0.01) {
       renderer.setPixelRatio(want)
       renderer.setSize(innerWidth, innerHeight)
