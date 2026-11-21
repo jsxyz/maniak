@@ -30168,6 +30168,20 @@ function partsRelease(r, ag, u, H, yaw, th, o) {
   const a = off(th), ps = th + P.tilt * w, b = off(ps)
   o.x += a[0] + D[0] * w - b[0]; o.y += a[1] + D[1] * w - b[1]; o.z += a[2] + D[2] * w - b[2]; o.pitch = ps
 }
+// card #55, fix 55e (QA #62): a body grabbed from where it lies. The lying pose (the death clip's end: centre 0.1 m up, 0.89 m
+// behind its root, torso -83 deg) to #101's held slump (the death clip at 0.5 s: centre 1.0 m up, torso 15 deg): over 0.4 s the
+// slump turns up about its own centre from lying, and that centre rises from the lying body's (at most about 12 deg and 0.15 m a frame)
+const PARTS_LIE = { c: [0.1, -0.89], tilt: -1.71 }
+function partsGrabRise(ag, r, t, o) {
+  const u = (t - r.t) / 1000 / PARTS_REL.T
+  if (u >= 1 || u < 0 || r.what || ag.kind === SL_K.stray || o.clip !== 'death' || o.ct > 1 || !slDeathOf(ag.id, r.t)) return
+  const e = partsEase(u), w = 1 - e, [hy, hz] = PARTS_REL.dead.c, [ly, lz] = PARTS_LIE.c
+  const off = (yaw, A, Cy, Cz) => { const y = Cy * Math.cos(A) - Cz * Math.sin(A), z = Cy * Math.sin(A) + Cz * Math.cos(A); return [z * Math.sin(yaw), y, z * Math.cos(yaw)] }
+  const P = o.pitch || 0, h = off(o.yaw, P, hy, hz), l = off(r.yaw, 0, ly, lz)
+  const Bx = (o.x + h[0]) * e + (r.x + l[0]) * w, By = (o.y + h[1]) * e + l[1] * w, Bz = (o.z + h[2]) * e + (r.z + l[2]) * w
+  const A = P + PARTS_LIE.tilt * w, b = off(o.yaw, A, hy, hz)
+  o.x = Bx - b[0]; o.y = Math.max(0, By - b[1]); o.z = Bz - b[2]; o.pitch = A
+}
 // the pose under record 8 or 9 (slDetached hands them here); after landing, a knock-down's lie, get-up and run
 function partsStreetPose(ag, r, t, o) {
   const dog = ag.kind === SL_K.stray, tau = (t - r.t) / 1000, H = dog ? 0.3 : 0.9
@@ -31872,7 +31886,7 @@ function slSwimPose(r, wl, q, o, H, dog, face) {
 }
 // the pose under a record
 function slDetached(ag, r, t, o) {
-  if (r.kind === 8 || r.kind === 9) { partsStreetPose(ag, r, t, o); if (!r.what && slDeathOf(ag.id, t)) slDeadHeld(ag, r, t, o); return }          // card #55: held, flung (#101: a body)
+  if (r.kind === 8 || r.kind === 9) { partsStreetPose(ag, r, t, o); if (!r.what && slDeathOf(ag.id, t)) slDeadHeld(ag, r, t, o); if (r.kind === 8) partsGrabRise(ag, r, t, o); return }          // card #55: held, flung (#101: a body)
   if (r.kind === 10) return slStaggerPose(ag, r, t, o)          // card #67: a stagger, still on its feet
   const tau = (t - r.t) / 1000, H = ag.body >= 3 ? 1.66 : 1.78, S = STREET
   const dog = ag.kind === SL_K.stray
