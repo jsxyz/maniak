@@ -27651,6 +27651,12 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
       hookCheck([vehicleId, agentId, speed, back].every(Number.isFinite) && speed >= 0 && speed <= 40 && back >= 0 && back <= 60, 'ram(vehicleId, agentId, speed 0-40, back 0-60) needs numbers')
       return GAME.streetLife.ram(vehicleId, agentId, speed, back)
     },
+    // card #101: knock(id, ux, uz, power, dmg) knocks a person down from direction (ux, uz) with damage dmg (0 none): a kill test
+    knock(id, ux = 1, uz = 0, power = 4, dmg = 0) {
+      hookCheck(isHost, 'Only the host can use test commands.')
+      hookCheck([id, ux, uz, power, dmg].every(Number.isFinite) && power >= 0 && power <= 40 && dmg >= 0 && dmg <= 1000, 'knock(id, ux, uz, power 0-40, dmg 0-1000) needs numbers')
+      return GAME.streetLife.knock(id, ux, uz, power, dmg)
+    },
     view(p, t) {
       hookCheck(isHost, 'Only the host can use test commands.')
       const v3 = a => Array.isArray(a) && a.length === 3 && a.every(Number.isFinite)
@@ -30948,7 +30954,7 @@ function slFleeStart(ag, at) {
 // time, s), scale (0 hidden), mode, v (m/s), down (on the ground), and the prop's state
 const SL_POSE = () => ({ x: 0, z: 0, y: 0, yaw: 0, clip: 'idle', ct: 0, scale: 1, mode: 0, v: 0, s: 0, i: 0, u: 0, down: false, rec: null, hidden: false, bike: null, prop: 0 })
 function slPose(ag, t, o) {
-  o.y = 0; o.scale = 1; o.down = false; o.hidden = false; o.rec = null; o.lieRoll = 0; o.roll = 0; o.pitch = 0
+  o.y = 0; o.scale = 1; o.down = false; o.hidden = false; o.rec = null; o.lieRoll = 0; o.roll = 0; o.pitch = 0; o.dead = false
   const r = ag.kind === SL_K.exit ? ag.r : slRecFor(ag, t)
   // the schedule's pose first (cyclists from their line)
   if (ag.kind === SL_K.cyclist) slRider(ag.line, ag, t, o)
@@ -31183,6 +31189,21 @@ const SL_HP = { adult: 40, kid: 25, dog: 25, heal: 60 }
 const slHpOf = ag => ag.kind === SL_K.stray ? SL_HP.dog : ag.kid ? SL_HP.kid : SL_HP.adult * (0.85 + 0.275 * slRnd(ag.id, 101))          // 34 to 45: a haymaker kills
 // a death record of this agent's (the dead stay dead while it lasts)
 function slDeathOf(id, t) { const own = slState?.byId.get(id); if (own) for (const r of own) if (r.kind === 11 && r.t <= t && t - r.t < STREET.deadS * 1000) return r; return null }
+// card #101: lying from a knock-down (its own, or #55's landing after a throw), alive: a target (the dead, held and flying are not)
+const slLying = (p, T) => p.down && !p.dead && (p.rec?.kind === 1 || p.rec?.kind === 9 && !p.rec.what && T >= p.rec.t + p.rec.tl)
+// a melee swing's pellets are one blow: the first to reach someone (a person, or a pram's own target) deals the whole swing, the
+// rest of that swing none
+const slSwings = new Set()
+function slSwingDmg(c, h, G, T) {
+  const d = (G?.dmg ?? 10) * profDmg(c, G?.name), n = G?.melee ? profPellets(c, G.name, G.pellets ?? 1) : 1
+  if (n <= 1) return d
+  const k = h.agent.id + ':' + (h.pram ? 'p' : 'm') + ':' + c.id + ':' + Math.round(T) + ':' + G.name
+  if (slSwings.has(k)) return 0
+  slSwings.add(k); if (slSwings.size > 256) slSwings.delete(slSwings.values().next().value)
+  return d * n
+}
+// a person's health now (the host's; null on a guest), 0 when dead
+function slHpNow(ag, T) { if (!isHost || !slState) return null; if (slDeathOf(ag.id, T)) return 0; const h = slState.hp?.get(ag.id); return +(h && T - h.t < SL_HP.heal * 1000 ? h.hp : slHpOf(ag)).toFixed(1) }
 const slDeathFns = []          // GAME.streetLife.on('death', fn): fn(record, agent) on every machine as a death record is added
 // the body lies for STREET.bodyS, then fades out where it lies
 function slDeadFade(tau, o) { o.dead = true; o.down = true; const g = tau - STREET.bodyS; if (g > 0) { o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 } }
@@ -31366,7 +31387,7 @@ function slAim(shooter, list, viewT, G) {
   if (!isHost || !slState || !shooter || shooter.bot && !shooter.bot.busk || !LV.faust) return list
   const T = viewT ?? (tickAt || now()), reach = Math.min(80, (G?.range ?? 3) * 1.6 + 2.5), add = []
   slAround(shooter.x, shooter.z, reach, T, (ag, p) => {
-    if (p.down || p.scale < 0.5 || Math.hypot(p.x - shooter.x, p.z - shooter.z) > reach) return
+    if (p.down && !slLying(p, T) || p.scale < 0.5 || Math.hypot(p.x - shooter.x, p.z - shooter.z) > reach) return          // card #101: the lying can be hit
     const ride = ag.kind === SL_K.cyclist
     add.push({ street: true, agent: ag, pose: { ...p }, id: -1000 - add.length, x: p.x, y: (ag.kind === SL_K.stray ? 0.35 : (ride ? 0.45 : 0) + 0.9) + p.y, z: p.z, r: ag.kind === SL_K.stray ? 0.35 : 0.3, h: ag.kind === SL_K.stray ? 0.05 : 0.6,
       hp: 1e9, dead: 0, prot: 0, axis: AXIS_UP, grounded: true, cid: 0 })
@@ -31379,8 +31400,8 @@ function slStruck(c, h, G, ux, uy, uz) {
   if (!isHost || !slState) return
   const T = tickAt || now(), power = Math.max(1, (G?.knock ?? 6) * 0.35 + (G?.dmg ?? 10) * 0.03)
   // card #45: which part of a pram's agent was struck (its pram, or its mother), and how hard
-  slHit.part = h.agent.kind === SL_K.pram ? (h.pram ? 'pram' : 'mother') : null; slHit.dmg = (G?.dmg ?? 10) * profDmg(c, G?.name)
-  try { slKnock(h.agent, h.pose, ux, uz, power, c, T, undefined, undefined, undefined, slHit.dmg, GUNS.indexOf(G), G?.kind === 'radius' ? 5 : G?.name === 'Cinderblock' ? 4 : 1) } finally { slHit.part = null; slHit.dmg = Infinity }          // card #101
+  slHit.part = h.agent.kind === SL_K.pram ? (h.pram ? 'pram' : 'mother') : null; slHit.dmg = slSwingDmg(c, h, G, T)          // card #101: a swing is one blow
+  try { slKnock(h.agent, h.pose, ux, uz, power, c, T, undefined, undefined, undefined, h.pram ? 0 : slHit.dmg, GUNS.indexOf(G), G?.kind === 'radius' ? 5 : G?.name === 'Cinderblock' ? 4 : 1) } finally { slHit.part = null; slHit.dmg = Infinity }          // card #101 (a blow on the pram: #45's pram hp, not its mother's)
 }
 // what traffic brakes for: people and riders in the roadway near (x, z) (crossing, riding, running, knocked down)
 const slRoadFuture = SL_POSE()
@@ -31955,7 +31976,7 @@ GAME.streetLife = {
   get stats() { return slState && { ...slState.stats, kit: !!slKit, cells: slState.cells.size, records: slState.rec.size } },
   // tests and the debug panel: people near a point, records, and the host's own actions
   around(x, z, r = 30, T) { const out = []; if (!slState) return out
-    slAround(x, z, r, T ?? slNow(), (ag, p) => out.push({ id: ag.id, kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: +p.x.toFixed(3), z: +p.z.toFixed(3), yaw: +p.yaw.toFixed(3), clip: p.clip, mode: p.mode, rec: p.rec?.kind || 0, down: p.down, y: +p.y.toFixed(3), roll: +(p.roll || 0).toFixed(3),
+    slAround(x, z, r, T ?? slNow(), (ag, p) => out.push({ id: ag.id, kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: +p.x.toFixed(3), z: +p.z.toFixed(3), yaw: +p.yaw.toFixed(3), clip: p.clip, mode: p.mode, rec: p.rec?.kind || 0, down: p.down, dead: !!p.dead, hp: slHpNow(ag, T ?? slNow()), y: +p.y.toFixed(3), roll: +(p.roll || 0).toFixed(3),
       pram: ag.kind === SL_K.pram ? [slR2(p.x + Math.sin(p.yaw) * STREET.pramBack * p.scale), slR2(p.z + Math.cos(p.yaw) * STREET.pramBack * p.scale), slR2(p.yaw)] : undefined })); return out },
   clock: () => slNow(),
   flocks(x, z, r = 40) { const out = []; if (slState) slFlocksNear(x, z, r, f => out.push({ id: f.id, x: f.x, z: f.z, n: f.birds.length, out: f.out || [0, 1] })); return out },
