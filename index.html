@@ -30471,7 +30471,9 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   // card #63, for live QA: gameHooks.heat(): his own heat now (stars, pts, state: the host's; a guest's stars and state as the host
   // sent them, pts null) and the last 64 crimes the host weighed, oldest first ({ t ms, id, kind, add, counted, why, pts, stars }: why
   // 'limit' or 'unseen' when it didn't count; the host's only). Poll it each frame
-  heat() { const H = GAME.heat?.mine || {}; return { stars: H.stars | 0, pts: isHost ? +(H.pts ?? 0).toFixed(2) : null, state: ['clear', 'wanted', 'searching'][H.state | 0], crimes: isHost ? heatLog.map(e => ({ ...e })) : [] } },
+  heat: Object.assign(function () { const H = GAME.heat?.mine || {}; return { stars: H.stars | 0, pts: isHost ? +(H.pts ?? 0).toFixed(2) : null, state: ['clear', 'wanted', 'searching'][H.state | 0], crimes: isHost ? heatLog.map(e => ({ ...e })) : [] } }, {
+    // card #63 (hooks2): gameHooks.heat.reset() (host): his own heat cleared and the crime log emptied, as /despawn does
+    reset() { hookCheck(isHost, 'Only the host can use test commands.'); heatReset(); return true } }),
   // card #63, for live QA: street life's test calls (a test page reaches gameHooks only): around(x, z, r, T) people near a point
   // and their poses; vehicles(x, z, r) the vehicles near it, nearest first, for ram; ram(vehicleId, agentId, speed, back) a real
   // vehicle rolled undriven at a person from back m behind; view([x, y, z], [tx, ty, tz]) a free camera, view(null) the game's.
@@ -34742,7 +34744,7 @@ function slCaught(ag, p) {
   // where the agent was, by its own schedule, when the panic began; earlier records it was already in are respected
   const own = slState.byId.get(ag.id), busy = own?.some(r => r.t < p.t && p.t - r.t < STREET.backS * 1000)
   let hit = false
-  if (!busy) { const q = slAmbient(ag, p.t, slTmp); hit = Math.hypot(q.x - p.x, q.z - p.z) < p.r }
+  if (!busy && !(ag.born > p.t)) { const q = slAmbient(ag, p.t, slTmp); hit = Math.hypot(q.x - p.x, q.z - p.z) < p.r }          // card #63: a test mother isn't caught by a panic begun before she was put there
   ;(ag.pan ||= new Map()).set(p.key, hit); if (ag.pan.size > 12) ag.pan.delete(ag.pan.keys().next().value)
   return hit
 }
@@ -36095,7 +36097,9 @@ function slFrameSafe(t, dt, obl) { try { slFrame(t, dt, obl) } catch (e) { frame
 // there, as people run. Not the seed's: a guest doesn't have her. At most 8 (the oldest goes); clearTests() (/despawn) takes them
 // away. Her agent, or null where there's no street
 const SL_TEST_ID = 0x3F00000          // to 0x3F00FFF: clear of the drivers' and crews' 0x3000000 and the birds' 0x4000000
-function slSpawnTest(kind, x, z, yaw, y = 0) {
+// card #63 (hooks2): dead: she lies dead beside her pram, its baby alive (her death 2 s before, a fall 0.6 m back; nobody did it:
+// no crime). born: the ms she was put there (no panic begun before it catches her)
+function slSpawnTest(kind, x, z, yaw, y = 0, dead = false) {
   const st = slState; if (!isHost || !st || ![x, z, yaw, y].every(Number.isFinite)) return null
   const A = st.S * 48, cell = Math.abs(x) < A && Math.abs(z) < A ? slCell(Math.floor((x + A) / 96), Math.floor((z + A) / 96)) : slSubCellsIn(x, z, x, z, [])[0]
   if (!cell) return null
@@ -36105,10 +36109,13 @@ function slSpawnTest(kind, x, z, yaw, y = 0) {
   const L = st.tests ||= []
   while (L.length >= 8) slClearTest(L.shift())
   const ag = { id: SL_TEST_ID + (st.testN = (st.testN || 0) % 4095 + 1), kind, body: 3, tint: [0.92, 0.86, 0.8], x, z, yaw, y: y > 0.05 ? y : 0, home, test: true }
+  const T = Math.round(tickAt || now()); ag.born = T
   cell.agents.push(ag); L.push({ ag, cell })
+  if (dead) slAddRec([SL_REC.death, ag.id, T - 2000, slR2(x), slR2(z), slR2(x - Math.sin(yaw) * 0.6), slR2(z - Math.cos(yaw) * 0.6), 6, -1])
   return ag
 }
-function slClearTest(e) { const i = e.cell.agents.indexOf(e.ag); if (i >= 0) e.cell.agents.splice(i, 1) }
+function slClearTest(e) { const i = e.cell.agents.indexOf(e.ag); if (i >= 0) e.cell.agents.splice(i, 1)
+  const B = slBabyOf(slState); B.hurt.delete(e.ag.id); B.mad.delete(e.ag.id); B.live.delete(e.ag.id) }          // card #63 (hooks2): no fuse left burning
 function slClearTests() { if (slState?.tests) for (const e of slState.tests.splice(0)) slClearTest(e) }
 GAME.streetLife = {
   obstacles: slObstacles, driverExit: slDriverExit, blast: (x, z, B, by) => slBlastStreet(x, z, B, by, tickAt || now()),          // card #101: blast
@@ -38728,6 +38735,9 @@ function heatNote(c, kind, n, T, no) {
   if (heatLog.length > 64) heatLog.shift()
   return !no
 }
+// card #63 (hooks2), for live QA (gameHooks.heat.reset(), /despawn): the host's own heat cleared (no stars, no points, no crime's
+// rate limit; the enforcers on him stand down as heatClear has them) and the crime log emptied
+function heatReset() { heatClear(myId); const H = heat.get(myId); if (H) H.at = {}; heatLog.length = 0 }
 // sure: the crime was seen by the enforcer it was done to
 function heatCrime(c, kind, x = c?.x, z = c?.z, n = 1, sure = false) {
   if (!isHost || !LV.faust || !c || c.bot || c.id >= BOT_ID0 || c.dead > 0 || !enforcersEnabled()) return false
@@ -39222,15 +39232,16 @@ function spawnStill(name, mode) {
 }
 // card #63, for live QA: /spawn pram [still]: a mother with her pram and its baby standing still 3 m ahead of the host, side-on (her
 // pram to his right), street life's own (slSpawnTest): she and her pram are hit, killed and blown up as any are; /despawn takes it away
-function spawnTestPram() {
+function spawnTestPram(dead = false) {          // card #63 (hooks2): dead, /spawn pram dead: she lies dead beside it
   const me = selfChar()
   if (!me || me.dead > 0) return sysMsg(gameText('stillDown'))
   const yaw = input.yaw, rx = Math.cos(yaw), rz = -Math.sin(yaw), x = me.x - Math.sin(yaw) * 3 - rx * 0.6, z = me.z - Math.cos(yaw) * 3 - rz * 0.6, hit = []
   staticRay(x, me.y + 1, z, 0, -1, 0, 8, hit)
   const gy = hit.length && hit[4] > 0.5 ? hit[1] : me.y - me.h - me.r
-  const ag = LV.faust ? GAME.streetLife?.spawnTest?.(SL_K.pram, x, z, Math.atan2(rx, rz), gy) : null
+  const ag = LV.faust ? GAME.streetLife?.spawnTest?.(SL_K.pram, x, z, Math.atan2(rx, rz), gy, dead) : null
   if (!ag) return sysMsg('§cNo street here.')
-  sysMsg('§7A test mother with her pram (§f' + ag.id + '§7) stands 3 m ahead until she is hit: host only; §f/despawn §7takes it away.')
+  sysMsg(dead ? '§7A test mother (§f' + ag.id + '§7) lies dead 3 m ahead beside her pram, its baby alive: host only; §f/despawn §7takes it away.'
+    : '§7A test mother with her pram (§f' + ag.id + '§7) stands 3 m ahead until she is hit: host only; §f/despawn §7takes it away.')
 }
 // the commands this game adds to the page's own
 GAME.commands = {
@@ -39239,9 +39250,9 @@ GAME.commands = {
               const w = String(a || '').trim().toLowerCase(), k = eventPicks().find(p => p.toLowerCase() === w)
               if (!k) return sysMsg('§7Event: §f' + eventLabel(settings.event || 'auto') + ' §7(' + eventPicks().map(eventLabel).join(', ') + ')')
               pickEvent(k) } },
-  spawn:  { args: '<name|all|pram> [still|walk]', help: 'host only, bring enemies in now; with still or walk, one enemy 5 m ahead that stands or paces until it is hit (to check its look); pram [still]: a test mother with her pram 3 m ahead', run: a => {
+  spawn:  { args: '<name|all|pram> [still|walk|dead]', help: 'host only, bring enemies in now; with still or walk, one enemy 5 m ahead that stands or paces until it is hit (to check its look); pram [still|dead]: a test mother with her pram 3 m ahead (dead: lying dead beside it)', run: a => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
-              if (/^pram(\s+still)?$/i.test(String(a || '').trim())) return spawnTestPram()          // card #63: QA's test pram
+              { const pm = /^pram(?:\s+(still|dead))?$/i.exec(String(a || '').trim()); if (pm) return spawnTestPram(pm[1]?.toLowerCase() === 'dead') }          // card #63: QA's test pram
               const test = /^(.*\S)\s+(still|walk)$/i.exec(String(a || '').trim())
               if (test) return spawnStill(test[1], test[2].toLowerCase())
               const want = String(a || '').trim().toLowerCase()
@@ -39271,6 +39282,7 @@ GAME.commands = {
               BOT_COUNT = 0; botsSlider(); stepSquad()
               spawnList([])
               GAME.streetLife?.clearTests?.()          // card #63: QA's test prams too
+              heatReset()          // card #63 (hooks2): his own heat and the crime log too: the next test starts clean
               sysMsg('§7Cleared.') } },
   bots:   { args: '<0-6>', help: 'host only, set how many enemies', run: a => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
