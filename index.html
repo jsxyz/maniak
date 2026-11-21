@@ -31504,7 +31504,7 @@ function slFleeStart(ag, at) {
 // time, s), scale (0 hidden), mode, v (m/s), down (on the ground), and the prop's state
 const SL_POSE = () => ({ x: 0, z: 0, y: 0, yaw: 0, clip: 'idle', ct: 0, scale: 1, mode: 0, v: 0, s: 0, i: 0, u: 0, down: false, rec: null, hidden: false, bike: null, prop: 0 })
 function slPose(ag, t, o) {
-  o.y = 0; o.scale = 1; o.down = false; o.hidden = false; o.rec = null; o.lieRoll = 0; o.roll = 0; o.pitch = 0; o.dead = false
+  o.y = 0; o.scale = 1; o.down = false; o.hidden = false; o.rec = null; o.lieRoll = 0; o.roll = 0; o.pitch = 0; o.dead = false; o.fw = 0
   const r = ag.kind === SL_K.exit ? ag.r : slRecFor(ag, t)
   // the schedule's pose first (cyclists from their line)
   if (ag.kind === SL_K.cyclist) slRider(ag.line, ag, t, o)
@@ -32182,7 +32182,31 @@ function* slKitSteps([anims, street, ...rest]) {
 // ---- the frame: everyone near the camera, posed at the room clock, into the instance buffers
 const slM4 = new THREE.Matrix4(), slQ = new THREE.Quaternion(), slV = new THREE.Vector3(), slS = new THREE.Vector3(), slE = new THREE.Euler(), slCol = new THREE.Color()
 const slFrus = new THREE.Frustum(), slPM = new THREE.Matrix4(), slSph = new THREE.Sphere()
-const slPoseA = SL_POSE(), slPoseB = SL_POSE()
+const slPoseA = SL_POSE(), slPoseB = SL_POSE(), slPoseF = SL_POSE()
+// card #67 (#63, #72): street people crossfade when their clip changes, over SL_FADE ms: p.fw is 0 (none) or the weight of the new clip (0 to 1),
+// p.fclip and p.fct the old one's last pose. Derived from (ag, T) alone, so it is the same on every machine: the pose function is asked what
+// they were doing SL_FADE ms ago and, if the clip differs, when it changed (a bisection of the pose function). Only people the near LOD (the
+// one that blends two rows) draws. A blow is a hard cut.
+const SL_FADE = 120, SL_HARD = new Set(['knockback', 'death', 'stagger', 'hit_chest', 'flinch'])
+function slFadeSet(ag, T, p, d) {
+  p.fw = 0
+  const L = STREET.qualityLod[settings.quality] || STREET.lod
+  if (d >= L[0] || SL_HARD.has(p.clip)) return
+  if (slPose(ag, T - SL_FADE, slPoseF).clip === p.clip) return
+  let lo = T - SL_FADE, hi = T
+  for (let n = 0; n < 5; n++) { const m = (lo + hi) / 2; if (slPose(ag, m, slPoseF).clip === p.clip) hi = m; else lo = m }
+  slPose(ag, lo, slPoseF)
+  if (slPoseF.hidden || slPoseF.clip === p.clip) return
+  p.fclip = slPoseF.clip; p.fct = slPoseF.ct; p.fw = Math.min(1, (T - hi) / SL_FADE)
+}
+// the near LOD's two rows for a fade: the old clip's frame nearest its last pose, the new clip's nearest its pose now, the weight smoothed
+function slFrameFade(kitm, p, out, i) {
+  const A = kitm.clips.get(p.fclip), B = kitm.clips.get(p.clip); if (!A || !B) return false
+  const row = (C, ct) => { let u = ct / C.dur; u = C.loop ? u - Math.floor(u) : Math.min(1, Math.max(0, u)); return C.row + Math.min(C.n - 1, Math.round(u * (C.loop ? C.n : C.n - 1)) % C.n) }
+  const w = p.fw * p.fw * (3 - 2 * p.fw)
+  out.array[i * 4] = row(A, p.fct); out.array[i * 4 + 1] = row(B, p.ct); out.array[i * 4 + 2] = w; out.array[i * 4 + 3] = 0
+  return true
+}
 function slSet(im, x, y, z, yaw, s, roll = 0, pitch = 0) {
   const i = im.count; if (i >= im.instanceMatrix.count) return -1
   slE.set(pitch, yaw, roll, 'YXZ'); slQ.setFromEuler(slE); slV.set(x, y, z); slS.set(s, s, s); slM4.compose(slV, slQ, slS)
@@ -32200,7 +32224,7 @@ function slDrawSkinned(kitm, p, d, tint, scale = 1) {
   const L = STREET.qualityLod[settings.quality] || STREET.lod, k = d < L[0] ? 0 : d < L[1] ? 1 : 2, im = kitm.ims[Math.min(k, kitm.ims.length - 1)]
   const C = kitm.clips.get(p.clip), lift = C?.abs ? 0 : -(kitm.footY || 0) * p.scale * scale * Math.cos(p.roll || 0)
   const i = slSet(im, p.x, p.y + lift, p.z, p.yaw, p.scale * scale, p.roll || 0, p.pitch || 0); if (i < 0) return
-  slFrameOf(kitm, p.clip, p.ct, im.userData.frame, i)
+  if (!(p.fw > 0 && k === 0 && slFrameFade(kitm, p, im.userData.frame, i))) slFrameOf(kitm, p.clip, p.ct, im.userData.frame, i)
   if (tint) im.setColorAt(i, slCol.setRGB(tint[0], tint[1], tint[2]))
 }
 // The step-aside (card #63). Each person keeps an offset from their route that moves toward its target at a capped speed:
@@ -32392,6 +32416,7 @@ function slFrame(t, dt, obl) {
       if (p.hidden || p.scale <= 0.01 || !near(p.x, p.z, D.ped) || !seen(p.x, 1, p.z, 2.2)) continue
       const nudged = slNudge(ag, p, pushers, cell, dt)
       const d = Math.hypot(p.x - cx, p.z - cz)
+      slFadeSet(ag, T, p, d)
       if (ag.kind === SL_K.stray) { if (d < D.dog) slDrawSkinned(kit.dog, p, d, ag.tint, ag.companion ? 0.9 : 0.95); continue }
       slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++
       if (ag.kind === SL_K.pram && d < D.pram && !slPramGone(ag, T) && !partsPram(kit, ag, p, d, T)) {
@@ -32429,7 +32454,7 @@ function slFrame(t, dt, obl) {
     if (p.hidden || !near(p.x, p.z, D.bike) || !seen(p.x, 1, p.z, 2.4)) continue
     const d = Math.hypot(p.x - cx, p.z - cz), lod = d < 16 ? '' : '_lod1'
     if (!p.bikeDown) slBike(kit, lod, p)
-    if (!p.hidden && p.scale > 0.01) { if (!p.rec) p.y = 0; slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++ }
+    if (!p.hidden && p.scale > 0.01) { if (!p.rec) p.y = 0; slFadeSet(ag, T, p, d); slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++ }
   }
   // drivers out of taken cars
   for (const { ag } of st.exits.values()) {
