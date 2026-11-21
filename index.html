@@ -19452,7 +19452,7 @@ function rigAnimate(a, want, dt, t) {
   // landing from a charged jump or a dive: the two-arm smash over everything
   if (airborne && !R.wasAir) R.airAt = t
   if (R.wasAir && !airborne && t - (R.charged ?? -Infinity) < 4000 && want !== 'crouch') { R.charged = -Infinity; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true }
-    if (a === avatars.get(myId)) kick(landDepth(), a.mesh.position.x, a.mesh.position.y, a.mesh.position.z, 1e4, 220, now(), 'land') }    // his own smash landing: the heavy dip
+    if (a === avatars.get(myId)) kick(landDepth(), a.mesh.position.x, a.mesh.position.y, a.mesh.position.z, 1e4, 300, now(), 'bounce') }    // his own smash landing: the heavy dip
   // card #50: a hop or a fall of a quarter second or more lands heavily: the land clip's absorb over everything (lighter and
   // quicker if he lands moving), your camera thumps, and dust and a stomp at his feet. A kerb's step down is shorter
   else if (K.hopLand && R.wasAir && !airborne && t - (R.airAt ?? t) > 250 && want !== 'crouch' && a.dying < 0) {
@@ -21537,7 +21537,7 @@ function addTracers(list, t) {
         liveTracers.push(o)
         slash = melee ? o : null
         if (f[7] === 6) kick(0.35, f[0], f[1], f[2], 25, 700, t)
-        else if (f[7] === 7) kick(0.22, f[0], f[1], f[2], 14, 450, t)
+        else if (f[7] === 7 && f[8] !== myId) kick(0.22, f[0], f[1], f[2], 14, 300, t, 'bounce')     // a slam: the damped bounce (his own: his landing's)
       }
     } else slash = null
     if(f[7]===10){chainImpactBurst(f,t);continue}
@@ -21682,6 +21682,10 @@ function kick(a, x, y, z, far, ms, born = now(), dip = false) {
 }
 // a heavy landing's dip over its kick (u 0..1): down in `down` of it, back over the rest, overshooting by `over` of its depth
 const LAND_DIP = { down: 0.2, over: 0.4 }
+// a slam's bounce over T ms: a damped vertical swing, hz, decaying over tau ms; its first swing down peaks at 1
+const SLAM_BOUNCE = { hz: 7, tau: 75 }
+const slamBounce = T => { const w = 2 * Math.PI * SLAM_BOUNCE.hz / 1000, t1 = Math.atan(w * SLAM_BOUNCE.tau) / w
+  return Math.sin(w * T) * Math.exp(-T / SLAM_BOUNCE.tau) / (Math.sin(w * t1) * Math.exp(-t1 / SLAM_BOUNCE.tau)) }
 const landDip = u => { if (u < LAND_DIP.down) return Math.sin(Math.PI / 2 * u / LAND_DIP.down)
   const w = (u - LAND_DIP.down) / (1 - LAND_DIP.down); return 1 - w * w * (3 - 2 * w) - LAND_DIP.over * Math.sin(Math.PI * w) * w }
 function shake(cam, t) {
@@ -21690,7 +21694,7 @@ function shake(cam, t) {
   for (const k of kicks) { const T = Math.max(0, t - k.born)
     if (T >= k.ms) continue
     const near = Math.max(0, 1 - Math.hypot(cam.position.x - k.x, cam.position.y - k.y, cam.position.z - k.z) / k.far)
-    if (k.dip) dy -= k.a * near * (k.dip === 'land' ? landDip(T / k.ms) : Math.sin(Math.PI * T / k.ms)); else a = Math.max(a, k.a * near * (1 - T / k.ms)) }
+    if (k.dip) dy -= k.a * near * (k.dip === 'land' ? landDip(T / k.ms) : k.dip === 'bounce' ? slamBounce(T) : Math.sin(Math.PI * T / k.ms)); else a = Math.max(a, k.a * near * (1 - T / k.ms)) }
   if (a > 0 || dy) cam.position.set(cam.position.x + a * Math.sin(t * 0.091), cam.position.y + a * Math.sin(t * 0.137) + dy, cam.position.z + a * Math.cos(t * 0.113))
 }
 
