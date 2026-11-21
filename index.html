@@ -1324,7 +1324,7 @@ const VEHICLE_STYLES = (({ black, maroon, wine, green, teal, cream, ivory, grey,
 // lamps' emissive intensity, in every look
 // env: the chrome gradient's strength on the cars (three lights a material's whole surface by its envMap: at full strength a
 // pale car glowed flat white at night)
-const PERIOD = { lods: { high: [22, 70], medium: [0, 56], low: [0, 44] }, wheelNear: { high: 16, medium: 0, low: 0 }, lamp: 3.5, wheelCap: 1024, env: 0.2,
+const PERIOD = { lods: { high: [22, 70], medium: [0, 56], low: [0, 44] }, wheelNear: { high: 16, medium: 0, low: 0 }, lamp: 3.5, wheelCap: 1024, env: 0.2, gloss: 0.12,
   wreck: { sedan: 'sedan', taxi: 'sedan', beater: 'sedan', coupe: 'coupe', speedster: 'speedster', van: 'van', truck: 'truck', bus: 'bus' } }
 // card #54: each vehicle's room for its riders, in model space as VEHICLE_SHAPES (x right, y up, -z ahead): floor and roof y;
 // x: the half-width by height [[y, m]...]; front, back: the z the room ends at, by height (the windscreen and the rear glass
@@ -20847,6 +20847,12 @@ function periodMerge(parts) {
   out.userData.parts = ranges
   return out
 }
+// a period car's material: the street lamps reach it through three's own direct light, diffuse and specular (#28's 'pbr'
+// mode, as Realistic's materials take them), so its lacquer catches them; on a class so every clone keeps it
+class PeriodCarMaterial extends THREE.MeshStandardMaterial {
+  onBeforeCompile(shader) { faustLampHook(shader, 'pbr') }
+  customProgramCacheKey() { return 'period-car-pbr-1' }
+}
 function periodSetup(gltf) {
   const F = periodFleet, geo = {}
   let base = null
@@ -20860,6 +20866,20 @@ function periodSetup(gltf) {
   if (!base || !geo.sedan_lod0) throw new Error('not a period fleet file')
   // the palette is sampled at cell centres: nearest, no mipmaps, so a far car never blends neighbouring cells
   for (const t of [base.map, base.emissiveMap, base.roughnessMap, base.metalnessMap]) if (t) { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true }
+  base = new PeriodCarMaterial().copy(base)
+  // lacquer: the four paint cells' roughness (the ORM map's green) at PERIOD.gloss
+  const orm = base.roughnessMap
+  if (orm?.image && typeof document !== 'undefined') {
+    const cv = document.createElement('canvas'), w = cv.width = orm.image.width; cv.height = orm.image.height
+    const g = cv.getContext('2d', { willReadFrequently: true }), cell = w / 8
+    g.drawImage(orm.image, 0, 0)
+    const px = g.getImageData(0, 0, cell * 4, cell)
+    for (let i = 0; i < px.data.length; i += 4) px.data[i + 1] = Math.round(PERIOD.gloss * 255)
+    g.putImageData(px, 0, 0)
+    const t = new THREE.CanvasTexture(cv)
+    t.colorSpace = orm.colorSpace; t.flipY = orm.flipY; t.wrapS = orm.wrapS; t.wrapT = orm.wrapT; t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false
+    base.roughnessMap = base.metalnessMap = t
+  }
   base.side = THREE.FrontSide; base.envMap = chrome().envMap; base.envMapIntensity = PERIOD.env; base.emissiveIntensity = PERIOD.lamp; base.name = 'vehicle-period'
   base.userData.vehicleLamps = true; base.needsUpdate = true
   Object.assign(F, { geo, doors, base, paints: new Map(), whole: new Map(), stats: {} })
