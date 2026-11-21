@@ -161,6 +161,11 @@
     background:#d0453a}
   #hitmark:before{transform:rotate(45deg)}#hitmark:after{transform:rotate(-45deg)}
   #tab{position:fixed;inset:0;display:none;place-items:center;z-index:9;pointer-events:none}
+  #tab .tabinner{width:min(760px,calc(100vw - 24px))}
+  #tabkeys{columns:2 280px;column-gap:28px;font-size:13px;line-height:1.6;color:#c9c6bf;margin-bottom:14px}
+  #tabkeys div{break-inside:avoid}
+  #tabkeys b{color:#ece9e2}
+  #tabkeys:empty{display:none}
   #results{position:fixed;inset:0;display:none;place-items:center;z-index:10;pointer-events:none}
   #restitle{color:#c9a55c}
   #results.host .tabinner{pointer-events:auto}
@@ -436,7 +441,7 @@
   </g>
   <circle cx="32" cy="32" r="29" fill="none" stroke="#d8b24a" stroke-width="3"/>
 </symbol></svg>
-<div id="tab"><div class="tabinner"><h3 id="tabhead">STANDINGS</h3><table id="tabrows"></table>
+<div id="tab"><div class="tabinner"><div id="tabkeys"></div><h3 id="tabhead">STANDINGS</h3><table id="tabrows"></table>
   <div id="prof"></div></div></div>
 <div id="results"><div class="tabinner">
   <h3 id="restitle">MATCH OVER</h3><table id="resrows"></table>
@@ -3369,15 +3374,17 @@ const IN_TINT = { plaster: 0xb9b2a3, plasterCool: 0x9fa7ad, wood: 0x5a3a24, wood
 const inWindowKey = (B, k, face, bay) => B.chunk * 4194304 + B.slot * 1048576 + k * 1024 + face * 256 + bay
 const inDistrict = (cx, cz) => { const g = [Math.floor(cx / 96), Math.floor(cz / 96)], cc = [g[0] * 96 + 48, g[1] * 96 + 48], d2 = cc[0] * cc[0] + cc[1] * cc[1]
   return d2 < 230400 ? 0 : g[0] < -2 && g[1] < 4 && d2 < 1e6 ? 1 : d2 > 1102500 || g[1] < -7 ? 3 : 2 }
+const faustPieceLit = (seed, venue, face, piece) => venue === 'liquor' || venue === 'conv' ? true : venue === 'club' ? false : cityHash(seed ^ Math.imul(face * 32 + piece + 7, 0x85ebca6b)) % 100 < FAUST_NIGHT.shops.lit * 100
 function inWindows(B, k) {
   const s = B.storeys[k], out = [], count = [0, 0, 0, 0]
   if (k > 0 && B.landmark === 'cathedral') return out
-  const push = (face, plane, a0, a1, y0, y1) => { const bay = count[face]++
-    out.push({ key: inWindowKey(B, k, face, bay), face, bay, plane: inCm(plane), a0: inCm(a0), a1: inCm(a1), y0: inCm(y0), y1: inCm(y1) }) }
+  const pieces = [0, 0, 0, 0]
+  const push = (face, plane, a0, a1, y0, y1, piece) => { const bay = count[face]++
+    out.push({ key: inWindowKey(B, k, face, bay), face, bay, plane: inCm(plane), a0: inCm(a0), a1: inCm(a1), y0: inCm(y0), y1: inCm(y1), ...piece === undefined ? {} : { piece } }) }
   if (k === 0) {
     if (B.style === 'industrial' || inDistrict(B.x, B.z) === 3) return out
-    const shop = (face, plane, c, hw) => { const n = hw > 4 ? Math.floor((2 * hw - 1) / 4.5) : 0, bw = (2 * hw - 1) / n
-      for (let j = 0; j < n; j++) { const a = c - hw + 0.5 + j * bw; push(face, plane, a + bw * 0.07, a + bw * 0.93, 0.55, 3.3) } }
+    const shop = (face, plane, c, hw) => { const n = hw > 4 ? Math.floor((2 * hw - 1) / 4.5) : 0, bw = (2 * hw - 1) / n, pi = pieces[face]++
+      for (let j = 0; j < n; j++) { const a = c - hw + 0.5 + j * bw; push(face, plane, a + bw * 0.07, a + bw * 0.93, 0.55, 3.3, pi) } }
     const x0 = B.x - B.w - 0.25, x1 = B.x + B.w + 0.25, z0 = B.z - B.d - 0.25, z1 = B.z + B.d + 0.25, t = 0.95, D = B.door
     const d0 = D.x - D.w / 2, d1 = D.x + D.w / 2
     shop(0, z1, (x0 + d0) / 2, (d0 - x0) / 2); shop(0, z1, (d1 + x1) / 2, (x1 - d1) / 2)
@@ -3755,7 +3762,11 @@ function faustStorey(B, k) {
   function fitRoom(r) {
     enter(r)
     const kind = R.kind, cx = (R.x0 + R.x1) / 2, cz = (R.z0 + R.z1) / 2, area = w * d
-    const lit = kind === 'lobby' || kind === 'hallway' || chance({ office: 0.75, pool: 0.85, meeting: 0.6, records: 0.5, bed: 0.55, living: 0.8, kitchen: 0.75, club: 0 }[kind] ?? 0.95)
+    const lit0 = kind === 'lobby' || kind === 'hallway' || chance({ office: 0.75, pool: 0.85, meeting: 0.6, records: 0.5, bed: 0.55, living: 0.8, kitchen: 0.75, club: 0 }[kind] ?? 0.95)
+    const near = (q, ea, eb) => Math.min(q.a1, eb) - Math.max(q.a0, ea) > 0.6
+    const wl = k === 0 && B.venue !== 'club' && kind !== 'lobby' && kind !== 'hallway' ? wins.filter(q => q.piece !== undefined && (q.face === 0 ? Math.abs(R.z1 - P.z1) < 0.6 && near(q, R.x0, R.x1) : q.face === 1 ? Math.abs(R.z0 - P.z0) < 0.6 && near(q, R.x0, R.x1)
+      : q.face === 2 ? Math.abs(R.x1 - P.x1) < 0.6 && near(q, R.z0, R.z1) : Math.abs(R.x0 - P.x0) < 0.6 && near(q, R.z0, R.z1))) : []
+    const lit = wl.length ? wl.some(q => faustPieceLit(B.seed, B.venue, q.face, q.piece)) : lit0
     R.lit = lit
     const warm = { office: 0xffe0b0, pool: 0xdce8ff, meeting: 0xffe6c0, records: 0xd0dcf0, shop: 0xfff0d8, bar: 0xffb070, diner: 0xf4f8ff,
       lobby: 0xffd8a0, hallway: 0xffcf90, bed: 0xffc880, living: 0xffc880, kitchen: 0xf0f0e0, liquor: 0xffb878, conv: 0xeaf4ff, club: 0xff4a78 }[kind] || 0xffe0b0
@@ -7070,7 +7081,7 @@ function faustShopfronts(batch, lot) {
   if (lot.district === 'industrial' || lot.stop) return
   const S = FAUST_NIGHT.shops, { x, z, w, d } = lot
   for (const side of [-1, 1]) {
-    const h = cityHash(lot.seed ^ Math.imul(side + 2, 0x9e3779b9)), lit = h % 100 < S.lit * 100, cx = x + side * w * 0.45
+    const h = cityHash(lot.seed ^ Math.imul(side + 2, 0x9e3779b9)), lit = faustPieceLit(lot.seed, lot.venue, 0, side < 0 ? 0 : 1), cx = x + side * w * 0.45
     batch.box(faustBox(cx, 1.7, z + d + 0.28, 1.25, 1.2, 0.03), lit ? S.windows[h >>> 8 & 1] : S.dark, lit ? S.glow : 0)
     if (lit && (h >>> 12) % 3 === 0) batch.box(faustBox(cx, 3.55, z + d + 0.42, 1.1, 0.22, 0.08), S.signs[(h >>> 16) % S.signs.length], S.signGlow)
   }
@@ -7080,7 +7091,7 @@ function faustShopGlass(batch, B, V) {
   const S = FAUST_NIGHT.shops
   for (const w of inWindows(B, 0)) {
     if (typeof dsState === 'object' && dsState?.all?.has(w.key)) continue
-    const h = cityHash(B.seed ^ Math.imul(w.face * 32 + w.bay + 7, 0x85ebca6b)), lit = h % 100 < S.lit * 100, cool = (h >>> 8 & 1) === 1, blinds = (h >>> 10) % 100 < 55 ? 1 : 0.55
+    const h = cityHash(B.seed ^ Math.imul(w.face * 32 + w.bay + 7, 0x85ebca6b)), lit = faustPieceLit(B.seed, B.venue, w.face, w.piece), cool = (h >>> 8 & 1) === 1, blinds = (h >>> 10) % 100 < 55 ? 1 : 0.55
     const a = Math.round(batch.count * 3), sg = w.face === 0 || w.face === 2 ? 1 : -1, fwd = w.face === 0 || w.face === 3
     const quad = (u0, u1, y0, y1, off, tint, gb, gt) => {
       const P = (u, y) => w.face < 2 ? [u, y, w.plane + sg * off] : [w.plane + sg * off, y, u]
@@ -7126,7 +7137,7 @@ function faustShopTypes(g0, lot) {
   if (lot.venue) return
   for (const side of [-1, 1]) {
     const kind = faustShopKind(lot, side), h = cityHash(lot.seed ^ Math.imul(side + 9, 0xc2b2ae35)), cx = x + side * w * 0.45
-    const hw = cityHash(lot.seed ^ Math.imul(side + 2, 0x9e3779b9)), lit = hw % 100 < S.lit * 100
+    const hw = cityHash(lot.seed ^ Math.imul(side + 2, 0x9e3779b9)), lit = faustPieceLit(lot.seed, lot.venue, 0, side < 0 ? 0 : 1)
     if (lit && (kind === 'plain' || kind === 'awning' || kind === 'blade' || kind === 'lancet')) {
       const cool = (hw >>> 8 & 1) === 1, z = f + 0.045
       g.box(faustBox(cx, 1.7, z, 1.22, 1.17, 0.012), cool ? 0x86929c : 0xa68c68, 0.55)
@@ -11453,7 +11464,7 @@ function swimTick(c, inp, wx, wz, dt, J) {
   const yS = s - SWIM.float
   let want
   if (inp.descend) want = -SWIM.diveV
-  else if (c.water === 2) want = inp.j ? SWIM.riseV : inp.f * Math.sin(inp.pitch) * SWIM.steerV + (f < 0.1 ? SWIM.lift : 0)
+  else if (c.water === 2) want = inp.j || c.bot ? SWIM.riseV : inp.f * Math.sin(inp.pitch) * SWIM.steerV + (f < 0.1 ? SWIM.lift : 0)
   else if (inp.j && !c.jLock) { c.swVy = Math.max(c.vy, SWIM.kickV); return true }
   else want = f > 0.3 && inp.f > 0.3 && inp.pitch < SWIM.pitchDive ? -SWIM.diveV : clamp((yS - c.y) * SWIM.spring, -SWIM.riseV, SWIM.riseV)
   c.swVy = want + (c.vy - want) * Math.exp(-SWIM.drag * dt)
@@ -16844,12 +16855,34 @@ function rigFetch(file) {
 }
 function rigLoader() {
   if (!rigLib) { modelDiag.libs = 'loading'; setTimeout(modelSlowCheck, 5000) }
-  return rigLib ||= (self.THREE = THREE, geoLoad(RIG_LIBS)).then(env => {
+  const libs = () => new Promise((ok, no) => {
+    let settled = false, tries = 0
+    const go = () => { tries++; geoLoad(RIG_LIBS).then(env => { if (!settled) { settled = true; modelDiag.libTries = tries; ok(env) } }, e => { if (!settled && tries >= 2) { settled = true; no(e) } else if (!settled) go() }) }
+    self.THREE = THREE; go()
+    setTimeout(() => { if (!settled && tries < 2) { modelDiag.libs = 'retrying (15 s)'; go() } }, 15000)
+  })
+  return rigLib ||= libs().then(env => {
     const loader = new env.GLTF.GLTFLoader()
     const decoder = rigDecoder = env.Meshopt.MeshoptDecoder
-    try { const n = Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 2) - 1)); decoder.useWorkers(n); modelDiag.workers = n }
-    catch (e) { decoder.useWorkers(0); modelDiag.workers = 0; modelDiag.noWorkers = String(e?.message || e).slice(0, 80) }
-    modelDiag.libs = 'ok'
+    const workerDecode = decoder.decodeGltfBufferAsync.bind(decoder)
+    const mainDecode = (count, size, source, mode, filter) => decoder.ready.then(() => { const t = new Uint8Array(count * size); decoder.decodeGltfBuffer(t, count, size, source, mode, filter); return t })
+    const workersDead = why => { try { decoder.useWorkers(0) } catch (e) {} modelDiag.workers = 0; modelDiag.noWorkers ||= why }
+    decoder.decodeGltfBufferAsync = (count, size, source, mode, filter) => {
+      if (!modelDiag.workers) return mainDecode(count, size, source, mode, filter)
+      return new Promise((ok, no) => {
+        let done = false
+        workerDecode(count, size, source, mode, filter).then(r => { if (!done) { done = true; ok(r) } }, e => { if (!done) { done = true; no(e) } })
+        setTimeout(() => { if (done) return; done = true; workersDead('a worker decode took over 5 s'); mainDecode(count, size, source, mode, filter).then(ok, no) }, 5000)
+      })
+    }
+    const probeWorkers = () => { let answered = false
+      workerDecode(1, 4, new Uint8Array([0]), 'ATTRIBUTES', 'NONE').then(() => { answered = true }, () => { answered = true })
+      setTimeout(() => { if (!answered && modelDiag.workers) workersDead('the worker probe got no answer in 3 s') }, 3000) }
+    const startWorkers = () => { try { const n = Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 2) - 1)); decoder.useWorkers(n); modelDiag.workers = n; probeWorkers() }
+      catch (e) { decoder.useWorkers(0); modelDiag.workers = 0; modelDiag.noWorkers = String(e?.message || e).slice(0, 80) } }
+    modelDiag.workers = 0
+    Promise.race([modelDiag.ownDone || Promise.resolve(), new Promise(r => setTimeout(r, 20000))]).then(startWorkers, startWorkers)
+    modelDiag.libs = 'ok'; modelDiag.libsMs = Math.round(performance.now())
     loader.setMeshoptDecoder(decoder)
     loader.setCrossOrigin('anonymous')
     return loader
@@ -16866,7 +16899,27 @@ function rigLoad(name, M, priority = 2) {
 }
 const rigLods = root => { const m = []; root.traverse(o => { const k = /_lod(\d)$/.exec(o.name) || /_lod(\d)$/.exec(o.parent?.name || ''); if (o.isSkinnedMesh && k) m[+k[1]] = o }); return m }
 function onRigLoaded(M, gltf, anims, priority = 2) {
+  if (priority > 2) {
+    modelDiag.ownFetchedMs = Math.round(performance.now())
+    const root = drain(rigBuildSteps(M, gltf, anims))
+    if (!root) return Promise.resolve(false)
+    M.proto = root
+    rebuildAvatars()
+    modelDiag.ownBuiltMs = Math.round(performance.now())
+    background.run('rig-warm:' + M.file, function* () { yield* uploadTextures(root); yield* warmSceneSteps(activeLook || 'plain', [root]) }, { gpu: true, priority })
+      .catch(e => frameFailed('model warm-up', e))
+    return Promise.resolve(true)
+  }
   return background.run('rig:' + M.file, function* () {
+  const root = yield* rigBuildSteps(M, gltf, anims)
+  if (!root) return
+  yield* uploadTextures(root)
+  yield* warmSceneSteps(activeLook || 'plain', [root])
+  M.proto = root
+  rebuildAvatars()
+  }, { gpu: true, priority })
+}
+function* rigBuildSteps(M, gltf, anims) {
   const root = gltf.scene
   const grip = root.getObjectByName('grip_r')
   if (grip) { root.updateMatrixWorld(true); M.gripRest = grip.getWorldQuaternion(new THREE.Quaternion()).invert() }
@@ -16877,15 +16930,11 @@ function onRigLoaded(M, gltf, anims, priority = 2) {
   if (idle) { mixer.clipAction(idle).play(); mixer.update(0) }
   const b = yield* boundsSteps(root)
   mixer.stopAllAction(); mixer.uncacheRoot(root)
-  if (!b) { console.warn('model has no measurable height'); return }
+  if (!b) { console.warn('model has no measurable height'); return null }
   M.height = b.h; M.footY = b.minY
   capeShade(root, M)
   inkPrepare(root)
-  yield* uploadTextures(root)
-  yield* warmSceneSteps(activeLook || 'plain', [root])
-  M.proto = root
-  rebuildAvatars()
-  }, { gpu: true, priority })
+  return root
 }
 
 const BOOM_MS = 4500, SLAM_MS = 2200
@@ -24751,7 +24800,7 @@ function drawDebug(me, fps) {
         (startLog.warmProgs != null ? ' (in play +' + v(background.stats.lateCount) + ')' : '')) : '') +
     (rescues.n ? row('rescue', v(rescues.n) + '  last ' + esc(rescues.last.who + ' at ' + [rescues.last.x, rescues.last.y, rescues.last.z].map(Math.round).join(' ') +
         ' vy ' + Math.round(rescues.last.vy) + (rescues.last.cell ? '  cell ' + rescues.last.cell : '') + ' (' + rescues.last.cause + ')')) : '') +
-    row('models', (D => 'libs ' + esc(D.libs) + '  workers ' + v(D.workers ?? '-') + '  files ' + v([...D.files.values()].filter(f => f.state === 'loaded').length) + '/' + v(D.files.size) +
+    row('models', (D => 'libs ' + esc(D.libs) + '  workers ' + v(D.workers ?? '-') + (D.noWorkers ? ' (' + esc(D.noWorkers) + ')' : '') + '  files ' + v([...D.files.values()].filter(f => f.state === 'loaded').length) + '/' + v(D.files.size) +
       '  rigs ' + v([...D.rigs.values()].filter(s => s === 'ready').length) + '/' + v(D.rigs.size) + '  cars ' + esc(periodFleet ? periodFleet.failed ? 'failed' : periodFleet.ready ? 'ready' : 'loading' : '-') +
       '  street ' + esc(slKitJob ? slKitJob.failed ? 'failed' : slKitJob.done ? 'ready' : 'loading' : '-') +
       ([...D.files.entries()].some(([, f]) => f.state !== 'loaded') ? '  waiting ' + esc([...D.files.entries()].filter(([, f]) => f.state !== 'loaded').slice(0, 4).map(([k, f]) => k.split('.')[0] + ' ' + f.state + ' ' + Math.round((Date.now() - f.t0) / 1000) + 's').join(', ')) : '') +
@@ -25706,7 +25755,6 @@ function openPause() {
     : 'The game keeps running on the host — you are standing still, not safe.'
   el('#pause-host').style.display = isHost ? '' : 'none'
   for (const id of ['#pause-world-save', '#pause-world-load']) el(id).style.display = isHost && LV.faust ? '' : 'none'
-  el('#pause-hint').innerHTML = IS_TOUCH ? '' : keyHelp(selfChar())
   show('pause', 1)
 }
 
@@ -25718,8 +25766,10 @@ function keyHelp(c) {
     'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker, falling: smash' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
     (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + (C.disguise !== undefined ? ' · G change coat' : '') + (C.pipe ? ' · P pipe' : '') + '<br>' +
     'In a biplane: the mouse aims it · W full throttle · S idle · A/D roll (on the ground, steer) · Space brakes · E get out<br>' +
-    'H whistle for your car, at its wheel the ejector seat · T chat · Tab scores · V view · M map · N sound · B radio · F3 debug · Esc menu'
+    'H whistle for your car, at its wheel the ejector seat · T chat · Tab controls and scores · V view · M map · N sound · B radio · F3 debug · Esc menu'
 }
+
+const keyRows = c => keyHelp(c).split(/<br>| · /).map(t => '<div>' + t.replace(/^(WASD|Shift|Space|Q|E|R|F|G|P|W|S|A\/D|H|T|Tab|V|M|N|B|F3|Esc|click|right-click)(?= )/, '<b>$1</b>') + '</div>').join('')
 
 function closePause() {
   if (!pauseOpen) return
@@ -27084,6 +27134,7 @@ function shaderCheck() {
 }
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   shaderCheck,
+  glassStats: () => FAUST_GLASS_STATS.map(q => ({ ...q })),
   capture: captureFrames,
   dropCar(x, z, h = 3, kind = 'Car') {
     if (!isHost || ![x, z, h].every(Number.isFinite) || objs.length >= OBJ_MAX - 8) return false
@@ -38264,6 +38315,7 @@ function drawTab(others) {
   const tab = el('#tab')
   tab.style.display = tabOpen ? 'grid' : 'none'
   if (!tabOpen) { lastTabSig = null; return }
+  hud('tabKeys', el('#tabkeys'), 'innerHTML', IS_TOUCH ? '' : keyRows(selfChar()))
   hud('tabHead', el('#tabhead'), 'textContent', 'STANDINGS · ' + (fragLimit ? 'first to ' + fragLimit : 'no limit'))
   const rows = standings(others)
   const sig = rows.map(r => r.id + ':' + r.kills).join(',')
@@ -38433,7 +38485,7 @@ function drawHud(me, others, t) {
   const use = partsUseLabel(me)
   hud('hud', el('#hud'), 'textContent', IS_TOUCH
     ? nm + (cycles ? '  ·  WPN next' : '') + (use ? '  ·  USE ' + use : '') + clock
-    : nm + (use ? '  ·  E ' + use : '') + (cycles ? '  ·  R next' : '') + '  ·  Esc menu and keys' +
+    : nm + (use ? '  ·  E ' + use : '') + (cycles ? '  ·  R next' : '') + '  ·  hold Tab: controls  ·  Esc menu' +
       (locked || chatOpen ? '' : '  ·  click to capture mouse') + clock)
 }
 
