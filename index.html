@@ -5370,7 +5370,7 @@ function faustWaterSpill(seed, S, b) {
     const g = new THREE.BufferGeometry(), n = m.G.length
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(m.P), 3)); g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(m.N), 3))
     g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2)); g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(m.C), 3)); g.setAttribute('faustGlow', new THREE.BufferAttribute(new Float32Array(m.G), 1))
-    out.push({ geo: g, info: { id: b.id, kind, level: b.level, flow: [hx, hz], speed } })
+    out.push({ geo: g, info: { id: b.id, kind, level: b.level, flow: [hx, hz], speed, ...kind === 'foam' && { centre: pos(0, -26.5) } } })
   }
   return out
 }
@@ -37989,7 +37989,7 @@ vec3 waterWave(vec2 p) {
 }
 `
 const WATER_FRAG = `
-uniform float uTime, uRain, uLook, uWhite, uLampRef; uniform vec3 uSky, uFlow;
+uniform float uTime, uRain, uLook, uWhite, uLampRef; uniform vec3 uSky, uFlow, uCentre;
 varying vec3 vWaterP; varying float vWaterH;
 float waterHash(vec2 p) { p = fract(p * vec2(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }
 vec2 waterSwell(vec2 p) {
@@ -38021,10 +38021,14 @@ float waterNoise(vec2 p) { vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2
   return mix(mix(waterHash(i), waterHash(i + vec2(1.0, 0.0)), u.x), mix(waterHash(i + vec2(0.0, 1.0)), waterHash(i + vec2(1.0, 1.0)), u.x), u.y); }
 float waterWhite(vec2 q, float mask) {
   vec2 fl = normalize(uFlow.xy + vec2(0.0001)); float sp = uFlow.z, along = dot(q, fl), across = dot(q, vec2(-fl.y, fl.x));
-  float a = waterNoise(vec2(across * 1.7, along * 0.30 - uTime * sp * 0.30));
-  float b = waterNoise(vec2(across * 4.3 + 7.0, along * 0.80 - uTime * sp * 0.85));
-  float c = waterNoise(vec2(across * 9.0 + 3.0, along * 1.70 - uTime * sp * 1.60));
-  return smoothstep(0.40, 0.62, a * 0.45 + b * 0.35 + c * 0.25 + (mask - 0.5) * 0.45);
+  if (uCentre.z > 0.5) { vec2 d = q - uCentre.xy; along = length(d); across = atan(d.y, d.x) * max(along, 3.0); }
+  float a = waterNoise(vec2(across * 1.7, along * 0.45 - uTime * sp * 0.45));
+  float b = waterNoise(vec2(across * 4.3 + 7.0, along * 0.75 - uTime * sp * 0.75));
+  float c = waterNoise(vec2(across * 9.0 + 3.0, along * 0.80 - uTime * sp * 0.80));
+  float n = a * 0.45 + b * 0.35 + c * 0.25;
+  float f0 = smoothstep(0.38, 0.62, 0.5 + (n - 0.525) * 2.6 + (mask - 0.5) * 0.35);
+  float band = 0.5 + 0.5 * sin((along - uTime * sp) * 1.15 + waterNoise(vec2(across * 1.3, along * 0.2 - uTime * sp * 0.2)) * 2.6);
+  return f0 * (0.30 + 0.70 * band);
 }
 float waterStroke(float p, float width) { float d = abs(fract(p) - 0.5), aa = max(fwidth(p), 0.02); return 1.0 - smoothstep(width - aa, width + aa, d); }
 `
@@ -38059,13 +38063,13 @@ function waterMaterialFor(kind, info) {
   const white = !!WATER_WHITE[kind]
   let m = white ? null : waterMats.get(kind)
   if (m) return m
-  const amp = { value: FAUST_WATER.waves.amp[kind] || 0 }, uWhite = { value: kind === 'foam' ? 2 : white ? 1 : 0 }, f = white && info?.flow || [0, -1], uFlow = { value: new THREE.Vector3(f[0], f[1], white && info?.speed || 6) }
+  const amp = { value: FAUST_WATER.waves.amp[kind] || 0 }, uWhite = { value: kind === 'foam' ? 2 : white ? 1 : 0 }, f = white && info?.flow || [0, -1], uFlow = { value: new THREE.Vector3(f[0], f[1], white && info?.speed || 6) }, uCentre = { value: new THREE.Vector3(white && info?.centre?.[0] || 0, white && info?.centre?.[1] || 0, white && info?.centre ? 1 : 0) }
   m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: WATER.rough, metalness: 0 })
   m.userData.inkWater = true
   if (kind === 'foam') { m.transparent = true; m.depthWrite = false; m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -2 }
   m.onBeforeCompile = shader => {
     faustLampHook(shader, 'pbr')
-    Object.assign(shader.uniforms, { uTime: waterU.time, uLook: waterU.look, uRain: waterU.rain, uSky: waterU.sky, uLampRef: { value: FAUST_NIGHT.lamps.candela }, uWhite, uFlow, uWaveN: waterU.waveN, uWaveW: waterU.waveW, uWaveA: waterU.waveA, uAmp: amp })
+    Object.assign(shader.uniforms, { uTime: waterU.time, uLook: waterU.look, uRain: waterU.rain, uSky: waterU.sky, uLampRef: { value: FAUST_NIGHT.lamps.candela }, uWhite, uFlow, uCentre, uWaveN: waterU.waveN, uWaveW: waterU.waveW, uWaveA: waterU.waveA, uAmp: amp })
     shader.vertexShader = WATER_VERT + shader.vertexShader
       .replace('#include <beginnormal_vertex>', 'vec3 waterWorld = (modelMatrix * vec4(position, 1.0)).xyz; vec3 waterW = waterWave(waterWorld.xz);\n#include <beginnormal_vertex>\n objectNormal = normalize(vec3(-waterW.y, 1.0, -waterW.z));')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n transformed.y += waterW.x; vWaterP = waterWorld; vWaterH = waterW.x;')
@@ -38076,9 +38080,34 @@ function waterMaterialFor(kind, info) {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
  vec3 waterR = waterRipple(vWaterP.xz);
  normal = normalize(normal + mat3(viewMatrix) * vec3(-waterR.x, 0.0, -waterR.y));
- float waterInkTone = 0.045 + 0.9 * max(waterFoam, max(waterStroke(vWaterH * 14.0 + dot(vWaterP.xz, vec2(0.6, 0.8)) * 1.5 - uTime * 0.2 + waterR.x * 8.0, 0.045), min(1.0, waterR.z * 3.0)));`)
+ float waterInkTone = 0.0, waterInkRefl = 0.0;
+ if (uLook > 0.5 && uLook < 1.5) {
+  vec2 wCam = vWaterP.xz - cameraPosition.xz;
+  vec2 wFwd = normalize(-vec2(viewMatrix[0][2], viewMatrix[2][2]) + vec2(0.0001)), wRight = vec2(wFwd.y, -wFwd.x);
+  float wDepth = max(dot(wCam, wFwd), 0.5), wLat = dot(wCam, wRight);
+  float wRow = wDepth / 2.4 + 0.12 * sin(wLat * 0.25), wPx = max(fwidth(wRow), 0.0001), wF = fract(wRow), wId = floor(wRow);
+  float wFade = (1.0 - smoothstep(0.30, 0.55, wPx)) * (1.0 - smoothstep(110.0, 200.0, wDepth));
+  float wSeg = wLat / 1.8 + waterHash(vec2(wId, 1.0)), wSegId = floor(wSeg), wT = fract(wSeg);
+  float wLen = 0.40 + 0.22 * waterHash(vec2(wId, 3.0)), wKeep = step(waterHash(vec2(wSegId, wId)), mix(0.28, 0.9, smoothstep(10.0, 90.0, wDepth)));
+  float wThin = smoothstep(0.0, wPx * 0.8, wF) * (1.0 - smoothstep(wPx * 1.1, wPx * 1.9, wF));
+  float wRip = wThin * step(wT, wLen) * sin(clamp(wT / wLen, 0.0, 1.0) * 3.1416) * wKeep * wFade;
+  waterInkRefl = smoothstep(0.0, wPx * 0.8, wF) * (1.0 - smoothstep(wPx * 2.4, wPx * 3.4, wF)) * wFade;
+  float wRing = 0.0;
+  if (uRain > 0.01) {
+   vec2 wCell = floor(vec2(wLat, wDepth) / 3.2);
+   for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
+    vec2 c = wCell + vec2(float(i), float(j));
+    if (waterHash(c) > uRain * 0.22) continue;
+    float per = 0.9 + 0.6 * waterHash(c + 17.0), t = fract(uTime / per + waterHash(c + 5.0));
+    vec2 centre = (c + vec2(waterHash(c + 3.1), waterHash(c + 9.7))) * 3.2, d = vec2(wLat - centre.x, (wDepth - centre.y) * 3.0);
+    float r = length(d), w = max(fwidth(r), 0.02);
+    wRing = max(wRing, (1.0 - t) * (1.0 - smoothstep(0.0, w * 1.4, abs(r - t * 1.5))));
+   }
+  }
+  waterInkTone = 0.015 + 0.9 * max(waterFoam, max(wRip, wRing * wFade));
+ }`)
       .replace('#include <opaque_fragment>', '#include <opaque_fragment>\n if (uLook > 1.5 && uWhite < 0.5) gl_FragColor.a = ' + (1 - WATER.reflect).toFixed(4) + ';')
-      .replace('#include <opaque_fragment>', 'vec3 waterStreak = uLook < 1.5 && uWhite < 0.5 ? waterLampStreak(vWaterP, normalize(vWaterP - cameraPosition), normal) : vec3(0.0);\n waterInkTone = min(1.0, waterInkTone + dot(waterStreak, vec3(0.6)));\n if (uLook < 0.5 && uWhite < 0.5) outgoingLight += uSky * pow(1.0 - max(dot(normalize(vViewPosition), normal), 0.0), 3.0) + waterStreak;\n#include <opaque_fragment>')
+      .replace('#include <opaque_fragment>', 'vec3 waterStreak = uLook < 1.5 && uWhite < 0.5 ? waterLampStreak(vWaterP, normalize(vWaterP - cameraPosition), normal) : vec3(0.0);\n waterInkTone = max(waterInkTone, smoothstep(0.10, 0.45, dot(waterStreak, vec3(0.6))) * waterInkRefl);\n if (uLook < 0.5 && uWhite < 0.5) outgoingLight += uSky * pow(1.0 - max(dot(normalize(vViewPosition), normal), 0.0), 3.0) + waterStreak;\n#include <opaque_fragment>')
   }
   m.customProgramCacheKey = () => 'faust-water-1'
   if (!white) waterMats.set(kind, m)
