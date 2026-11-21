@@ -4687,10 +4687,12 @@ function* faustRoadCellSteps(plan, key, emit, look) {
     const L = (p, s, h, dy) => at(p, s, -h, dy), Rr = (p, s, h, dy) => at(p, s, h, dy)
     if (!look) emit.face(L(a, sa, ha), L(b, sb, hb), Rr(b, sb, hb), Rr(a, sa, ha), up, T.asphalt, true)
     else {
-      const ka = Math.max(0.5, ha - 1.7), kb = Math.max(0.5, hb - 1.7)
+      const ka = road.taper ? ha : Math.max(0.5, ha - 1.7), kb = road.taper ? hb : Math.max(0.5, hb - 1.7)
       emit.face(L(a, sa, ka), L(b, sb, kb), Rr(b, sb, kb), Rr(a, sa, ka), up, T.asphalt, false)
-      emit.face(L(a, sa, ha), L(b, sb, hb), L(b, sb, kb), L(a, sa, ka), up, T.shoulder, false)
-      emit.face(Rr(a, sa, ka), Rr(b, sb, kb), Rr(b, sb, hb), Rr(a, sa, ha), up, T.shoulder, false)
+      if (!road.taper) {
+        emit.face(L(a, sa, ha), L(b, sb, hb), L(b, sb, kb), L(a, sa, ka), up, T.shoulder, false)
+        emit.face(Rr(a, sa, ka), Rr(b, sb, kb), Rr(b, sb, hb), Rr(a, sa, ha), up, T.shoulder, false)
+      }
     }
     const da = low ? -a[1] : -R.slab, db = low ? -b[1] : -R.slab, fa = low ? da : -2.4, fb = low ? db : -2.4
     if (!low) {
@@ -11829,8 +11831,8 @@ function insideObject(c) {
   return inHit
 }
 const SWIM = { deep: 1.4, wet: 0.2, float: 0.2, under: 0.15, k: 0.5, drag: 6, spring: 6, riseV: 3.2, diveV: 3.2, kickV: 6, steerV: 3, lift: 0.8, pitchDive: -0.45,
-  climbV: 5.5, reach: 1.5, climbUp: 1.8, rise: { stairs: 6, low: 4.2, high: 4.2, ladder: 14 }, slow: 1.4 }
-const swimOut = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0], bank: null }, swimEdge = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0] }
+  climbV: 5.5, outV: 1.5, reach: 1.5, climbUp: 1.8, rise: { stairs: 6, low: 4.2, high: 4.2, ladder: 14 }, slow: 1.4 }
+const swimOut = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0], bank: null }, swimEdge = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0] }, climbHit = []
 const waterOf = (x, z) => GAME.faustland.water?.at?.(x, z, swimOut) ?? null
 const SWIM_LIP = { near: [2.5, 5, 8], rise: 0.6, v: [2.6, 3.8], ahead: 0.35, slow: 1, haul: 2.4, jump: 6 }
 function bankLip(c, wx, wz) {
@@ -11848,9 +11850,13 @@ function bankLip(c, wx, wz) {
 function swimTick(c, inp, wx, wz, dt, J) {
   const was = c.water | 0
   c.swK = 1; c.swFx = c.swFz = 0; c.swWx = c.swWz = undefined; c.water = 0
+  if (c.mantle) return false
   if (J || c.tie || c.zip || c.wallRun || c.ceil || c.flyTurn || !c.body || seatOf(c)) return false
   const W = waterOf(c.x, c.z)
-  if (!W) return bankLip(c, wx, wz)
+  if (!W) {
+    if (was === 3 && c.vy > SWIM.outV) { c.swVy = SWIM.outV; return true }
+    return bankLip(c, wx, wz)
+  }
   const s = W.y, feet = c.y - c.h - c.r, head = c.y + c.h + c.r, depth = s - feet, D = s - W.floor
   const wet = was || depth > SWIM.wet
   const B = wet ? GAME.faustland.water.exit?.(c.x, c.z) ?? null : null
@@ -11860,9 +11866,18 @@ function swimTick(c, inp, wx, wz, dt, J) {
     const nl = Math.hypot(B.nx, B.nz) || 1, nx = B.nx / nl, nz = B.nz / nl
     if ((wx * nx + wz * nz) / f > 0.5) {
       let e = -1; for (let t = 0.25; t <= 12; t += 0.25) if (!GAME.faustland.water.at(c.x + nx * t, c.z + nz * t, swimEdge)) { e = t; break }
-      if (e >= 0 && e < SWIM.reach) { c.water = 1; c.swVy = SWIM.climbV; return true }
+      if (e >= 0 && e < SWIM.reach && staticRay(c.x, feet + 0.3, c.z, nx, 0, nz, c.r + 0.5, climbHit, RAY_GROUP) < c.r + 0.5 && Math.abs(climbHit[4]) < 0.5) {
+        const P = c.bot ? null : mantleProbe(c, nx, nz, c.r + 0.4)
+        if (P) {
+          const [s2, top, w] = P, K = MANTLE, dy = top + K.lift - feet, gap = Math.max(0, s2 - c.r - 0.02), tr = K.rise[0] + K.rise[1] * dy
+          c.mantle = [0, tr, ((w ? s2 + w + c.r + 0.05 : s2 + c.r + 0.1) - gap) / K.slow, c.x, c.y, c.z, nx, nz, gap, K.slow, dy, w ? 0 : 1, top]
+          return false
+        }
+        c.water = 3; c.swVy = SWIM.climbV; return true
+      }
     }
   }
+  if (was === 3 && c.vy > SWIM.outV) { c.swVy = SWIM.outV; return true }
   if (!(depth > SWIM.wet)) return false
   if (D < SWIM.deep) { c.swK = 1 - (1 - SWIM.k) * clamp((D - 0.3) / (SWIM.deep - 0.3), 0, 1); return false }
   c.water = was === 2 ? (head < s ? 2 : 1) : head < s - SWIM.under ? 2 : 1
@@ -21555,7 +21570,7 @@ function rigAnimate(a, want, dt, t) {
   else if (a.moveState === 3) name = K.leap
   else if (a.moveState === 4) { name = K.run; rate = clamp(v / (M.pace.run * H), 0.8, 1.6); fade = 0.12 }
   else if (hold === 'held') name = K.fall
-  else if (typeof want === 'string' && want.startsWith('swim') && K[want] && !(hold === 'sit')) { name = K[want]; fade = 0.25; rate = want === 'swim' ? clamp(v / 2.6, 0.7, 1.8) : 1 }
+  else if (typeof want === 'string' && want.startsWith('swim') && K[want] && !(hold === 'sit')) { name = K[want]; fade = want === 'swimUp' ? 0.1 : 0.25; rate = want === 'swim' ? clamp(v / 2.6, 0.7, 1.8) : 1 }
   else if (hold === 'sit') name = a.seat === 0 ? K.drive : K.sit
   else if (hold === 'swing' || hold === 'climb' || hold === 'ceiling' || want === 4) name = K.climb
   else if (hold === 'dive' || want === 6) name = K.dive
@@ -25907,7 +25922,7 @@ function playVoice(speaker, group, n = 0, o = {}) {
 }
 function sfxPlay(name, at, cat, lvl, delay, span, who) { return playSound(name, { at, cat, lvl, delay, span, who }) }
 const swimWas = new Map()
-const swimWant = (w, p) => { if (w === 2 || (p.vy || 0) < -1.5) return 'swimDive'; const f = GAME.faustland.water?.at?.(p.x, p.z)?.flow; return Math.hypot((p.vx || 0) - (f ? f[0] : 0), (p.vz || 0) - (f ? f[1] : 0)) > 0.8 ? 'swim' : 'swimIdle' }
+const swimWant = (w, p) => { if (w === 3) return 'swimUp'; if (w === 2 || (p.vy || 0) < -1.5) return 'swimDive'; const f = GAME.faustland.water?.at?.(p.x, p.z)?.flow; return Math.hypot((p.vx || 0) - (f ? f[0] : 0), (p.vz || 0) - (f ? f[1] : 0)) > 0.8 ? 'swim' : 'swimIdle' }
 function swimFx(id, w, p, dt) {
   const S = swimWas.get(id) || swimWas.set(id, { w: 0, vy: 0, rip: 0, air: 0, ring: 0, n: 0 }).get(id), vy = p.vy || 0
   const W = w || S.w ? GAME.faustland.water?.at?.(p.x, p.z) : null
@@ -25928,7 +25943,14 @@ function carFx(dt) {
   for (const o of objs) {
     if (!o.V || o.floodT === undefined) continue
     const W = GAME.faustland.water?.at?.(o.x, o.z); if (!W) continue
-    if (o.fxT !== o.floodT) { o.fxT = o.floodT; burst('splash', o.x, W.y, o.z, 0, 1, 0, 0xd5e6ee, 1.5); burst('foam', o.x, W.y + 0.02, o.z, 0, 1, 0, 0x6e808a, 1.4); sfxPlay('Splash', { x: o.x, y: W.y, z: o.z }, 'world', 1, 0, 0, o.id) }
+    if (o.fxT !== o.floodT) {
+      o.fxT = o.floodT
+      const v = o.body.getLinearVelocity(), k = clamp(1.6 + Math.hypot(v.x(), v.y(), v.z()) * 0.3, 2, 5), R = Math.max(1, o.R || 2)
+      for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; burst('splash', o.x + Math.cos(a) * R * 0.6, W.y, o.z + Math.sin(a) * R * 0.6, Math.cos(a) * 0.5, 1, Math.sin(a) * 0.5, 0xd5e6ee, k) }
+      burst('splash', o.x, W.y, o.z, 0, 1, 0, 0xd5e6ee, k * 1.2)
+      for (let i = 0; i < 10; i++) { const a = i * Math.PI / 5; burst('foam', o.x + Math.cos(a) * R, W.y + 0.02, o.z + Math.sin(a) * R, 0, 1, 0, 0x6e808a, 1.2 + k * 0.3) }
+      sfxPlay('Splash', { x: o.x, y: W.y, z: o.z }, 'world', 1, 0, 0, o.id)
+    }
     if ((o.bubT = (o.bubT || 0) - dt) <= 0 && o.y < W.y + 0.3) { o.bubT = 0.25; burst('bubble', o.x, Math.min(o.y + 0.8, W.y), o.z, 0, 1, 0, 0xdcecf2, 1.4) }
   }
 }
@@ -30213,6 +30235,7 @@ MODELS.maniak.anims = [...[MODELS.maniak.anims].flat(), RIG_FILES.maniak_grab]
 RIG_FILES.maniak_swim = 'maniak_swim.0ee5f26e.glb'
 MODELS.maniak.anims.push(RIG_FILES.maniak_swim)
 MODELS.maniak.clips.swimIdle = 'maniak_swim_idle'; MODELS.maniak.clips.swim = 'maniak_swim'; MODELS.maniak.clips.swimDive = 'maniak_swim_dive'
+MODELS.maniak.clips.swimUp = MODELS.maniak.clips.climb
 {
   const P = HOST_PHASES, bi = P.beforeIntent, bp = P.beforePhysics, ap = P.afterPhysics
   P.beforeIntent = t => { partsMask(t.cur); bi(t) }
