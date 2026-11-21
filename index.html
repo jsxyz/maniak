@@ -33482,7 +33482,7 @@ function slVenue(cell, P, ci, cj) {
 // it out (#18's lots, doors, front paths and pavements): walkers out of a front door, down the path, along the pavement and home; a dog
 // walker and a pram along it. Houses, garages and fences are the cell's bodies. Ids 0x1000000 + ((bi + 128) * 256 + (bj + 128)) * 32 + k
 // #72: built at most one every gap ms, on a ring cell already planned in the background (force: at once; slRunTo's runs)
-const SL_SUB = { porch: 0.8, lane: 0.45, inset: 1, walkers: 4, dogs: 1, prams: 1, stop: [6, 20], max: 24, walk: [30, 110], gap: 25 }
+const SL_SUB = { porch: 0.8, lane: 0.59, lane2: 0.1, inset: 1, walkers: 4, dogs: 1, prams: 1, stop: [6, 20], max: 24, walk: [30, 110], gap: 25 }
 function slSubCell(bi, bj, force) {
   const key = 'sub ' + bi + ' ' + bj, st = slState
   let cell = st.cells.get(key)
@@ -33522,7 +33522,7 @@ function slSubCell(bi, bj, force) {
   }
   // a dog walker and a pram along the pavement: round the block where it closes, else from end to end and back
   const along = v => { const ch = chains[rng() * chains.length | 0], rev = rng() < 0.5
-    const pts = ch.closed ? (rev ? ch.pts.slice().reverse() : ch.pts) : slSubWalk(ch, rev ? ch.len - SL_SUB.inset : SL_SUB.inset, rev ? -1 : 1, ch.len)
+    const pts = ch.closed ? slSubOffsetLoop(rev ? ch.pts.slice().reverse() : ch.pts, rev ? SL_SUB.lane2 : SL_SUB.lane) : slSubWalk(ch, rev ? ch.len - SL_SUB.inset : SL_SUB.inset, rev ? -1 : 1, ch.len)          // card #91 (sub2c): a loop on its way's lane
     return slLoop(pts, v, 0, null, -rng() * 3e5) }
   for (let w = 0; w < Math.round(SL_SUB.dogs * Math.min(1, fill * 1.5)) && k < SL_SUB.max; w++) cell.agents.push({ id: id(k++), kind: SL_K.walker, body: body(), tint: tint(), route: along(speed()) })
   for (let w = 0; w < Math.round(SL_SUB.prams * Math.min(1, fill * 1.5)) && k < SL_SUB.max; w++) cell.agents.push({ id: id(k++), kind: SL_K.pram, body: 3 + (rng() < 0.5 ? 0 : 1), tint: tint(), route: along(STREET.pram) })
@@ -33614,16 +33614,25 @@ function slSubOffset(pts, d) {
   }
   return out
 }
+// card #91 (sub2c): a closed line's points moved off it by d m to the right, every corner along its bisector (the first too)
+function slSubOffsetLoop(pts, d) { const n = pts.length; return n < 3 ? slSubOffset(pts, d) : slSubOffset([pts[n - 1], ...pts, pts[0]], d).slice(1, n + 1) }
+// card #91 (sub2c): a leg's lane: going the line's way (the block on the right), SL_SUB.lane toward the kerb (5.41 m from the street's
+// centre line); against it, SL_SUB.lane2 toward the house (6.1 m): a dog (0.35-0.85 m to its walker's right) stays 5.25-6.26 m
+const slSubLane = (pts, way) => slSubOffset(pts, way > 0 ? SL_SUB.lane : SL_SUB.lane2)
+const slSubDedupe = pts => pts.filter((p, i) => !i || Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) > 1e-6)
 function slSubNormal(a, b) { const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz); return L > 1e-9 ? [dz / L, -dx / L] : null }
 // a walk along a line from s, going dir, D m (to an open line's end at most) and back to s: out on one half of the pavement, back
 // on the other (turning round, two quarter turns across it); round a closed line once when D reaches its length. From and to the
 // point at s on the centre line (where a front path meets it)
 function slSubWalk(ch, s, dir, D) {
-  if (ch.closed && D >= ch.len) return slSubPart(ch, s, s + dir * ch.len)          // round and back to s (then up the path)
+  if (ch.closed && D >= ch.len) { const lap = slSubLane(slSubPart(ch, s, s + dir * ch.len), dir), at = slSubAt(ch, s); return slSubDedupe(dir > 0 ? [at, ...lap, at] : lap) }          // round on its lane and back to s (then up the path)
   const e = ch.closed ? s + dir * D : Math.max(SL_SUB.inset, Math.min(ch.len - SL_SUB.inset, s + dir * D))
   const way = slSubPart(ch, s, e)
   if (way.length < 2 || Math.abs(e - s) < 1) return [way[0]]
-  return [way[0], ...slSubOffset(way, SL_SUB.lane), ...slSubOffset(way.slice().reverse(), SL_SUB.lane)]
+  // card #91 (sub2c): out and back on the lanes of their ways; from the centre line (the foot of a front path) only to the kerb's lane
+  // (straight on from the path); a walk out on the house's lane starts on it (no step back at the path's foot)
+  const out = slSubLane(way, dir), back = slSubLane(way.slice().reverse(), -dir)
+  return slSubDedupe(dir > 0 ? [way[0], ...out, ...back] : [...out, ...back])
 }
 // the suburb's blocks overlapping [x0, x1] x [z0, z1] (into out); none inside the city or in the other rings
 function slSubCellsIn(x0, z0, x1, z1, out) {
