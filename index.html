@@ -14340,7 +14340,8 @@ let trafficState = null
 TRAFFIC.far = 250; TRAFFIC.thinkFar = 0.3; TRAFFIC.thinkBudget = 16; TRAFFIC.spawnMin = 120
 TRAFFIC.kinOut = 130; TRAFFIC.kinIn = 100; TRAFFIC.kinMax = 2; TRAFFIC.kinCool = 10
 const trafficFar = (o, a, people) => o.trafficAmbient && !a.urgent && !a.follow && people.length > 0 && people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.far)
-const trafficK = () => (TRAFFIC.quality[settings.quality] ?? 1) * (TRAFFIC.scale ?? 1)
+const trafficScale = () => Math.max(0.1, Math.min(1, GAME.perfScale?.() ?? (IS_TOUCH ? 0.4 : 1)))
+const trafficK = () => (TRAFFIC.quality[settings.quality] ?? 1) * (TRAFFIC.scale ?? 1) * trafficScale()
 const trafficRemote = new Map(), trafficViews = new Map()
 const trafficKey = (x, z) => x + ':' + z
 function trafficReset() {
@@ -14859,11 +14860,11 @@ function trafficHidden(x, z, people) {
 function trafficSpawn(people) {
   const T = trafficState, count = [...T.cars.values()].filter(o => o.trafficAmbient).length
   const K = trafficK()
-  if (count >= TRAFFIC.cap * K || objs.length >= OBJ_MAX - 8 || !people.length) return
+  if (count >= Math.max(8, TRAFFIC.cap * K) || objs.length >= OBJ_MAX - 8 || !people.length) return
   const p = people[(T.serial++) % people.length], district = trafficDistrict(p)
   if (district === 'none') return
   const anchors=[];for(const c of people)if(anchors.every(a=>Math.hypot(a.x-c.x,a.z-c.z)>TRAFFIC.radius*1.5))anchors.push(c)
-  const density=Math.min((TRAFFIC.density[district]||8)*K,Math.max(1,Math.floor(TRAFFIC.cap*K/anchors.length)))
+  const density=Math.max(4,Math.min((TRAFFIC.density[district]||8)*K,Math.max(1,Math.floor(TRAFFIC.cap*K/anchors.length))))
   if ([...T.cars.values()].filter(o => o.traffic?.ambient && Math.hypot(o.x - p.x, o.z - p.z) < TRAFFIC.radius + 80).length >= density) return
   const edges = T.edges.filter(e => { const q = e.mid ??= trafficPoint(e, e.length / 2), d = Math.hypot(q.x - p.x, q.z - p.z); return d > TRAFFIC.spawnMin && d < TRAFFIC.radius && (e.ring || Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96) })
   const weight = edges.reduce((sum, e) => sum + trafficWeight(e), 0)
@@ -14956,6 +14957,13 @@ function trafficTick(dt, all) {
   if (!LV.faust) return
   if (!trafficState) trafficReset()
   const t = performance.now(), T = trafficState, people = all.filter(c => !c.bot && c.owner === undefined && c.body), clock = trafficClock()
+  const scale = trafficScale()
+  if (scale < 0.7) {
+    T.dtAcc = (T.dtAcc || 0) + dt
+    if (t - (T.slowAt || 0) < 25) return
+    dt = T.dtAcc; T.dtAcc = 0; T.slowAt = t
+  }
+  const budget = Math.max(3, Math.round(TRAFFIC.thinkBudget * scale)), thinkStep = TRAFFIC.think / Math.max(0.4, scale)
   let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0
   let lane = null, kinNew = []
   parkedTick(dt, people)
@@ -14976,8 +14984,8 @@ function trafficTick(dt, all) {
         const due = (a.think -= dt) <= 0
         if (due || a.far) {
           const far = o.kin || trafficFar(o, a, people)
-          if ((due || !far) && (thinks < (far ? TRAFFIC.thinkBudget * 0.6 : TRAFFIC.thinkBudget) || !due)) {
-            const step = far ? TRAFFIC.thinkFar * (1 + 0.3 * ((o.id * 0.6180339) % 1)) : TRAFFIC.think; thinks++
+          if ((due || !far) && (thinks < (far ? budget * 0.6 : budget) || !due)) {
+            const step = far ? TRAFFIC.thinkFar * (1 + 0.3 * ((o.id * 0.6180339) % 1)) : thinkStep; thinks++
             a.far = far; const t0 = performance.now(), r = trafficThink(o, step, all); thinkMs += performance.now() - t0; if (o.kin) a.kd = r.d; else a.input = r; a.think = (a.think <= 0 ? a.think : 0) + step
           }
         }
