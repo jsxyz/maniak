@@ -31287,7 +31287,110 @@ function slCell(ci, cj) {
     const v = STREET.walk[0] + rng() * (STREET.walk[1] - STREET.walk[0]), z0 = sg.z0 - 2.5, z1 = sg.z1 + 2.5
     cell.agents.push({ id: 0x600000 + (ci * 512 + cj) * 4 + sg.k * 2 + n, kind: SL_K.ped, body: body(), tint: tint(), route: slLoop(n ? [[a.x, z1], [a.x, z0]] : [[a.x, z0], [a.x, z1]], v, 0, null, -rng() * 3e5) })
   }
+  slVenue(cell, P, ci, cj)          // card #99: the stores' people, their draws after every other agent's so nobody else's moves
   return slKeep(cell)
+}
+// card #99 (and #98 to come): the people of the venues. Ordinary street agents, so hp, death, panic, heat and the wire come with them.
+// Ids: SL_VENUE_ID + (ci * 512 + cj) * 256 + li * 4 + n (li < 64 the lot's index in its cell's plan, n < 4 the person). The ids in use:
+// 0x100000 riders (to 0x105000), 0x200000 drivers out of cars (+4096), 0x400000 dogs (owner id + 0x400000: to 0xCC0000), 0x600000 alley
+// walkers (+4 a cell), 0x800000 + 48 a cell (to 0x8C0000), cell ids (ci * 512 + cj) * 64 + k below 0x100000, all with ci, cj < S <= 32
+// (cell index at most 31 * 512 + 31 = 15903): this range runs to 0x2000000 + 15903 * 256 + 255 = 0x23E2000 (clear of the suburb blocks'
+// 0x1000000 and the drivers' and boat crews' 0x3000000).
+const SL_VENUE_ID = 0x2000000
+// a way across a store's ground storey from a to b ([x, z]) clear of its solid boxes for a body 0.3 m out from them: A* on a 0.2 m
+// grid over the plate, then pulled straight where the line is clear. null when there is none (pure in the storey, so the same everywhere)
+function slVenuePath(S0, plate, a, b, strict) {
+  const G = 0.2, R = 0.3, x0 = plate.x0, z0 = plate.z0, W = Math.ceil((plate.x1 - x0) / G), H = Math.ceil((plate.z1 - z0) / G)
+  if (!(W > 0 && H > 0 && W * H < 40000)) return null
+  const bad = new Uint8Array(W * H)
+  for (const q of S0.boxes) {
+    if (!q.c || q.cy - q.ey > 1.8 || q.cy + q.ey < 0.15) continue
+    const i0 = Math.max(0, Math.floor((q.cx - q.ex - R - x0) / G)), i1 = Math.min(W - 1, Math.floor((q.cx + q.ex + R - x0) / G))
+    const j0 = Math.max(0, Math.floor((q.cz - q.ez - R - z0) / G)), j1 = Math.min(H - 1, Math.floor((q.cz + q.ez + R - z0) / G))
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) bad[j * W + i] = 1
+  }
+  const cell = p => [Math.min(W - 1, Math.max(0, Math.floor((p[0] - x0) / G))), Math.min(H - 1, Math.max(0, Math.floor((p[1] - z0) / G)))]
+  const free = (x, z) => { const i = Math.floor((x - x0) / G), j = Math.floor((z - z0) / G); return i >= 0 && j >= 0 && i < W && j < H && !bad[j * W + i] }
+  const [ai, aj] = cell(a), [bi, bj] = cell(b), N = W * H
+  if (strict && bad[bj * W + bi]) return null
+  bad[aj * W + ai] = bad[bj * W + bi] = 0
+  const g = new Float32Array(N).fill(Infinity), from = new Int32Array(N).fill(-1), done = new Uint8Array(N), open = []
+  const push = (k, f) => { open.push([f, k]); let i = open.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (open[p][0] <= open[i][0]) break; [open[p], open[i]] = [open[i], open[p]]; i = p } }
+  const pop = () => { const t = open[0], l = open.pop(); if (open.length) { open[0] = l; let i = 0; for (;;) { let m = i; const c1 = 2 * i + 1, c2 = c1 + 1
+    if (c1 < open.length && open[c1][0] < open[m][0]) m = c1; if (c2 < open.length && open[c2][0] < open[m][0]) m = c2; if (m === i) break; [open[m], open[i]] = [open[i], open[m]]; i = m } } return t }
+  const s = aj * W + ai, e = bj * W + bi, h = k => Math.hypot((k % W) - bi, ((k / W) | 0) - bj)
+  g[s] = 0; push(s, h(s))
+  while (open.length) {
+    const k = pop()[1]; if (done[k]) continue; done[k] = 1; if (k === e) break
+    const ci = k % W, cj = (k / W) | 0
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      if (!di && !dj) continue
+      const i = ci + di, j = cj + dj; if (i < 0 || j < 0 || i >= W || j >= H) continue
+      const n = j * W + i; if (bad[n] || done[n] || (di && dj && (bad[cj * W + i] || bad[j * W + ci]))) continue
+      const c = g[k] + (di && dj ? 1.4142 : 1); if (c < g[n]) { g[n] = c; from[n] = k; push(n, c + h(n)) }
+    }
+  }
+  if (!done[e]) return null
+  const cells = []; for (let k = e; k >= 0; k = from[k]) cells.push([x0 + ((k % W) + 0.5) * G, z0 + (((k / W) | 0) + 0.5) * G])
+  cells.reverse(); cells[0] = a; cells[cells.length - 1] = b
+  const clear = (p, q) => { const L = Math.hypot(q[0] - p[0], q[1] - p[1]); for (let d = 0; d <= L; d += 0.1) if (!free(p[0] + (q[0] - p[0]) * d / (L || 1), p[1] + (q[1] - p[1]) * d / (L || 1))) return false; return true }
+  const out = [cells[0]]
+  for (let i = 0; i < cells.length - 1;) { let j = cells.length - 1; while (j > i + 1 && !clear(cells[i], cells[j])) j--; out.push(cells[j]); i = j }
+  return out
+}
+function slVenue(cell, P, ci, cj) {
+  const lots = P.lots
+  for (let li = 0; li < lots.length && li < 64; li++) {
+    const lot = lots[li]
+    if (lot.venue !== 'liquor' && lot.venue !== 'conv') continue
+    let B, S0, spots
+    try {          // the building as #38's interiors have it (shared with them, once): its ground storey's spots, in world metres
+      const bid = ci + ' ' + cj + ' ' + li
+      B = faustIn.plans.get(bid); if (!B) { B = faustInterior(P, li); B.cache = new Map(); faustIn.plans.set(bid, B) }
+      S0 = inStorey(B, 0); spots = S0.spots || []
+    } catch (e) { continue }
+    const D = B.door, out = [D.out[0], D.out[2]], inn = [D.in[0], D.in[2]]
+    const ring = slNearestRing(cell.rings, out[0], out[1]); if (!ring || !ring.path.length) continue
+    // the lot's path (a closed polyline) from the point nearest the door, once round and back to it
+    const pth = ring.path, np = pth.length
+    let bi = 0, bq = null, bd = Infinity
+    for (let i = 0; i < np; i++) {
+      const a = pth[i], c = pth[(i + 1) % np], dx = c[0] - a[0], dz = c[1] - a[1], L2 = dx * dx + dz * dz || 1
+      const f = Math.max(0, Math.min(1, ((out[0] - a[0]) * dx + (out[1] - a[1]) * dz) / L2)), q = [a[0] + dx * f, a[1] + dz * f], d = Math.hypot(q[0] - out[0], q[1] - out[1])
+      if (d < bd) { bd = d; bi = i; bq = q }
+    }
+    if (bd > 5) continue
+    const lap = [bq]; for (let k = 1; k <= np; k++) lap.push(pth[(bi + k) % np]); lap.push(bq)
+    const door = bd < 0.6 ? [] : [out]          // the door's step out is on the path when it is within 0.6 m of it
+    const base = SL_VENUE_ID + (ci * 512 + cj) * 256 + li * 4, rnd = (n, k) => slRnd(base + n, k)
+    const tint = n => [0.82 + rnd(n, 5) * 0.3, 0.82 + rnd(n, 6) * 0.28, 0.82 + rnd(n, 7) * 0.26]
+    const clerk = spots.find(s => s.kind === 'clerk')
+    const cway = clerk && slVenuePath(S0, B.storeys[0].plate, [clerk.x, clerk.z], inn)
+    if (cway) {
+      // behind the counter, facing it; frightened, he runs the way clear of the fittings to the door, out of it and round the lot (the
+      // route is out and back along the same way, so either way along it leads out of the door)
+      const way = cway
+      cell.agents.push({ id: base, kind: SL_K.idle, body: slHash(base, 1) % 3, tint: tint(0), x: clerk.x, z: clerk.z, yaw: Math.atan2(clerk.face[0], clerk.face[1]),
+        clip: ['idle', 'arms_folded', 'idle', 'phone'][slHash(base, 2) % 4], ph: rnd(0, 3), venue: lot.venue,
+        home: slLoop([...way, ...door, ...lap, ...door, ...way.slice(0, -1).reverse()], STREET.walk[0], 0, null, 0) })
+    }
+    // customers: in at the door, a few seconds at a shelf by it, back out, once round the lot and in again
+    const want = [0, 1, 1, 2][slHash(base, 3) & 3], seats = spots.filter(s => s.kind === 'customer').map(s => [s.x, s.z])
+    // the kit's customer spots are few: where it has none, a clear place in the venue's own room, in reach of the door
+    const room = S0.rooms.find(q => q.kind === lot.venue)
+    for (let k = 0; room && k < 40 && seats.length < want; k++) {
+      const c = [room.x0 + 0.9 + rnd(5, 20 + k) * (room.x1 - room.x0 - 1.8), room.z0 + 0.9 + rnd(6, 20 + k) * (room.z1 - room.z0 - 1.8)]
+      if (clerk && Math.hypot(c[0] - clerk.x, c[1] - clerk.z) < 2.2 || seats.some(q => Math.hypot(q[0] - c[0], q[1] - c[1]) < 1.5)) continue
+      if (slVenuePath(S0, B.storeys[0].plate, inn, c, true)) seats.push(c)
+    }
+    for (let n = 0; n < want && n < seats.length; n++) {
+      const s = seats[n], id = base + 1 + n, way = slVenuePath(S0, B.storeys[0].plate, inn, s); if (!way) continue
+      const v = STREET.walk[0] + rnd(n + 1, 8) * (STREET.walk[1] - STREET.walk[0])
+      const stops = new Map([[door.length + way.length - 1, [4 + rnd(n + 1, 9) * 6, 1, s[0] < inn[0] ? -Math.PI / 2 : Math.PI / 2]]])
+      cell.agents.push({ id, kind: SL_K.ped, body: slHash(id, 1) % 5, tint: tint(n + 1), venue: lot.venue,
+        route: slLoop([...door, ...way, ...way.slice(0, -1).reverse(), ...door, ...lap], v, 0, stops, -rnd(n + 1, 10) * 3e5) })
+    }
+  }
 }
 function slKeep(cell) {
   const st = slState
