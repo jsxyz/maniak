@@ -32337,8 +32337,10 @@ function slHostTick() {
   // card #67: nobody stays inside a character running at them (the Maniak, another player, a freak, an enforcer): from 3.5 m/s it
   // knocks them down as a car does (the hit rules' slKnock), tested along the path since the last 20 Hz tick, feet below 1.2 m
   for (const c of who) {
-    const prev = c.slAt; c.slAt = [c.x, c.z, T]
-    if (!prev || c.dead > 0 || seatOf(c) || !(T > prev[2]) || T - prev[2] > 400 || c.y - (c.h || 0.5) - (c.r || 0.4) > 1.2) continue
+    // card #101: a warp moves no one (setCharPos's: a rescue, a respawn, /tp, a level; out of a vehicle at its door): c.warp counts
+    // them, and a tick across one is no run (2-4 m in one tick read as a 40-80 m/s runner and knocked, then killed, whoever stood there)
+    const prev = c.slAt; c.slAt = [c.x, c.z, T, c.warp || 0]
+    if (!prev || prev[3] !== (c.warp || 0) || c.dead > 0 || seatOf(c) || !(T > prev[2]) || T - prev[2] > 400 || c.y - (c.h || 0.5) - (c.r || 0.4) > 1.2) continue
     const dt = (T - prev[2]) / 1000, mx = c.x - prev[0], mz = c.z - prev[1], L = Math.hypot(mx, mz), sp = L / dt
     if (sp > 80) continue
     // below 3 m/s (the step-aside's own pace) only riders can close that fast: others are the step-aside's
