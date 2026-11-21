@@ -21253,7 +21253,7 @@ function rigMovePose(a, R, want, t) {
         }
       }
       reach('r', [lx + dx * PIPE_FIT.grip, ly + dy * PIPE_FIT.grip, lz + dz * PIPE_FIT.grip], [mx - 0.85, my, mz - 0.1])
-      if (lit > 0.01) reach('l', [lx + dx * 0.39, ly + dy * 0.39 - 0.075, lz + dz * 0.39 - 0.01], [mx + 0.85, my - 0.05, mz - 0.1])
+      if (lit > 0.01) reach('l', [lx + dx * 0.39, ly + dy * 0.39 - (0.06 + PIPE_FIT.lift + PIPE_FIT.tip * PIPE_FIT.lighter), lz + dz * 0.39 - 0.01], [mx + 0.85, my - 0.05, mz - 0.1])
     }
     keep.forEach((b, i) => b.quaternion.copy(was[i].slerp(b.quaternion, i < 3 ? raise : lit)))
   } else if (chg >= 0 && chg < 1) {
@@ -29939,9 +29939,10 @@ function makePipe() {
   const part = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m }
   part(new THREE.CylinderGeometry(0.016, 0.016, 0.22, 10), glass, 0, 0.11, 0)               // the stem, mouthpiece at the origin
   part(new THREE.CylinderGeometry(0.02, 0.012, 0.026, 10), glass, 0, 0.006, 0)               // the mouthpiece's flare
-  const bowl = part(new THREE.SphereGeometry(0.048, 14, 10), glass, 0, 0.245, 0)             // the bulb
+  const bowlGlass = glass.clone(); bowlGlass.opacity = 0.5                                       // the bulb's glass lets the ember show through
+  const bowl = part(new THREE.SphereGeometry(0.031, 14, 10), bowlGlass, 0, 0.245, 0)             // the bulb, about 5 cm in radius at the pipe's scale
   part(new THREE.SphereGeometry(0.013, 8, 6), glass, 0.028, 0.19, 0)                         // the carb on its side
-  const ember = part(new THREE.SphereGeometry(0.021, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff7a2a }), 0, 0.24, 0)
+  const ember = part(new THREE.SphereGeometry(0.016, 14, 10), new THREE.MeshBasicMaterial({ color: 0xff7a2a, toneMapped: false }), 0, 0.245, 0)
   g.userData = { ember, bowl }
   // the lighter, in the other hand: a steel body and its flame
   const lighter = new THREE.Group()
@@ -29959,7 +29960,7 @@ const pipeQ = new THREE.Quaternion(), pipeV = new THREE.Vector3(), pipeM = new T
 // how the pipe is held (third person, and rigMovePose's matching hands): the stem level, out to his left PIPE_FIT.angle from straight
 // ahead, the mouthpiece at his lips and his hand grip m along it; the bowl at mouth height and clear of his head, the lighter's
 // hand cupped under it. cap: the live puffs one smoker may keep (each burst is three), so a crowd of smokers can't flood the screen
-const PIPE_FIT = { angle: 0.7, rise: 0.04, grip: 0.075, scale: 1.6, lighter: 1.4, cap: 150, burst: 3, life: 3800 }
+const PIPE_FIT = { angle: 0.7, rise: 0.04, grip: 0.075, scale: 1.6, lighter: 1.9, lift: 0.03, tip: 0.085, cap: 150, burst: 3, life: 3800 }
 const PIPE_Y = new THREE.Vector3(0, 1, 0), pipeD = new THREE.Vector3()
 function bodyDraw(id, st, t, dt, view = null, fade = 1) {
   const a = avatars.get(id)
@@ -29998,7 +29999,7 @@ function bodyDraw(id, st, t, dt, view = null, fade = 1) {
     // the pipe's hand at his lips, its stem up and outward to his left (the bowl clear of his head, so it shows from behind); the
     // lighter's hand (his left) at the bowl, its flame up
     const ry = a.mesh.rotation.y, sc = PIPE_FIT.scale, ca = Math.cos(PIPE_FIT.angle), sa = Math.sin(PIPE_FIT.angle)
-    handAt(a, P.position); handAt(a, L.position, true)
+    handAt(a, P.position); handAt(a, L.position, true); L.position.y += PIPE_FIT.lift
     pipeD.set(-Math.sin(ry) * ca - Math.cos(ry) * sa, PIPE_FIT.rise, -Math.cos(ry) * ca + Math.sin(ry) * sa).normalize()
     P.quaternion.setFromUnitVectors(PIPE_Y, pipeD); P.scale.setScalar(sc)
     P.position.addScaledVector(pipeD, -PIPE_FIT.grip)
@@ -30010,7 +30011,7 @@ function bodyDraw(id, st, t, dt, view = null, fade = 1) {
   // the bowl, at the stem's far end
   P.updateMatrixWorld(true); L.updateMatrixWorld(true)
   bowl.set(0, 0.245, 0).applyMatrix4(P.matrixWorld)
-  lamp.copy(L.position); lamp.y += 0.07 * L.scale.x
+  lamp.copy(L.position); lamp.y += PIPE_FIT.tip * L.scale.x
   if (a.mesh.visible) {
     // the glow sprites: the flame's while it burns, the bowl's as he draws
     if (flameOn) burst('flare', lamp.x, lamp.y, lamp.z, 0, 1, 0, 0xffa24a, 0.17 * flick)
