@@ -11521,8 +11521,8 @@ function insideObject(c) {
 // than SWIM.deep he wades (the speed eases to SWIM.k as it deepens). Without #92's water every term here is a no-op.
 // Per tick it leaves: c.swK (speed factor), c.swFx, c.swFz (the current), c.swVy (his vertical speed), c.swWx, c.swWz (a bot's way to the bank)
 const SWIM = { deep: 1.4, wet: 0.2, float: 0.2, under: 0.15, k: 0.5, drag: 6, spring: 6, riseV: 3.2, diveV: 3.2, kickV: 6, steerV: 3, lift: 0.8, pitchDive: -0.45,
-  climbV: 5.5, reach: 2.6, climbUp: 1.8, rise: { stairs: 6, low: 1.8, high: 4.2, ladder: 14 }, slow: 1.4 }          // rise: the most a bank may stand over the surface for him to haul himself up it
-const swimOut = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0], bank: null }
+  climbV: 5.5, reach: 1.5, climbUp: 1.8, rise: { stairs: 6, low: 4.2, high: 4.2, ladder: 14 }, slow: 1.4 }          // rise: the most a bank may stand over the surface for him to haul himself up it
+const swimOut = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0], bank: null }, swimEdge = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0] }
 const waterOf = (x, z) => GAME.faustland.water?.at?.(x, z, swimOut) ?? null
 function swimTick(c, inp, wx, wz, dt, J) {
   const was = c.water | 0
@@ -11537,9 +11537,13 @@ function swimTick(c, inp, wx, wz, dt, J) {
   if (c.bot && B && depth > SWIM.wet && D >= SWIM.deep) { const dx = B.x - c.x, dz = B.z - c.z, d = Math.hypot(dx, dz) || 1; wx = c.swWx = dx / d; wz = c.swWz = dz / d }
   const f = Math.hypot(wx, wz)
   // climbing out: pressed at a bank he can get up (a latch: once he is up the wall he keeps going till his feet are on top)
-  if (B && feet < B.y - 0.02 && B.y - s <= (SWIM.rise[B.bank] ?? SWIM.climbUp)) {
-    const dx = B.x - c.x, dz = B.z - c.z, d = Math.hypot(dx, dz)
-    if (d < SWIM.reach && f > 0.3 && (wx * dx + wz * dz) / (f * (d || 1)) > 0.5) { c.water = 1; c.swVy = SWIM.climbV; return true }
+  if (B && f > 0.3 && feet < B.y - 0.02 && B.y - s <= (SWIM.rise[B.bank] ?? SWIM.climbUp)) {
+    // the wall is where the water ends along the way out (B's own point can lie metres inland of it): pressing that way, close to it
+    const nl = Math.hypot(B.nx, B.nz) || 1, nx = B.nx / nl, nz = B.nz / nl
+    if ((wx * nx + wz * nz) / f > 0.5) {
+      let e = -1; for (let t = 0.25; t <= 12; t += 0.25) if (!GAME.faustland.water.at(c.x + nx * t, c.z + nz * t, swimEdge)) { e = t; break }
+      if (e >= 0 && e < SWIM.reach) { c.water = 1; c.swVy = SWIM.climbV; return true }
+    }
   }
   if (!(depth > SWIM.wet)) return false
   if (D < SWIM.deep) { c.swK = 1 - (1 - SWIM.k) * clamp((D - 0.3) / (SWIM.deep - 0.3), 0, 1); return false }      // wading
