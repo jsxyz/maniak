@@ -1249,6 +1249,11 @@ const OBJECTS = [
 // card #84: a manhole's cover, once ripped off (a 16-sided slab, 92 cm across, 7 cm thick); its look is PROP_MODELS' 'Manhole cover'
 OBJECTS.push({ name: 'Manhole cover', shape: 'hull', points: Array.from({ length: 16 }, (_, i) => [Math.cos(i / 16 * Math.PI * 2) * 0.46, 0, Math.sin(i / 16 * Math.PI * 2) * 0.46]).flatMap(p => [[p[0], -0.035, p[2]], [p[0], 0.035, p[2]]]),
   mass: 1.6, bounce: 0.2, friction: 0.6, damp: [0.08, 0.25], hit: 1, color: 0x2d3034, dmg: 45 })
+// card #81: a street prop knocked off or torn off its post (prop: its #69 kind), held, thrown and punted as any object is
+OBJECTS.push(
+  { name: 'Hydrant', half: [0.19, 0.4, 0.19], mass: 1.6, bounce: 0.2, friction: 0.6, damp: [0.1, 0.3], hit: 1, color: 0xc0392b, stripe: 0x5a2420, prop: 'hydrant', dmg: 24 },
+  { name: 'Mailbox', half: [0.27, 0.6, 0.25], mass: 1.8, bounce: 0.15, friction: 0.6, damp: [0.1, 0.3], hit: 1, color: 0x2f5a9a, stripe: 0x1d3a66, prop: 'mailbox', dmg: 26 },
+  { name: 'Parking meter', half: [0.1, 0.65, 0.1], mass: 0.8, bounce: 0.2, friction: 0.5, damp: [0.1, 0.3], hit: 1, color: 0x6c747d, stripe: 0x4b5258, prop: 'meter', dmg: 20 })
 // rider centre over its cushion, × (h + r)
 const SIT_HIP = 0.29
 const seatFit = (s, C) => { const M = MODELS[C.model || 'man']
@@ -3277,7 +3282,7 @@ function faustTeleFrame(g, s) {
 function faustPropsDraw(g, P) {
   const posters = faustPosters(P)
   if (g.room !== undefined && g.room < (P.props?.length || 0) * 400 + posters.length * 300) return
-  for (const f of P.props || []) faustFeatDraw(g, f)
+  P.propV = (P.props || []).map(f => { const a = Math.round(g.count * 3); faustFeatDraw(g, f); return [a, Math.round(g.count * 3)] })      // card #81: each one's vertices in the batch
   for (const f of posters) faustFeatDraw(g, f)
 }
 // a local (lx, lz) in the world: the feature's centre and quarter turns
@@ -9127,7 +9132,7 @@ function* faustVisualSteps(c) {
     // Building masses cast the local shadow; small trim receives it without duplicating its many triangles.
     const mesh = new THREE.Mesh(data.geometry(), mat); mesh.castShadow = data === facade; mesh.receiveShadow = true; root.add(mesh)
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }      // card #46: each box's extents, for its windows' bays
-    else dsLampLook(c, mesh.geometry)                    // card #46: its broken lamp heads dark
+    else { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry) }                    // card #46: its broken lamp heads dark; card #81: and its broken props gone
   }
   { const feat = faustFeatMesh(P); if (feat) root.add(feat) }      // card #69
   if (faustState.poolMaterial) for (const q of faustLampOffsets(c.plan.diagonal)) {
@@ -16350,7 +16355,7 @@ function deliver(c, P, gunId, aimed, onKill) {
     }
     if (!car && LV.faust && isHost) for (const du of [-0.5, 0, 0.5]) {      // card #77: the swing's glass (a pane, a lamp, a post), as a punch's ray does
       const [qx, qy, qz] = aimDir(aimAngles(c)[0] + du, aimAngles(c)[1]), t = wallAt(ox, oy, oz, qx, qy, qz, pRange)
-      if (t < pRange - 1e-3) dsShot(ox, oy, oz, qx, qy, qz, t, pRange, P)
+      dsShot(ox, oy, oz, qx, qy, qz, t, pRange, P)      // card #81: also where the swing met no wall, a prop low on its way
     }
     const a = aimAngles(c)[0], y = car ? car.p[1] : eyeOf(c)      // card #57: drawn where it met the car
     for (let j = 0; j < 8; j++) { const u = a - 1.2 + j * 0.3, v = u + 0.3
@@ -23772,6 +23777,7 @@ function objHullPoints(K) {
   return [...seen.values()]
 }
 function objLook(K) {
+  if (K.prop) return propObjLook(K)      // card #81: a loose street prop, its own shape
   const cv = document.createElement('canvas'), g = cv.getContext('2d')
   cv.width = cv.height = 64
   g.fillStyle = css(K.color); g.fillRect(0, 0, 64, 64); g.fillStyle = css(K.stripe)
@@ -34195,19 +34201,26 @@ function dsPostBox(P, s) { return s.own ? P.boxes.find(b => dsIsPostBox(b, [s.x 
 // a cell's boxes less its felled avenue posts (its physics is built from these: faustPhysics)
 function dsStanding(P) {
   if (!dsState || !dsHasLamps()) return P.boxes
-  const F = faustState, feet = []
-  for (const r of dsState.chunks.get(P.ci * F.S + P.cj)?.recs.values() || []) if (r.kind === DS_KIND.post && r.p.box) feet.push(r.p.foot)
-  return feet.length ? P.boxes.filter(b => !b.slim || !feet.some(f => dsIsPostBox(b, f))) : P.boxes
+  const F = faustState, feet = [], props = []
+  for (const r of dsState.chunks.get(P.ci * F.S + P.cj)?.recs.values() || []) {
+    if (r.kind === DS_KIND.post && r.p.box) feet.push(r.p.foot)
+    else if (r.kind === DS_PROP) props.push(...dsPropSites(P)[r.p.i]?.boxes || [])      // card #81: its broken props' colliders
+  }
+  return feet.length || props.length ? P.boxes.filter(b => !b.slim || !feet.some(f => dsIsPostBox(b, f)) && !props.some(q => dsSameBox(b, q))) : P.boxes
 }
 // a felled avenue post leaves the cell's physics on this client: its slim box out of the compound (rebuilt from the rest)
 // and out of the static ray mesh (rebuilt), and out of BOXES
 function dsPostPhysics(rec) {
   if (!rec.p.box || !world) return
+  dsDropSlim(b => dsIsPostBox(b, rec.p.foot))
+}
+// the live collider boxes `is` picks leave their cell's compound, the ray mesh and BOXES (a post's; card #81: a prop's)
+function dsDropSlim(is) {
   // the live chunk that holds it, found among the statics by place: a crater's cut (craterTake) replaces a cell's chunk with
   // a new one, so the cell's own pointer to it may be the old, dropped one
-  const ph = statics.find(s => s.src.some(b => dsIsPostBox(b, rec.p.foot))), box = ph?.src.find(b => dsIsPostBox(b, rec.p.foot))
-  if (!box || !ph) return
-  const src = ph.src.filter(b => b !== box)
+  const ph = statics.find(s => s.src.some(is)), gone = ph?.src.filter(is) || []
+  if (!gone.length || !ph) return
+  const src = ph.src.filter(b => !is(b))
   if (src.length === ph.src.length) return
   const thin = src.filter(b => ph.slim?.has(b)), old = ph.bodies.find(B => B.kids)
   if (old) {
@@ -34221,7 +34234,7 @@ function dsPostPhysics(rec) {
   }
   if (ph.ray) { dropBody(ph.ray); A.destroy(ph.ray.mesh) }
   ph.ray = rayMesh(src, [], undefined); ph.src = src
-  const i = BOXES.indexOf(box); if (i >= 0) BOXES.splice(i, 1)
+  for (const box of gone) { const i = BOXES.indexOf(box); if (i >= 0) BOXES.splice(i, 1) }
 }
 // the unbroken lamp heads a segment a..b passes within r of, nearest first: [{ key, t, at }]
 function dsLampsAlong(a, b, r = 0) {
@@ -34593,6 +34606,7 @@ function dsObjectsTick(dt) {
     const a = [o.x, o.y, o.z], b = [o.x + vx * step, o.y + vy * step, o.z + vz * step], r = o.V ? 1 : o.R || 0.5
     for (const q of dsLampsAlong(a, b, r)) dsBreak(DS_KIND.lamp, q.key, 2 | 4 << 3 | 4 << 6)
     for (const q of dsSignalsAlong(a, b, r)) dsBreak(DS_KIND.signal, q.key, 2 | 4 << 3 | 4 << 6)
+    if (o.y - r < 2) for (const q of dsPropsAlong(a, b, r, o.V ? 3 : 2).slice(0, 4)) dsPropKnock(q, o.V ? 3 : 2, vx, vz)      // card #81: the props on its way
     if (o.V) continue
     if (o.y - r < 9) for (const p of dsPostsOnPath(o.x, o.z, b[0], b[2], r)) dsFell(p, vx, vz, 2, o)
     if (o.y - r < DS_SIG.top) for (const p of dsPolesOnPath(o.x, o.z, b[0], b[2], r)) dsFellSignal(p, vx, vz, 2, o)
@@ -34615,6 +34629,10 @@ function dsShot(ox, oy, oz, dx, dy, dz, t, reach, G) {
     const y = oy + dy * t * p.f
     if (y > 0 && y < DS_SIG.top) dsFellSignal(p, dx, dz, 2)
   }
+  // card #81: the prop it stops on (a blow with fists low at his waist, a shot as it flew)
+  const power = dsGunPower(G), low = G?.melee ? [[ox, Math.min(oy, 0.9), oz], [ox + dx * reach, Math.min(oy, 0.9), oz + dz * reach]] : [a, b]
+  const prop = dsPropsAlong(low[0], low[1], 0.12, power)[0]
+  if (prop) dsPropKnock(prop, power, dx, dz)
   return t < reach - 1e-3 ? dsWallHit(ox, oy, oz, dx, dy, dz, t, G) : !!(head || sig)
 }
 // a ray that stopped on the city at distance t (a punch, a shot): the pane it met breaks
@@ -34636,6 +34654,7 @@ function dsBlast(x, y, z, r, power = 3) {
   }
   for (const key of dsLampsNear(x, y, z, r)) if (dsBreak(DS_KIND.lamp, key, (power & 3) | 4 << 3 | 4 << 6)) n++
   if (y < 9 + r) for (const p of dsPostsNear(x, z, r * 0.6)) if (dsFell(p, p.x - x || 1e-3, p.z - z, power)) n++
+  if (y < 3 + r) for (const q of dsPropsNearPt(x, z, r * 0.8, power)) if (dsPropKnock(q, power, q.x - x || 1e-3, q.z - z)) n++      // card #81
   for (const s of dsSignalsNear(x, z, r)) {
     const ux = s.x - x, uy = DS_SIG.y - y, uz = s.z - z, d = Math.hypot(ux, uy, uz)
     if (!s.out && d < r && (d < 0.3 || staticRay(x, y, z, ux / d, uy / d, uz / d, d) >= d - 0.4) && dsBreak(DS_KIND.signal, s.key, (power & 3) | 4 << 3 | 4 << 6)) n++
@@ -34647,6 +34666,7 @@ function dsBlast(x, y, z, r, power = 3) {
 function dsBlockHit(point, n) {
   if (!isHost || !LV.faust || !dsCheck()) return false
   const p = dsPaneAt(point[0], point[1], point[2], n[0], n[2])
+  if (point[1] < 2) for (const q of dsPropsNearPt(point[0], point[2], 0.6, 2)) dsPropKnock(q, 2, -n[0] || 1e-3, -n[2])      // card #81: a prop it lodges against
   return !!p && dsBreak(DS_KIND.pane, p.key, dsInfo(p, 2, p.inside ? 1 : 0, p.along, point[1]))
 }
 // before the step: each body's velocity going into it; after: one at speed into a facade breaks the panes it meets (his
@@ -34675,6 +34695,7 @@ function dsBodiesAfter(all, dt) {
     const ux = v[0] / speed, uy = v[1] / speed, uz = v[2] / speed, reach = c.r + speed * dt * 1.5 + 0.3
     for (const h of dsLampsAlong([c.x - v[0] * dt, c.y - v[1] * dt, c.z - v[2] * dt], [c.x, c.y, c.z], c.r + c.h)) dsBreak(DS_KIND.lamp, h.key, 2 | 4 << 3 | 4 << 6)
     for (const h of dsSignalsAlong([c.x - v[0] * dt, c.y - v[1] * dt, c.z - v[2] * dt], [c.x, c.y, c.z], c.r + c.h)) dsBreak(DS_KIND.signal, h.key, 2 | 4 << 3 | 4 << 6)
+    for (const q of dsPropsAlong([c.x - v[0] * dt, c.y - v[1] * dt, c.z - v[2] * dt], [c.x, c.y, c.z], c.r + 0.1, 2).slice(0, 3)) dsPropKnock(q, 2, v[0], v[2])      // card #81: his run through a hydrant
     for (const dy of [-c.h, 0, c.h]) {
       const h = [], y = c.y + dy
       if (staticRay(c.x, y, c.z, ux, uy, uz, reach, h) >= reach || h.length < 6) continue
@@ -35231,6 +35252,7 @@ function dsFrame(t, dt) {
   const t0 = performance.now(), st = dsState
   if (st.view && camera) { camera.position.set(...st.view.p); camera.lookAt(...st.view.t); camera.updateMatrixWorld() }   // debug: a free camera (view)
   if (!dsFx) dsFxKit()          // made, and its shader compiled, before anything breaks
+  if (!dsGey) { try { dsGeyKit() } catch (e) { console.warn('hydrant geyser kit', e) } }      // card #81: the same, for a hydrant's spray
   if (isHost) { dsPersistStart(); dsTilesTick(); if (dsCraterOn() && dsPersist.key && craterV !== dsPersist.cv) { dsPersist.cv = craterV; dsPersist.manifestDirty = true; dsPersistLater() } }
   dsHeld()
   dsTakeDue()
@@ -35247,6 +35269,7 @@ function dsFrame(t, dt) {
   dsNotify()
   dsFallenStep()
   dsFxStep(Math.min(0.05, Math.max(0, dt)))
+  dsPropJetStep(Math.min(0.05, Math.max(0, dt)))      // card #81: a broken hydrant's geyser
   st.stats.frameMs = +(performance.now() - t0).toFixed(3)
 }
 function dsFrameSafe(t, dt) { try { dsFrame(t, dt) } catch (e) { frameFailed('destruction', e) } }
@@ -35745,6 +35768,308 @@ GAME.destruction = {
   kind: (id, def) => dsKindRegister(id, def),
   breakKind: (kind, key, info = 0) => dsKinds.has(kind) && dsBreak(kind, key, info),
 }
+
+// ---- street props (card #81): #69's hydrants, mailboxes, parking meters and newsstands (a cell's P.props), through the kind registry
+// (#55's GAME.destruction.kind): a prop is its index in its cell's P.props, its key 20·2^32 + chunk·1024 + index. Broken or ripped off, it
+// is gone from the cell's batch (the vertices faustPropsDraw noted, collapsed under the street) and from the cell's physics (its slim
+// colliders); the host puts its own row (OBJECTS: Hydrant, Mailbox, Parking meter) where it stood, flying off the blow, for the hands
+// to grab, throw and punt (#55); a hydrant spouts. info: the blow's power (bits 0-1) and the way it went (64 ways, bits 3-8).
+// The blow a prop takes: a punch or a shot, a haymaker or the block, a blast or a vehicle
+const DS_PROP = 20
+const DS_PROP_HARD = { meter: 1, bin: 1, crate: 1, hydrant: 2, mailbox: 2, drum: 2, news: 3, bollard: 3, bust: 3, clockpost: 3, busstop: 3 }
+const dsPropKey = (chunk, i) => DS_PROP * 4294967296 + chunk * 1024 + i
+const dsPropCache = new WeakMap()
+// a plan's props, worked out once: each { f, i, boxes (its solid slim colliders), top, hard }
+function dsPropSites(P) {
+  let L = dsPropCache.get(P)
+  if (!L) dsPropCache.set(P, L = (P.props || []).map((f, i) => { const boxes = faustFeatBoxes([f]); return { f, i, boxes, top: boxes.reduce((m, b) => Math.max(m, b.cy + b.ey), 0.4), hard: DS_PROP_HARD[f.k] ?? 3 } }))
+  return L
+}
+// the kind's record: a pure function of the key and the plan (every client, and a save's load)
+function dsPropRecord(key) {
+  const F = faustState, local = key - DS_PROP * 4294967296, chunk = Math.floor(local / 1024), i = local % 1024
+  if (!F || !(local >= 0) || chunk >= F.S * F.S) return null
+  const ci = Math.floor(chunk / F.S), cj = chunk % F.S, s = dsPropSites(dsPlan(ci, cj))[i]
+  return s ? { chunk, ci, cj, i, s, f: s.f, at: [s.f.x, s.top / 2, s.f.z] } : null
+}
+const dsSameBox = (a, b) => a.slim && Math.abs(a.cx - b.cx) < 1e-6 && Math.abs(a.cy - b.cy) < 1e-6 && Math.abs(a.cz - b.cz) < 1e-6 && Math.abs(a.ex - b.ex) < 1e-6 && Math.abs(a.ey - b.ey) < 1e-6 && Math.abs(a.ez - b.ez) < 1e-6
+// a cell's broken props leave its drawn batch, all but a stub at the foot (their vertices, noted when faustPropsDraw drew them, pressed
+// down to the stub's height: the break point stays on the kerb; a newsstand goes whole, under the street)
+const DS_PROP_STUB = { hydrant: 0.28, mailbox: 0.3, meter: 0.25 }
+function dsPropsLook(c, g) {
+  const st = dsState, F = faustState, V = c.plan?.propV
+  if (!st || !F || !V || !g?.attributes?.position) return
+  const pos = g.attributes.position, A = pos.array
+  let lo = Infinity, hi = -1
+  for (const r of st.chunks.get(c.ci * F.S + c.cj)?.recs.values() || []) {
+    if (r.kind !== DS_PROP) continue
+    const v = V[r.p.i], stub = DS_PROP_STUB[r.p.f.k]
+    if (!v) continue
+    for (let k = v[0]; k < v[1]; k++) { if (stub === undefined) { A[k * 3] = r.p.f.x; A[k * 3 + 1] = -50; A[k * 3 + 2] = r.p.f.z } else if (A[k * 3 + 1] > stub) A[k * 3 + 1] = stub }
+    lo = Math.min(lo, v[0]); hi = Math.max(hi, v[1] - 1)
+  }
+  if (hi < 0) return
+  pos.addUpdateRange(lo * 3, (hi - lo + 1) * 3); pos.needsUpdate = true
+}
+function dsPropApply(rec) {
+  const F = faustState, c = F.chunks.get(faustKey(rec.p.ci, rec.p.cj)), mesh = c?.visual?.children.find(m => m.isMesh && m.material === F.materials?.stone)
+  if (mesh) dsPropsLook(c, mesh.geometry)
+  if (world) dsDropSlim(b => rec.p.s.boxes.some(q => dsSameBox(b, q)))
+}
+// a guest's set dropped it: its cell is drawn again from its plan
+function dsPropUndo(rec) { const c = faustState.chunks.get(faustKey(rec.p.ci, rec.p.cj)); if (c?.visual) dsRelight(c) }
+// a new break where it is drawn: chips and dust, the noise, and a hydrant's geyser
+function dsPropFresh(rec) {
+  const f = rec.p.f, [x, y, z] = rec.p.at, w = (rec.info >> 3 & 63) / 64 * Math.PI * 2, dx = Math.cos(w), dz = Math.sin(w)
+  try {
+    for (let k = 0; k < 3; k++) burst('chip', x, y, z, dx, 0.8, dz, 0x9a9488, 0.8)
+    burst('dust', x, 0.2, z, 0, 1, 0, 0xc9c0ae, 1)
+    sfxPlay('Door rip', { x, y, z }, 'world', 0.8)
+  } catch (e) {}
+  if (f.k === 'hydrant') dsPropJet(f.x, f.z, rec.key)
+}
+// ---- a broken hydrant's geyser: a column that rises to about 4.6 m in about 0.3 s, blooms at the top into a crown, and falls back all round
+// in an umbrella of streaked spray, with a mist at the crown and a splash ring at the foot, held `hold` s and tapering over `taper`; and a
+// dark wet patch spreading on the pavement and drying slowly. The column is a tube (thick at its foot, wobbling, a flared ragged crown, its
+// ripples travelling up); the spray is soft-edged billboards stretched along their velocity (one instanced mesh); the mist is a second one
+// of a few big, very faint ones; a few opaque hard-edged discs (Ink only) carry Ink's dark rim. Soft things write no depth, so Ink's
+// outline pass leaves them white; the column and the discs are opaque in Ink, so it strokes them. Two small programs (an unlit textured
+// quad, and its alpha-tested twin) are compiled when the destruction's frame first runs, before anything breaks. Stepped by the frame's own time
+const DS_GEY = { cap: { low: 500, medium: 900, high: 1400 }, mist: 70, hold: 3.5, taper: 3, height: 4.6, rise: 0.09, g: 9.8, floor: 0.06, wetLife: 36, wobble: 0.13 }
+let dsGey = null
+const dsJets = []
+function dsSoftTex(hard) {
+  const c = document.createElement('canvas'); c.width = c.height = 64
+  const g = c.getContext('2d')
+  if (hard) { g.fillStyle = '#fff'; g.beginPath(); g.arc(32, 32, 30, 0, 6.2832); g.fill() }
+  else { const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.45, 'rgba(255,255,255,0.55)'); r.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = r; g.fillRect(0, 0, 64, 64) }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
+function dsGeyKit() {
+  if (dsGey) return dsGey
+  if (!scene || serving || renderHeadless) return null
+  const cap = DS_GEY.cap[settings.quality] || DS_GEY.cap.medium, geo = new THREE.PlaneGeometry(1, 1), soft = dsSoftTex(false), hard = dsSoftTex(true)
+  const mk = (n, mat, name) => {
+    const m = new THREE.InstancedMesh(geo, mat, n)
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.frustumCulled = false; m.count = 0; m.name = name; m.renderOrder = 3
+    scene.add(m)
+    if (typeof inkPrepare === 'function') inkPrepare(m)
+    try { m.count = 1; if (camera) renderer?.compileAsync?.(m, camera, scene)?.then?.(() => {}, () => {}) } catch (e) {} finally { m.count = 0 }
+    return m
+  }
+  const spray = mk(cap, new THREE.MeshBasicMaterial({ map: soft, color: 0xd6ebff, transparent: true, opacity: 0.85, depthWrite: false }), 'hydrant-spray')
+  const mist = mk(DS_GEY.mist, new THREE.MeshBasicMaterial({ map: soft, color: 0xe2f1ff, transparent: true, opacity: 0.16, depthWrite: false }), 'hydrant-mist')
+  const big = mk(Math.ceil(cap / 6), new THREE.MeshBasicMaterial({ map: hard, color: 0xeef7ff, alphaTest: 0.5 }), 'hydrant-rim')
+  return dsGey = { mesh: spray, mist, big, cap, live: 0, S: new Float32Array(cap * 9), mlive: 0, Mi: new Float32Array(DS_GEY.mist * 10), dummy: new THREE.Object3D(), q: new THREE.Quaternion(), qz: new THREE.Quaternion(), z: new THREE.Vector3(0, 0, 1), rate: cap / 1.6 }
+}
+function dsWetMesh(x, z) {
+  const m = new THREE.Mesh(dsWetMesh.geo ||= new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x06080b, roughness: 0.12, metalness: 0, transparent: true, opacity: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }))
+  m.position.set(x, 0.065, z); m.scale.set(0.18, 1, 0.18); m.renderOrder = 1; m.name = 'hydrant-wet'
+  scene.add(m)
+  if (typeof inkPrepare === 'function') inkPrepare(m)
+  return m
+}
+// the column: a tube (10 sides, 8 rings) from the stub up; its vertices are set each frame from its height, the wobble, the ripples and the crown
+function dsCoreMesh(x, z) {
+  const g = new THREE.CylinderGeometry(1, 1, 1, 10, 8, true).translate(0, 0.5, 0), base = g.attributes.position.array.slice()
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xd6ecff, roughness: 0.2, metalness: 0, side: THREE.DoubleSide, emissive: 0x2a4c70, transparent: true, opacity: 0.6, depthWrite: false }))
+  m.position.set(x, 0.28, z); m.frustumCulled = false; m.renderOrder = 2; m.name = 'hydrant-core'; m.userData.base = base
+  scene.add(m)
+  if (typeof inkPrepare === 'function') inkPrepare(m)
+  return m
+}
+function dsCoreShape(m, h, age) {
+  const P = m.geometry.attributes.position, A = P.array, B = m.userData.base
+  for (let i = 0; i < P.count; i++) {
+    const u = B[i * 3 + 1], bx = B[i * 3], bz = B[i * 3 + 2], th = Math.atan2(bz, bx), w = DS_GEY.wobble * u * u
+    const crown = Math.max(0, (u - 0.8) / 0.2), r = 0.15 + 0.1 * u + 0.018 * Math.sin(age * 21 + u * 9) + 0.025 * Math.sin(th * 5 + age * 3 + h * u * 6 - age * 24) + crown * (0.28 + 0.1 * Math.sin(age * 31 + i * 2.3))
+    A[i * 3] = bx * r + Math.sin(age * 13 + u * 6) * w; A[i * 3 + 1] = u * h + crown * 0.14 * Math.sin(age * 27 + i * 1.7); A[i * 3 + 2] = bz * r + Math.cos(age * 11 + u * 5 + 1) * w
+  }
+  P.needsUpdate = true; m.geometry.computeBoundingSphere()
+}
+// a drop: most from the crown, thrown out and up a little, to arc down in an umbrella 1.5 to 2.5 m round; some from the foot, rising along the column
+function dsJetDrop(J, K, s, top, crown) {
+  const r = J.rng, o = K.live++ * 9, a = r() * 6.2832, S = K.S
+  if (crown) {
+    const sp = (1.3 + 1.3 * r()) * Math.sqrt(s), q = r() * 0.25
+    S[o] = J.x + Math.cos(a) * q; S[o + 1] = 0.28 + top * (0.9 + 0.1 * r()); S[o + 2] = J.z + Math.sin(a) * q
+    S[o + 3] = Math.cos(a) * sp; S[o + 4] = 0.6 + 1.8 * r(); S[o + 5] = Math.sin(a) * sp
+  } else {
+    const sp = (0.05 + 0.35 * r()) * (0.5 + 0.5 * s), q = 0.04 + r() * 0.08
+    S[o] = J.x + Math.cos(a) * q; S[o + 1] = 0.3; S[o + 2] = J.z + Math.sin(a) * q
+    S[o + 3] = Math.cos(a) * sp; S[o + 4] = Math.sqrt(2 * DS_GEY.g * Math.max(0.2, top)) * (0.85 + 0.2 * r()); S[o + 5] = Math.sin(a) * sp
+  }
+  S[o + 6] = 0; S[o + 7] = 3; S[o + 8] = 0.05 + 0.07 * r()
+}
+// a mist puff: at the crown (kind 0) or on the ground where the spray lands (kind 1)
+function dsJetMist(J, K, kind, x, y, z) {
+  if (K.mlive >= DS_GEY.mist) return
+  const r = J.rng, o = K.mlive++ * 10, a = r() * 6.2832
+  K.Mi[o] = x; K.Mi[o + 1] = y; K.Mi[o + 2] = z
+  K.Mi[o + 3] = Math.cos(a) * (kind ? 0.25 : 0.5); K.Mi[o + 4] = kind ? 0.3 : 0.45; K.Mi[o + 5] = Math.sin(a) * (kind ? 0.25 : 0.5)
+  K.Mi[o + 6] = 0; K.Mi[o + 7] = kind ? 1.1 : 1.5; K.Mi[o + 8] = kind ? 0.6 : 0.9; K.Mi[o + 9] = kind ? 1.4 : 2.0
+}
+function dsPropJet(x, z, seed) {
+  if (!scene || serving || renderHeadless || !dsGeyKit()) return
+  if (dsJets.length >= 6) dsJetEnd(dsJets.shift())
+  dsJets.push({ x, z, age: 0, acc: 0, macc: 0, rng: genRng(dsHash(seed >>> 0)), wet: dsWetMesh(x, z), core: dsCoreMesh(x, z) })
+}
+function dsJetEnd(J) { scene.remove(J.wet); J.wet.material.dispose(); scene.remove(J.core); J.core.geometry.dispose(); J.core.material.dispose() }
+// the geyser and its patch advance dt s (the frame's own step)
+function dsPropJetStep(dt) {
+  const K = dsGey
+  if (!K || !dsJets.length && !K.live && !K.mlive || !camera) return
+  const S = K.S, M = K.dummy, E = camera.matrixWorld.elements, ink = typeof activeLook !== 'undefined' && activeLook === 'ink'
+  for (let i = dsJets.length; i--;) {
+    const J = dsJets[i]
+    J.age += dt
+    const s = J.age < DS_GEY.hold ? 1 : Math.max(0, 1 - (J.age - DS_GEY.hold) / DS_GEY.taper), h = DS_GEY.height * Math.pow(s, 0.6) * (1 - Math.exp(-J.age / DS_GEY.rise))
+    if (s > 0) {
+      for (J.acc += K.rate * s * dt; J.acc >= 1; J.acc--) {
+        if (K.live >= K.cap) { J.acc = 0; break }
+        dsJetDrop(J, K, s, h, h > 1 && J.rng() < 0.85)
+      }
+      for (J.macc += 30 * s * dt; J.macc >= 1; J.macc--) dsJetMist(J, K, 0, J.x + (J.rng() - 0.5) * 0.4, 0.28 + h * 0.95, J.z + (J.rng() - 0.5) * 0.4)
+    }
+    const c = J.core
+    c.visible = s > 0 && h > 0.05
+    if (c.visible) { dsCoreShape(c, h, J.age); c.material.transparent = !ink; c.material.opacity = ink ? 1 : 0.6; c.material.depthWrite = ink }
+    const w = J.wet
+    w.scale.set(0.18 + 1.45 * (1 - Math.exp(-J.age / 2.4)), 1, 0.18 + 1.45 * (1 - Math.exp(-J.age / 2.4)))
+    w.material.opacity = 0.55 * Math.min(1, J.age / 0.5) * (J.age > 26 ? Math.max(0, 1 - (J.age - 26) / 10) : 1)
+    if (J.age > DS_GEY.wetLife) { dsJetEnd(J); dsJets.splice(i, 1) }
+  }
+  // the spray: each drop a camera-facing quad stretched along its velocity as the camera sees it (its screen heading)
+  let ns = 0, nb = 0
+  for (let d = 0; d < K.live; d++) {
+    const o = d * 9
+    S[o + 6] += dt; S[o + 4] -= DS_GEY.g * dt
+    S[o] += S[o + 3] * dt; S[o + 1] += S[o + 4] * dt; S[o + 2] += S[o + 5] * dt
+    if (S[o + 1] < DS_GEY.floor || S[o + 6] > S[o + 7]) {
+      if (S[o + 1] < DS_GEY.floor && S[o + 3] * S[o + 3] + S[o + 5] * S[o + 5] > 0.8 && dsJets[0] && dsJets[0].rng() < 0.12) dsJetMist(dsJets[0], K, 1, S[o], 0.12, S[o + 2])
+      const last = --K.live; if (d !== last) S.copyWithin(o, last * 9, last * 9 + 9); d--; continue
+    }
+    const vx = S[o + 3], vy = S[o + 4], vz = S[o + 5], k = S[o + 8], sp = Math.hypot(vx, vy, vz)
+    const ang = Math.atan2(vx * E[4] + vy * E[5] + vz * E[6], vx * E[0] + vy * E[1] + vz * E[2])
+    K.qz.setFromAxisAngle(K.z, ang); K.q.copy(camera.quaternion).multiply(K.qz)
+    M.position.set(S[o], S[o + 1], S[o + 2]); M.quaternion.copy(K.q); M.scale.set(k * (1 + 0.45 * sp), k, 1); M.updateMatrix()
+    if (ink && k > 0.085 && nb < K.big.instanceMatrix.count) K.big.setMatrixAt(nb++, M.matrix); else K.mesh.setMatrixAt(ns++, M.matrix)
+  }
+  K.mesh.count = ns; K.big.count = nb; K.mesh.instanceMatrix.needsUpdate = true; K.big.instanceMatrix.needsUpdate = true; K.big.visible = ink
+  // the mist: big faint puffs that swell and drift, shrinking away at the end
+  let nm = 0
+  for (let d = 0; d < K.mlive; d++) {
+    const o = d * 10, Mi = K.Mi
+    Mi[o + 6] += dt
+    if (Mi[o + 6] > Mi[o + 7]) { const last = --K.mlive; if (d !== last) Mi.copyWithin(o, last * 10, last * 10 + 10); d--; continue }
+    Mi[o] += Mi[o + 3] * dt; Mi[o + 1] += Mi[o + 4] * dt; Mi[o + 2] += Mi[o + 5] * dt
+    const u = Mi[o + 6] / Mi[o + 7], size = (Mi[o + 8] + (Mi[o + 9] - Mi[o + 8]) * u) * Math.min(1, (1 - u) / 0.3)
+    M.position.set(Mi[o], Mi[o + 1], Mi[o + 2]); M.quaternion.copy(camera.quaternion); M.scale.set(size, size, 1); M.updateMatrix()
+    K.mist.setMatrixAt(nm++, M.matrix)
+  }
+  K.mist.count = nm; K.mist.instanceMatrix.needsUpdate = true
+}
+// a loose prop's look: its own shape (not a crate), one colour: the hydrant's body, domed cap and nozzles, the mailbox's box and lid,
+// the meter's pole and head, merged into one geometry for the row's instanced mesh
+function propObjLook(K) {
+  const T = THREE, parts = [], add = (geo, x, y, z) => { geo.translate(x, y, z); parts.push(geo.index ? geo.toNonIndexed() : geo) }
+  if (K.prop === 'hydrant') {
+    add(new T.LatheGeometry([[0.001, -0.4], [0.19, -0.4], [0.19, -0.2], [0.165, -0.2], [0.165, 0.3], [0.21, 0.3], [0.001, 0.42]].map(([r, y]) => new T.Vector2(r, y)), 12), 0, 0, 0)
+    add(new T.CylinderGeometry(0.06, 0.06, 0.62, 8).rotateZ(Math.PI / 2), 0, 0.05, 0)
+    add(new T.CylinderGeometry(0.075, 0.075, 0.12, 8).rotateX(Math.PI / 2), 0, 0.05, 0.19)
+  } else if (K.prop === 'mailbox') {
+    add(new T.BoxGeometry(0.54, 1.0, 0.5), 0, -0.1, 0); add(new T.BoxGeometry(0.58, 0.12, 0.54), 0, 0.56, 0); add(new T.BoxGeometry(0.34, 0.06, 0.02), 0, 0.2, 0.26)
+  } else {
+    add(new T.CylinderGeometry(0.045, 0.045, 1.15, 6), 0, -0.075, 0); add(new T.BoxGeometry(0.2, 0.28, 0.14), 0, 0.63, 0)
+  }
+  const n = parts.reduce((a, g) => a + g.attributes.position.count, 0), P = new Float32Array(n * 3), N = new Float32Array(n * 3)
+  let at = 0
+  for (const g of parts) { P.set(g.attributes.position.array, at * 3); N.set(g.attributes.normal.array, at * 3); at += g.attributes.position.count }
+  const geo = new T.BufferGeometry()
+  geo.setAttribute('position', new T.BufferAttribute(P, 3)); geo.setAttribute('normal', new T.BufferAttribute(N, 3))
+  const m = new T.InstancedMesh(geo, new T.MeshStandardMaterial({ color: K.color, roughness: 0.5, metalness: 0.15 }), OBJ_MAX)
+  m.castShadow = m.receiveShadow = true
+  depthFor(m)
+  return m
+}
+// the unbroken props a segment a..b passes within r of that take a blow of this power, nearest first: [{ key, i, t, x, z, s }]
+function dsPropsAlong(a, b, r, power) {
+  const F = faustState, out = []
+  if (!F || !dsState) return out
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], len = Math.hypot(d[0], d[1], d[2])
+  if (len < 1e-6) return out
+  const lo = (u, v) => Math.max(0, Math.floor((Math.min(u, v) - 3 + ARENA) / 96)), hi = (u, v) => Math.min(F.S - 1, Math.floor((Math.max(u, v) + 3 + ARENA) / 96))
+  for (let ci = lo(a[0], b[0]); ci <= hi(a[0], b[0]); ci++) for (let cj = lo(a[2], b[2]); cj <= hi(a[2], b[2]); cj++) {
+    for (const s of dsPropSites(dsPlan(ci, cj))) {
+      if (s.hard > power) continue
+      const key = dsPropKey(ci * F.S + cj, s.i)
+      if (dsState.all.has(key)) continue
+      let t = Infinity
+      for (const B of s.boxes) t = Math.min(t, rayBox(a[0], a[1], a[2], d[0] / len, d[1] / len, d[2] / len, { cx: B.cx, cy: B.cy, cz: B.cz, ex: B.ex + r, ey: B.ey + r, ez: B.ez + r }))
+      if (t <= len) out.push({ key, i: s.i, t, x: s.f.x, z: s.f.z, s })
+    }
+  }
+  return out.sort((p, q) => p.t - q.t)
+}
+// the unbroken props within r of (x, z) that take a blow of this power: [{ key, i, x, z, s, d }], nearest first
+function dsPropsNearPt(x, z, r, power = 3) {
+  const F = faustState, out = []
+  if (!F || !dsState) return out
+  const lo = v => Math.max(0, Math.floor((v - r - 3 + ARENA) / 96)), hi = v => Math.min(F.S - 1, Math.floor((v + r + 3 + ARENA) / 96))
+  for (let ci = lo(x); ci <= hi(x); ci++) for (let cj = lo(z); cj <= hi(z); cj++) for (const s of dsPropSites(dsPlan(ci, cj))) {
+    const d = Math.hypot(s.f.x - x, s.f.z - z), key = dsPropKey(ci * F.S + cj, s.i)
+    if (d <= r && s.hard <= power && !dsState.all.has(key)) out.push({ key, i: s.i, x: s.f.x, z: s.f.z, s, d })
+  }
+  return out.sort((p, q) => p.d - q.d)
+}
+const dsPropWay = (dx, dz) => Math.round((Math.atan2(dz, dx) / (2 * Math.PI) % 1 + 1) % 1 * 64) & 63
+// host: a blow of this power knocks prop p off its post the way (dx, dz) points: broken, and its row flung loose
+function dsPropKnock(p, power, dx, dz) {
+  if (!isHost || !dsCheck() || p.s.hard > power) return false
+  if (!dsBreak(DS_PROP, p.key, (power & 3) | dsPropWay(dx, dz) << 3)) return false
+  dsPropLoose(p.s, dx, dz, power)
+  return true
+}
+// host: the broken prop's own row where it stood, thrown off the blow (more for a heavier one)
+function dsPropLoose(s, dx, dz, power) {
+  const k = OBJECTS.findIndex(K => K.prop === s.f.k), n = Math.hypot(dx, dz) || 1
+  if (k < 0 || !world) return null
+  const id = partsFreeId()
+  if (id < 0) return null
+  const o = addObject(k, [s.f.x, OBJECTS[k].half[1] + 0.1, s.f.z], id, s.f.q * Math.PI / 2), sp = [2.5, 4.5, 7][Math.max(0, Math.min(2, power - 1))]
+  if (o) teleportBody(o.body, o.x, o.y, o.z, null, [dx / n * sp, 2 + power, dz / n * sp], [(dz / n) * 5, 0, -(dx / n) * 5])
+  return o
+}
+// the unbroken props of one kind within reach of c, as #55's pull lists a part: [{ ref, at, gap, R, mass }]
+function dsPropsReach(c, kind, reach) {
+  const F = faustState, out = [], row = OBJECTS.find(K => K.prop === kind)
+  if (!F || !LV.faust || !row || !dsCheck() || Math.abs(c.y - c.h - c.r) > 1.4) return out
+  for (const p of dsPropsNearPt(c.x, c.z, reach + 1, 2)) {
+    if (p.s.f.k !== kind) continue
+    const gap = p.d - c.r - Math.max(p.s.boxes[0]?.ex || 0.2, p.s.boxes[0]?.ez || 0.2)
+    if (gap <= reach) out.push({ ref: { key: p.key, i: p.i, x: p.x, z: p.z }, at: [p.x, p.s.top / 2, p.z], gap, R: 0.4, mass: row.mass })
+  }
+  return out
+}
+// #55's kinds: each prop's row, torn off its post by his pull (E held), then in his hands like any object
+let dsPropKindDone = false
+function dsPropKind() {
+  if (dsPropKindDone || !GAME.parts?.kind) return
+  dsPropKindDone = true
+  for (const K of OBJECTS.filter(K => K.prop)) {
+    GAME.parts.kind(K.name + ' on its post', { of: 'attached', mass: K.mass, rip: { pull: 0.45, gives: K.name } }, {
+      near: (c, reach) => dsPropsReach(c, K.prop, reach),
+      detach: (inst, c) => {
+        if (!isHost || !dsCheck() || !dsBreak(DS_PROP, inst.ref.key, dsPropWay(inst.ref.x - c.x, inst.ref.z - c.z) << 3)) return false
+        return [inst.ref.x, K.half[1] + 0.1, inst.ref.z]
+      },
+    })
+  }
+}
+dsKindRegister(DS_PROP, { record: dsPropRecord, apply: dsPropApply, undo: dsPropUndo, fresh: dsPropFresh })
+dsPropKind()
 
 // ---------------------------------------------------------------- the pram's baby, and the exploding pram (card #45)
 // Every pram carries a baby with a man's stubbled face, a bonnet, a cigar and a snub-nosed revolver, sitting up under the hood.
@@ -36754,6 +37079,13 @@ const testTools = (() => {
       const cx = lx0 + K.lift / 2          // the door's centre line: 0.2 m clear of a jamb each side, so in by it, then across to the UP half
       q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B, radius: 0.5, via: [{ x: cx, z: C.z1 + 1.5, r: 0.35 }, { x: cx, z: C.z1 - 0.15, r: 0.35 }, { x: cx, z: q.z }] } } })),
     window: c => windowsNear(c, false), brokenwindow: c => windowsNear(c, true),             // intact panes a punch reaches (#77); #46's breaches
+    prop: c => {                                                                 // card #81: the unbroken street props round him
+      const out = [], F = faustState
+      if (!LV.faust || !F || !dsCheck()) return out
+      const ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96)
+      for (let i = Math.max(0, ci - 1); i <= Math.min(F.S - 1, ci + 1); i++) for (let j = Math.max(0, cj - 1); j <= Math.min(F.S - 1, cj + 1); j++)
+        for (const s of dsPropSites(dsPlan(i, j))) if (!dsState.all.has(dsPropKey(i * F.S + j, s.i))) out.push({ x: s.f.x, z: s.f.z, y0: 0, what: 'intact ' + s.f.k + (s.hard > 2 ? ' (a blast or a car breaks it)' : s.hard > 1 ? ' (a haymaker or a sprint breaks it; hold E to rip it off)' : ' (a punch breaks it; hold E to rip it off)') })
+      return out },
     performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk && !b.deal), enforcer: bots(b => b.enforcer),
     dealer: bots(b => b.deal && !b.deal.lookout), lookout: bots(b => b.deal?.lookout),      // card #97
     dealerspot: () => slState ? [...slState.cells.values()].flatMap(c => c.spots || []).map(q => ({ x: q.x, z: q.z, y0: 0, what: 'dealer spot' })) : [],
@@ -36815,7 +37147,7 @@ const testTools = (() => {
     }
     return out
   }
-  const ALIAS = { highways: 'highway', viaduct: 'highway', motorway: 'highway', overpass: 'interchange', junction: 'interchange', stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
+  const ALIAS = { props: 'prop', hydrant: 'prop', mailbox: 'prop', meter: 'prop', highways: 'highway', viaduct: 'highway', motorway: 'highway', overpass: 'interchange', junction: 'interchange', stair: 'stairs', elevator: 'lift', windows: 'window', interior: 'door', airship: 'zeppelin', zep: 'zeppelin', monorail: 'station', rail: 'station' }
   // card #84: the manholes of the cells round c, each with a spot 3.2 m south of it facing it; E there climbs down, E held rips the cover off
   NEAR.manhole = c => { const F = faustState; if (!F) return []; const plan = faustSewers(F.seed, F.S), out = [], ci = Math.floor(c.x / 96), cj = Math.floor(c.z / 96)
     for (let i = ci - 3; i <= ci + 3; i++) for (let j = cj - 3; j <= cj + 3; j++) for (const m of plan.byCell.get(i + ' ' + j) || [])
