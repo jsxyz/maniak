@@ -33181,16 +33181,22 @@ function slVenue(cell, P, ci, cj) {
 // card #91: street life in the suburbs: one cell per 160 m block of the suburb ring, from the seed and the block as faustSubBlock lays
 // it out (#18's lots, doors, front paths and pavements): walkers out of a front door, down the path, along the pavement and home; a dog
 // walker and a pram along it. Houses, garages and fences are the cell's bodies. Ids 0x1000000 + ((bi + 128) * 256 + (bj + 128)) * 32 + k
-const SL_SUB = { porch: 0.8, lane: 0.45, inset: 1, walkers: 4, dogs: 1, prams: 1, stop: [6, 20], max: 24, walk: [30, 110] }
-function slSubCell(bi, bj) {
+// #72: built at most one every gap ms, on a ring cell already planned in the background (force: at once; slRunTo's runs)
+const SL_SUB = { porch: 0.8, lane: 0.45, inset: 1, walkers: 4, dogs: 1, prams: 1, stop: [6, 20], max: 24, walk: [30, 110], gap: 25 }
+function slSubCell(bi, bj, force) {
   const key = 'sub ' + bi + ' ' + bj, st = slState
   let cell = st.cells.get(key)
   if (cell) { cell.used = performance.now(); return cell }
   if (st.subNone?.has(key)) return null
   const F = faustState
   if (!F) return null
+  const C = FAUST_RINGS.cell, i = Math.floor((bi + 0.5) * FAUST_RINGS.sub.pitch / C), j = Math.floor((bj + 0.5) * FAUST_RINGS.sub.pitch / C)
+  if (faustRingBand(F.seed, F.S, i, j) !== 'suburb') { (st.subNone ||= new Set()).add(key); return null }          // faustSubBlock's own test
+  const at = performance.now()
+  if (!force && (at - (st.subAt ?? -Infinity) < SL_SUB.gap || !F.ringPlans?.has(i + ' ' + j))) return null          // #72: wait a frame or two
   const plan = faustRoadsReady(F)
   if (!plan) return null                       // the roads plan is still being made: try again next time
+  st.subAt = at
   const B = faustSubBlock(F.seed, F.S, plan, bi, bj)
   if (!B.exists) { (st.subNone ||= new Set()).add(key); return null }
   const [x0, z0] = B.rect, box = b => [b.cx - b.ex, b.cz - b.ez, b.cx + b.ex, b.cz + b.ez], bodies = []
@@ -33829,7 +33835,7 @@ function slRunTo(x, z, dx, dz, d) {
     if (cars.some(b => slInBox(b, px, pz))) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
     const out = Math.abs(px) > A - 2 || Math.abs(pz) > A - 2
     if (out && Math.abs(x) <= A - 2 && Math.abs(z) <= A - 2) return [x + dx * Math.max(0, k - 0.4), z + dz * Math.max(0, k - 0.4)]
-    const cell = out ? slSubCell(Math.floor(px / FAUST_RINGS.sub.pitch), Math.floor(pz / FAUST_RINGS.sub.pitch)) : slCell(Math.floor((px + A) / 96), Math.floor((pz + A) / 96))     // card #91
+    const cell = out ? slSubCell(Math.floor(px / FAUST_RINGS.sub.pitch), Math.floor(pz / FAUST_RINGS.sub.pitch), true) : slCell(Math.floor((px + A) / 96), Math.floor((pz + A) / 96))     // card #91
     if (cell) for (const g of cell.rings) if (slInside(g.body, px, pz, SL_CLEAR.r + 0.1)) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
   }
   return [x + dx * d, z + dz * d]
