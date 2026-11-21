@@ -1,6 +1,3 @@
-# The MANIAK's dedicated server, ghcr.io/jsxyz/maniak-server: the game page itself, unchanged, run in headless Chromium
-# in its server mode.
-# Build it from the repository root:   docker build -f server/Dockerfile -t maniak-server .
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
 WORKDIR /app
@@ -13,9 +10,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache /root/.npm
 COPY server/server.js server/health.js ./
 COPY index.html game.html
-# the game's asset data (models, textures), served to the page beside it as on the published site
 COPY assets ./assets
-# where guests open the game; the server prints this with '#' and the room code as its join link
 ENV JOIN_URL=https://jsxyz.github.io/maniak/
 USER node
 HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 CMD ["node", "/app/health.js"]
