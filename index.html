@@ -35007,6 +35007,8 @@ Object.assign(GAME.commands, { weather: { args: '[clear|rain|storm|fog|auto] [0-
 function weatherApi() {
   return { state: weather, at: (t, seed = weatherSeed()) => weatherAt(seed, t, null), seedNow: weatherSeed,
     looks: WEATHER_LOOKS,      // which looks show the weather: Plain on; set .ink / .realistic = true to see them before they pass review
+    lights: () => ({ look: activeLook, on: !!WEATHER_LOOKS[activeLook], flash: +weather.flash.toFixed(3), reduced: weatherReduced, sun: sunLight && +sunLight.intensity.toFixed(3), hemi: rainState.lit?.hemiLight && +rainState.lit.hemiLight.intensity.toFixed(3),
+      sky: scene?.background?.isColor ? scene.background.getHex() : null, fog: scene?.fog ? { near: scene.fog.near, far: scene.fog.far, density: scene.fog.density, color: scene.fog.color.getHex() } : null, wet: +weather.wet.toFixed(3) }),
     drops: () => ({ streaks: rainState.n, splashes: rainState.m, cover: +rainState.cover.toFixed(2), shown: !!rainState.group?.visible, inScene: rainState.group?.parent === scene, buf: renderer?.domElement.height, paper0: (a => a && Number.isFinite(a[0]) ? [0, 1, 2].map(k => (a[k] + a[3 + k] + a[6 + k] + a[9 + k]) / 4) : null)(rainState.paper?.geometry.attributes.position.array) }),
     force: v => { weatherForce = v === null ? null : clamp(+v || 0, 0, 1); return weatherForce },      // for a capture: hold the flash at v (0..1) on this page, null releases it
     bolts: (from, to) => { const out = []; for (let w = Math.floor(from / WEATHER.bolt); w <= Math.floor(to / WEATHER.bolt); w++) { const b = weatherBolt(weatherSeed(), w, weatherOv); if (b) out.push(b) } return out },
@@ -35028,7 +35030,7 @@ const RAIN = { streaks: 1100, splashes: 120, box: 28, top: 16, bottom: 7, speed:
 // exponential fog by up to FOG.density times; the bank's thickness drifts (±FOG.bank) with where he stands and with time
 // which looks show the weather: Plain passed #72; Ink and Realistic are switched on as each passes (a test may set gameHooks.weather.looks.ink = true)
 const WEATHER_LOOKS = { plain: true, ink: false, realistic: false }
-const FOG = { near: 10, far: 230, density: 5, bank: 0.18, tint: 0x3a4655, tintK: 0.5, curve: 0.8 }
+const FOG = { near: 8, far: 160, density: 5, bank: 0.18, tint: 0x3a4655, tintK: 0.7, curve: 0.8 }
 // loose paper in the wind: flat bits tumbling along the street ahead of the gusts, a ribbon mesh of its own (the rain's program)
 const PAPER = { n: 14, box: 34, size: [0.3, 0.21], from: 0.15, full: 0.6, drift: 0.8, colour: { plain: [0.46, 0.45, 0.4], ink: [0.02, 0.02, 0.03], realistic: [0.2, 0.19, 0.17] } }
 const rainState = { group: null, streaks: null, splashes: null, T: 0, ox: 0, oz: 0, px: 0, pz: 0, pT: 0, cover: 1, coverTo: 1, coverAt: 0, n: 0, m: 0, lit: null,
@@ -35227,6 +35229,9 @@ function weatherTrees(wind) {
   }
 }
 const weatherWetNow = () => weather.wet
+// the weather at room time t for this seed with the host's override (a guest has it from the snapshots): what physics and the water's waves read, so
+// the drawing and anything that floats agree (gameHooks.weather.at ignores the override). windSpeed in m/s
+function weatherStateAt(t) { const S = weatherAt(weatherSeed(), t, weatherOv), W = weatherWind(weatherSeed(), t, S.wind); return { ...S, windSpeed: W.speed, windX: W.x, windZ: W.z } }
 const weatherLit = () => WEATHER_LOOKS[activeLook] ? weather.flash : 0      // the flash a look is showing
 function draw(dt, t) {
   let me, others, pkl
