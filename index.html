@@ -12841,6 +12841,62 @@ function trafficReset() {
   for (const v of trafficViews.values()) { v.mixer.stopAllAction(); v.root.removeFromParent() }
   trafficViews.clear()
 }
+// card #91: the suburbs' local cars. A suburb cell's streets (faustRingStreets when the build has it: the one source for the
+// asphalt and the cars; else the same lines faustRingCell lays) become one-way 'side' edges between the 160 m grid's
+// crossings, the lane half a street's half width right of travel. Edge and node carry ring:true: no signals (trafficSignalled),
+// no ARENA limit (trafficNext, trafficSpawn). Built a cell at a time near people (trafficRingWarm).
+function trafficRingStreets(F, plan, i, j) {
+  if (typeof faustRingStreets === 'function') return faustRingStreets(F.seed, F.S, plan, i, j)
+  if (faustRingBand(F.seed, F.S, i, j) !== 'suburb') return []
+  const R = FAUST_RINGS, C = R.cell, U = R.sub, P = U.pitch, x0 = i * C, z0 = j * C, x1 = x0 + C, z1 = z0 + C, out = []
+  const segs = faustRingRoads(plan, x0, z0, x1, z1).concat(faustChanSegs(F.seed, F.S, x0, z0, x1, z1))
+  for (let k = Math.ceil(x0 / P); k * P < x1; k++) if (faustRingClear(segs, k * P, (z0 + z1) / 2, U.street, C / 2)) out.push({ a: [k * P, z0], b: [k * P, z1], half: U.street })
+  for (let k = Math.ceil(z0 / P); k * P < z1; k++) if (faustRingClear(segs, (x0 + x1) / 2, k * P, C / 2, U.street)) out.push({ a: [x0, k * P], b: [x1, k * P], half: U.street })
+  return out
+}
+function trafficRingCell(i, j) {
+  const T = trafficState, F = faustState, key = 'ring ' + i + ' ' + j
+  if (!T || !F || T.cells.has(key)) return false
+  const plan = faustRoadsReady(F); if (!plan) return false          // the highways' plan is not made yet: asked again next tick
+  T.cells.add(key)
+  const P = FAUST_RINGS.sub.pitch
+  const node = (x, z) => {
+    const k = trafficKey(x, z)
+    if (!T.nodes.has(k)) T.nodes.set(k, { key: k, x, z, out: [], ring: true })
+    return T.nodes.get(k)
+  }
+  for (const s of trafficRingStreets(F, plan, i, j)) {
+    const ex = s.a[0] === s.b[0] ? 0 : 1, ez = 1 - ex, q = s.half / 2
+    const lo = Math.ceil((ex ? s.a[0] : s.a[1]) / P - 1e-9) * P, end = ex ? s.b[0] : s.b[1]
+    for (let t = lo; t + P <= end + 1e-6; t += P) {
+      const ax = ex ? t : s.a[0], az = ex ? s.a[1] : t, bx = ex ? t + P : s.a[0], bz = ex ? s.a[1] : t + P
+      for (const [sx, sz, tx, tz] of [[ax, az, bx, bz], [bx, bz, ax, az]]) {
+        const from = node(sx, sz), to = node(tx, tz), dx = Math.sign(tx - sx), dz = Math.sign(tz - sz)
+        if (from.out.some(e => e.to === to)) continue
+        const e = { from, to, dx, dz, ox: -dz * q, oz: dx * q, district: 'suburb', length: P, width: 2 * s.half, kind: 'side', ring: true }
+        from.out.push(e); T.edges.push(e)
+      }
+    }
+  }
+  return true
+}
+// the suburb cells within a cell of anyone past the city's grid, one built a tick (the city's cells ride T.queue the same way)
+function trafficRingWarm(people) {
+  const T = trafficState, C = FAUST_RINGS.cell, at = people.filter(c => Math.max(Math.abs(c.x), Math.abs(c.z)) > ARENA - C).map(c => [Math.floor(c.x / C), Math.floor(c.z / C)])
+  const sig = at.join('|')
+  if (sig !== T.ringSig) {
+    T.ringSig = sig; T.ringQueue = []
+    for (const [ci, cj] of at) for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) if (!T.cells.has('ring ' + i + ' ' + j)) T.ringQueue.push([i, j])
+  }
+  const next = T.ringQueue?.shift(); if (next && !trafficRingCell(...next)) T.ringQueue.push(next)
+}
+// the density lookup's district for someone: the nearest grid cell's inside the city, 'suburb' in a suburb cell, else 'none' (no ambient cars)
+function trafficDistrict(p) {
+  if (Math.abs(p.x) <= ARENA && Math.abs(p.z) <= ARENA) return faustGet(...FAUSTLAND_API.cellAt(p.x, p.z).map(v => clamp(v, 0, LV.grow.S - 1))).plan.district
+  const F = faustState, C = FAUST_RINGS.cell
+  return F && faustRingBand(F.seed, F.S, Math.floor(p.x / C), Math.floor(p.z / C)) === 'suburb' ? 'suburb' : 'none'
+}
+TRAFFIC.density.suburb = 16
 function trafficCell(ci, cj) {
   const S = LV.grow.S, T = trafficState, key = faustKey(ci, cj)
   if (ci < 0 || cj < 0 || ci >= S || cj >= S || T.cells.has(key)) return
@@ -12870,7 +12926,7 @@ function trafficCell(ci, cj) {
 }
 const trafficFits = (e, V) => e.kind !== 'side' || !V || V.l < 5.4
 const trafficCanTurn = (e, n) => !e || e.dx * n.dx + e.dz * n.dz >= -0.01
-const trafficSignalled = n => n.x % 96 === 0 && n.z % 96 === 0 && n.out.some(e => !e.dx) && n.out.some(e => !e.dz)
+const trafficSignalled = n => !n.ring && n.x % 96 === 0 && n.z % 96 === 0 && n.out.some(e => !e.dx) && n.out.some(e => !e.dz)
 const trafficJunction = n => n.out.some(e => n.out.some(f => Math.abs(e.dx * f.dz - e.dz * f.dx) > 0.1))
 const trafficTrim = e => e.kind === 'side' ? 10 : TRAFFIC.trim
 const trafficStop = (e, node = e.to) => trafficSignalled(node) ? TRAFFIC.stop : Math.max(trafficTrim(e) + 2, ...node.out.map(n => n.width / 2 + 4))
@@ -12920,8 +12976,8 @@ function trafficNext(a) {
   const e = a.edge; trafficNear(e.to.x, e.to.z)
   if (a.route) return a.route.shift() || null
   // At the city edge, turn onto a continuing road before the last half-block becomes a dead end.
-  const onward = n => n.to.out.some(f => f.to !== n.from && trafficFits(f, a.vehicle) && trafficCanTurn(n, f) && Math.max(Math.abs(f.to.x), Math.abs(f.to.z)) < ARENA - 24)
-  const choices = e.to.out.filter(n => n.to !== e.from && trafficFits(n, a.vehicle) && trafficCanTurn(e, n) && onward(n) && Math.max(Math.abs(n.to.x), Math.abs(n.to.z)) < ARENA - 24)
+  const onward = n => n.to.out.some(f => f.to !== n.from && trafficFits(f, a.vehicle) && trafficCanTurn(n, f) && (f.ring || Math.max(Math.abs(f.to.x), Math.abs(f.to.z)) < ARENA - 24))
+  const choices = e.to.out.filter(n => n.to !== e.from && trafficFits(n, a.vehicle) && trafficCanTurn(e, n) && onward(n) && (n.ring || Math.max(Math.abs(n.to.x), Math.abs(n.to.z)) < ARENA - 24))
   if (!choices.length) return null
   const straight = choices.find(n => n.dx === e.dx && n.dz === e.dz)
   if (straight && Math.random() < (e.kind === 'boulevard' ? 0.85 : 0.72)) return straight
@@ -13145,6 +13201,7 @@ function trafficSteer(o, err, distance, speed) {
 // Conservative visibility: buildings must hide all four corners of the car from every player (yaw is irrelevant).
 // Test analytic plans along the sight line, including unloaded cells; rooftop/long sight lines can defer spawning.
 function trafficHidden(x, z, people) {
+  if (Math.max(Math.abs(x), Math.abs(z)) > ARENA) { for (const c of people) if (Math.hypot(c.x - x, c.z - z) < 150) return false; return people.length > 0 }      // card #91
   for (const c of people) {
     if (Math.hypot(c.x - x, c.z - z) < 90) return false
     const ridden = seatOf(c)?.[0], reach = ridden ? 2 * ridden.V.l + 4 : 8, cy = c.y + (c.h || 0.6) + reach
@@ -13176,11 +13233,12 @@ function trafficSpawn(people) {
   const T = trafficState, count = [...T.cars.values()].filter(o => o.trafficAmbient).length
   const K = trafficK()
   if (count >= TRAFFIC.cap * K || objs.length >= OBJ_MAX - 8 || !people.length) return
-  const p = people[(T.serial++) % people.length], district = faustGet(...FAUSTLAND_API.cellAt(p.x,p.z).map(v => clamp(v, 0, LV.grow.S - 1))).plan.district      // card #18: the nearest grid cell's, outside it
+  const p = people[(T.serial++) % people.length], district = trafficDistrict(p)      // card #18: the nearest grid cell's, outside it; card #91: a suburb cell past the grid
+  if (district === 'none') return
   const anchors=[];for(const c of people)if(anchors.every(a=>Math.hypot(a.x-c.x,a.z-c.z)>TRAFFIC.radius*1.5))anchors.push(c)
   const density=Math.min((TRAFFIC.density[district]||8)*K,Math.max(1,Math.floor(TRAFFIC.cap*K/anchors.length)))
   if ([...T.cars.values()].filter(o => o.traffic?.ambient && Math.hypot(o.x - p.x, o.z - p.z) < TRAFFIC.radius + 80).length >= density) return
-  const edges = T.edges.filter(e => { const q = trafficPoint(e, e.length / 2), d = Math.hypot(q.x - p.x, q.z - p.z); return d > 120 && d < TRAFFIC.radius && Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96 })
+  const edges = T.edges.filter(e => { const q = trafficPoint(e, e.length / 2), d = Math.hypot(q.x - p.x, q.z - p.z); return d > 120 && d < TRAFFIC.radius && (e.ring || Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96) })
   for (let trial = 0; edges.length && trial < 12; trial++) {
     let pick = Math.random() * edges.reduce((sum, e) => sum + trafficWeight(e), 0)
     const e = edges.find(e => (pick -= trafficWeight(e)) <= 0) || edges.at(-1)
@@ -13232,6 +13290,7 @@ function trafficTick(dt, all) {
   const warm = people.map(p => FAUSTLAND_API.cellAt(p.x,p.z).join(':')).join('|')
   if (warm !== T.warm) { T.warm=warm; T.queue=[...faustRange(people.map(p=>[p.x,p.z]),4)].filter(key=>!T.cells.has(key)) }
   const cell = T.queue.shift(); if(cell)trafficCell(...cell.split(' ').map(Number))
+  trafficRingWarm(people)          // card #91
   if ((T.spawn -= dt) <= 0) { T.spawn += T.cars.size < TRAFFIC.cap * trafficK() * 0.7 ? 0.2 : 0.35; trafficSpawn(people) }
   const ms = performance.now() - t; T.stats.ticks++; T.stats.ms += ms; T.stats.maxMs = Math.max(T.stats.maxMs, ms)
 }
