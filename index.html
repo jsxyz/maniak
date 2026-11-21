@@ -4861,12 +4861,12 @@ function faustRoadsMapLayer() {
 // FAUST_CHAN.reach of any player or moving vehicle, the look within the view's reach of the camera.
 // Rows are chosen clear of the monorail's stations, the central plaza, the transit towers' rows and the radials' lines; the
 // rail's own pylons then stand on the bridges' decks (the avenues' medians).
-const FAUST_CHAN = { version: 1, depth: 8, top: 28, floor: 14, lip: 2, wall: 0.9, gutter: [1.2, 2.5, 0.25], water: 0.12, cut: 30, deck: 14.4, thick: 1.4,
+const FAUST_CHAN = { version: 1, depth: 8, top: 28, floor: 18, lip: 2, wall: 0.9, gutter: [1.2, 2.5, 0.25], water: 0.12, cut: 30, deck: 14.4, thick: 1.4,
   span: 33, foot: 2.6, ramp: { w: 7, land: 4 }, keep: 8, reach: 240, look: 900, ground: -0.02, part: 1000,
-  tint: { bank: 0x6d7279, floor: 0x555a62, gutter: 0x3f444b, lip: 0x8c9096, wall: 0x9a9ea3, cap: 0xb0b3b6, deckTop: 0x242a33, walk: 0x737983,
-    under: 0x5c6168, fascia: 0x8a8f95, stone: 0xa7a59c, stoneDark: 0x7d7c76, pier: 0x8f8d86, water: 0x1d3a47, mark: 0xb4a77d, lamp: 0xffb35a, pole: 0x30353c,
+  tint: { bank: 0x5d6168, floor: 0x45494f, gutter: 0x2b2f35, lip: 0x76797e, wall: 0x7a7872, cap: 0x97948b, joint: 0x25282d, damp: 0x383d42, sheen: 0x5b7a88, deckTop: 0x242a33, walk: 0x737983,
+    under: 0x5c6168, fascia: 0x7c7f84, stone: 0x8d8a82, stoneDark: 0x6e6c66, pier: 0x827f78, flute: 0x5f5d57, water: 0x142b36, mark: 0xb4a77d, lamp: 0xffb35a, pole: 0x30353c,
     ramp: 0x838890, drain: 0x07090c, collar: 0x8a8f95, stain: 0x2c3a38, paint: [0xd23a5a, 0x36c2c9, 0xe6c43a, 0x8f4ad8, 0x56d36a, 0xeeeeee, 0xf0803c] },
-  glow: { bank: 0.3, floor: 0.24, wall: 0.4, under: 0.32, paint: 0.55, water: 0.15 } }
+  glow: { bank: 0.24, floor: 0.17, wall: 0.25, under: 0.3, paint: 0.55, water: 0.2 } }
 let faustChanMemo = null
 // the plan: { list: [channel], rects: [{a0, a1, b0, b1}] (the ground cut by each), cells: Map 'gx gz' -> channel, hash, version }
 // channel: { id, n, axis (0: runs along x, 1: along z), u (its row's or column's cell index), c (its middle's coordinate),
@@ -5056,14 +5056,20 @@ function* faustChanPiece(ch, k, emit, look) {
     for (let i = 0; i < 12; i++) emit.tri(ctr, q(i / 12 * 6.2831853), q((i + 1) / 12 * 6.2831853), pn, tint, false, g)
   }
   const tOf = depth => depth * hs / D           // the slope distance of a depth
-  // expansion joints: dark lines across the floor and banks every 8 m, two along the floor
-  for (let q = Math.ceil(s0 / 8) * 8; q < s1; q += 8) {
+  // expansion joints: dark lines across the floor and banks every 6 m, two along the floor
+  for (let q = Math.ceil(s0 / 6) * 6; q < s1; q += 6) {
     for (const side of [-1, 1]) {
-      f(P(q - 0.05, side * 2.5, fl + 0.012), P(q + 0.05, side * 2.5, fl + 0.012), P(q + 0.05, side * K.floor, fl + 0.012), P(q - 0.05, side * K.floor, fl + 0.012), [0, 1, 0], T.gutter, false, 0)
-      patch(side, q, 0, hs, 0.1, T.gutter, 0, 0.012)
+      f(P(q - 0.07, side * 2.5, fl + 0.012), P(q + 0.07, side * 2.5, fl + 0.012), P(q + 0.07, side * K.floor, fl + 0.012), P(q - 0.07, side * K.floor, fl + 0.012), [0, 1, 0], T.joint, false, 0)
+      patch(side, q, 0, hs, 0.14, T.joint, 0, 0.012)
     }
   }
-  for (const side of [-1, 1]) f(P(s0, side * 8 - 0.05, fl + 0.012), P(s1, side * 8 - 0.05, fl + 0.012), P(s1, side * 8 + 0.05, fl + 0.012), P(s0, side * 8 + 0.05, fl + 0.012), [0, 1, 0], T.gutter, false, 0)
+  for (const side of [-1, 1]) f(P(s0, side * 9 - 0.07, fl + 0.012), P(s1, side * 9 - 0.07, fl + 0.012), P(s1, side * 9 + 0.07, fl + 0.012), P(s0, side * 9 + 0.07, fl + 0.012), [0, 1, 0], T.joint, false, 0)
+  for (const side of [-1, 1]) patch(side, (s0 + s1) / 2, tOf(6.6), hs, s1 - s0, T.damp, 0, 0.01)
+  for (let n = 0; n < 14; n++) {
+    const h = faustMix(0x73747261 ^ ch.n, k * 32 + n, ch.u), side = (h & 1) ? 1 : -1, s = k * 96 - 46 + ((h >>> 1) % 92), t0 = ((h >>> 9) % 3) * 0.3, t1 = tOf(3 + ((h >>> 12) % 5))
+    if (s < s0 + 1 || s > s1 - 1) continue
+    patch(side, s, t0, t1, 0.35 + ((h >>> 16) % 4) * 0.2, T.stain, 0, 0.02)
+  }
   for (const o of ch.outfalls) if (o.kind === 'wall' && Math.floor((o.s + 48) / 96) === k) {
     const t = tOf(6.5)
     disc(o.side, o.s, t, o.r * 1.35, T.collar, G.wall, 0.04); disc(o.side, o.s, t, o.r, T.drain, 0, 0.07)
@@ -5123,8 +5129,13 @@ function faustChanBridge(ch, b, emit, look, ob, Y, fl) {
     else { const e = at(L / 2, sg * (w - 0.3)); ob(e[0], e[1], d, L / 2, 0.3, Y - 1.8, Y - th, T.fascia, G.under, true, 1 | 4 | 8) }
     // newels at the ends of the parapet, with a lamp globe; lamp standards on the span's quarters
     for (const t of [t0, t1]) { const p = at(t, sg * (w - 0.1)); if (onOther(p, 0.9)) continue
-      ob(p[0], p[1], d, 0.85, 0.85, Y, Y + 0.5, T.stoneDark, G.wall, true); ob(p[0], p[1], d, 0.62, 0.62, Y + 0.5, Y + 2.9, T.stone, G.wall, true)
-      ob(p[0], p[1], d, 0.82, 0.82, Y + 2.9, Y + 3.25, T.cap, G.wall, true); if (look) ob(p[0], p[1], d, 0.34, 0.34, Y + 3.25, Y + 3.95, T.lamp, -1, false) }
+      ob(p[0], p[1], d, 0.9, 0.9, Y, Y + 0.4, T.stoneDark, G.wall, true); ob(p[0], p[1], d, 0.62, 0.62, Y + 0.4, Y + 2.6, T.stone, G.wall, true)
+      ob(p[0], p[1], d, 0.8, 0.8, Y + 2.6, Y + 2.85, T.cap, G.wall, true); ob(p[0], p[1], d, 0.65, 0.65, Y + 2.85, Y + 3.1, T.cap, G.wall, true); ob(p[0], p[1], d, 0.5, 0.5, Y + 3.1, Y + 3.35, T.cap, G.wall, true)
+      if (look) {
+        for (const e of [-1, 1]) for (const off of [-0.3, 0, 0.3]) {      // flutes: three dark vertical bands on each face of the shaft
+          ob(p[0] + d[0] * e * 0.63 + n[0] * off, p[1] + d[1] * e * 0.63 + n[1] * off, d, 0.02, 0.05, Y + 0.8, Y + 2.2, T.flute, 0, false)
+          ob(p[0] + n[0] * e * 0.63 + d[0] * off, p[1] + n[1] * e * 0.63 + d[1] * off, d, 0.05, 0.02, Y + 0.8, Y + 2.2, T.flute, 0, false) }
+        ob(p[0], p[1], d, 0.34, 0.34, Y + 3.35, Y + 4.05, T.lamp, -1, false) } }
     if (!foot) for (const u of [-10, 10]) { const p = at((u + span) * ratio, v); if (onOther(p, 0.9)) continue
       ob(p[0], p[1], d, 0.2, 0.2, Y, Y + 5.6, T.pole, 0, true); if (look) ob(p[0], p[1], d, 0.38, 0.38, Y + 5.6, Y + 6.2, T.lamp, -1, false) }
   }
@@ -5158,6 +5169,8 @@ function* faustChanLook(ch, k) {
 function* faustChanWater(ch, k) {
   const buf = faustRoadBuf(), s0 = Math.max(ch.lo, k * 96 - 48), s1 = Math.min(ch.hi, k * 96 + 48), P = (s, u) => ch.axis ? [u, 0, s] : [s, 0, u]
   buf.face(P(s0, -0.5), P(s1, -0.5), P(s1, 0.5), P(s0, 0.5), [0, 1, 0], FAUST_CHAN.tint.water, FAUST_CHAN.glow.water)
+  const sh = (a, b, u) => buf.face(P(a, -u), P(b, -u), P(b, u), P(a, u), [0, 1, 0], FAUST_CHAN.tint.sheen, 0.3)
+  for (let q = s0 + 3; q + 9 < s1; q += 14) sh(q, q + 9, 0.08)      // a few pale glints along it
   return buf.geometry()
 }
 function faustChanWaterSet(F, level) {
