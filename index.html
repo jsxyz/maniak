@@ -22979,6 +22979,7 @@ function rigAnimate(a, want, dt, t) {
   } else R.inst.position.y = R.inst.userData.y
   rigMovePose(a, R, want, t)
   rigSkirt(a, R, dt)
+  if (a.dealId !== undefined) dealRig(a, R, dt, t)          // card #97: a dealer's lean, pockets and hand-off
   rigCape(a, R, dt)
 }
 // card #50: a hop's landing. Your own thumps your camera (harder than a footfall); both feet kick up dust; a stomp
@@ -29370,6 +29371,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   auto: autoApi,
   // card #74: the /blackbox recorder's frame rows, for a test script: gameHooks.blackbox() returns { on, flags, rows } (the last 300 frames, each with its flags), gameHooks.blackbox('on' | 'off') switches it
   blackbox(cmd) { if (cmd === 'on' || cmd === 'off') blackbox.run(cmd); return { on: blackbox.on, flags: blackbox.flags, rows: blackbox.rows.slice() } },
+  // card #97, for live QA: gameHooks.deals(x, z, r <= 250): the dealers' spots near a point, each with its dealer and lookout bots, the hand-off in progress (age s) and s until each customer next stops
+  deals(x, z, r = 60) { hookCheck([x, z, r].every(Number.isFinite) && r > 0 && r <= 250, 'deals(x, z, r <= 250) needs numbers'); return dealerReport(x, z, r) },
   // card #63, for live QA: street life's test calls (a test page reaches gameHooks only): around(x, z, r, T) people near a point
   // and their poses; vehicles(x, z, r) the vehicles near it, nearest first, for ram; ram(vehicleId, agentId, speed, back) a real
   // vehicle rolled undriven at a person from back m behind; view([x, y, z], [tx, ty, tz]) a free camera, view(null) the game's.
@@ -32075,19 +32078,20 @@ function dealAlleys(cell, h, spots) {
     if (!post || !mouth || slRnd(kh, 1) >= DEAL.alley) continue
     const ax = -Math.sin(mouth.yaw), az = -Math.cos(mouth.yaw)                    // out of the alley, along its length (north-south: its walls are east and west)
     if (Math.abs(az) < 0.7) continue
-    const lat = -(post.side || 1), cx = post.x + lat * 1.0, cz = post.z                // the customer stands a metre toward the middle, facing him
+    const lat = -(post.side || 1), cx = post.x + lat * 0.8, cz = post.z                // the customer stands a metre toward the middle, facing him
     if (!free(post.x, post.z) || !free(cx, cz)) continue
     const sp = dealSpot(cell, 200000 + kh % 300000, kh, post.x, post.z, cx, cz, post.yaw)
     sp.alley = true
     if (rec && slRnd(kh, 2) < DEAL.lookout) { sp.look = true; sp.lx = mouth.x; sp.lz = mouth.z; sp.lyaw = mouth.yaw }
     // in from E, 3 m outside the mouth, along the line through the customer's stand, and out again; it waits at E between
-    const out = (mouth.x - cx) * ax + (mouth.z - cz) * az + 3, Ex = cx + ax * out, Ez = cz + az * out, d = Math.hypot(Ex - cx, Ez - cz), v = STREET.walk[0] + 0.15
+    const mid = mouth.x - (mouth.side || 1) * ((mouth.width || 4) / 2 - 0.8), out = (mouth.z - cz) * az + 3, Ex = mid, Ez = cz + az * out, Px = mid, Pz = cz + az * 1.4          // the alley's centre line
+    const d1 = Math.hypot(Ex - Px, Ez - Pz), d2 = Math.hypot(Px - cx, Pz - cz), v = STREET.walk[0] + 0.15
     const face = Math.atan2(post.x - cx, post.z - cz), faceIn = Math.atan2(-ax, -az)
     for (let c = 0; c < DEAL.clients; c++) {
-      const wait = 22 + slRnd(kh, 3 + c) * 20, t1 = wait + d / v, t2 = t1 + DEAL.stand, t3 = t2 + d / v
-      const R = slRoute([[0, Ex, Ez, 1, 0], [wait, Ex, Ez, 0, v], [t1, cx, cz, 1, 0], [t2, cx, cz, 0, v], [t3, Ex, Ez, 1, 0]], t3, -slRnd(kh, 7 + c) * 1e5 - c * 4e4)
-      R.face = []; R.face[0] = faceIn; R.face[2] = face; R.face[4] = faceIn
-      dealClient(cell, sp, kh, 0, c, R, 2)
+      const wait = 22 + slRnd(kh, 3 + c) * 20, ta = wait + d1 / v, t1 = ta + d2 / v, t2 = t1 + DEAL.stand, tb = t2 + d2 / v, t3 = tb + d1 / v
+      const R = slRoute([[0, Ex, Ez, 1, 0], [wait, Ex, Ez, 0, v], [ta, Px, Pz, 0, v], [t1, cx, cz, 1, 0], [t2, cx, cz, 0, v], [tb, Px, Pz, 0, v], [t3, Ex, Ez, 1, 0]], t3, -slRnd(kh, 7 + c) * 1e5 - c * 4e4)
+      R.face = []; R.face[0] = faceIn; R.face[3] = face; R.face[6] = faceIn
+      dealClient(cell, sp, kh, 0, c, R, 3)
     }
   }
 }
@@ -32195,7 +32199,7 @@ function dealRun(b, fx, fz, dt) {
 }
 // a look up the street: a turn of the head and shoulders for a moment, then back; pure from the clock
 function dealGlance(sp, look, T) {
-  const per = look ? 3200 : 7000, w = Math.floor(T / per), u = (T - w * per) / 1000, dur = look ? 1.3 : 1.6
+  const per = look ? 2400 : 4200, w = Math.floor(T / per), u = (T - w * per) / 1000, dur = look ? 1.8 : 2.2
   if (u >= dur) return 0
   return ((slHash(sp.id, w, look ? 1 : 2) & 1) ? 1 : -1) * (look ? 1.5 : 0.9) * Math.sin(Math.PI * u / dur)
 }
@@ -32213,6 +32217,11 @@ function dealScare(b, k, fx, fz, s, T) {
   k.flee = Math.max(k.flee, s); k.fx = fx; k.fz = fz; k.hide = k.flee + DEAL.hideS       // it runs, then keeps out of sight a while before it goes back
 }
 function dealThink(b, tgt, sd, sees, dt) {
+  const o = dealMind(b, tgt, sd, sees, dt)
+  if (o) b.gun = dealGun ??= gunNamed('Punt')          // passive: nothing in the hand (the 'Punt' row is never held)
+  return o
+}
+function dealMind(b, tgt, sd, sees, dt) {
   const ai = b.ai, B = b.bot.deal, T = tickAt || now(), ds = dealSpotOf.get(b.id)
   if (!ds) return null
   const k = ai.deal ||= { hp: b.hp, mad: 0, flee: 0, fx: 0, fz: 0, look: 0, talk: 0, said: new Map() }
@@ -32285,7 +32294,10 @@ function dealDraw(id, state, t) {
     s.shown = true
     if (up && T - s.at < 1500) { a.sayAt = s.at; playVoice('Dealer', DEAL_G[s.g - 1], s.n, { at: perfPlace(a.mesh.position), cat: 'world' }) }
   }
-  const sp = up && !B.lookout && slState && LV.faust ? dealSpotNear(a.mesh.position.x, a.mesh.position.z) : null, ph = sp && dealPhase(sp, T)
+  const sp0 = up && slState && LV.faust ? dealSpotNear(a.mesh.position.x, a.mesh.position.z) : null, sp = !B.lookout ? sp0 : null, ph = sp && dealPhase(sp, T)
+  a.dealId = id; a.dealIdle = up && GUNS[a.heldGun]?.held === false; a.dealAge = ph ? ph.age : -1
+  a.dealHead = sp0 ? 0.5 * dealGlance(sp0, !!B.lookout, T + 700) : 0          // the head leads the body's glance
+  if (up && !a.dealTint) dealTint(a)
   if (!ph) {
     for (const k of ['bill', 'pack']) {            // a hand-off cut off with something in the air: it drops where it was, and lies a while
       const m = a['deal_' + k]; if (!m) continue
@@ -32299,7 +32311,6 @@ function dealDraw(id, state, t) {
     return
   }
   for (const k of ['bill', 'pack']) { const m = a['deal_' + k]; if (m) m.userData.fall = 0 }
-  if (ph.age >= DEAL.gesture && a.dealGest !== ph.t0) { a.dealGest = ph.t0; a.sayAt = ph.t0 + 1 }
   handAt(a, dealV, 1)
   const dx = sp.cx - sp.x, dz = sp.cz - sp.z, dl = Math.hypot(dx, dz) || 1
   dealW.set(dealV.x + dx / dl * 0.62, dealV.y - 0.12, dealV.z + dz / dl * 0.62)         // the customer's hand, across from it
@@ -32315,12 +32326,120 @@ function dealDraw(id, state, t) {
 function dealDrop(a) {
   for (const k of ['bill', 'pack']) { const m = a['deal_' + k]; if (m) { m.removeFromParent(); a['deal_' + k] = null } }
 }
+// ---- card #97, the second increment (#72's fix-forwards): a pusher reads from 15 m, and the hand-off is a gesture you can see without props
+//  * the coat is darker (DEAL_TINT on the avatar's own materials);
+//  * the blade stays in the coat until the bot rules draw it (a passive dealer holds the hidden 'Punt' row);
+//  * at its post it leans back with its hands in its coat pockets and its head under the brim, and looks up and down the street
+//    (the head leads the body's glance: dealGlance on the clock, the same for every machine);
+//  * in a hand-off it glances left and right, then its left hand reaches low between the two of them for a beat, and parts.
+// All of it is a pose put over the clip each frame (dealRig, from rigAnimate), by the rig's own arm solve: no clip, no asset.
+const DEAL_TINT = 0.5
+let dealGun = null
+const dealSm = THREE.MathUtils.smoothstep
+const dealQ = { root: new THREE.Quaternion(), parent: new THREE.Quaternion(), delta: new THREE.Quaternion(), tmp: new THREE.Quaternion(), a: new THREE.Quaternion(), b: new THREE.Quaternion(), c: new THREE.Quaternion() }
+const dealP = Array.from({ length: 14 }, () => new THREE.Vector3())
+function dealTint(a) {
+  a.dealTint = true
+  ownMaterials(a.mesh)
+  a.mesh.traverse(n => { const m = n.material; if (m?.color && !m.userData.dealTint) { m.userData.dealTint = true; m.color.multiplyScalar(DEAL_TINT) } })
+}
+// a bone turned about an axis of the body's own frame, over the clip's pose
+function dealTurn(R, name, xyz, ang) {
+  const b = R.bones.get(name); if (!b || !ang) return
+  b.parent.getWorldQuaternion(dealQ.parent)
+  dealP[13].set(xyz[0], xyz[1], xyz[2]).applyQuaternion(dealQ.root).applyQuaternion(dealQ.parent.invert())
+  b.quaternion.premultiply(dealQ.delta.setFromAxisAngle(dealP[13], ang))
+}
+function dealRot(b, u, v) {
+  b.parent.getWorldQuaternion(dealQ.parent)
+  dealQ.delta.setFromUnitVectors(u.normalize(), v.normalize())
+  dealQ.tmp.copy(dealQ.parent).invert().multiply(dealQ.delta).multiply(dealQ.parent).multiply(b.quaternion)
+  b.quaternion.copy(dealQ.tmp)
+}
+// an arm's two bones solved so its hand is at goal (the body's frame), its elbow toward bend, then eased in by w
+function dealArm(R, side, goal, bend, w) {
+  const up = R.bones.get('upperarm_' + side), lo = R.bones.get('lowerarm_' + side), en = R.bones.get('hand_' + side)
+  if (!up || !lo || !en || !(w > 0)) return
+  const [sh, el, hd, tg, pl, dr, hg, fr, to] = dealP
+  dealQ.a.copy(up.quaternion); dealQ.b.copy(lo.quaternion)
+  up.getWorldPosition(sh); lo.getWorldPosition(el); en.getWorldPosition(hd)
+  tg.set(goal[0], goal[1], goal[2]); R.inst.localToWorld(tg); pl.set(bend[0], bend[1], bend[2]); R.inst.localToWorld(pl)
+  const u = sh.distanceTo(el), f = el.distanceTo(hd)
+  dr.subVectors(tg, sh); const d = clamp(dr.length(), Math.abs(u - f) + 0.001, u + f - 0.005); dr.normalize()
+  tg.copy(sh).addScaledVector(dr, d)
+  const along = (u * u - f * f + d * d) / (2 * d)
+  hg.subVectors(pl, sh); hg.addScaledVector(dr, -hg.dot(dr)).normalize()
+  hg.multiplyScalar(Math.sqrt(Math.max(0, u * u - along * along))).addScaledVector(dr, along).add(sh)
+  dealRot(up, fr.subVectors(el, sh), to.subVectors(hg, sh))
+  lo.getWorldPosition(el); en.getWorldPosition(hd)
+  dealRot(lo, fr.subVectors(hd, el), to.subVectors(tg, el))
+  dealQ.c.copy(up.quaternion); up.quaternion.slerpQuaternions(dealQ.a, dealQ.c, w)
+  dealQ.c.copy(lo.quaternion); lo.quaternion.slerpQuaternions(dealQ.b, dealQ.c, w)
+}
+// the dealer's posture over the clip, each frame (a.dealIdle, a.dealAge, a.dealHead are set by dealDraw)
+function dealRig(a, R, dt, t) {
+  if (a.dying >= 0 || R.lod >= 2 || !R.bones.get('pelvis')) return
+  const idle = a.dealIdle && R.name === 'idle', age = a.dealAge ?? -1, ease = 1 - Math.exp(-Math.min(dt || 0.033, 0.1) * 6)
+  R.dealW = (R.dealW || 0) + ((idle ? 1 : 0) - (R.dealW || 0)) * ease
+  const lean = R.dealW, reach = age >= 0 ? dealSm(age, 0.9, 1.25) * (1 - dealSm(age, 2.6, 3.0)) : 0
+  const look = age > 0.1 && age < 0.9 ? Math.sin(Math.PI * 2 * (age - 0.1) / 0.8) * 0.8 : 0         // left, then right, before the hands meet
+  if (lean < 0.01 && reach < 0.01 && !look) return
+  a.mesh.updateMatrixWorld(true); R.inst.updateMatrixWorld(true); R.inst.getWorldQuaternion(dealQ.root)
+  const w = Math.max(lean, reach)
+  // the body's own frame: which way is forward and which side each arm is, from its bones
+  const [pe, fl, bl, sl] = dealP
+  R.bones.get('pelvis').getWorldPosition(pe); R.inst.worldToLocal(pe)
+  const foot = R.bones.get('foot_l'), ball = R.bones.get('ball_l')
+  let fz = 1; if (foot && ball) { foot.getWorldPosition(fl); R.inst.worldToLocal(fl); ball.getWorldPosition(bl); R.inst.worldToLocal(bl); fz = bl.z >= fl.z ? 1 : -1 }
+  const px = pe.x, py = pe.y, pz = pe.z, arm = side => { const b = R.bones.get('upperarm_' + side); b.getWorldPosition(sl); R.inst.worldToLocal(sl); return { x: sl.x, y: sl.y, z: sl.z, s: sl.x >= px ? 1 : -1 } }
+  dealTurn(R, 'spine_01', [1, 0, 0], -0.05 * lean * fz); dealTurn(R, 'spine_02', [1, 0, 0], (-0.07 * lean + 0.2 * reach) * fz);          // leaning back at his post, in toward the customer for the hand-off
+   dealTurn(R, 'spine_03', [1, 0, 0], -0.05 * lean * fz)
+  dealTurn(R, 'Head', [1, 0, 0], 0.12 * lean * fz); dealTurn(R, 'Head', [0, 1, 0], clamp((a.dealHead || 0) * lean + look, -1.1, 1.1))          // never more than 63 degrees off the chest
+  if (w < 0.01) return
+  R.inst.updateMatrixWorld(true)
+  for (const side of ['l', 'r']) {
+    const s = arm(side), k = side === 'l' ? 1 : 0.5, sd = s.s
+    // pockets: at the hip, forward a little; the hand-off: low at the waist, out between the two of them (the left hand; the right tucks in toward it)
+    const pocket = [px + sd * 0.2, py - 0.03, pz + fz * 0.1], meet = [px + sd * (side === 'l' ? 0.03 : 0.15), py + 0.12, pz + fz * (side === 'l' ? 0.62 : 0.4)]
+    const g = pocket.map((v, i) => v + (meet[i] - v) * reach), bend = [s.x + sd * 0.4, s.y - 0.3, s.z - fz * 0.15]
+    dealArm(R, side, g, bend, Math.max(lean * 0.9, reach * k))
+  }
+}
+// what the capture's per-frame rows read of a dealer's pose: hands and head, in the world
+function dealPoseRow(a) {
+  const R = a.rig, o = {}; if (!R) return o
+  const r = v => Math.round(v * 100) / 100
+  for (const s of ['l', 'r']) { const h = R.bones.get('hand_' + s); if (h) { h.getWorldPosition(dealP[0]); o['h' + s] = [r(dealP[0].x), r(dealP[0].y), r(dealP[0].z)] } }
+  const hd = R.bones.get('Head'); if (hd) { hd.getWorldQuaternion(dealQ.tmp); dealP[1].set(0, 0, 1).applyQuaternion(dealQ.tmp); o.headWorldYaw = r(Math.atan2(dealP[1].x, dealP[1].z)) }
+  const ch = R.bones.get('spine_03'); if (hd && ch) { ch.getWorldQuaternion(dealQ.a); hd.getWorldQuaternion(dealQ.b); dealQ.c.copy(dealQ.a).invert().multiply(dealQ.b); o.headOffChestDeg = r(2 * Math.acos(Math.min(1, Math.abs(dealQ.c.w))) * 180 / Math.PI) }
+  o.age = a.dealAge; o.lean = r(R.dealW || 0); o.holstered = a.dealIdle
+  return o
+}
+// gameHooks.deals(x, z, r): for a test page (card #62's stills): each dealer spot within r m of a point, the hand-off's clock, and the bots
+function dealerReport(x, z, r) {
+  const st = slState, out = []
+  if (!st || !LV.faust) return out
+  const A = st.S * 48, T = isHost ? now() : renderT, f = v => Math.round(v * 100) / 100
+  const bot = (px, pz) => { for (const p of players.values()) if (p.bot?.deal && Math.hypot(p.x - px, p.z - pz) < 6) return { id: p.id, role: p.bot.deal.lookout ? 'lookout' : 'dealer', x: f(p.x), y: f(p.y), z: f(p.z), hp: f(p.hp), dead: p.dead > 0, armed: !!p.bot.far }
+    return null }
+  for (let i = Math.max(0, Math.floor((x - r + A) / 96)); i <= Math.min(st.S - 1, Math.floor((x + r + A) / 96)); i++)
+    for (let j = Math.max(0, Math.floor((z - r + A) / 96)); j <= Math.min(st.S - 1, Math.floor((z + r + A) / 96)); j++)
+      for (const sp of slCell(i, j).spots || []) {
+        const d = Math.hypot(sp.x - x, sp.z - z); if (d > r) continue
+        const ph = dealPhase(sp, T)
+        out.push({ spot: sp.id, alley: !!sp.alley, d: f(d), dealerPost: [f(sp.x), f(sp.z)], customerStops: [f(sp.cx), f(sp.cz)], lookoutPost: sp.look ? [f(sp.lx), f(sp.lz)] : null, armed: sp.armed,
+          dealer: bot(sp.x, sp.z), lookout: sp.look ? bot(sp.lx, sp.lz) : null,
+          deal: ph && { age: f(ph.age), startedAtMs: ph.t0 },          // age s: 0.9-1.25 the hand comes out, 1.2-1.7 the money, 2.0-2.6 the packet, 4.6 the customer leaves
+          customers: sp.clients.map(c => { const R = c.route, per = R.period, u = (((T - R.t0) / 1000) % per + per) % per; return { id: c.ag.id, inS: f((c.stopU - u + per) % per), stopsFor: DEAL.stand } }), clockMs: Math.round(T) })
+      }
+  return out
+}
 // the test and capture hooks: spots by cell, the hand-off's clock, what is drawn (cards #97 and #72's frame tables)
 GAME.dealers = {
   spots: (ci, cj) => slState ? slCell(ci, cj).spots || [] : [], phase: dealPhase, glance: dealGlance, cfg: DEAL, bots: dealBots, near: dealSpotNear,
   S: () => slState?.S, T: () => isHost ? now() : renderT,
   clients: (sp, T) => { const o = []; for (const ag of slState?.cells.get(sp.cell)?.agents || []) if (ag.client === sp) { const p = SL_POSE(); slPose(ag, T, p); o.push({ id: ag.id, x: p.x, z: p.z, mode: p.mode, clip: p.clip, hidden: p.hidden, rec: !!p.rec }) } return o },
-  avatar: id => { const a = avatars.get(id), c = players.get(id); return a && { x: a.mesh.position.x, y: a.mesh.position.y, z: a.mesh.position.z, clip: a.rig?.name, sayAt: a.sayAt, bill: !!a.deal_bill?.visible, pack: !!a.deal_pack?.visible, hp: c?.hp, dead: c?.dead, ai: c?.ai?.deal && { mad: +c.ai.deal.mad.toFixed(2), flee: +c.ai.deal.flee.toFixed(2), hide: +(c.ai.deal.hide || 0).toFixed(2) } } },
+  avatar: id => { const a = avatars.get(id), c = players.get(id); return a && { x: a.mesh.position.x, y: a.mesh.position.y, z: a.mesh.position.z, clip: a.rig?.name, ...dealPoseRow(a), sayAt: a.sayAt, bill: !!a.deal_bill?.visible, pack: !!a.deal_pack?.visible, hp: c?.hp, dead: c?.dead, ai: c?.ai?.deal && { mad: +c.ai.deal.mad.toFixed(2), flee: +c.ai.deal.flee.toFixed(2), hide: +(c.ai.deal.hide || 0).toFixed(2) } } },
 }
 
 // ---------------------------------------------------------------- the disguise and the glass pipe (cards #15 and #16)
@@ -33213,7 +33332,7 @@ function slKeep(cell) {
     owner.dog = dog; cell.agents.push(dog)
   }
   for (const ag of cell.agents) {
-    ag.rank = slRnd(ag.companion?.id ?? ag.id, 77)
+    ag.rank = ag.client ? 0 : slRnd(ag.companion?.id ?? ag.id, 77)          // card #97: a deal's customer is always drawn
     const R = ag.route; let b
     if (R) { b = [1e9, 1e9, -1e9, -1e9]; for (let i = 0; i < R.n; i++) { const x = R.keys[i * 5 + 1], z = R.keys[i * 5 + 2]; b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], z); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], z) } }
     else b = [ag.x, ag.z, ag.x, ag.z]
