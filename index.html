@@ -6105,7 +6105,13 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
 }
 function* faustWaterCellSolid(seed, S, i, j) {
   const out = []
-  const tri = (a, b, c, nrm, tint, solid) => { if (solid) out.push(...a, ...b, ...c) }
+  // each triangle wound to face its normal: a collider copy is hit by rays only from its front (a deck's top, wound down, let the ground check through)
+  const tri = (a, b, c, nrm, tint, solid) => {
+    if (!solid) return
+    const nx = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]), ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]), nz = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    if (!(Math.abs(nx) + Math.abs(ny) + Math.abs(nz) > 1e-9)) return
+    out.push(...a, ...(nx * nrm[0] + ny * nrm[1] + nz * nrm[2] < 0 ? [...c, ...b] : [...b, ...c]))
+  }
   yield* faustWaterCell(seed, S, i, j, { tri, face: (a, b, c, d, nrm, tint, solid) => { tri(a, b, c, nrm, tint, solid); tri(a, c, d, nrm, tint, solid) } }, false)
   return new Float32Array(out)
 }
@@ -11572,12 +11578,27 @@ const SWIM = { deep: 1.4, wet: 0.2, float: 0.2, under: 0.15, k: 0.5, drag: 6, sp
   climbV: 5.5, reach: 1.5, climbUp: 1.8, rise: { stairs: 6, low: 4.2, high: 4.2, ladder: 14 }, slow: 1.4 }          // rise: the most a bank may stand over the surface for him to haul himself up it
 const swimOut = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0], bank: null }, swimEdge = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0] }
 const waterOf = (x, z) => GAME.faustland.water?.at?.(x, z, swimOut) ?? null
+// the lip at the top of a bank: out of the water but near it, pressing on and held up (slower than 1 m/s along his way) by a rise of 0.02-0.6 m just ahead
+// (a capsule doesn't climb a kerb): lifted onto it. Pure in his state and the static world, so a guest's prediction does the same
+const SWIM_LIP = { near: [2.5, 5, 8], rise: 0.6, v: [2.6, 3.8], ahead: 0.35, slow: 1, haul: 2.4, jump: 6 }
+function bankLip(c, wx, wz) {
+  const f = Math.hypot(wx, wz); if (!(f > 0.3)) return false
+  const ux = wx / f, uz = wz / f
+  if ((c.vx || 0) * ux + (c.vz || 0) * uz > SWIM_LIP.slow && !(c.vy > SWIM_LIP.haul)) return false          // held up, or already being lifted (vy over haul)
+  const W = GAME.faustland.water; if (!W?.at) return false
+  let near = false
+  for (const r of SWIM_LIP.near) { for (let k = 0; k < 8 && !near; k++) { const a = k * Math.PI / 4; if (W.at(c.x + Math.cos(a) * r, c.z + Math.sin(a) * r, swimEdge)) near = true } if (near) break }
+  if (!near) return false
+  const feet = c.y - c.h - c.r, d = staticRay(c.x + ux * (c.r + SWIM_LIP.ahead), feet + 1.0, c.z + uz * (c.r + SWIM_LIP.ahead), 0, -1, 0, 1.6), rise = 1.0 - d
+  if (d >= 1.6 || !(rise > 0.02 && rise <= SWIM_LIP.rise)) return false
+  c.swVy = c.vy > SWIM_LIP.jump ? c.vy : Math.min(SWIM_LIP.v[1], SWIM_LIP.v[0] + rise * 2); return true          // a faster rise (a jump) is left alone
+}
 function swimTick(c, inp, wx, wz, dt, J) {
   const was = c.water | 0
   c.swK = 1; c.swFx = c.swFz = 0; c.swWx = c.swWz = undefined; c.water = 0
   if (J || c.tie || c.zip || c.wallRun || c.ceil || c.flyTurn || !c.body || seatOf(c)) return false
   const W = waterOf(c.x, c.z)
-  if (!W) return false
+  if (!W) return bankLip(c, wx, wz)          // out of the water: the lip at the top of a bank
   const s = W.y, feet = c.y - c.h - c.r, head = c.y + c.h + c.r, depth = s - feet, D = s - W.floor
   const wet = was || depth > SWIM.wet
   const B = wet ? GAME.faustland.water.exit?.(c.x, c.z) ?? null : null          // the nearest way out within 12 m: { x, z, y: the bank's top, bank }
