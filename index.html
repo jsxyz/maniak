@@ -5392,7 +5392,7 @@ function faustRoadsTick(points) {
   const near = (k, r) => { const [i, j] = k.split(' ').map(Number); return at.some(([x, z]) => Math.abs(x - i) <= r && Math.abs(z - j) <= r) }
   for (const [k, cell] of [...Rd.cells]) if (!near(k, 2)) {
     background.cancel('road:' + k)
-    for (const c of cell.chunks) try { dropChunk(c) } catch (e) { frameFailed('roads', e) }
+    faustDropLater(cell.chunks, 'roads', w)      // (card #91) in the background, a chunk a step
     Rd.cells.delete(k)
   }
   for (const k of plan.cells.keys()) if (near(k, 1) && !Rd.cells.has(k)) {
@@ -7057,6 +7057,15 @@ function faustRingShapes() {
     body: shape(box.slice(), 0.06, [0, 0, 0]), light: shape(box.slice(), -1, [0, 0, 0]), roof: shape(roof, 0.08, [0, 0.3, 0]), flat: shape(flat, 0, null),
     far: new THREE.BoxGeometry(1, 1, 1) }      // a unit box, scaled to the block's full size: dsFacade reads its box from that
 }
+// card #91 (#63): collider chunks left behind (the highways', the rings') dropped in the background, a chunk a step, not all on
+// the tick a player arrives far away; only while the world they belong to is the world
+let faustDrops = 0
+function faustDropLater(chunks, what, w) {
+  if (!chunks.length) return
+  const list = chunks.slice()
+  background.run('outskirts drop ' + (++faustDrops), function* () { for (const c of list) { try { dropChunk(c) } catch (e) { frameFailed(what, e) } yield } },
+    { priority: 2, valid: () => world === w }).catch(e => frameFailed(what, e))
+}
 // card #91 (#64): the outskirts' foliage (tree crowns, hedges) in a material of its own: the stone shader and program (the same
 // cache key), a separate object, so Realistic's swap (realSwapFor: F.materials.stone -> the facades' patterned ornament) leaves it
 const FAUST_FOLIAGE = new Set(['crown', 'crownHi', 'crownTop', 'hedge'])
@@ -7083,7 +7092,8 @@ function faustRingTreesNear() {
   for (let i = Math.floor((p.x - R.tree) / C); i <= Math.floor((p.x + R.tree) / C); i++) for (let j = Math.floor((p.z - R.tree) / C); j <= Math.floor((p.z + R.tree) / C); j++) {
     const band = faustRingBand(F.seed, F.S, i, j)
     if (band !== 'suburb') continue
-    const c = faustRingPlan(F, plan, i, j)
+    const c = F.ringPlans?.get(i + ' ' + j)      // (card #91) only a plan the pool has made: none planned in the frame
+    if (!c) { F.ringTreeStamp = null; continue }      // (and again next frame, until it's in)
     for (const list of [c.part, c.near || []]) for (const [k, sx, sy, sz, x, y, z, yaw, , tint] of list) {
       if (k !== 'crown' || n >= 240) continue
       const dx = x - p.x, dz = z - p.z
@@ -7215,7 +7225,7 @@ function faustRingsTick(points) {
   const near = (k, r) => { const [i, j] = k.split(' ').map(Number); return at.some(([x, z]) => Math.abs(x - i) <= r && Math.abs(z - j) <= r) }
   for (const [k, cell] of [...Rg.cells]) if (!near(k, 2)) {
     background.cancel('ring:' + k)
-    for (const c of cell.chunks) try { dropChunk(c) } catch (e) { frameFailed('rings', e) }
+    faustDropLater(cell.chunks, 'rings', w)      // (card #91) in the background, a chunk a step
     Rg.cells.delete(k)
   }
   for (const [x, z] of at) for (let i = x - 1; i <= x + 1; i++) for (let j = z - 1; j <= z + 1; j++) {
@@ -15178,6 +15188,26 @@ function* loadLevelSteps(id, gen) {
 
 // craters: host's [x, z, r, seed, y] list; CRATER_BUILDER.build(list, added, done) → done({ regions, replaces })
 const CRATER_MAX = 64
+// #64: a smash landing over half (of its square) in a scar grows that scar about its own middle, with its own seed: the cutter
+// only scales up, so the ground it cut stays under the new bowl. A 96 m cell's scars cost at most CRATER_CELL single bowls
+// (one: 2,289 vertices; one in a region with others about 1.65 as many): about 20,000 vertices, 8 bowls apart or 5 touching.
+// Past that a smash grows the oldest scar it touches there, or makes none. No scar heals: its cut city mesh can't be put back.
+const CRATER_CELL = 8.7, CRATER_GROW = 1.5
+const craterCell = (x, z) => Math.floor((x + ARENA) / 96) + ' ' + Math.floor((z + ARENA) / 96)
+const craterShare = (p, q) => Math.max(0, Math.min(p.a1, q.a1) - Math.max(p.a0, q.a0)) * Math.max(0, Math.min(p.b1, q.b1) - Math.max(p.b0, q.b0)) / ((q.a1 - q.a0) * (q.b1 - q.b0))
+// where a new scar e ([x, z, r, seed, y]) goes in list: { add: true }; else { i, r }, scar i and its radius grown (to r, at most
+// maxR), or i -1: nowhere
+function craterInto(list, e, maxR) {
+  const q = craterSquare(e[0], e[1], e[2]), sq = c => craterSquare(c[0], c[1], c[2]), cell = craterCell(e[0], e[1])
+  let i = -1, share = 0.5
+  list.forEach((c, k) => { const s = craterShare(sq(c), q); if (s > share) { share = s; i = k } })
+  const cost = L => L.reduce((n, c, k) => n + (craterCell(c[0], c[1]) !== cell ? 0 : L.some((o, j) => j !== k && over(sq(o), sq(c))) ? 1.65 : 1), 0)
+  if (i < 0 && cost([...list, e]) <= CRATER_CELL) return { add: true }
+  if (i < 0) i = list.findIndex(c => craterCell(c[0], c[1]) === cell && over(sq(c), q))
+  if (i < 0) return { i }
+  const c = list[i]
+  return { i, r: Math.max(c[2], Math.min(maxR, Math.round(Math.max(c[2] + 0.1 * e[2], Math.hypot(e[0] - c[0], e[1] - c[1]) + e[2]) * 10) / 10)) }
+}
 let craters = [], craterV = 0, geoToken = 0, craterBehind = false, craterRegions = new Map(), craterReplaced = new Set()
 // Ground cuts belong to source boxes, not their changing indices in the streamed BOXES list.
 let craterSources = new WeakMap(), craterSourceId = 0
@@ -15219,7 +15249,7 @@ function craterBuild(list, done) {
   for (const { cr, ...rect } of rs) {
     const key = 'crater ' + Object.values(rect).join(' '), c = cr.map(i => list[i]), g = craterGround(rect, c[0].y)
     if (!g) continue
-    const y = top(g), deep = y - Math.max(...c.map(c => c.depth)) - 0.05, was = old.get(key), R = { key, rect, y, n: c.length, tris: was?.tris, render: was?.render, subs: [] }; all.push(R)
+    const y = top(g), deep = y - Math.max(...c.map(c => c.depth)) - 0.05, was = old.get(key), R = { key, rect, y, n: JSON.stringify(c.map(c => [c.x, c.z, c.r, c.seed])), tris: was?.tris, render: was?.render, subs: [] }; all.push(R)
     BOXES.forEach(b => { if (!b.paint && over(sq(b), rect) && top(b) <= y + 0.01 && top(b) > deep) gs.set(b, [...gs.get(b) || [], R]) })
     crb.regions.set(key, R)
     for (const [k, o] of old) if (k !== key && o.rect.a0 >= rect.a0 && o.rect.a1 <= rect.a1 && o.rect.b0 >= rect.b0 && o.rect.b1 <= rect.b1) { old.delete(k); R.subs.push([k, o]) }
@@ -15257,19 +15287,27 @@ function craterFits(x, z, r, y) {
 }
 function addCrater(x, z, r, y) {
   ;[x, z, r, y] = [x, z, r, y].map(v => Math.round(v * 10) / 10)        // as sent
-  if (craters.length >= CRATER_MAX || !craterFits(x, z, r, y)) return false
-  craters.push([x, z, r, Math.random() * 4294967296 >>> 0, y])
-  craterV++; lsLeft = 8; buildCrater(craters.length - 1)
+  if (!craterFits(x, z, r, y)) return false
+  const to = craterInto(craters, [x, z, r, 0, y], GAME.crater.maxR()), c = craters[to.i]
+  if (to.add) {
+    if (craters.length >= CRATER_MAX) return false
+    craters.push([x, z, r, Math.random() * 4294967296 >>> 0, y])
+    craterV++; lsLeft = 8; buildCrater(craters.length - 1)
+    return true
+  }
+  if (!c || !(to.r > c[2]) || !craterFits(c[0], c[1], to.r, c[4])) return false      // in a scar that can't grow: no new bowl
+  craters[to.i] = [c[0], c[1], to.r, c[3], c[4]]
+  craterV++; lsLeft = 8; buildCrater(to.i)
   return true
 }
 // append-only: anything but the held list plus more is refused
 const craterOk = cr => Array.isArray(cr) && cr.length <= CRATER_MAX && cr.every(e => Array.isArray(e) && e.length === 5 &&
   e.every(Number.isFinite) && Math.abs(e[0]) <= WORLD && Math.abs(e[1]) <= WORLD && e[2] >= 0.5 && e[2] <= GAME.crater.maxR() && e[3] === e[3] >>> 0 &&
   e[4] >= -64 && e[4] <= 192) && craterHeld(cr)       // y: webPoint's range
-const craterHeld = cr => craters.every((e, i) => Array.isArray(cr[i]) && e.every((v, k) => v === cr[i][k]))
+const craterHeld = cr => craters.every((e, i) => Array.isArray(cr[i]) && e.every((v, k) => v === cr[i][k] || k === 2 && cr[i][k] > v))      // a held scar only grows (#64)
 function takeCraters(cr, cv) {
   if (cr !== undefined && (cv | 0) !== craterV && GAME.crater.spec()) {
-    if (craterOk(cr)) { const n = craters.length; craters = cr.map(e => e.slice()); craterV = cv | 0; if (cr.length > n) buildCrater(n) }
+    if (craterOk(cr)) { const n = craters.length, grew = craters.some((e, i) => e[2] !== cr[i][2]); craters = cr.map(e => e.slice()); craterV = cv | 0; if (cr.length > n || grew) buildCrater(n) }
     else if (!craterBehind) sysMsg('§cRefused the host\'s craters.')
   }
   craterBehind = cv !== undefined && (cv | 0) !== craterV
@@ -37149,7 +37187,8 @@ function dsCratersLoad(sec) {
   }
   if (grew) { craterV++; lsLeft = 8; buildCrater(craters.length) }
   const add = [...saved.values()].filter(e => !at.has(scar(e)))
-  const next = [...craters, ...add].slice(0, CRATER_MAX), n = craters.length
+  const next = craters.map(e => e.slice()), n = craters.length
+  for (const e of add) if (next.length < CRATER_MAX && e.length === 5 && craterInto(next, e, 0).add) next.push(e)      // #64: stacked scars fold
   if (next.length === n || !craterOk(next)) return 0
   craters = next.map(e => e.slice()); craterV++; lsLeft = 8; buildCrater(n)
   return craters.length - n
@@ -39148,7 +39187,7 @@ GAME.msgs = { host: {
 // what a level load, a grown chunk and each tick hand the game: its pads, pickups and bot navigation
 GAME.level = { loaded() { eventWorld(); PADS = LV.pads; navQueue.length = 0; initPickups() }, grown(ci, cj) { if (navLevel === levelId) navQueue.push([ci, cj]) }, tick() { for (let n = 0; n < 4 && navQueue.length; n++) navTile(...navQueue.shift()) } }
 // the crater a smash leaves: the row's shape, and the widest any row can make
-GAME.crater = { spec: () => smashRow()?.smash, maxR: () => Math.max(...[...BOTS, ...CHARS].map(R => R.smash?.r || 0)) }
+GAME.crater = { spec: () => smashRow()?.smash, maxR: () => Math.round(CRATER_GROW * Math.max(...[...BOTS, ...CHARS].map(R => R.smash?.r || 0)) * 10) / 10 }      // #64: a scar grows
 
 // a new object body: carried ones are swept, so a throw cannot tunnel a thin wall
 GAME.objectBody = (body, K) => { if (K.carry) { body.setCcdMotionThreshold(objR(K)); body.setCcdSweptSphereRadius(0.6 * objR(K)) } }
