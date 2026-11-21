@@ -4574,7 +4574,7 @@ function faustStorey(B, k) {
           sb(0.02, 0.1, fy + sh, fy + 3.0, sz0, sz1, 0x7a1830, { f: faceTo | 4 }); sb(0.02, 0.1, fy + 3.0, Y1, sz0, sz1, IN_TINT.dark, { f: faceTo })
           const pz = [zm - 0.9, zm + 0.9]
           for (const z of pz) sb(1.7, 1.78, fy + sh, Y1, z - 0.04, z + 0.04, IN_TINT.steel, { m: 1 })
-          light(FX(1.8), fy + 2.6, zm, r, 0.9, 0xff6aa0)
+          light(FX(2.6), fy + 3.3, zm, r, 1.6, 0xff6aa0)
           take(Math.min(FX(0), FX(3.4 + rl)), Math.max(FX(0), FX(3.4 + rl)), sz0 - 0.3, sz1 + 0.3)
           spots.push({ kind: 'stage', x: FX(1.7), y: fy + sh, z: zm, face: [fs, 0] }, ...pz.map(z => ({ kind: 'pole', x: FX(1.9), y: fy + sh, z, face: [fs, 0] })))
         }
@@ -32541,11 +32541,11 @@ function slVenue(cell, P, ci, cj) {
         np_++; extra++
       }
       // the dancers: one on the stage and one at each pole (up to three), a dance each from the CMU set (the street performer's clips),
-      // in a red, black, green or magenta dress, facing the room (toward the club room's middle, whichever way the kit's spot face points); ag.y lifts them to the stage's top
-      const croom = S0.rooms.find(q => q.kind === 'club'), dances = ['dance_charleston', 'dance_charleston_fancy', 'dance_lindy'], dress = [[1.55, 0.3, 0.34], [0.3, 0.3, 0.34], [0.34, 1.1, 0.62], [1.35, 0.4, 1.0]]
+      // in a bright pink, gold, silver or ruby dress, facing the room (toward the club room's middle, whichever way the kit's spot face points); ag.y lifts them to the stage's top
+      const croom = S0.rooms.find(q => q.kind === 'club'), dances = ['dance_charleston', 'dance_charleston_fancy', 'dance_lindy'], dress = [[2.6, 0.5, 1.3], [2.4, 1.8, 0.4], [1.9, 1.9, 2.3], [2.2, 0.35, 0.5]]
       ;[stage, ...spots.filter(s => s.kind === 'pole')].filter(Boolean).slice(0, 3).forEach((s, k) => {
-        const ag = stand(13 + k, s, { face: [croom ? Math.sign((croom.x0 + croom.x1) / 2 - s.x) || 1 : 1, 0], body: 3 + (slHash(base + 13 + k, 4) & 1), tint: dress[slHash(base + 13 + k, 5) % dress.length], clip: dances[slHash(base + 13 + k, 6) % 3], role: 'dancer' })
-        if (ag) ag.y = Math.max(0, s.y - 0.06)
+        const ag = stand(13 + k, s, { face: [croom ? Math.sign((croom.x0 + croom.x1) / 2 - s.x) || 1 : 1, 0], body: 3, tint: dress[slHash(base + 13 + k, 5) % dress.length], clip: dances[slHash(base + 13 + k, 6) % 3], role: 'dancer' })
+        if (ag) { ag.y = Math.max(0, s.y - 0.06); ag.plume = true; ag.shimmer = true }
       })
       continue
     }
@@ -33423,7 +33423,7 @@ mat4 slSkin(float f) { return slBone(skinIndex.x, f) * skinWeight.x + slBone(ski
 function* slSkinnedSteps(g, clipSrc, want, cap, tag, out) {
   const root = cloneSkinned(g.scene); root.updateMatrixWorld(true)
   const lods = rigLods(root).filter(Boolean); if (!lods.length) lods.push(root.getObjectByProperty('isSkinnedMesh', true))
-  const m0 = lods[0], skel = m0.skeleton, nb = skel.bones.length, W = nb * 3, mixer = new THREE.AnimationMixer(root)
+  const m0 = lods[0], skel = m0.skeleton, nb = skel.bones.length, W = nb * 3, mixer = new THREE.AnimationMixer(root), hb = skel.bones.findIndex(b => b.name === 'Head')
   const list = want.map(([name, fps, loop]) => { const nm = name.endsWith('_') ? name + tag : name, c = clipSrc.find(c => c.name === nm)
     return c && { name: name.replace(/_$/, ''), c, fps, loop, n: Math.max(2, Math.round(c.duration * fps) + (loop ? 0 : 1)) } }).filter(Boolean)
   const rows = list.reduce((s, l) => s + l.n, 0), data = new Uint16Array(W * rows * 4), M = new THREE.Matrix4()
@@ -33432,9 +33432,11 @@ function* slSkinnedSteps(g, clipSrc, want, cap, tag, out) {
   for (const l of list) {
     mixer.stopAllAction(); const act = mixer.clipAction(l.c); act.play()
     clips.set(l.name, { row, n: l.n, dur: l.c.duration, loop: !!l.loop })
+    const CH = hb >= 0 && l.name.startsWith('dance') ? (clips.get(l.name).head = new Float32Array(l.n * 6)) : null          // card #98: the head's place and up axis per baked frame
     for (let f = 0; f < l.n; f++) {
       act.time = l.loop ? f / l.n * l.c.duration : f / (l.n - 1) * l.c.duration; mixer.update(0)
       root.updateMatrixWorld(true); skel.update()
+      if (CH) { const e = skel.bones[hb].matrixWorld.elements; CH.set([e[12], e[13], e[14], e[4], e[5], e[6]], f * 6) }
       for (let b = 0; b < nb; b++) {
         M.fromArray(skel.boneMatrices, b * 16).premultiply(Bi).premultiply(MW)          // metres: the vertices are moved into bind space below
         const e = M.elements, o = (row * W + b * 3) * 4
@@ -33519,12 +33521,44 @@ function* slKitSteps([anims, street, ...rest]) {
   kit.pigeon = {}; yield* slSkinnedSteps(pigeon, pigeon.animations, SL_CLIPS.pigeon, 320, '', kit.pigeon); for (const im of kit.pigeon.ims) root.add(im)
   for (const [name, cap] of [['bike_frame', 40], ['bike_wheel', 80], ['bike_crank', 40], ['bike_pedal', 80], ['pram_body', 48], ['pram_wheel_f', 96], ['pram_wheel_r', 96]])
     for (const lod of ['', '_lod1']) { const im = slPart(name.startsWith('bike') ? bike : pram, name + lod, cap, true); if (im) { kit.parts[name + lod] = im; root.add(im) } }
+  {          // card #98: a dancer's headdress: seven flat feathers (gold, magenta, white, cream), vertex-coloured, unlit, bright in every look
+    const pos = [], col = [], idx = [], tints = [[1, 0.95, 0.8], [1, 0.78, 0.15], [1, 0.25, 0.65], [1, 1, 1], [1, 0.25, 0.65], [1, 0.78, 0.15], [1, 0.95, 0.8]]
+    for (let k = 0; k < 7; k++) for (const turn of [0, 1]) {
+      const a = (k - 3) * 0.3, h = 0.46 - Math.abs(k - 3) * 0.05, w = 0.05, dx = Math.sin(a), dy = Math.cos(a), nx = Math.cos(a), ny = -Math.sin(a), b = pos.length / 3
+      const pt = [[0, 0], [-nx * w + dx * h / 3, -ny * w + dy * h / 3], [nx * w + dx * h / 3, ny * w + dy * h / 3], [dx * h, dy * h]]
+      pt.forEach(([x, y], i) => { pos.push(turn ? 0 : x, y, turn ? x : 0); const f = i === 0 ? 0.55 : i === 3 ? 1 : 0.85; col.push(tints[k][0] * f, tints[k][1] * f, tints[k][2] * f) })
+      idx.push(b + 1, b + 2, b + 3, b + 1, b, b + 2)
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx)
+    const mp = new THREE.InstancedMesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false }), 48)
+    mp.count = 0; mp.frustumCulled = false; mp.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mp.userData.tris = idx.length / 3
+    kit.plume = mp; root.add(mp)
+  }
   const lg = new THREE.BufferGeometry(), lp = new THREE.BufferAttribute(new Float32Array(48 * 8 * 3), 3); lp.setUsage(THREE.DynamicDrawUsage); lg.setAttribute('position', lp)
   kit.leash = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x2b2118 })); kit.leash.frustumCulled = false; root.add(kit.leash)
   inkPrepare(root)
   yield* uploadTextures(root)
   yield* warmSceneSteps(activeLook || 'plain', [root])
   scene.add(root); slKit = kit
+}
+// card #98: a dancer's dress shimmers (a time term on its tint, a pure function of the room time), and her plume sits on her head: the baked head
+// place and up axis for her dance frame (clip time ct, blended as the skinning blends), turned by her yaw, scaled by hers
+const slShim = [1, 1, 1], slPlumeUp = new THREE.Vector3(0, 1, 0), slPQ = new THREE.Quaternion(), slPV = new THREE.Vector3(), slPH = new Float32Array(6)
+function slShimmer(ag, T) {
+  const k = 1 + 0.14 * Math.sin(T * 0.0063 + ag.ph * 40) + 0.08 * Math.sin(T * 0.017 + ag.ph * 90)
+  slShim[0] = ag.tint[0] * k; slShim[1] = ag.tint[1] * k; slShim[2] = ag.tint[2] * k
+  return slShim
+}
+function slPlume(kit, ag, p) {
+  const K = kit.bodies[ag.body], C = K && K.clips.get(p.clip), im = kit.plume
+  if (!C || !C.head || !im || im.count >= im.instanceMatrix.count) return
+  const f = (p.ct / C.dur - Math.floor(p.ct / C.dur)) * C.n, a = Math.floor(f) % C.n, b = (a + 1) % C.n, w = f - Math.floor(f), H = C.head
+  for (let i = 0; i < 6; i++) slPH[i] = H[a * 6 + i] + (H[b * 6 + i] - H[a * 6 + i]) * w
+  const s = p.scale, c = Math.cos(p.yaw), sn = Math.sin(p.yaw), n = Math.hypot(slPH[3], slPH[4], slPH[5]) || 1
+  const ux = slPH[3] / n, uy = slPH[4] / n, uz = slPH[5] / n, hx = slPH[0] + ux * 0.1, hy = slPH[1] + uy * 0.1, hz = slPH[2] + uz * 0.1          // the crown, a hand above the head joint
+  slPQ.setFromUnitVectors(slPlumeUp, slPV.set(ux * c + uz * sn, uy, -ux * sn + uz * c))
+  slV.set(p.x + (hx * c + hz * sn) * s, p.y - (K.footY || 0) * s + hy * s, p.z + (-hx * sn + hz * c) * s); slS.set(s, s, s); slM4.compose(slV, slPQ, slS)
+  slM4.toArray(im.instanceMatrix.array, im.count * 16); im.count++
 }
 // ---- the frame: everyone near the camera, posed at the room clock, into the instance buffers
 const slM4 = new THREE.Matrix4(), slQ = new THREE.Quaternion(), slV = new THREE.Vector3(), slS = new THREE.Vector3(), slE = new THREE.Euler(), slCol = new THREE.Color()
@@ -33765,7 +33799,8 @@ function slFrame(t, dt, obl) {
       const d = Math.hypot(p.x - cx, p.z - cz)
       slFadeSet(ag, T, p, d)
       if (ag.kind === SL_K.stray) { if (d < D.dog) slDrawSkinned(kit.dog, p, d, ag.tint, ag.companion ? 0.9 : 0.95); continue }
-      slDrawSkinned(kit.bodies[ag.body], p, d, ag.tint); people++
+      slDrawSkinned(kit.bodies[ag.body], p, d, ag.shimmer ? slShimmer(ag, T) : ag.tint); people++
+      if (ag.plume && d < D.ped * 0.5) slPlume(kit, ag, p)
       if (ag.kind === SL_K.pram && d < D.pram && !slPramGone(ag, T) && !partsPram(kit, ag, p, d, T)) {
         const lod = d < 18 ? '' : '_lod1', s = p.scale, f = STREET.pramBack, x = p.x + Math.sin(p.yaw) * f * s, z = p.z + Math.cos(p.yaw) * f * s
         slSet(kit.parts['pram_body' + lod], x, 0, z, p.yaw, s); slBabySeen(ag, p, x, z, d, T)
