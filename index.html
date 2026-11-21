@@ -38761,6 +38761,16 @@ GAME.commands = {
 // card #71, test commands for live QA: /tp <x> <z>, /near <thing> [go], /where. /tp and /near are the host's own character only.
 // Each thing's position is its own system's: the rail's stations, the airships and their stops, the cars (traffic, parked), objects,
 // street life, bots (freaks, enforcers, the performer), interiors' doors. A system not in this build, or with none out: "none yet".
+// card #71: is a capsule (centre x y z, radius r, half-height h) clear of the solid level boxes in `list`? A box top within 0.35 m of the feet is a step
+function capsuleClear(list, x, y, z, r, h) {
+  const feet = y - h - r, head = y + h + r
+  for (const b of list) {
+    if (b.paint || b.mark || b.plane || b.cy + b.ey <= feet + 0.35 || b.cy - b.ey >= head) continue
+    const dx = Math.max(Math.abs(x - b.cx) - b.ex, 0), dz = Math.max(Math.abs(z - b.cz) - b.ez, 0)
+    if (dx * dx + dz * dz < r * r) return false
+  }
+  return true
+}
 const testTools = (() => {
   const R2D = 180 / Math.PI, refuse = m => { sysMsg('§c' + m); return null }
   const me = hostOnly => {
@@ -38773,18 +38783,28 @@ const testTools = (() => {
   const rose = d => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(d / 45) % 8] + ' ' + d + '°'
   const feet = c => c.y - c.h - c.r
   // the street (or the surface y0) under x, z: the city grown there first, a ray down for the floor, else 3 m above y0 to fall
-  function tpTo(c, x, z, y0, face, up = 4) {
+  function tpTo(c, x, z, y0, face, up = 4, nudge = false) {
     const lim = WORLD - 8
     x = clamp(x, -lim, lim); z = clamp(z, -lim, lim)
     const s = seatOf(c); if (s) leave(c, s[0], s[1])
     if (LV.grow) growNear([[x, z]], true)
     const hit = []
     staticRay(x, y0 + up, z, 0, -1, 0, 12, hit)
-    const y = hit.length && hit[4] > 0.5 ? hit[1] + c.h + c.r + 0.05 : y0 + 3
+    let y = hit.length && hit[4] > 0.5 ? hit[1] + c.h + c.r + 0.05 : y0 + 3, moved = 0
+    if (nudge) {      // out of a slot between walls: the nearest free capsule spot on the same level (rings of 16: 0.5 m apart out to 6 m, then 1 m apart out to 30 m, for a target inside a building)
+      const near = BOXES.filter(b => Math.abs(b.cx - x) < b.ex + 34 && Math.abs(b.cz - z) < b.ez + 34), x0 = x, z0 = z, y1 = y, had = hit.length && hit[4] > 0.5
+      const free = (px, py, pz) => capsuleClear(near, px, py, pz, c.r, c.h) && [0, 1, 2, 3, 4, 5, 6, 7].every(k => staticRay(px, py - c.h * 0.5, pz, Math.cos(k * Math.PI / 4), 0, Math.sin(k * Math.PI / 4), c.r + 0.05) >= c.r)
+      search: for (let ring = 0; ring <= 36; ring++) for (let k = 0; k < (ring ? 16 : 1); k++) {
+        const a = k * Math.PI / 8 + ring * 0.4, d = ring <= 12 ? ring * 0.5 : ring - 6, px = x0 + Math.cos(a) * d, pz = z0 + Math.sin(a) * d, h2 = []
+        let py = y1
+        if (ring) { staticRay(px, y0 + up, pz, 0, -1, 0, 12, h2); if (!(h2.length && h2[4] > 0.5)) continue; py = h2[1] + c.h + c.r + 0.05; if (had && Math.abs(py - y1) > 2) continue }
+        if (free(px, py, pz)) { x = px; z = pz; y = py; moved = Math.hypot(px - x0, pz - z0); break search }
+      }
+    }
     setCharPos(c, x, y, z)
     c.vx = c.vy = c.vz = 0; c.carryV = null
     if (face) { const yaw = Math.atan2(-face[0], -face[1]); c.yaw = yaw; input.yaw = yaw; input.pitch = 0 }
-    return [x, y, z]
+    return [x, y, z, moved]
   }
   // about 3 m from the thing on the first side with a clear way (toward the player first), facing it
   function beside(c, t) {
@@ -38958,14 +38978,14 @@ const testTools = (() => {
       if (hit.length > 1) return sysMsg('§c' + hit.length + ' players match §f' + esc(q) + '§c: use the full name')
       const c = players.get(hit[0][0])
       if (c.dead > 0) return sysMsg('§c' + esc(hit[0][1].name) + ' is down.')
-      const [px, py, pz] = tpTo(c, x, z, 0, null)
-      return sysMsg('§7Moved §f' + esc(hit[0][1].name) + ' §7to x §f' + Math.round(px) + ' §7z §f' + Math.round(pz) + ' §7y §f' + py.toFixed(1))
+      const [px, py, pz, mv] = tpTo(c, x, z, 0, null, 4, true)
+      return sysMsg('§7Moved §f' + esc(hit[0][1].name) + ' §7to x §f' + px.toFixed(1) + ' §7z §f' + pz.toFixed(1) + ' §7y §f' + py.toFixed(1) + (mv ? ' §7(nudged by §f' + mv.toFixed(1) + ' m§7 to open ground)' : ''))
     }
     const c = me(true); if (!c) return
     const n = w.map(Number)
     if (n.length !== 2 || !n.every(Number.isFinite)) return sysMsg('§cUsage: §f/tp [name] <x> <z>')
-    const [x, y, z] = tpTo(c, n[0], n[1], 0, null)
-    sysMsg('§7Teleported to x §f' + Math.round(x) + ' §7z §f' + Math.round(z) + ' §7y §f' + y.toFixed(1))
+    const [x, y, z, mv] = tpTo(c, n[0], n[1], 0, null, 4, true)
+    sysMsg('§7Teleported to x §f' + x.toFixed(1) + ' §7z §f' + z.toFixed(1) + ' §7y §f' + y.toFixed(1) + (mv ? ' §7(nudged by §f' + mv.toFixed(1) + ' m§7 to open ground)' : ''))
   }
   const near = a => {
     const c = me(true); if (!c) return
