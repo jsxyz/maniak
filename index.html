@@ -30604,6 +30604,11 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
       hookCheck(Number.isFinite(id), 'light(pramId) needs a pram id (around())')
       return GAME.streetLife.light(id)
     },
+    // card #63 (hooks5): blasts(): the last 16 blasts in the street (a pram's, a car's): where, by whom, whom each caught and passed over
+    blasts() {
+      hookCheck(isHost, 'Only the host can use test commands.')
+      return GAME.streetLife.blasts()
+    },
     // card #101: killBird(flockId, i, ux, uz) kills the i-th bird of flocks()' flock flockId, hit from (ux, uz): a test
     killBird(flockId, i, ux = 1, uz = 0) {
       hookCheck(isHost, 'Only the host can use test commands.')
@@ -35508,15 +35513,31 @@ function slBlastStreet(x, z, B, by, T) {
   if (!isHost || !slState) return
   const caught = []
   const prams = []          // card #63: a dead mother's pram, alone
-  slAround(x, z, B.radius, T, (ag, p) => { const d = Math.hypot(p.x - x, p.z - z); if (d < B.radius && !p.dead && !p.hidden) caught.push([ag, { ...p }, d]); else if (p.dead) { const q = slPramOnly(ag, p, T), e = q && Math.hypot(q.x - x, q.z - z); if (q && e < B.radius) prams.push([ag, { ...p }, e]) } })
+  const skipped = []          // card #63 (hooks5): those in its radius it passes over, and why (for its log)
+  slAround(x, z, B.radius, T, (ag, p) => { const d = Math.hypot(p.x - x, p.z - z); if (d < B.radius && !p.dead && !p.hidden) caught.push([ag, { ...p }, d]); else if (p.dead) { if (d < B.radius) skipped.push([ag, 'dead', d]); const q = slPramOnly(ag, p, T), e = q && Math.hypot(q.x - x, q.z - z); if (q && e < B.radius) prams.push([ag, { ...p }, e]) } })
   for (const [ag, p, d] of prams) slPramStrike(ag, p, by, T, B.dmg * (1 - d / B.radius))
   for (const [ag, p, d] of caught) {
     slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
     try { slKnock(ag, p, (p.x - x) || 0.01, p.z - z, 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }
     slBlastHurt(ag, p, by, T)          // card #63 (hooks3): a lying one it hurt
   }
+  slBlastNote('car', x, z, B, by, caught, prams, skipped, T)          // card #63 (hooks5): QA's blast log
   slBirdsNear(x, z, B.radius, T, (f, i, q) => slBirdKill(f, i, by, (q.x - x) || 0.01, q.z - z, T))
   slPanic(x, z, T, STREET.scareR * 2)
+}
+// card #63 (hooks5): a pram's blast: the Car's boom (7 m, 120 at its centre falling to 0 at its edge, knock 16)
+const slPramBoom = () => VEHICLES.find(V => V.name === 'Car')?.boom || { radius: 7, dmg: 120, knock: 16 }
+// card #63 (hooks5), for live QA (gameHooks.streetLife.blasts()): the last 16 blasts in the street (a pram's, a car's): where, its
+// radius, whom it was credited to (by: a player's id, or null), whom it caught (id, kind, distance, lying, its damage there, killed
+// by it), the lone prams it struck, and whom inside its radius it passed over and why
+const slBlastLog = []
+function slBlastNote(what, x, z, B, by, caught, prams, skipped, T) {
+  const kind = ag => Object.keys(SL_K).find(k => SL_K[k] === ag.kind) ?? null
+  slBlastLog.push({ what, t: Math.round(T), x: slR2(x), z: slR2(z), r: B.radius, by: by ? by.id : null,
+    caught: caught.map(([ag, p, d]) => ({ id: ag.id, kind: kind(ag), d: slR2(d), lying: !!p.down, dmg: slR2(B.dmg * (1 - d / B.radius)), killed: !p.dead && !!slDeathOf(ag.id, Math.round(T)) })),
+    prams: prams.map(([ag, p, d]) => ({ id: ag.id, d: slR2(d), blown: !!slPramGone(ag, T) })),
+    skipped: skipped.map(([ag, why, d]) => ({ id: ag.id, kind: kind(ag), d: slR2(d), why })) })
+  if (slBlastLog.length > 16) slBlastLog.shift()
 }
 // the wire: new records in the next few snapshots, and every live one every refreshMs (a late joiner, a lost packet)
 function slWireOut() {
@@ -36213,7 +36234,7 @@ function slSpawnTest(kind, x, z, yaw, y = 0, dead = false, down = false) {
   cell.agents.push(ag); L.push({ ag, cell })
   if (dead) slAddRec([SL_REC.death, ag.id, T - 2000, slR2(x), slR2(z), slR2(x - Math.sin(yaw) * 0.6), slR2(z - Math.cos(yaw) * 0.6), 6, -1])
   if (down && !dead) { const x1 = x - Math.sin(yaw) * 0.6, z1 = z - Math.cos(yaw) * 0.6, [x2, z2] = slRunTo(x1, z1, -Math.sin(yaw), -Math.cos(yaw), 22)
-    ag.lie = 20; (st.hp ||= new Map()).set(ag.id, { hp: 16, t: T })
+    ag.lie = 20; if (kind === SL_K.pram) (st.hp ||= new Map()).set(ag.id, { hp: 16, t: T })          // card #63 (hooks5): the mother at hp 16; anyone else at his full hp
     slAddRec([SL_REC.knock, ag.id, T - 1000, slR2(x), slR2(z), slR2(x1), slR2(z1), slR2(x2), slR2(z2)]) }
   return ag
 }
@@ -36222,6 +36243,19 @@ function slClearTest(e) { const i = e.cell.agents.indexOf(e.ag); if (i >= 0) e.c
 function slClearTests() { if (slState?.tests) for (const e of slState.tests.splice(0)) slClearTest(e) }
 // card #63 (hooks4), for live QA (host): a pram's fuse set going now (2.5 s), as a hit that does it no damage would, credited to
 // the host's own character (the baby turns on him); false if no such pram is within 120 m of a player, or it has blown
+// card #63 (hooks5), for live QA (host): /spawn ped down [d]: a test pedestrian lying alive (down 20 s, at his full hp) d m from the
+// pram of the test mother nearest (x, z), beyond it from her; { id, mother } or null (no test mother with her pram there)
+function slSpawnNearPram(x, z, d) {
+  const st = slState; if (!isHost || !st || ![x, z, d].every(Number.isFinite) || d < 0 || d > 30) return null
+  const T = tickAt || now(); let best = null, bd = Infinity
+  for (const e of st.tests || []) { if (e.ag.kind !== SL_K.pram || slPramGone(e.ag, T)) continue
+    const p = slPose(e.ag, T, SL_POSE()); if (p.hidden) continue
+    const q = slPramAt(p, {}), dd = Math.hypot(q.x - x, q.z - z); if (dd < bd) { bd = dd; best = [e.ag, q] } }
+  if (!best) return null
+  const [M, q] = best, fx = Math.sin(q.yaw), fz = Math.cos(q.yaw)
+  const ag = slSpawnTest(SL_K.ped, q.x + fx * (d + 0.6), q.z + fz * (d + 0.6), q.yaw, 0, false, true)          // he falls 0.6 m back: d m from it
+  return ag && { id: ag.id, mother: M.id }
+}
 function slLightPram(id) {
   if (!isHost || !slState) return false
   const T = tickAt || now(); let got = null
@@ -36234,6 +36268,7 @@ GAME.streetLife = {
   obstacles: slObstacles, driverExit: slDriverExit, blast: (x, z, B, by) => slBlastStreet(x, z, B, by, tickAt || now()),          // card #101: blast
   spawnTest: slSpawnTest, clearTests: slClearTests,          // card #63: QA's test pram (/spawn pram)
   light: slLightPram,          // card #63 (hooks4): QA's lit pram
+  spawnNear: slSpawnNearPram, blasts: () => slBlastLog.map(e => ({ ...e })),          // card #63 (hooks5): QA's lying pedestrian, the blasts' log
   // traffic may report a contact from its own physics; the host's own test makes the same record, so either is enough
   struck: ({ id, vehicleId, vx = 0, vz = 0 } = {}) => {
     if (!isHost || !slState) return
@@ -38559,7 +38594,7 @@ function slPramOnly(ag, p, T) { return ag.kind === SL_K.pram && p.down && !p.hid
 function slPramReport(ag, T) {
   const gone = !!slPramGone(ag, T), h = isHost && !gone ? slBabyOf(slState).hurt.get(ag.id) : null
   return { baby: gone ? 'dead' : 'alive', blown: gone, fuse: h ? +Math.max(0, (h.fuse - T) / 1000).toFixed(2) : null,
-    pramHp: isHost ? (gone ? 0 : +(h ? h.hp : SL_PRAM_HIT.hp).toFixed(1)) : null, mother: slDeathOf(ag.id, Math.round(T)) ? 'dead' : 'alive' }
+    pramHp: isHost ? (gone ? 0 : +(h ? h.hp : SL_PRAM_HIT.hp).toFixed(1)) : null, mother: slDeathOf(ag.id, Math.round(T)) ? 'dead' : 'alive', blastR: slPramBoom().radius }          // card #63 (hooks5): blastR
 }
 // card #63: a hit on that pram alone: slPramHit with the hit's damage (none given: all of its hp), as a hit on a standing mother's
 // pram is dealt; she is not touched
@@ -38578,7 +38613,7 @@ function slPramBlow(id, x, z, by, T) {
 // boom()'s blast, at a pram: players in its radius hurt and thrown (credited to whoever set it off), vehicles in it damaged
 // (they burn and blow in their own turn), people in it knocked down, the street panicked; one fire-and-smoke record
 function slPramBlast(e, credit) {
-  const B = VEHICLES.find(V => V.name === 'Car')?.boom || { radius: 7, dmg: 120, knock: 16 }, at = [e.x, 0.55, e.z], by = e.by, T = e.T
+  const B = slPramBoom(), at = [e.x, 0.55, e.z], by = e.by, T = e.T          // card #63 (hooks5): its numbers from one place
   for (const c of players.values()) {
     const dx = c.x - at[0], dz = c.z - at[2], d = Math.hypot(dx, c.y - at[1], dz), k = 1 - d / B.radius
     const was = hookHitOn && [c.hp, c.mark, c.markT]
@@ -38595,13 +38630,15 @@ function slPramBlast(e, credit) {
   const caught = []
   const prams = []          // card #63: a down mother's pram, alone
   // card #63 (hooks3): the lying (knocked down, alive) are caught too, as those standing: hurt where they lie, or killed (no new throw)
-  slAround(at[0], at[2], B.radius, T, (ag, p) => { const d = Math.hypot(p.x - at[0], p.z - at[2]); if (d < B.radius && (!p.down || slLying(p, T))) caught.push([ag, { ...p }, d]); else { const q = slPramOnly(ag, p, T), e = q && Math.hypot(q.x - at[0], q.z - at[2]); if (q && e < B.radius) prams.push([ag, { ...p }, e]) } })
+  const skipped = []          // card #63 (hooks5): those in its radius it passes over, and why (for its log)
+  slAround(at[0], at[2], B.radius, T, (ag, p) => { const d = Math.hypot(p.x - at[0], p.z - at[2]); if (d < B.radius && (!p.down || slLying(p, T))) caught.push([ag, { ...p }, d]); else { if (d < B.radius) skipped.push([ag, p.dead ? 'dead' : 'held or flying', d]); const q = slPramOnly(ag, p, T), e = q && Math.hypot(q.x - at[0], q.z - at[2]); if (q && e < B.radius) prams.push([ag, { ...p }, e]) } })
   for (const [ag, p, d] of prams) slPramStrike(ag, p, by, T, B.dmg * (1 - d / B.radius))
   for (const [ag, p, d] of caught) {
     slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
     try { slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }          // card #101
     slBlastHurt(ag, p, by, T)          // card #63 (hooks3): a lying one it hurt
   }
+  slBlastNote('pram', at[0], at[2], B, by, caught, prams, skipped, T)          // card #63 (hooks5): QA's blast log
   slBirdsNear(at[0], at[2], B.radius, T, (f, i, q) => slBirdKill(f, i, by, q.x - at[0] || 0.01, q.z - at[2], T))          // card #101: the birds in it
   slPanic(at[0], at[2], T)
   const seed = Math.random() * 2 ** 31 | 0, B_ = slBabyOf(slState)
@@ -38862,7 +38899,8 @@ function heatNote(c, kind, n, T, no, who = null) {          // card #63 (hooks3)
 function heatReset() { heatClear(myId); const H = heat.get(myId); if (H) H.at = {}; heatLog.length = 0 }
 // sure: the crime was seen by the enforcer it was done to
 function heatCrime(c, kind, x = c?.x, z = c?.z, n = 1, sure = false, who = null) {          // card #63 (hooks3): who, the street person it was done to (QA's crime log)
-  if (!isHost || !LV.faust || !c || c.bot || c.id >= BOT_ID0 || c.dead > 0 || !enforcersEnabled()) return false
+  if (!isHost || !LV.faust || !c || c.bot || c.id >= BOT_ID0) return false
+  if (c.dead > 0 || !enforcersEnabled()) return heatNote(c, kind, n, tickAt || now(), c.dead > 0 ? 'attacker dead' : 'enforcers off', who)          // card #63 (hooks5): logged, still refused
   const T = tickAt || now(), H = heatFor(c.id), lim = HEAT.limit[kind]
   if (lim && T - (H.at[kind] || -1e9) < lim * 1000) return heatNote(c, kind, n, T, 'limit', who)          // card #63: QA's crime log
   if (!sure && !heatWitnessed(x, z, T)) return heatNote(c, kind, n, T, 'unseen', who)
@@ -39366,6 +39404,16 @@ function spawnTestPram(dead = false, down = false) {          // card #63 (hooks
     : dead ? '§7A test mother (§f' + ag.id + '§7) lies dead 3 m ahead beside her pram, its baby alive: host only; §f/despawn §7takes it away.'
     : '§7A test mother with her pram (§f' + ag.id + '§7) stands 3 m ahead until she is hit: host only; §f/despawn §7takes it away.')
 }
+// card #63 (hooks5), for live QA: /spawn ped down [d]: a test pedestrian lying alive (down 20 s, at his full hp) d m (3 unless given)
+// from the pram of the nearest test mother, beyond it from her: to be caught in its blast; /despawn takes him away
+function spawnTestPed(d) {
+  const me = selfChar()
+  if (!me || me.dead > 0) return sysMsg(gameText('stillDown'))
+  if (!(d >= 0 && d <= 30)) return sysMsg('§cUsage: §f/spawn ped down [0-30]')
+  const r = LV.faust ? GAME.streetLife?.spawnNear?.(me.x, me.z, d) : null
+  if (!r) return sysMsg('§cNo test pram near: §f/spawn pram down §cfirst.')
+  sysMsg('§7A test pedestrian (§f' + r.id + '§7) lies ' + d + ' m from the pram of test mother §f' + r.mother + '§7, down for 20 s: host only; §f/despawn §7takes him away.')
+}
 // the commands this game adds to the page's own
 GAME.commands = {
   event:  { args: '<name|auto|off>', help: 'host only, the seasonal event', run: a => {
@@ -39373,9 +39421,10 @@ GAME.commands = {
               const w = String(a || '').trim().toLowerCase(), k = eventPicks().find(p => p.toLowerCase() === w)
               if (!k) return sysMsg('§7Event: §f' + eventLabel(settings.event || 'auto') + ' §7(' + eventPicks().map(eventLabel).join(', ') + ')')
               pickEvent(k) } },
-  spawn:  { args: '<name|all|pram> [still|walk|dead|down]', help: 'host only, bring enemies in now; with still or walk, one enemy 5 m ahead that stands or paces until it is hit (to check its look); pram [still|dead|down]: a test mother with her pram 3 m ahead (dead: lying dead beside it; down: knocked down, alive, for 20 s)', run: a => {
+  spawn:  { args: '<name|all|pram> [still|walk|dead|down]', help: 'host only, bring enemies in now; with still or walk, one enemy 5 m ahead that stands or paces until it is hit (to check its look); pram [still|dead|down]: a test mother with her pram 3 m ahead (dead: lying dead beside it; down: knocked down, alive, for 20 s); ped down [d]: a test pedestrian lying d m (3) beyond the nearest test pram', run: a => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
               { const pm = /^pram(?:\s+(still|dead|down))?$/i.exec(String(a || '').trim()); if (pm) return spawnTestPram(pm[1]?.toLowerCase() === 'dead', pm[1]?.toLowerCase() === 'down') }          // card #63: QA's test pram
+              { const pd = /^ped\s+down(?:\s+(\d+(?:\.\d+)?))?$/i.exec(String(a || '').trim()); if (pd) return spawnTestPed(pd[1] === undefined ? 3 : +pd[1]) }          // card #63 (hooks5): QA's lying pedestrian
               const test = /^(.*\S)\s+(still|walk)$/i.exec(String(a || '').trim())
               if (test) return spawnStill(test[1], test[2].toLowerCase())
               const want = String(a || '').trim().toLowerCase()
