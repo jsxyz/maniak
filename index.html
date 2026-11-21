@@ -19041,6 +19041,7 @@ function realRigMaterial(orig) {
       float realPlate = smoothstep(0.4, 0.6, metalnessFactor);
       roughnessFactor = mix(mix(0.5, 0.86, smoothstep(0.25, 0.55, roughnessFactor)), 0.42, realPlate);
       metalnessFactor = 0.22 * realPlate;`)
+    capeShadeShader(shader, 0.5)      // the cape's shading (card #63): its rim and lamps can't light it pale
   }
   m.customProgramCacheKey = () => key + '|real-rig-1'
   return m
@@ -22290,13 +22291,15 @@ const capeShaded = new WeakSet()
 // the cape's shading in a material's shader (capeShadeMaterial's hook, and Realistic's rig material, realRigMaterial,
 // after its own): its lining a quarter darker, no grazing rise in its reflectance, and its specular (all of it: the
 // lights', the lamps', Realistic's environment and its hero rim, which lights any edge-on surface) cut to a quarter, the
-// lining's to a tenth, after every hook's lighting. Constant factors in [0, 1] only (no pow, division or normalize)
-function capeShadeShader(shader) {
+// lining's to a tenth, after every hook's lighting. Constant factors in [0, 1] only (no pow, division or normalize).
+// `diffuse` (Realistic's, under its sodium lamps: the near-black cloth lit brown to beige) scales its diffuse light too
+function capeShadeShader(shader, diffuse = 1) {
   shader.vertexShader = 'attribute vec2 capeMark;\nvarying vec2 vCapeMark;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vCapeMark = capeMark;')
   shader.fragmentShader = 'varying vec2 vCapeMark;\n' + shader.fragmentShader
     .replace('#include <map_fragment>', '#include <map_fragment>\n  diffuseColor.rgb *= 1.0 - 0.25 * vCapeMark.y;')
     .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n  material.specularF90 = mix(material.specularF90, material.specularColor.g, vCapeMark.x);')
-    .replace('#include <aomap_fragment>', '{ float capeSpec = 1.0 - 0.75 * vCapeMark.x - 0.15 * vCapeMark.y;\n    reflectedLight.directSpecular *= capeSpec; reflectedLight.indirectSpecular *= capeSpec; }\n  #include <aomap_fragment>')
+    .replace('#include <aomap_fragment>', '{ float capeSpec = 1.0 - 0.75 * vCapeMark.x - 0.15 * vCapeMark.y;\n    reflectedLight.directSpecular *= capeSpec; reflectedLight.indirectSpecular *= capeSpec; }\n' +
+      (diffuse < 1 ? `  { float capeDif = 1.0 - ${(1 - diffuse).toFixed(3)} * vCapeMark.x;\n    reflectedLight.directDiffuse *= capeDif; reflectedLight.indirectDiffuse *= capeDif; }\n` : '') + '  #include <aomap_fragment>')
 }
 function capeShadeMaterial(m) {
   if (!m?.isMeshStandardMaterial || capeShaded.has(m)) return m
