@@ -32290,7 +32290,7 @@ function partsTake(c, g) {
   }
   if (g.src === 'street') {
     const { ag, pose, what } = g.ref, T = Math.round(tickAt || now())
-    const r = slAddRec([8, ag.id, T, slR2(pose.x), slR2(pose.z), c.id, slR2(pose.yaw), what])
+    const r = slAddRec([8, ag.id, T, slR2(pose.x), slR2(pose.z), c.id, slR2(pose.yaw), what, slR2(c.x), slR2(c.z)])          // fix 55h: his place at the grab
     if (!r) return
     S.st = { ag, rec: r, kind: g.kind, R: g.R, t: 0, what }
     slPanic(pose.x, pose.z, T)
@@ -32563,11 +32563,11 @@ const partsCentre = (ag, what) => what ? 0.45 : ag?.kind === SL_K.stray ? 0.3 : 
 // ---- street people under records 8 and 9, on every client
 // record fields: 8 [8, id, t, x, z, by, yaw, what]; 9 [9, id, t, x0, z0, y0, vx, vy, vz, tw ms, tl ms, x1, z1, x2, z2, yaw, what, by]
 function partsRecParse(r, a) {
-  if (r.kind === 8) { r.by = a[5] | 0; r.yaw = a[6]; r.what = a[7] | 0; if (!slState?.byId.get(r.id)?.some(q => q.kind === 9 && q.t >= r.t)) partsGrabbed.set(r.id, r) }
+  if (r.kind === 8) { r.by = a[5] | 0; r.yaw = a[6]; r.what = a[7] | 0; if (a.length > 9) { r.hx = a[8]; r.hz = a[9] } if (!slState?.byId.get(r.id)?.some(q => q.kind === 9 && q.t >= r.t)) partsGrabbed.set(r.id, r) }
   else if (r.kind === 9) { [r.x0, r.z0, r.y0, r.vx, r.vy, r.vz, r.tw, r.tl, r.x1, r.z1, r.x2, r.z2, r.yaw, r.what, r.by] = a.slice(3, 18); r.what |= 0; r.yaw0 = a.length > 18 ? a[18] : r.yaw
     const g = partsGrabbed.get(r.id); if (g && g.t <= r.t) { r.from = g; partsGrabbed.delete(r.id) } }
 }
-const partsRecOk = a => (a[0] === 8 && a.length === 8 || a[0] === 9 && (a.length === 18 || a.length === 19)) && a.every(Number.isFinite)
+const partsRecOk = a => (a[0] === 8 && (a.length === 8 || a.length === 10) || a[0] === 9 && (a.length === 18 || a.length === 19)) && a.every(Number.isFinite)
 const partsGrabbed = new Map()
 function partsStreetHeldBy(id) {
   const T = slNow()
@@ -32644,7 +32644,8 @@ function partsGrabRise(ag, r, t, o) {
   const off = (yaw, A, Cy, Cz) => { const y = Cy * Math.cos(A) - Cz * Math.sin(A), z = Cy * Math.sin(A) + Cz * Math.cos(A); return [z * Math.sin(yaw), y, z * Math.cos(yaw)] }
   const P = o.pitch || 0, h = off(o.yaw, P, E[1], E[2]), l = off(r.yaw, 0, ly, lz)
   // the centre: from the lying body's to the held one's; the torso: from lying to the held slump's, the clip's own angle made up by the pitch
-  const Bx = (o.x + h[0]) * e + (r.x + l[0]) * w, By = (o.y + h[1]) * e + l[1] * w, Bz = (o.z + h[2]) * e + (r.z + l[2]) * w
+  const H = r.hx === undefined ? null : partsHolder(r.by, partsHolderTmp), sx = r.x + (H ? H.x - r.hx : 0), sz = r.z + (H ? H.z - r.hz : 0)          // fix 55h
+  const Bx = (o.x + h[0]) * e + (sx + l[0]) * w, By = (o.y + h[1]) * e + l[1] * w, Bz = (o.z + h[2]) * e + (sz + l[2]) * w
   const A = PARTS_LIE.axis * w + (E[3] * Math.PI / 180 + P) * e - ax, b = off(o.yaw, A, cy, cz)
   o.ct = ct; o.x = Bx - b[0]; o.y = Math.max(0, By - b[1]); o.z = Bz - b[2]; o.pitch = A
 }
@@ -32661,8 +32662,9 @@ function partsStreetPose(ag, r, t, o) {
     const h = partsHolder(r.by, partsHolderTmp)
     if (!h) { o.x = r.x; o.z = r.z; o.y = 0; o.yaw = r.yaw; o.clip = dog ? 'flinch' : 'cower'; o.ct = tau; o.pramAt = ag.kind === SL_K.pram ? [r.x, r.z, r.yaw] : null; return }
     const C = { r: 0.48, h: 0.5 }, p = partsCarryAt(r.by, h.x, h.y, h.z, h.yaw, C, dog ? 'chest' : 'scruff', dog ? 0.3 : 0.32, [0, 0, 0])
-    const yw = h.yaw + (dog ? Math.PI / 2 : 0), dy = partsWrap(yw - r.yaw), e = partsEase(tau / Math.max(0.2, Math.hypot(p[0] - r.x, p[2] - r.z) * 0.42))
-    o.x = r.x + (p[0] - r.x) * e; o.z = r.z + (p[2] - r.z) * e; o.y = Math.max(0, p[1] - H) * e; o.yaw = r.yaw + dy * partsEase(tau / partsTurnS(dy))          // fix 55c: lifted, not popped
+    const yw = h.yaw + (dog ? Math.PI / 2 : 0), dy = partsWrap(yw - r.yaw), e = partsEase(tau / PARTS_REL.T)          // card #55, fix 55h: a fixed 0.4 s (it was from the distance to his hands now: a runner left it behind)
+    const sx = r.x + (r.hx === undefined ? 0 : h.x - r.hx), sz = r.z + (r.hz === undefined ? 0 : h.z - r.hz)          // fix 55h: the grab spot, carried along with him
+    o.x = sx + (p[0] - sx) * e; o.z = sz + (p[2] - sz) * e; o.y = Math.max(0, p[1] - H) * e; o.yaw = r.yaw + dy * partsEase(tau / partsTurnS(dy))          // fix 55c: lifted, not popped
     o.clip = dog ? 'flinch' : 'cower'; o.ct = dog ? 0.25 : tau; o.pitch = dog ? 0 : -0.15 * e
     if (ag.kind === SL_K.pram) o.pramAt = [r.x, r.z, r.yaw]
     if (ag.kind === SL_K.cyclist) { o.bikeDown = [r.x, r.z, r.yaw]; o.wheel = 0 }
