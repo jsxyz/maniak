@@ -12884,7 +12884,7 @@ function stepPhysics(dt) {
 const TRAFFIC = { cap: 160, fleet: ['Car','Sports car','Van','Truck','Bus'], density: {core:108,civic:64,tenement:56,industrial:27}, quality: {low:0.5,medium:0.5,high:1}, radius: 420, retire: 520, think: 0.1, cruise: [7, 11], trim: 15, stop: 21 }
 let trafficState = null
 // card #86: the host's quality setting scales the ambient fleet (low and medium keep the old 80-car fleet)
-const trafficK = () => TRAFFIC.quality[settings.quality] ?? 1
+const trafficK = () => (TRAFFIC.quality[settings.quality] ?? 1) * (TRAFFIC.scale ?? 1)
 const trafficRemote = new Map(), trafficViews = new Map()
 const trafficKey = (x, z) => x + ':' + z
 function trafficReset() {
@@ -30082,7 +30082,7 @@ function slFrame(t, dt, obl) {
   if (st.view) { cam.position.set(...st.view.p); cam.lookAt(...st.view.t) }          // debug: a free camera (streetLife.view)
   cam.updateMatrixWorld(); slPM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); slFrus.setFromProjectionMatrix(slPM)
   for (const c of kit.root.children) if (c.isInstancedMesh) c.count = 0
-  const qn = STREET.quality[settings.quality] ?? 1, qd = STREET.qualityDraw[settings.quality] ?? 1, D = Object.fromEntries(Object.entries(STREET.draw).map(([k, v]) => [k, v * qd]))
+  const qn = (STREET.quality[settings.quality] ?? 1) * (STREET.scale ?? 1), qd = STREET.qualityDraw[settings.quality] ?? 1, D = Object.fromEntries(Object.entries(STREET.draw).map(([k, v]) => [k, v * qd]))
   const cx = cam.position.x, cz = cam.position.z, A = st.S * 48, seen = (x, y, z, r) => slFrus.intersectsSphere(slSph.set(slV.set(x, y, z), r))
   const near = (x, z, R) => Math.abs(x - cx) < R && Math.abs(z - cz) < R && Math.hypot(x - cx, z - cz) < R
   // the step-aside (slNudge): from the characters and vehicles this client draws near the camera
@@ -33378,6 +33378,13 @@ Object.assign(GAME.commands, {
   tp:    { args: '[<name>] <x> <z>', help: 'host only, test: teleport to the street under a point; a named player (full name or a unique prefix), else you', run: testTools.tp },
   near:  { args: '<thing> [go]', help: 'host only, test: find the nearest (' + testTools.things() + '), go to teleport beside it', run: testTools.near },
   where: { args: '', help: 'test: your x, z, heading and city cell', run: testTools.where },
+  density: { args: '[<cars> [<people>]]', help: 'host only, test: scale the ambient fleet and the drawn crowd, 0 to 1 of what the quality setting gives (card #86); /density 0.5 0.55 is about the city before #86, /density 1 1 puts it back, alone it shows both; cars past the new cap leave as you move off', run: a => {
+    if (!isHost) return sysMsg('§cOnly the host can use test commands.')
+    const w = String(a || '').trim().split(/\s+/).filter(Boolean).map(Number)
+    if (w.length && w.some(v => !Number.isFinite(v) || v < 0 || v > 1)) return sysMsg('§cUsage: §f/density [<cars 0-1> [<people 0-1>]]')
+    if (w.length) { TRAFFIC.scale = w[0]; STREET.scale = w[1] ?? w[0] }
+    sysMsg('§7ambient cars x§f' + (TRAFFIC.scale ?? 1) + '§7 (cap §f' + Math.round(TRAFFIC.cap * trafficK()) + '§7), crowd drawn x§f' + (STREET.scale ?? 1))
+  } },
   blackbox: { args: '[on|off|dump]', help: 'test: a flight recorder for the black box that flashes when a car turns (card #74)', run: blackbox.run },
 })
 // a joining player's row: the one it asked for, unless this room cannot take it (told why), and its team fielded once it stands
