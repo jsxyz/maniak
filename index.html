@@ -2942,6 +2942,7 @@ function faustPosterArt(B, P, cy, hw, hh, zf, h) {
 }
 function faustFeatParts(f) {
   if (f.k.startsWith('site_')) return faustSiteParts(f)      // card #82
+  if (f.k === 'alley') return faustAlleyParts(f)      // card #96
   const k = f.s, P = [], T = FAUST_FEAT
   const B = (cx, cy, cz, ex, ey, ez, t, g = 0, solid = 0) => P.push({ b: [cx, cy, cz, ex, ey, ez], t, g, solid })
   const U = (a, b, r0, r1, n, t, turn = 0, cap = 1, dbl = 0) => P.push({ u: [a, b], r: [r0, r1], n, t, turn, cap, dbl })
@@ -3156,7 +3157,7 @@ function faustProps(P, rail) {
     const rng = genRng(lot.seed ^ 0x70726f70), ring = slLotRing(lot), tile = [lot.x - 14.8, lot.z - 14.8, lot.x + 14.8, lot.z + 14.8]
     for (const [axis, dir, q] of SIDE) {
       const r = rng(), v = rng(), pickU = rng() * 4 | 0, h = rng() * 4 | 0
-      if (r < 0.45) continue
+      if (r < 0.45 || axis === 0 && dir === lot.alley?.side) continue      // card #96: nothing on the alley side
       // across: the kerb side of the ring; the room is from the ring's far edge (0.45 m for a body) to the tile's edge (0.15 m in)
       const edge = dir < 0 ? tile[axis] : tile[axis + 2], line = dir < 0 ? ring[axis] : ring[axis + 2]
       const room = dir < 0 ? line - 0.45 - (edge + 0.15) : edge - 0.15 - (line + 0.45)
@@ -3277,10 +3278,11 @@ function faustFeatDraw(g, f) {
 }
 // a cell's features as one mesh on the stone material (null when it has none)
 function faustFeatMesh(P) {
-  if (!P.features?.length && !P.sites?.length) return null
+  if (!P.features?.length && !P.sites?.length && !P.alleyFeat?.length) return null
   const g = faustBatch(14336)
   for (const f of P.features) faustFeatDraw(g, f)
   for (const f of P.sites || []) faustFeatDraw(g, f)      // card #82
+  for (const f of P.alleyFeat || []) faustFeatDraw(g, f)      // card #96
   const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true
   return mesh
 }
@@ -3309,6 +3311,176 @@ function faustLandmarks(seed, S) {
   faustLandmarkMemo = { seed, S, map }
   return map
 }
+// ---------------------------------------------------------------- back alleys (card #96)
+// A cell of ordinary blocks (four lots, or the industrial two) sometimes has its north-south side street (x = cell centre) turned into
+// an alley: no road, no lanes, no kerbs or lamps; the lots either side move together to leave W metres clear between their walls'
+// furthest parts (piers and podium: E out from each wall). The alley runs the lots' length in each row (two segments in a four-lot
+// cell, split by the east-west side street; one 56 m long in an industrial cell), open at both ends onto the pavement. Pure in
+// (seed, cell): the plan keeps the record (plan.alleys) and each flank lot's lot.alley { side, half }, the way to the alley and
+// half the gap, which the walkers' rings use (their edge on that side is the alley's centre line). Deterministic, the same for every
+// player; it is the plan version's, so a change here bumps the version.
+const FAUST_ALLEY = { p: { tenement: 0.4, industrial: 0.4, core: 0.3, civic: 0.12 }, w: [3, 5], pier: 1.13, flat: 0.25, door: 0.55, mouth: 1.5, stand: 0.8, light: 60, cost: 5600, tag: [0xd23b8a, 0x2bb3c9, 0xe0b52a, 0x8bd04a, 0xe6e6e6] }
+function faustAlleyFor(seed, S, gx, gz, c, rail) {
+  const K = FAUST_ALLEY, p = K.p[c.district]
+  if (!p || c.plaza || c.diagonal || c.layout === 1 || (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0) return null
+  const h = cityHash(faustMix(seed ^ 0x616c6c79, gx, gz))
+  // card #98: a cell with a strip club nearly always has its alley (the club's back door opens on it)
+  const club = typeof faustClubAt === 'function' && [0, 1, 2, 3].slice(0, c.layout).some(i => faustClubAt(seed, gx, gz, i))
+  if ((h & 1023) / 1024 >= (club ? 0.85 : p)) return null
+  const X = gx * 96, Z = gz * 96
+  if (rail.byCell.has(faustKey(gx + S / 2, gz + S / 2))) return null
+  for (const [a, b] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) if (faustChanCell(seed, S, gx + a, gz + b)) return null      // card #83: no alley beside a channel
+  for (let i = 0; i < c.layout; i++) {
+    const x = X + (i & 1 ? 72 : 24), z = Z + (c.layout < 4 ? 48 : i & 2 ? 72 : 24)
+    if (Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z))) return null
+    if (faustSiteFor(seed, gx, gz, i, c.district, c.layout, c.plaza, c.diagonal, x, z)) return null      // a vacant plot keeps its plot
+  }
+  const pier = c.district === 'core' || c.district === 'civic', E = pier ? K.pier : K.flat
+  const W = K.w[0] + ((h >>> 12) % 5) * 0.5
+  return { x: X + 48, W, E, G: W + 2 * E, h, district: c.district }
+}
+// the alley's record in the plan: its segments (z0 north end, z1 south end), their back doors (z, side: -1 the west wall, which faces +x)
+function faustAlleyRecord(al, gx, gz, layout, ds, ci, cj, lots) {
+  const Z = gz * 96, K = FAUST_ALLEY, segs = []
+  for (let k = 0; k < (layout === 4 ? 2 : 1); k++) {
+    const zc = Z + (layout === 4 ? (k ? 72 : 24) : 48), d = ds[k], hh = cityHash(faustMix(al.h ^ 0x646f6f72, k, gz))
+    const s1 = hh & 1 ? 1 : -1, off = (d > 20 ? 0.45 : K.door) * d
+    const doors = [[inCm(zc + ((hh >> 1 & 1) ? 1 : -1) * off), s1]]
+    if (d > 20 || hh >> 2 & 1) doors.push([inCm(zc - ((hh >> 1 & 1) ? 1 : -1) * off), -s1])
+    const lw = lots[layout === 4 ? 2 * k : 0], le = lots[layout === 4 ? 2 * k + 1 : 1]
+    segs.push({ k, z0: inCm(zc - d), z1: inCm(zc + d), doors, mouth: [hh >> 3 & 1 ? 1 : -1, hh >> 4 & 1 ? 1 : -1],
+      esc: !!lw && lw.district === 'tenement' && faustTenementEscapes(lw).includes(1), H: [lw?.height | 0, le?.height | 0] })
+  }
+  return { id: ci + ' ' + cj, x: inCm(al.x), W: al.W, E: al.E, G: al.G, district: al.district, segs }
+}
+// a record's spots: [{ id, x, z, yaw, depth, kind: 'mouth' | 'recess' | 'backdoor', ci, cj, seg, side, width }]. yaw 0 faces -Z (yaw =
+// atan2(-fx, -fz)). A mouth: 1.5 m in from the alley's end, to one side of the middle (the walkers' line), looking out. A backdoor: on the
+// threshold, 0.8 m from the wall's furthest part, looking out along the door's normal. A recess: 2 m along from a door, further from the nearer
+// mouth, looking toward the door. depth: metres into the alley from the nearer end.
+function faustAlleySpots(a, ci, cj) {
+  const K = FAUST_ALLEY, out = [], r = inCm
+  for (const sg of a.segs) {
+    const len = sg.z1 - sg.z0, id = (t, n) => 'al:' + ci + ':' + cj + ':' + sg.k + ':' + t + n
+    const depthOf = z => Math.min(z - sg.z0, sg.z1 - z)
+    const base = { ci, cj, seg: sg.k, width: a.W }
+    sg.mouth.forEach((s, n) => {
+      const z = n ? sg.z1 - K.mouth : sg.z0 + K.mouth
+      out.push({ id: id('m', n), x: r(a.x + s * (a.W / 2 - 0.8)), z: r(z), yaw: n ? Math.PI : 0, depth: K.mouth, kind: 'mouth', side: s, ...base })
+    })
+    sg.doors.forEach(([z, s], n) => {
+      const x = a.x + s * (a.W / 2 - K.stand), fx = s < 0 ? 1 : -1      // the west wall (s -1) faces +x; stand K.stand clear of the wall's furthest part
+      const near = z - sg.z0 < sg.z1 - z ? -1 : 1, rz = z - near * 2, fz = z > rz ? 1 : -1
+      out.push({ id: id('d', n), x: r(x), z: r(z), yaw: r(Math.atan2(-fx, 0)), depth: r(depthOf(z)), kind: 'backdoor', side: s, ...base })
+      out.push({ id: id('r', n), x: r(x), z: r(rz), yaw: fz > 0 ? r(Math.PI) : 0, depth: r(depthOf(rz)), kind: 'recess', side: s, ...base })
+    })
+  }
+  return out
+}
+
+// ---- an alley segment's dressing (card #96 increment 2): a plan feature { k: 'alley', x: the alley's centre line, z: the segment's middle,
+// W, G, L, doors, esc, H, district, h } whose parts are in its frame: u across (+ east), v along (+ south), y up. Pure in the feature:
+// the layout (doors, lamps, vents, props, signs), then the parts and the colliders from it. Clear of the walkers' centre line (0.5 m
+// each side), of the mouths (2.6 m), of each back door and its recess; against the podium's face (G / 2 - 0.25 from the centre line),
+// at most 0.9 m deep; a core alley's props keep off its piers. A segment's parts stay under FAUST_ALLEY.cost vertices.
+function faustAlleyLayout(f) {
+  const W = f.W, hl = f.L / 2, face = f.G / 2 - 0.25, rng = genRng(f.h ^ 0x616c6c65), pier = f.district === 'core' || f.district === 'civic'
+  const doors = f.doors.map(([z, s]) => ({ s, v: z - f.z })), keep = [], piers = pier ? [-0.86 * hl, 0, 0.86 * hl] : []
+  for (const d of doors) { const near = d.v + hl < hl - d.v ? -1 : 1; d.rv = d.v - near * 2; keep.push([d.v - 1.9, d.v + 1.9], [d.rv - 1.2, d.rv + 1.2]) }
+  const free = (v, half) => Math.abs(v) + half < hl - 2.6 && !keep.some(([a, b]) => v + half > a && v - half < b) && !piers.some(p => Math.abs(v - p) < half + 0.7)
+  const items = [], vents = [], signs = [], big = { '-1': [], 1: [] }
+  const mix = f.district === 'industrial' ? ['crates', 'barrel', 'crates', 'dumpster', 'cans', 'barrel'] : f.district === 'tenement' ? ['cans', 'dumpster', 'cans', 'crates', 'dumpster', 'barrel'] : ['dumpster', 'cans', 'dumpster', 'crates']
+  const HALF = { dumpster: 0.95, cans: 0.6, crates: 0.5, barrel: 0.4 }
+  const tight = W < 3.6
+  for (const s of [-1, 1]) {
+    let v = -hl + 2.8 + rng() * 1.6
+    while (v < hl - 2.8) {
+      let t = mix[rng() * mix.length | 0]
+      if ((tight || t === 'dumpster' || t === 'crates') && big[-s].some(o => Math.abs(o - v) < (tight ? 1.8 : 2.4))) t = tight ? null : 'cans'      // a narrow alley: nothing facing anything
+      const half = t && HALF[t]
+      if (!t || rng() < 0.18 || !free(v, half)) { v += 0.8; continue }
+      items.push({ t, s, v, c: rng() * 4 | 0, n: 1 + (rng() * 3 | 0) })
+      if (tight || t === 'dumpster' || t === 'crates') big[s].push(v)
+      v += half + 1.2 + rng() * 2.6
+    }
+  }
+  // a vent or two low on a wall, clear of the props; signs: a poster and a tag on the plainer walls, a tag by a door
+  for (let i = 0, n = 1 + (rng() * 2 | 0); i < n; i++) { const s = rng() < 0.5 ? -1 : 1, v = (rng() - 0.5) * (hl * 2 - 7); if (free(v, 0.6) && !items.some(o => o.s === s && Math.abs(o.v - v) < HALF[o.t] + 1.2)) vents.push({ s, v, y: 0.7 }) }
+  if (!pier) for (const s of [-1, 1]) {
+    const v = (rng() - 0.5) * (hl * 2 - 8), k = rng() * 4 | 0
+    if (free(v, 0.9) && rng() < 0.7) signs.push({ t: rng() < 0.45 ? 'poster' : 'tag', s, v, y: 1.7 + rng() * 0.8, k, c: rng() * 5 | 0 })
+  }
+  const bulbs = doors.map(d => ({ s: d.s, v: d.v }))
+  if (f.L > 30) for (const v of [-hl * 0.5, hl * 0.5]) bulbs.push({ s: v < 0 ? 1 : -1, v })      // card #96 inc 3
+  return { doors, items, vents, signs, bulbs, face, hl, piers }
+}
+function faustAlleyParts(f) {
+  const P = [], K = FAUST_ALLEY, L = faustAlleyLayout(f), face = L.face, hl = L.hl, W = f.W, rng = genRng(f.h ^ 0x70617274)
+  let cost = 0
+  const B = (cx, cy, cz, ex, ey, ez, t, g = 0, solid = 0) => { const c = ey < 0.015 ? 6 : 36; if (cost + c > K.cost) return; cost += c; P.push({ b: [cx, cy, cz, ex, ey, ez], t, g, solid }) }
+  const U = (a, b, r0, r1, n, t, turn = 0, cap = 1, dbl = 0) => { const c = n * 12; if (cost + c > K.cost) return; cost += c; P.push({ u: [a, b], r: [r0, r1], n, t, turn, cap, dbl }) }
+  const T = (a, b, c, t) => { if (cost + 6 > K.cost) return; cost += 6; P.push({ v: [a, b, c], t }) }
+  // the floor: darker than the street, a drain down the middle, grime at the foot of the walls, puddles
+  B(0, 0.012, 0, face, 0.006, hl, 0x1a1e24)
+  B(0, 0.018, 0, 0.1, 0.004, hl - 0.5, 0x0d1013)
+  for (const s of [-1, 1]) B(s * (face - 0.02), 0.4, 0, 0.02, 0.4, hl, 0x14171b)
+  for (let i = 0, n = 2 + (rng() * 3 | 0); i < n; i++) { const u = (rng() - 0.5) * (W - 0.8), v = (rng() - 0.5) * (hl * 2 - 3); B(u, 0.024, v, 0.35 + rng() * 0.4, 0.004, 0.5 + rng() * 0.7, 0x28333f, 0.1) }
+  // the back doors: frame, leaf, handle, step; a caged bulb over each, on its bracket
+  const leaf = [0x3b4a3f, 0x4a2f2a, 0x2d3b52, 0x57534a]
+  L.doors.forEach((d, i) => {
+    const s = d.s, x = s * face, y = f.h >> (i * 2 + 4) & 3
+    B(x - s * 0.03, 1.05, d.v, 0.03, 1.05, 0.58, 0x2a2f36)
+    B(x - s * 0.07, 1.0, d.v, 0.03, 0.98, 0.47, leaf[y])
+    B(x - s * 0.11, 1.0, d.v + 0.36, 0.03, 0.04, 0.03, 0xb0a070)
+    B(x - s * 0.2, 0.08, d.v, 0.2, 0.08, 0.7, 0x4a4f55)
+    B(x - s * 0.2, 2.6, d.v, 0.2, 0.03, 0.03, 0x2b2f35)
+    B(x - s * 0.4, 2.52, d.v, 0.09, 0.09, 0.09, 0x2b2f35)
+    B(x - s * 0.4, 2.52, d.v, 0.055, 0.055, 0.055, 0xfff0c0, 1.9)
+  })
+  for (const b of L.bulbs.slice(L.doors.length)) { const x = b.s * face
+    B(x - b.s * 0.2, 2.6, b.v, 0.2, 0.03, 0.03, 0x2b2f35); B(x - b.s * 0.4, 2.52, b.v, 0.09, 0.09, 0.09, 0x2b2f35); B(x - b.s * 0.4, 2.52, b.v, 0.055, 0.055, 0.055, 0xfff0c0, 1.9) }
+  const col = { dumpster: [0x2a4a35, 0x34485e, 0x6a3a28, 0x3a3f46], crates: [0x6a5236, 0x7a6244, 0x5a4630, 0x6a5236], barrel: [0x7a2a22, 0x2f4a5e, 0x4a4f55, 0x7a2a22] }
+  for (const o of L.items) {
+    const s = o.s, x = s * (face - 0.45), v = o.v
+    if (o.t === 'dumpster') {
+      B(x, 0.6, v, 0.45, 0.6, 0.9, col.dumpster[o.c], 0, 1); B(s * (face - 0.5), 1.26, v, 0.5, 0.05, 0.95, 0x1d2025); B(x, 0.6, v + 0.9 * (o.c & 1 ? 1 : -1), 0.48, 0.12, 0.02, 0x15181c)
+    } else if (o.t === 'cans') {
+      for (let i = 0; i < Math.min(3, o.n + 1); i++) { const vv = v + (i - 0.5) * 0.56, uu = s * (face - 0.32 - (i & 1) * 0.18)
+        U([uu, 0, vv], [uu, 0.85, vv], 0.27, 0.25, 8, 0x6c7076, 0.5); U([uu, 0.85, vv], [uu, 0.91, vv], 0.28, 0.1, 8, 0x4a4e54, 0.5); B(uu, 0.45, vv, 0.3, 0.45, 0.3, 0x6c7076, 0, 2) }      // 0.3 m, not under it: a smaller slim box is a post the walkers' rings swerve round
+    } else if (o.t === 'crates') {
+      for (let i = 0; i < o.n; i++) { const c = col.crates[(o.c + i) & 3]; B(s * (face - 0.28), 0.25 + i * 0.5, v + (i & 1 ? 0.12 : -0.1) * (o.c & 1 ? 1 : -1), 0.26, 0.25, 0.27, c, 0, 1); B(s * (face - 0.28), 0.25 + i * 0.5, v, 0.265, 0.03, 0.275, 0x3a2e20) }
+    } else {
+      const uu = s * (face - 0.34); U([uu, 0, v], [uu, 0.9, v], 0.3, 0.3, 8, col.barrel[o.c], 0.5); U([uu, 0.55, v], [uu, 0.6, v], 0.31, 0.31, 8, 0x1d2025, 0.5); B(uu, 0.45, v, 0.3, 0.45, 0.3, 0x000000, 0, 2)
+    }
+  }
+  // vents: a dark grille low on the wall (its steam is increment 3's)
+  for (const t of L.vents) { const x = t.s * (face - 0.04); B(x, t.y, t.v, 0.04, 0.34, 0.5, 0x15181c); for (let i = 0; i < 5; i++) B(x - t.s * 0.035, t.y - 0.24 + i * 0.12, t.v, 0.015, 0.025, 0.46, 0x2c3138) }
+  // signs: a ripped propaganda poster (his dark head, red eyes), and the tags of the city: an eye, a cross, drips
+  for (const g of L.signs) {
+    const x = g.s * (face - 0.04), px = x - g.s * 0.012, y = g.y, v = g.v
+    if (g.t === 'poster') {
+      const [field, ink] = FAUST_POSTERS[g.k & 3]
+      B(x, y, v, 0.012, 0.75, 0.55, field, 0.2); B(px, y + 0.05, v - 0.1, 0.01, 0.4, 0.2, 0x0d0f14); B(px, y + 0.5, v - 0.1, 0.01, 0.16, 0.16, 0x0d0f14)
+      B(px, y + 0.45, v - 0.1, 0.01, 0.03, 0.15, 0xff3322, 1.4)
+      for (let i = 0; i < 3; i++) B(px, y - 0.35 - i * 0.12, v + 0.15, 0.01, 0.045, 0.3 - i * 0.07, ink, 0.2)
+      B(px, y + 0.62, v + 0.45, 0.01, 0.14, 0.1, 0x0c0e12)      // the torn corner
+    } else {
+      const c = K.tag[g.c], px2 = x - g.s * 0.02, pt = (a, b) => [px2, y + b, v + a]
+      if (g.k === 0) { const n = 10; for (let i = 0; i < n; i++) { const a0 = i / n * 6.283, a1 = (i + 1) / n * 6.283; T(pt(0, 0), pt(Math.cos(a0) * 0.55, Math.sin(a0) * 0.28), pt(Math.cos(a1) * 0.55, Math.sin(a1) * 0.28), c) }
+        for (let i = 0; i < 6; i++) { const a0 = i / 6 * 6.283, a1 = (i + 1) / 6 * 6.283; T(pt(0, 0), pt(Math.cos(a0) * 0.16, Math.sin(a0) * 0.16), pt(Math.cos(a1) * 0.16, Math.sin(a1) * 0.16), 0x0a0b0e) } }
+      else if (g.k === 1) { for (const m of [-1, 1]) { T(pt(-0.5, -0.5 * m), pt(-0.38, -0.5 * m), pt(0.5, 0.5 * m), c); T(pt(-0.38, -0.5 * m), pt(0.5, 0.5 * m), pt(0.38, 0.5 * m), c) } }
+      else { for (let i = 0; i < 5; i++) { const a = -0.6 + i * 0.3, h = 0.5 + (i * 37 + g.c * 11) % 5 * 0.12; T(pt(a - 0.05, 0.35), pt(a + 0.05, 0.35), pt(a, 0.35 - h), c) }
+        T(pt(-0.7, 0.4), pt(0.7, 0.4), pt(0.7, 0.3), c); T(pt(-0.7, 0.4), pt(0.7, 0.3), pt(-0.7, 0.3), c) }
+    }
+  }
+  // laundry between the west lot's escape (it reaches 2.2 m out from the wall, from 5 m up) and the east wall
+  const reach = -f.G / 2 + 2.2, span = f.G / 2 - 0.05 - reach
+  if (f.esc && span > 0.9) for (const [y, v] of [[6.9, -1.7], [11.9, 1.5]]) if (y < f.H[0] - 1.5) {
+    B((reach + f.G / 2 - 0.05) / 2, y, v, span / 2, 0.012, 0.012, 0x1f2328)
+    for (let i = 0, n = Math.min(4, Math.floor(span / 0.5)); i < n; i++) { const u = reach + 0.25 + i * (span - 0.4) / Math.max(1, n - 1), c = [0xcfc7b4, 0x7a2f2a, 0x2f4a6a, 0xb59a3a, 0x8a8f94][(f.h + i + (y | 0)) % 5], w = 0.16
+      T([u - w, y, v], [u + w, y, v], [u + w, y - 0.5, v], c); T([u - w, y, v], [u + w, y - 0.5, v], [u - w, y - 0.5, v], c) }
+  }
+  return P
+}
 function faustPlan(seed, ci, cj, S = 20) {
   const gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96
   const rng = genRng(faustMix(seed, gx, gz)), { districtHash, distance, district, centralPlaza, plaza, diagonal, layout } = faustCell(seed, gx, gz)
@@ -3316,11 +3488,12 @@ function faustPlan(seed, ci, cj, S = 20) {
   const rail = faustRail(seed, S), chan = faustChanCell(seed, S, gx, gz)      // card #83: a flood channel's row: no lots, side streets or props
   const lots = [], boxes = chan ? faustChanBoxes(chan, X, Z) : [faustBox(X + 48, -0.52, Z + 48, 48.05, 0.5, 48.05)]
   const roads = [], lanes = [], sidewalks = [], masts = [], screens = []
+  const al = chan ? null : faustAlleyFor(seed, S, gx, gz, { district, layout, plaza, diagonal }, rail), alD = []      // card #96
   // Edge avenues join exactly. Each cell also owns two 8 m side streets.
   for (const axis of [0, 1]) for (const offset of [0, 48]) {
     const wide = offset === 0, width = wide ? 20 : 8, q = (wide ? 4.2 : 2), mid = (axis ? Z : X) + offset
     const point = (along, across = 0) => axis ? [X + along, 0, mid + across] : [mid + across, 0, Z + along]
-    if (chan && !wide || plaza && !wide || centralPlaza && Math.abs(mid) < 192 || !wide && (layout === 1 || layout === 2 && axis === 1)) continue
+    if (chan && !wide || plaza && !wide || centralPlaza && Math.abs(mid) < 192 || !wide && (layout === 1 || layout === 2 && axis === 1 || al && axis === 0)) continue
     roads.push({ id: [gx, gz, axis, offset].join(':'), a: point(0), b: point(96), width, avenue: wide })
     for (const side of [-1, 1]) {
       // Right of travel in the X/Z plane: +X uses +Z, +Z uses -X.
@@ -3342,10 +3515,13 @@ function faustPlan(seed, ci, cj, S = 20) {
   const sites = []      // card #82: vacant plots
   const landmark = !plaza && layout === 1 ? faustLandmarks(seed, S).get(gx + ' ' + gz) : undefined
   if (!plaza && !chan) for (let i = 0; i < layout; i++) {
-    const x = X + (layout === 1 ? 48 : i & 1 ? 72 : 24), z = Z + (layout < 4 ? 48 : i & 2 ? 72 : 24)
+    let x = X + (layout === 1 ? 48 : i & 1 ? 72 : 24)
+    const z = Z + (layout < 4 ? 48 : i & 2 ? 72 : 24)
     const ticket = rng(); let H = 4 * (district === 'core' ? distance > 650 ** 2 ? i === 0 ? 80 + (rng() * 22 | 0) : 12 + (rng() * 8 | 0) : ticket > 0.22 ? 34 + (rng() * 54 | 0) : 9 + (rng() * 16 | 0)
       : district === 'civic' ? 12 + (rng() * 25 | 0) : district === 'industrial' ? 2 + (rng() * 6 | 0) : 4 + (rng() * 10 | 0))
-    const w = layout === 1 ? 29 : 10 + (rng() * 3 | 0), d = layout < 4 ? 28 : 10 + (rng() * 3 | 0)
+    const w = layout === 1 ? 29 : 10 + (rng() * 3 | 0), d0 = layout < 4 ? 28 : 10 + (rng() * 3 | 0)
+    const row = layout === 4 ? i >> 1 : 0, d = al && i & 1 ? alD[row] : d0      // card #96: the two lots of an alley's row are as deep as the first
+    if (al && !(i & 1)) alD[row] = d
     let gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
     if (landmark === 'theatre') gothic = false       // card #69: a theatre is never the Gothic kind (the rng draws stay as they were)
     const cath = landmark === 'cathedral' && !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0)
@@ -3353,6 +3529,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     const site = faustSiteFor(seed, gx, gz, i, district, layout, plaza, diagonal, x, z)      // card #82: this lot's plot stays empty and is put to use
     if (site && !(Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z)))) { sites.push(site); continue }
     if (diagonal && Math.abs(z - x - 384) < w + d + 18 || Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z))) continue
+    if (al) x = X + 48 + (i & 1 ? 1 : -1) * (al.G / 2 + w)      // card #96: against the alley
     const stop = (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 && i === 0
     if (stop) H = 560 + (districtHash % 4) * 16
     const style = stop ? 'core' : district
@@ -3366,6 +3543,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     const skyMass = cath ? mass.slice(0, 2) : h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, w * 0.73, (H - h0) / 2, d * 0.73)] : mass.slice(0, 2)
     const lot = { x, z, w, d, height: H, gothic, district: style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + i, gz) }
     if (landmark && !stop && (landmark !== 'cathedral' || cath)) lot.landmark = landmark
+    if (al) lot.alley = { side: i & 1 ? -1 : 1, half: inCm(al.G / 2) }      // card #96
     lots.push(lot); boxes.push(...mass)
     // The strong façade piers also stop the block and chain, including in a server with no rendered city.
     if (style !== 'industrial' && style !== 'tenement') {
@@ -3387,6 +3565,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     }
     if (H > 36 && i === 0 && !cath) screens.push({ x, y: 20, z: z + d + 0.12, w: 16, h: 9, yaw: 0, ground: null })
   }
+  const alleys = al ? [faustAlleyRecord(al, gx, gz, layout, alD.length ? alD : [28], ci, cj, lots)] : []      // card #96
   for (const q of faustLampOffsets(diagonal)) boxes.push(faustBox(X + 11.4, 4.5, Z + q, 0.14, 4.5, 0.14, { slim: true }))
   // card #69: a plaza's monument and furniture, and their colliders
   const features = chan ? [] : faustFeatures(seed, gx, gz, { plaza, centralPlaza, diagonal })
@@ -3394,6 +3573,10 @@ function faustPlan(seed, ci, cj, S = 20) {
   const props = chan ? [] : faustProps({ ci, cj, S, plaza, diagonal, layout, roads, lots }, rail.boxes.filter(b => b.cy - b.ey < 3 && Math.abs(b.cx - X - 48) < 60 + b.ex && Math.abs(b.cz - Z - 48) < 60 + b.ez))
   boxes.push(...faustFeatBoxes(props))
   boxes.push(...faustFeatBoxes(sites))      // card #82
+  const alleyFeat = alleys.flatMap(a => a.segs.map(sg => ({ k: 'alley', x: a.x, z: inCm((sg.z0 + sg.z1) / 2), q: 0, s: 1, h: faustMix(seed ^ 0x61446573, gx * 8 + sg.k, gz), W: a.W, G: a.G, L: inCm(sg.z1 - sg.z0),
+    doors: sg.doors, esc: sg.esc, H: sg.H, district: a.district })))      // card #96
+  boxes.push(...faustFeatBoxes(alleyFeat))
+  const alleyLights = alleyFeat.flatMap(f => faustAlleyLayout(f).bulbs.flatMap(b => [inCm(f.x + b.s * (f.G / 2 - 0.25 - 0.4)), 2.52, inCm(f.z + b.v), FAUST_ALLEY.light]))      // card #96 inc 3
   boxes.push(...rail.byCell.get(faustKey(ci, cj)) || [])
   const railLights = rail.lightsByCell.get(faustKey(ci, cj)) || []
   const nodes = new Map(), edges = []
@@ -3409,7 +3592,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 14, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites }
+  const content = { version: 15, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -6731,7 +6914,7 @@ function faustLampSites(P) {
 // a cell's lamps as lights: x, y, z, candela each
 function faustLamps(P) {
   const L = FAUST_NIGHT.lamps
-  return Float32Array.from(faustLampSites(P).filter((s, i) => !dsLampDark(P, i)).flatMap(s => [s.x, s.nx || s.nz ? L.y : 8.3, s.z, L.candela]).concat(P.railLights || []))      // card #46: not a broken head; card #60: the stations' lights after the street's
+  return Float32Array.from(faustLampSites(P).filter((s, i) => !dsLampDark(P, i)).flatMap(s => [s.x, s.nx || s.nz ? L.y : 8.3, s.z, L.candela]).concat(P.railLights || [], P.alleyLights || []))      // card #46: not a broken head; card #60: the stations' lights after the street's; card #96: the alleys' bulbs
 }
 // a lamp in a cell's street detail: a post on the kerb, an arm, a glowing head over the road; or a lantern on its post
 function faustLampDraw(batch, s) {
@@ -7247,7 +7430,7 @@ function faustDecoMarquee(g, lot) {
 }
 // card #69 / #82: the tenement kit of a lot (0 the original, 1 door hood and cornice, 2 mansard, 3 gabled with oriels), and its fire escapes
 const faustTenementKit = lot => (lot.seed >>> 11) % 4
-const faustTenementEscapes = lot => [[1], [-1], [], [1, -1]][faustTenementKit(lot)]
+const faustTenementEscapes = lot => [[1], [-1], [], [1, -1]][faustTenementKit(lot)].filter(sg => !(lot.alley && lot.alley.side < 0 && sg < 0))      // card #96: only the west lot's escape reaches into the alley
 // card #82: a tenement's wall colour goes with its kit (0 the district's blue-greys, 1 red-brown brick, 2 pale render, 3 dark brown
 // brick), a shade by the lot's tint; the near chunks and the far skyline both use it
 const FAUST_TENEMENT_WALLS = [null, [0x6a4236, 0x5e3a30, 0x744838, 0x663f33], [0xb5ae98, 0xc2baa4, 0xaaa38d, 0xbab49e], [0x4a3328, 0x41302a, 0x54382b, 0x46322a]]
@@ -8076,7 +8259,46 @@ function faustAtmosphere() {
     const smog = new THREE.Sprite(smogMaterial); smog.position.set(x, 13, z); smog.scale.set(600, 32, 1); root.add(smog)
   }
 }
-function faustAtmosphereFrame() { faustFieldsFrame(); faustRoadsFrame(); faustRingsFrame(); faustChanFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
+// ---------------------------------------------------------------- the alleys' steam (card #96): puffs of white rising from each vent
+// near the camera, drifting along the alley and fading; one pool of FAUST_STEAM.vents * puffs sprites, re-assigned to the nearest vents
+// when the camera has moved 6 m. Built on first use, in the frame loop's atmosphere step; nothing on the wire.
+const FAUST_STEAM = { reach: 60, vents: 10, puffs: 4, rise: 2.8, period: 3.4, color: 0xb4bec9, opacity: 0.34 }
+function faustAlleySteam() {
+  const F = faustState; if (!F?.materials || !camera || renderHeadless || !LV.faust) return
+  const K = FAUST_STEAM, S = F.steam ||= { group: null, sprites: [], list: [], stamp: '' }
+  if (!S.group) {
+    const c = document.createElement('canvas'); c.width = c.height = 64
+    const g = c.getContext('2d'), r = g.createRadialGradient(32, 32, 2, 32, 32, 31); r.addColorStop(0, 'rgba(255,255,255,0.9)'); r.addColorStop(0.5, 'rgba(255,255,255,0.35)'); r.addColorStop(1, 'rgba(255,255,255,0)')
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64)
+    const map = new THREE.CanvasTexture(c); S.group = new THREE.Group(); S.group.name = 'alley-steam'
+    for (let i = 0; i < K.vents * K.puffs; i++) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map, color: K.color, opacity: 0, transparent: true, depthWrite: false })); sp.visible = false; sp.renderOrder = 3
+      S.sprites.push(sp); S.group.add(sp)
+    }
+    worldGroup.add(S.group)
+  }
+  const p = camera.position, stamp = Math.floor(p.x / 6) + ' ' + Math.floor(p.z / 6)
+  if (S.stamp !== stamp) {
+    S.stamp = stamp; const list = []
+    for (const c of F.chunks.values()) {
+      if (!c.plan?.alleyFeat?.length || Math.abs(c.ci * 96 - ARENA + 48 - p.x) > K.reach + 60 || Math.abs(c.cj * 96 - ARENA + 48 - p.z) > K.reach + 60) continue
+      for (const f of c.plan.alleyFeat) for (const t of faustAlleyLayout(f).vents) {
+        const x = f.x + t.s * (f.G / 2 - 0.25 - 0.25), z = f.z + t.v, d = Math.hypot(x - p.x, z - p.z)
+        if (d < K.reach) list.push({ x, y: t.y, z, s: t.s, d, h: (f.h ^ Math.imul(Math.round(t.v * 10), 0x9e3779b1)) >>> 0 })
+      }
+    }
+    list.sort((a, b) => a.d - b.d); S.list = list.slice(0, K.vents)
+  }
+  const now = performance.now() / 1000
+  S.sprites.forEach((sp, n) => {
+    const t = S.list[n / K.puffs | 0]
+    if (!t) { sp.visible = false; return }
+    const ph = ((now / K.period + (n % K.puffs) / K.puffs + (t.h & 255) / 255) % 1), a = Math.sin(Math.PI * ph)
+    sp.visible = true; sp.position.set(t.x - t.s * (0.15 + 0.55 * ph), t.y + 0.25 + K.rise * ph, t.z + Math.sin(now * 0.7 + (t.h & 63)) * 0.12 * ph)
+    sp.scale.setScalar(0.45 + 1.5 * ph); sp.material.opacity = K.opacity * a * a
+  })
+}
+function faustAtmosphereFrame() { faustAlleySteam(); faustFieldsFrame(); faustRoadsFrame(); faustRingsFrame(); faustChanFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
 function faustFarLights() { return drain(faustFarLightsSteps()) }
 function* faustFarLightsSteps() {
   const F = faustState, lights = faustBatch(F.S * F.S * 48), warnings = []
@@ -8207,6 +8429,14 @@ const FAUSTLAND_API = { interior: faustInterior, storey: faustStorey, plan: faus
     interior: id => { const b = FAUSTLAND_API.ring.building(id); return b ? b.kind === 'urban' ? faustRingUrbanInterior(b) : faustRingInterior(b) : null },
     interiors: () => ({ open: [...faustState?.ringIn?.open.keys() || []], stats: faustState?.ringIn?.stats || null }),
     building: id => { const [, i, j, n] = String(id).split(' ').map(Number), F = faustState, plan = F && faustRoadsReady(F); return plan ? faustRingPlan(F, plan, i, j).buildings[n] || null : null } },
+  // card #96: the back alleys. spots(ci, cj): [{ id, x, z, yaw, depth, kind: 'mouth' | 'recess' | 'backdoor', ci, cj, seg, side, width }] of one
+  // cell (pure in the seed and the cell: the same on every machine); spots(): every built cell's, by cell. list(): the alleys' records
+  alleys: { spots: (ci, cj) => {
+      const F = faustState; if (!F) return []
+      const of = (i, j) => { const c = F.chunks.get(faustKey(i, j)), P = c?.plan || faustPlan(F.seed, i, j, F.S); return P.alleys.flatMap(a => faustAlleySpots(a, i, j)) }
+      if (ci === undefined) return [...F.chunks.values()].sort((a, b) => a.ci - b.ci || a.cj - b.cj).flatMap(c => of(c.ci, c.cj))
+      return of(ci, cj)
+    }, list: () => faustState ? [...faustState.chunks.values()].sort((a, b) => a.ci - b.ci || a.cj - b.cj).flatMap(c => c.plan.alleys) : [], config: FAUST_ALLEY },
   get state() { return faustState },
   get seed() { return LV.grow?.seed },
   airBand: FAUST.airBand, cruiseY: FAUST.cruiseY, globeBounds: FAUST.globe,
@@ -29147,7 +29377,8 @@ function slLoop(pts, v, start, stops, t0 = 0) {
 function slLotRing(lot) {
   const pier = lot.district !== 'industrial' && lot.district !== 'tenement', m = pier ? 1.13 + 0.8 : 0.25 + 0.85
   const front = lot.district === 'industrial' || lot.district === 'tenement' ? 0.5 + 0.85 : !lot.gothic && !lot.stop ? 1.3 + 0.75 : m
-  return [lot.x - lot.w - m, lot.z - lot.d - m, lot.x + lot.w + m, lot.z + lot.d + Math.max(m, front)]
+  const a = lot.alley      // card #96: the alley side of the ring is its centre line (the two lots' rings meet there)
+  return [lot.x - lot.w - (a?.side < 0 ? a.half : m), lot.z - lot.d - m, lot.x + lot.w + (a?.side > 0 ? a.half : m), lot.z + lot.d + Math.max(m, front)]
 }
 const slInside = (r, x, z, pad = 0) => x > r[0] - pad && x < r[2] + pad && z > r[1] - pad && z < r[3] + pad
 // Card #56: nobody walks through what stands at body height (0-2.2 m). A lot's body is everything its facade puts there:
@@ -29334,12 +29565,12 @@ function slCell(ci, cj) {
   // the same people for every client whatever its quality setting (records name them by id); quality only thins what is drawn
   const q = 1, rng = genRng(slHash(seed, gx, gz, 26)), q_ = () => q
   cell = { key, ci, cj, X, Z, agents: [], flocks: [], used: performance.now(), rings: [] }
-  const lots = P.lots, rings = lots.map(l => [slLotRing(l), slLotBody(l)]).filter(([r]) => !P.diagonal || r[3] - r[0] - 384 < -21.2 || r[1] - r[2] - 384 > 21.2)
+  const lots = P.lots, rings = lots.map(l => [slLotRing(l), slLotBody(l), !!l.alley]).filter(([r]) => !P.diagonal || r[3] - r[0] - 384 < -21.2 || r[1] - r[2] - 384 > 21.2)
   // pts: the ring's corners; path: the way round it, past the posts (card #56)
   const near = slNear(ci, cj)
-  cell.rings = rings.map(([r, body]) => {
+  cell.rings = rings.map(([r, body, alley]) => {
     const posts = near.posts.filter(p => p[0] < r[2] + 4 && p[2] > r[0] - 4 && p[1] < r[3] + 4 && p[3] > r[1] - 4)
-    return { r, body, pts: [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]], ...slRingPath(r, posts), wide: slRingWide(r, posts) }
+    return { r, body, alley, pts: [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]], ...slRingPath(r, posts), wide: slRingWide(r, posts) }
   })
   const district = P.plaza ? 'plaza' : P.district
   const n = Math.round((STREET.density[district] ?? 10) * q * (0.85 + 0.3 * rng()))
@@ -29394,7 +29625,7 @@ function slCell(ci, cj) {
       continue
     }
     const stops = new Map(); if (rng() < 0.5) { const j = rng() * 4 | 0, a = pts[j], c = pts[(j + 1) % 4]; stops.set(j, [3 + rng() * 6, 1, Math.atan2((ring.r[0] + ring.r[2]) / 2 - a[0], (ring.r[1] + ring.r[3]) / 2 - a[1])]) }
-    const kind = rng() < STREET.share.pram ? SL_K.pram : rng() < STREET.share.dog ? SL_K.walker : SL_K.ped
+    const kind0 = rng() < STREET.share.pram ? SL_K.pram : rng() < STREET.share.dog ? SL_K.walker : SL_K.ped, kind = ring.alley && kind0 !== SL_K.ped ? SL_K.ped : kind0      // card #96
     // a walked dog keeps to its owner's left, so owners go round the reversed way: the dog on the street side (card #56)
     const R = slRingLoop(ring, kind === SL_K.walker || !dir, start, kind === SL_K.pram ? null : stops, kind === SL_K.pram ? STREET.pram : v, -rng() * 3e5, kind === SL_K.walker)
     cell.agents.push({ id: id(k++), kind, body: kind === SL_K.pram ? 3 + (rng() < 0.5 ? 0 : 1) : b, tint: tw, route: R })
