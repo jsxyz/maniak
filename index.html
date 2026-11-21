@@ -28694,8 +28694,11 @@ function hearCmd(a) {
   if (!sfxLive()) return sysMsg('§cSound is not running yet: click in the game, then try again.')
   const H = HEARS[move]
   if (pick === 'live') {
-    const v = playSound(H.row, { cat: 'you' })
-    return sysMsg(v ? '§7Playing §f' + move + ' live §8(' + H.row + ')' : '§7Nothing plays for §f' + H.row + '§7 right now.')
+    const names = [].concat(SOUNDS[H.row]?.file ?? []).filter(Boolean)
+    names.forEach(f => soundReady(f))
+    const say = v => sysMsg(v ? '§7Playing §f' + move + ' live §8(' + H.row + ')' : '§7Nothing plays for §f' + H.row + '§7 right now.')
+    if (names.length && names.some(f => !soundBuf.has(f) && !soundBad.has(f))) return void setTimeout(() => say(playSound(H.row, { cat: 'you' })), 600)   // the first play of a file waits for its decode
+    return say(playSound(H.row, { cat: 'you' }))
   }
   const n = pick ? +pick : 0
   if (pick && !(n >= 1 && n <= H.takes.length)) return sysMsg('§c' + move + ' has takes 1 to ' + H.takes.length + '.')
