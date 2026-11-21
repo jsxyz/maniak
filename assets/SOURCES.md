@@ -275,3 +275,12 @@ Candidate sounds to audition in the game with `/hear <move> [take]`; none plays 
 | steps | `hear_steps1.4f35ab40.mp3`, `hear_steps2.1ca88245.mp3`, `hear_steps3.dd27fdad.mp3`, `hear_steps4.bb314244.mp3`, `hear_steps5.e3a9ade0.mp3`, `hear_steps6.f9f1b6f4.mp3` | a heavy boot footfall on pavement: a real concrete step and a metal-heel step, with a short low thump | Kenney 'Impact Sounds' (github.com/Boyquotes/kenney-impact-sounds-for-godot, a mirror of kenney.nl's pack with its CC0 1.0 licence file), CC0 1.0; Thimras 'Metal footsteps on concrete' (opengameart.org/content/metal-footsteps-on-concrete), CC0 1.0 | CC0 1.0 (sources); processing CC0 1.0 |
 
 Removed with this change: `sfx_stomp1.89cafb1c.mp3`, `sfx_stomp2.04de4369.mp3`, `sfx_stomp3.50a0c343.mp3` and their SOURCES row for the Move stomp sounds (the sprint footfall was rejected; the row is silent).
+
+
+
+# The car radio
+
+| File | What it is | Made from | License |
+|---|---|---|---|
+| `radio_neverend.fad81de3.mp3` | Faustland FM's song: 4:02, 44.1 kHz stereo MP3 (VBR, about 144 kb/s), the audio of a music video, re-encoded | a song shared as a music video, chosen for The MANIAK's radio | included at the project's direction |
+| `radio_neverend.6a165c51.webp` | the song's cover, shown under the station's name while it plays: 256 x 256 WebP, a still of the same video | the same video | included at the project's direction |
