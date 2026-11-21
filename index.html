@@ -4225,7 +4225,7 @@ function faustSolids() {
   }, { valid: () => gen === faustSolidsGen && LV === lv && world === w }).catch(e => console.warn('Faust solids: the head is not solid yet,', e?.message || e))
 }
 
-const FAUST_ROADS = { version: 1, cell: 1000, ring: 3000, corner: 700, deck: 12, ringDeck: 24, bridge: 30, fill: 1.2,
+const FAUST_ROADS = { version: 3, taper: 60, access: [1500, 3000], accessGrade: 0.045, accessDrift: 8, cell: 1000, ring: 3000, corner: 700, deck: 12, ringDeck: 24, bridge: 30, fill: 1.2,
   grade: 0.045, step: 20, half: 14.5, rampHalf: 5.5, slab: 1.6, avenue: 288, cross: 380, end: 60, gore: 8, part: 1000 }
 const faustR2 = v => Math.round(v * 100) / 100
 const faustLen = (x, z) => Math.sqrt(x * x + z * z)
@@ -4297,6 +4297,15 @@ function* faustRoadsPlanSteps(seed, S) {
       const s = i * step, k = Math.floor(s / 2000), h = faustMix(seed ^ 0x42524447, q, k) % 100
       targets.push(s <= sCross + 600 ? R.deck : s >= sEnd - 900 ? R.fill : h < 35 ? R.fill : h < 70 ? R.deck : R.bridge)
     }
+    for (let k = 0, K = Math.round(2000 / step); (k + 1) * 2000 < sEnd - 1500; k++) {
+      const i0 = k * K, i1 = Math.min(n, (k + 1) * K)
+      const xs = []
+      for (let i = i0 + K / 5; i + 1 < i1 - K / 5; i++) { const a = xz[i], b = xz[i + 1], ax = Math.abs(b[0] - a[0]) > Math.abs(b[1] - a[1]) ? 0 : 1
+        if (Math.floor(a[ax] / 480) !== Math.floor(b[ax] / 480)) xs.push(i) }
+      xs.sort((a, b) => Math.abs(a - i0 - K / 2) - Math.abs(b - i0 - K / 2))
+      const x = xs.find(i => i * step > sCross + 600 + 300 && !targets.slice(i - 300 / step, i + 300 / step + 1).some(v => v !== R.fill)) ?? -1
+      if (x >= 0) for (let i = x - Math.ceil((R.deck - R.fill) / (R.grade * step)) - 1; i <= x + 2; i++) targets[i] = R.deck
+    }
     const road = faustRoad(name, 'radial', xz, faustRoadProfile(targets, 0.05, step), i => Math.min(R.half, 10 + (R.half - 10) * i * step / 120), true)
     road.gate = true; road.cross = Math.round(sCross / step)
     roads.push(road); crossings.push(road)
@@ -4334,15 +4343,194 @@ function* faustRoadsPlanSteps(seed, S) {
         }
       }
       roads.push(ramp)
+      for (const [main, sgn, P, dirv, lat, y, which] of [[rad, b, P0, [a * F[0], a * F[1]], G, R.deck, 'start'], [ringRoad, a, P3, [b * G[0], b * G[1]], F, R.ringDeck, 'end']]) {
+        const TL = R.taper, nT = Math.max(2, Math.round(TL / step)), xzT = [], halfT = [], M0 = [P[0] - sgn * off * lat[0], P[1] - sgn * off * lat[1]]
+        for (let k = 0; k <= nT; k++) { const t = k / nT, w = (2 * R.rampHalf + 0.3) * (1 - t) + 0.3 * t, o = R.half + w / 2
+          xzT.push([faustR2(M0[0] + dirv[0] * TL * t + sgn * o * lat[0]), faustR2(M0[1] + dirv[1] * TL * t + sgn * o * lat[1])]); halfT.push(faustR2(w / 2)) }
+        const taper = faustRoad(ramp.id + ' taper ' + which, 'ramp', xzT, xzT.map(() => y), k => halfT[k], false)
+        taper.taper = true
+        for (let k = 0; k <= nT; k++) { taper.noPylon.add(k); taper.noLamp.add(k) }
+        const ts = taper.side[0], inner = ((M0[0] - xzT[0][0]) * ts[0] + (M0[1] - xzT[0][1]) * ts[1]) > 0 ? 'r' : 'l'
+        for (let k = 0; k <= nT; k++) taper.gap[inner].add(k)
+        for (let k = 0; k <= nT; k++) { const q = xzT[k], j = nearest(main, q[0], q[1], Math.max(0, (main === rad ? ic : jc) - 40), Math.min(main.pts.length, (main === rad ? ic : jc) + 40)), sj = main.side[j], mj = main.pts[j]
+          main.gap[((q[0] - mj[0]) * sj[0] + (q[1] - mj[2]) * sj[1]) > 0 ? 'r' : 'l'].add(j) }
+        roads.push(taper)
+      }
     }
     yield
   }
+  const access = []
+  {
+    const SP = FAUST_RINGS.sub.pitch, SH = FAUST_RINGS.sub.street, lerp = (a, b, t) => a + (b - a) * t
+    const at = (road, s) => { const P = road.pts, n = P.length, f = road.closed ? ((s / step) % n + n) % n : Math.max(0, Math.min(n - 1.001, s / step)), i = Math.floor(f), t = f - i, a = P[i], b = P[(i + 1) % n]
+      const sa = road.side[i], sb = road.side[(i + 1) % n], sx = lerp(sa[0], sb[0], t), sz = lerp(sa[1], sb[1], t), sl = faustLen(sx, sz) || 1
+      return { x: lerp(a[0], b[0], t), y: lerp(a[1], b[1], t), z: lerp(a[2], b[2], t), side: [sx / sl, sz / sl], head: [sz / sl, -sx / sl] } }
+    const smooth = t => t * t * (3 - 2 * t)
+    const nearAt = (main, x, z, s) => { const n = main.pts.length, c = Math.round(s / step); let best = -1, bd = Infinity
+      for (let d = -5; d <= 5; d++) { let i = c + d; if (main.closed) i = ((i % n) + n) % n; else if (i < 0 || i >= n) continue
+        const p = main.pts[i], e = (p[0] - x) * (p[0] - x) + (p[2] - z) * (p[2] - z); if (e < bd) { bd = e; best = i } }
+      return best }
+    const slip = (main, sg, sH, sG, onRamp, id) => {
+      const yh = at(main, sH).y, len = Math.abs(sG - sH), nR = Math.max(3, Math.ceil(len / step)), xz = [], ys = []
+      for (let k = 0; k <= nR; k++) { const t = k / nR, u = smooth(t), m = at(main, lerp(sH, sG, t)), o = sg * (R.half + R.rampHalf + 0.3 + R.accessDrift * u)
+        xz.push([faustR2(m.x + m.side[0] * o), faustR2(m.z + m.side[1] * o)]); ys.push(faustR2(lerp(yh, 0.05, u))) }
+      if (onRamp) { xz.reverse(); ys.reverse() }
+      const ramp = faustRoad(id, 'ramp', xz, ys, R.rampHalf, false)
+      const hk = onRamp ? ramp.pts.length - 1 : 0
+      for (let k = 0; k < ramp.pts.length; k++) { if (Math.abs(ramp.pts[k][1] - yh) > 0.3) continue
+        const q = ramp.pts[k], j = nearAt(main, q[0], q[2], lerp(sH, sG, (onRamp ? ramp.pts.length - 1 - k : k) / nR)), mj = main.pts[j], sj = main.side[j], d = (q[0] - mj[0]) * sj[0] + (q[2] - mj[2]) * sj[1]
+        main.gap[d > 0 ? 'r' : 'l'].add(j)
+        const rs = ramp.side[k], inner = ((mj[0] - q[0]) * rs[0] + (mj[2] - q[2]) * rs[1]) > 0 ? 'r' : 'l', isg = inner === 'r' ? 1 : -1, msg = d > 0 ? 1 : -1
+        ramp.gap[inner].add(k)
+        ramp.gore.push([k, [mj[0] + sj[0] * main.half[j] * msg, mj[1], mj[2] + sj[1] * main.half[j] * msg], [q[0] + rs[0] * ramp.half[k] * isg, q[1], q[2] + rs[1] * ramp.half[k] * isg]]) }
+      roads.push(ramp)
+      const dirS = Math.sign(sH - sG), nT = Math.max(2, Math.round(R.taper / step)), txz = [], th = []
+      for (let k = 0; k <= nT; k++) { const t = k / nT, m = at(main, sH + dirS * R.taper * t), w = (2 * R.rampHalf + 0.3) * (1 - t) + 0.3 * t, o = sg * (R.half + w / 2)
+        txz.push([faustR2(m.x + m.side[0] * o), faustR2(m.z + m.side[1] * o)]); th.push(faustR2(w / 2)) }
+      const taper = faustRoad(id + ' taper', 'ramp', txz, txz.map((_, k) => faustR2(at(main, sH + dirS * R.taper * k / nT).y)), k => th[k], false)
+      taper.taper = true
+      for (let k = 0; k <= nT; k++) { taper.noPylon.add(k); taper.noLamp.add(k)
+        const q = taper.pts[k], j = nearAt(main, q[0], q[2], sH + dirS * R.taper * k / nT), mj = main.pts[j], sj = main.side[j], d = (q[0] - mj[0]) * sj[0] + (q[2] - mj[2]) * sj[1]
+        main.gap[d > 0 ? 'r' : 'l'].add(j)
+        const ts = taper.side[k]; taper.gap[((mj[0] - q[0]) * ts[0] + (mj[2] - q[2]) * ts[1]) > 0 ? 'r' : 'l'].add(k) }
+      roads.push(taper)
+      return ramp
+    }
+    const water = (x, z, r) => faustRingClear(faustChanSegs(seed, S, x - r, z - r, x + r, z + r).concat(faustWaterSegs(seed, S, x - r, z - r, x + r, z + r)), x, z, r, r)
+    const lineD = (line, p) => line.axis === 'x' ? p.x - line.c : p.z - line.c
+    const meet = (main, line, o, s0, dir, want) => {
+      const g = s => { const m = at(main, s); return lineD(line, { x: m.x + m.side[0] * o, z: m.z + m.side[1] * o }) }
+      const bis = (a, b, f) => { let fa = f(a); for (let k = 0; k < 30; k++) { const m = (a + b) / 2, fm = f(m); if ((fm > 0) === (fa > 0)) { a = m; fa = fm } else b = m } return (a + b) / 2 }
+      let x = null
+      for (let d = 0; d <= 240 && x === null; d += 2) for (const e of [d, -d - 2]) if (x === null && (g(s0 + e) > 0) !== (g(s0 + e + 2) > 0)) x = bis(s0 + e, s0 + e + 2, g)
+      if (x === null || !want) return x
+      let a = x, b = x
+      while (Math.abs(g(b)) < want) { a = b; b += dir * 2; if (Math.abs(b - x) > 240) return null }
+      return bis(a, b, s => Math.abs(g(s)) - want)
+    }
+    const sites = function* (main, s0, s1, avoid, keepOff, known, start, end) {
+      const L = main.pts.length * step, cand = [], N = main.pts.length, Y = main.pts.map(p => p[1]), bands = new Map()
+      const bandOf = (x, z) => { const k = Math.floor(x / 480) + ' ' + Math.floor(z / 480); if (!bands.has(k)) bands.set(k, faustRingBand(seed, S, Math.floor(x / 480), Math.floor(z / 480))); return bands.get(k) }
+      const runB = new Int32Array(N)
+      for (let i = N - 1; i >= 0; i--) runB[i] = i + 1 < N && Math.abs(Y[i + 1] - Y[i]) <= 0.02 ? runB[i + 1] : i
+      const allLevel = runB[0] === N - 1
+      const levelOver = (sA, sB) => { if (main.closed && allLevel) return true
+        const ia = Math.floor(Math.min(sA, sB) / step), ib = Math.ceil(Math.max(sA, sB) / step)
+        return ia >= 0 && ib < N && runB[ia] >= ib }
+      let tick = 0
+      for (let i = Math.max(0, Math.floor(s0 / step)); i <= Math.min(main.closed ? N - 1 : N - 2, Math.floor(s1 / step)); i++) {
+        if (++tick % 10 === 0) yield
+        const a = main.pts[i], b = main.pts[(i + 1) % N], band = bandOf(a[0], a[2])
+        if (band === 'city' || band === 'edge') continue
+        const kind = band === 'urban' ? 'urban' : band === 'suburb' ? 'suburb' : 'field', pitch = kind === 'urban' ? FAUST_RINGS.block : SP
+        const half = kind === 'urban' ? FAUST_RINGS.street : kind === 'suburb' ? SH : 4
+        const ax = Math.abs(b[0] - a[0]) > Math.abs(b[2] - a[2]) ? 0 : 2, axis = ax ? 'z' : 'x', ca = a[ax] / pitch, cb = b[ax] / pitch
+        if (Math.floor(ca) === Math.floor(cb) || Math.abs(cb - ca) < 1e-9) continue
+        const c = Math.ceil(Math.min(ca, cb)) * pitch, line = { axis, c, half }
+        if (c > Math.max(a[ax], b[ax])) continue
+        const site = i * step + step * (c - a[ax]) / (b[ax] - a[ax])
+        if (site < s0 || site > s1) continue
+        const m = at(main, site), sinT = axis === 'x' ? Math.abs(m.head[1]) : Math.abs(m.head[0]), g = half + R.rampHalf * (sinT + 0.05) + 0.8
+        if (avoid.some(v => Math.abs(v - site) < keepOff) || sinT > 0.35 || !water(m.x, m.z, 60)) continue
+        if ([-45, 45].some(o => bandOf(m.x + m.side[0] * o, m.z + m.side[1] * o) !== band)) continue
+        let ok = true
+        for (let d = -(half + 12); d <= half + 12 && ok; d += 2) { const y = at(main, site + d).y; if (y < 6.5 || y > R.bridge + 1) ok = false }
+        if (!ok) continue
+        const ends = {}
+        for (const e of [-1, 1]) { ends[e] = null
+          for (let d = g + 60 + 15; d <= g + 1100 && ends[e] === null; d += 10) { const sH = site + e * d, yh = at(main, sH).y
+            if (!main.closed && (sH - R.taper - 2 * step < 0 || sH + R.taper + 2 * step > L)) break
+            if (d - g - 15 >= Math.max(60, yh / R.accessGrade) && levelOver(sH - e * step, sH + e * (R.taper + step))) ends[e] = d } }
+        if (ends[-1] === null || ends[1] === null) continue
+        const reach = Math.max(ends[-1], ends[1]) + R.taper + step
+        if (main.closed && (site - reach < 0 || site + reach > (N - 1) * step)) continue
+        let country = null
+        if (kind === 'field') {
+          const dirL = axis === 'x' ? [0, 1] : [1, 0], ends = []
+          for (const sg of [-1, 1]) { let t = 0
+            for (let d = 10; d <= 600; d += 10) { const x = m.x + dirL[0] * sg * d, z = m.z + dirL[1] * sg * d
+              if (faustRingBand(seed, S, Math.floor(x / 480), Math.floor(z / 480)) !== 'shanty' || !water(x, z, 10)) break
+              t = d }
+            ends.push(t) }
+          if (Math.min(...ends) < 120) continue
+          country = [faustR2(m.x - dirL[0] * ends[0]), faustR2(m.z - dirL[1] * ends[0]), faustR2(m.x + dirL[0] * ends[1]), faustR2(m.z + dirL[1] * ends[1]), half]
+        }
+        cand.push({ s: site, reach, ends, line, kind, country, every: kind === 'field' ? R.access[1] : R.access[0] })
+      }
+      yield
+      const wrap = v => main.closed && v < start ? v + L : v
+      for (const c of cand) c.s = wrap(main.closed ? ((c.s % L) + L) % L : c.s)
+      cand.sort((a, b) => a.s - b.s)
+      const everyAt = s => { const m = at(main, s - (s >= L ? L : 0)), b = faustRingBand(seed, S, Math.floor(m.x / 480), Math.floor(m.z / 480)); return b === 'urban' || b === 'suburb' || b === 'city' ? R.access[0] : R.access[1] }
+      const kn = known.map(wrap), marks = [...new Set([start, ...kn.filter(v => v > start && v < end), end])].sort((a, b) => a - b), out = []
+      const rOf = v => kn.includes(v) || (main.closed && v === end) ? keepOff : 0
+      for (let n = 0; n + 1 < marks.length; n++) {
+        const a = marks[n], b = marks[n + 1], ra = rOf(a), rb = rOf(b)
+        const ok = (c, p) => c.s > p.s && c.s - c.reach >= p.s + p.reach + 20 && c.s + c.reach + rb + 20 <= b
+        let best = null
+        for (const k of [1, 1.1, 1.2, 1.3, 0.9, 0.8, 0.7, 0.6, 0.5]) {
+          const got = []; let p = { s: a, reach: ra }
+          for (;;) { const ev = everyAt(p.s) * k
+            if (p.s + ev >= b) break
+            let c = null; for (const q of cand) if (q.s <= p.s + ev && ok(q, p)) c = q
+            if (!c) c = cand.find(q => q.s > p.s + ev && ok(q, p)) || null
+            if (!c) break
+            got.push(c); p = c }
+          const pts = [a, ...got.map(c => c.s), b]
+          let over = 0
+          for (let t = 0; t + 1 < pts.length; t++) over = Math.max(over, pts[t + 1] - pts[t] - (everyAt((pts[t] + pts[t + 1]) / 2) === R.access[0] ? 2000 : 3500))
+          if (!best || over < best.over) best = { over, got }
+          if (over <= 0) break
+        }
+        for (const c of best.got) out.push({ ...c, s: c.s >= L ? c.s - L : c.s })
+      }
+      return out
+    }
+    const diamond = (main, c) => {
+      const s = c.s, m = at(main, s)
+      const sinT = c.line.axis === 'x' ? Math.abs(m.head[1]) : Math.abs(m.head[0]), g = c.line.half + R.rampHalf * (sinT + 0.05) + 0.8
+      const rec = { road: main.id, s: faustR2(s), at: [faustR2(m.x), faustR2(m.z)], deck: faustR2(m.y), street: { kind: c.kind, axis: c.line.axis, c: c.line.c, half: c.line.half }, ramps: [] }
+      if (c.country) rec.country = c.country
+      const tag = main.id + ' ' + Math.round(s)
+      for (const sg of [1, -1]) {
+        const up = sg > 0 ? -1 : 1, oG = sg * (R.half + R.rampHalf + 0.3 + R.accessDrift)
+        const gOff = meet(main, c.line, oG, s, up, g), gOn = meet(main, c.line, oG, s, -up, g)
+        if (gOff === null || gOn === null) continue
+        const hOff = s + up * c.ends[up], hOn = s - up * c.ends[-up]
+        const off = slip(main, sg, hOff, gOff, false, main.id + ' exit ' + Math.round(s) + (sg > 0 ? ' r' : ' l'))
+        const on = slip(main, sg, hOn, gOn, true, main.id + ' entry ' + Math.round(s) + (sg > 0 ? ' r' : ' l'))
+        for (const [r, sH, sG] of [[off, hOff, gOff], [on, hOn, gOn]]) { const y = at(main, sH).y, l = Math.abs(sH - sG), dk = r === off ? 0 : r.pts.length - 1, gr = r.pts.length - 1 - dk
+          rec.ramps.push({ id: r.id, side: sg > 0 ? 'right' : 'left', way: r === off ? 'exit' : 'entry', deck: faustR2(y), length: faustR2(l), grade: +(y / l).toFixed(4), steepest: +(1.5 * y / l).toFixed(4),
+            deckEnd: [faustR2(r.pts[dk][0]), faustR2(r.pts[dk][2])], groundEnd: [faustR2(r.pts[gr][0]), faustR2(r.pts[gr][2])] }) }
+      }
+      main.noTower ||= new Set()
+      for (let d = -(c.ends[-1] + R.taper + step); d <= c.ends[1] + R.taper + step; d += step) { const n = main.pts.length, r = Math.round((s + d) / step), i = main.closed ? ((r % n) + n) % n : Math.max(0, Math.min(n - 1, r))
+        main.noTower.add(i)
+        const q = main.pts[i]; if (Math.abs(c.line.axis === 'x' ? q[0] - c.line.c : q[2] - c.line.c) < c.line.half + 3 + R.half * sinT) main.noPylon.add(i) }
+      access.push(rec)
+    }
+    for (const rad of crossings) { const L = rad.pts.length * step
+      for (const c of yield* sites(rad, 300, L - 900, [], R.cross + R.taper + step, [rad.cross * step], 0, L)) { diamond(rad, c); yield }
+      yield }
+    { const L = ringRoad.pts.length * step, xs = crossings.map(rad => nearest(ringRoad, rad.pts[rad.cross][0], rad.pts[rad.cross][2]) * step), x0 = Math.min(...xs)
+      for (const c of yield* sites(ringRoad, 0, L, [], R.cross + R.taper + step, xs, x0, x0 + L)) { diamond(ringRoad, c); yield } }
+    let pyl = 0
+    for (const [ri, road] of roads.entries()) for (let i = 0; i < road.pts.length; i++) {
+      if (++pyl % 300 === 0) yield
+      const p = road.pts[i]; if (p[1] < 4) continue
+      if (faustRingBand(seed, S, Math.floor(p[0] / 480), Math.floor(p[2] / 480)) !== 'suburb') continue
+      const sd = road.side[i], hx = Math.abs(sd[1]) > 0.5
+      const ax = hx ? p[0] : p[2], r = Math.abs(ax - Math.round(ax / SP) * SP)
+      if (r < SH + 3) road.noPylon.add(i)
+    }
+  }
   const cells = new Map(), C = R.cell, put = (x, z, item) => { const k = Math.floor(x / C) + ' ' + Math.floor(z / C); (cells.get(k) || cells.set(k, []).get(k)).push(item) }
-  roads.forEach((road, ri) => { const P = road.pts, n = road.closed ? P.length : P.length - 1
-    for (let i = 0; i < n; i++) { const a = P[i], b = P[(i + 1) % P.length]; put((a[0] + b[0]) / 2, (a[2] + b[2]) / 2, [ri, i]) } })
+  let work = 0
+  for (const [ri, road] of roads.entries()) { const P = road.pts, n = road.closed ? P.length : P.length - 1
+    for (let i = 0; i < n; i++) { const a = P[i], b = P[(i + 1) % P.length]; put((a[0] + b[0]) / 2, (a[2] + b[2]) / 2, [ri, i]); if (++work % 1000 === 0) yield } }
   let h = 2166136261
-  for (const road of roads) for (const p of road.pts) for (const v of p) { h = Math.imul(h ^ Math.round(v * 100), 16777619) }
-  return faustRoadsMemo = { key, roads, cells, hash: (h >>> 0).toString(16).padStart(8, '0'), version: R.version }
+  for (const road of roads) for (const p of road.pts) { for (const v of p) h = Math.imul(h ^ Math.round(v * 100), 16777619); if (++work % 2000 === 0) yield }
+  return faustRoadsMemo = { key, roads, cells, access, hash: (h >>> 0).toString(16).padStart(8, '0'), version: R.version }
 }
 function faustRoadsReady(F) {
   if (faustRoadsMemo?.key === (F.seed >>> 0) + '/' + F.S) return faustRoadsMemo
@@ -4357,6 +4545,134 @@ function faustRoadLanes(road) {
     out.push({ dir, pts: road.pts.map((p, i) => [faustR2(p[0] + road.side[i][0] * o * dir), p[1], faustR2(p[2] + road.side[i][1] * o * dir)]) })
   }
   return out
+}
+let faustHighwayGraphMemo = null
+function faustHighwayGraph(seed, S) {
+  const plan = faustRoadsPlan(seed, S)
+  return faustHighwayGraphMemo?.plan === plan ? faustHighwayGraphMemo.graph : drain(faustHighwayGraphSteps(seed, S))
+}
+function* faustHighwayGraphSteps(seed, S) {
+  const plan = faustRoadsPlan(seed, S)
+  if (faustHighwayGraphMemo?.plan === plan) return faustHighwayGraphMemo.graph
+  const R = FAUST_ROADS, step = R.step, OFF = 1.4 + 3.6 * 1.5, LANE = 2.6, nodes = [], edges = [], merges = [], diverges = [], problems = [], byId = new Map()
+  const r2 = v => Math.round(v * 100) / 100, p3 = p => [r2(p[0]), r2(p[1]), r2(p[2])]
+  const node = (id, o) => { if (!byId.has(id)) { const n = { id, ...o, x: r2(o.x), y: r2(o.y), z: r2(o.z) }; byId.set(id, n); nodes.push(n) } return byId.get(id) }
+  const edge = (a, b, points, o) => { let L = 0
+    for (let k = 1; k < points.length; k++) L += Math.hypot(points[k][0] - points[k - 1][0], points[k][1] - points[k - 1][1], points[k][2] - points[k - 1][2])
+    const e = { id: 'e' + edges.length, a: a.id, b: b.id, points: points.map(p3), length: r2(L), ...o }; edges.push(e); return e }
+  const byRoad = new Map(plan.roads.map(r => [r.id, r]))
+  const at = (road, s) => { const P = road.pts, n = P.length, f = road.closed ? ((s / step) % n + n) % n : Math.max(0, Math.min(n - 1.001, s / step)), i = Math.floor(f), t = f - i, a = P[i], b = P[(i + 1) % n]
+    const sa = road.side[i], sb = road.side[(i + 1) % n], sx = sa[0] + (sb[0] - sa[0]) * t, sz = sa[1] + (sb[1] - sa[1]) * t, sl = Math.hypot(sx, sz) || 1
+    return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, z: a[2] + (b[2] - a[2]) * t, side: [sx / sl, sz / sl] } }
+  const cw = (road, s, dir) => { const m = at(road, s); return [m.x + m.side[0] * dir * OFF, m.y, m.z + m.side[1] * dir * OFF] }
+  const proj = (road, x, z) => { const P = road.pts, n = P.length; let bi = 0, bd = Infinity
+    for (let i = 0; i < n; i++) { const d = (P[i][0] - x) ** 2 + (P[i][2] - z) ** 2; if (d < bd) { bd = d; bi = i } }
+    let best = bi * step, bD = Infinity
+    for (const j of [bi - 1, bi]) { const i0 = road.closed ? (j + n) % n : j; if (!road.closed && (i0 < 0 || i0 + 1 >= n)) continue
+      const a = P[i0], b = P[(i0 + 1) % n], dx = b[0] - a[0], dz = b[2] - a[2], t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[2]) * dz) / (dx * dx + dz * dz || 1)))
+      const d = (a[0] + dx * t - x) ** 2 + (a[2] + dz * t - z) ** 2; if (d < bD) { bD = d; best = (i0 + t) * step } }
+    return best }
+  const stops = new Map()
+  const ends = new Map()
+  let tick = 0
+  for (const T of plan.roads) { if (!T.taper) continue
+    if (++tick % 24 === 0) yield
+    const k = T.id.lastIndexOf(' taper'), ramp = byRoad.get(T.id.slice(0, k)); if (!ramp) { problems.push('taper without its ramp: ' + T.id); continue }
+    const which = T.id.slice(k + 7), word = T.id.split(' ')[0], main = byRoad.get(which === 'end' ? 'ring' : word)
+    if (!main) { problems.push('taper without its highway: ' + T.id); continue }
+    const tip = T.pts.at(-1), base = T.pts[0], s0 = proj(main, tip[0], tip[2]), m = at(main, s0), dir = (tip[0] - m.x) * m.side[0] + (tip[2] - m.z) * m.side[1] > 0 ? 1 : -1
+    const c0 = cw(main, s0, dir), c1 = cw(main, s0 + dir * 5, dir), go = [c1[0] - c0[0], c1[2] - c0[2]], tv = [base[0] - tip[0], base[2] - tip[2]]
+    const type = go[0] * tv[0] + go[1] * tv[1] > 0 ? 'diverge' : 'merge', f = ramp.pts[0], l = ramp.pts.at(-1)
+    const atEnd = Math.hypot(base[0] - f[0], base[2] - f[2]) <= Math.hypot(base[0] - l[0], base[2] - l[2]) ? 'first' : 'last'
+    const key = main.id + ' ' + dir; (stops.get(key) || stops.set(key, []).get(key)).push(s0)
+    const n = node(main.id + (dir > 0 ? '+' : '-') + r2(s0), { ...Object.fromEntries(['x', 'y', 'z'].map((q, i) => [q, c0[i]])), deck: r2(c0[1]), kind: 'carriageway', road: main.id, dir, s: r2(s0) })
+    ;(ends.get(ramp.id) || ends.set(ramp.id, []).get(ramp.id)).push({ at: atEnd, main, dir, s: s0, type, node: n, taper: T })
+  }
+  const taperIn = (e, rev) => { const P = e.taper.pts.slice(1, -1); return rev ? P : P.reverse() }
+  const access = new Map(); for (const a of plan.access || []) for (const r of a.ramps) access.set(r.id, a)
+  const grounds = []
+  for (const ramp of plan.roads) { if (ramp.kind !== 'ramp' || ramp.taper) continue
+    if (++tick % 24 === 0) yield
+    const E = ends.get(ramp.id) || [], first = E.find(e => e.at === 'first'), last = E.find(e => e.at === 'last'), acc = access.get(ramp.id)
+    if (acc) {
+      const exit = !!first && !last, e = first || last, g = exit ? ramp.pts.at(-1) : ramp.pts[0]
+      if (!e || (exit ? e.type !== 'diverge' : e.type !== 'merge')) { problems.push('access ramp against its traffic: ' + ramp.id); continue }
+      const gn = node('ground ' + ramp.id, { x: g[0], y: g[1], z: g[2], deck: r2(g[1]), kind: 'ground', ramp: ramp.id })
+      const pts = exit ? [cw(e.main, e.s, e.dir), ...taperIn(e, false), ...ramp.pts] : [...ramp.pts, ...taperIn(e, true), cw(e.main, e.s, e.dir)]
+      const ed = exit ? edge(e.node, gn, pts, { kind: 'ramp-exit', lanes: 1, laneWidth: 2 * R.rampHalf, limit: 16, roadId: ramp.id, ramp: ramp.id })
+        : edge(gn, e.node, pts, { kind: 'ramp-entry', lanes: 1, laneWidth: 2 * R.rampHalf, limit: 16, roadId: ramp.id, ramp: ramp.id })
+      grounds.push({ acc, ramp, gn, exit, edge: ed, end: e })
+    } else {
+      if (!first || !last) { problems.push('interchange ramp not on two highways: ' + ramp.id); continue }
+      const fwd = first.type === 'diverge' && last.type === 'merge', rev = last.type === 'diverge' && first.type === 'merge'
+      if (!fwd && !rev) { problems.push('interchange ramp with no way through (' + first.type + ' to ' + last.type + '): ' + ramp.id); continue }
+      const lane = ramp.pts.map((p, i) => [p[0] + ramp.side[i][0] * LANE * (fwd ? 1 : -1), p[1], p[2] + ramp.side[i][1] * LANE * (fwd ? 1 : -1)])
+      const from = fwd ? first : last, to = fwd ? last : first
+      edge(from.node, to.node, [cw(from.main, from.s, from.dir), ...taperIn(from, false), ...(fwd ? lane : lane.reverse()), ...taperIn(to, true), cw(to.main, to.s, to.dir)],
+        { kind: 'interchange', lanes: 1, laneWidth: 2 * R.rampHalf, limit: 18, roadId: ramp.id, ramp: ramp.id })
+    }
+  }
+  for (const main of plan.roads) { if (main.kind !== 'radial' && main.kind !== 'ring') continue
+    const n = main.pts.length, L = n * step, Lend = (n - 1) * step
+    for (const dir of [1, -1]) {
+      yield
+      const ss = [...new Set((stops.get(main.id + ' ' + dir) || []).map(r2))]
+      const ids = new Map(ss.map(v => [v, main.id + (dir > 0 ? '+' : '-') + v]))
+      if (!main.closed) for (const [v, end] of [[0, 'city'], [r2(Lend), 'edge']]) { if (ids.has(v)) continue
+        const c = cw(main, v, dir); ids.set(v, main.id + (dir > 0 ? '+' : '-') + v); ss.push(v)
+        node(ids.get(v), { x: c[0], y: c[1], z: c[2], deck: r2(c[1]), kind: 'end', end, road: main.id, dir, s: v }) }
+      ss.sort((a, b) => dir * (a - b))
+      const pairs = []; for (let k = 0; k + 1 < ss.length; k++) pairs.push([ss[k], ss[k + 1]])
+      if (main.closed && ss.length) pairs.push([ss.at(-1), ss[0]])
+      for (const [a, b] of pairs) {
+        const pts = [cw(main, a, dir)]
+        if (dir > 0) { const bb = b <= a ? b + L : b; for (let i = Math.floor(a / step) + 1; i * step < bb - 0.5; i++) { if (i * step <= a + 0.5) continue; pts.push(cw(main, i * step, 1)) } }
+        else { const bb = b >= a ? b - L : b; for (let i = Math.ceil(a / step) - 1; i * step > bb + 0.5; i--) { if (i * step >= a - 0.5) continue; pts.push(cw(main, i * step, -1)) } }
+        pts.push(cw(main, b, dir))
+        edge(byId.get(ids.get(a)), byId.get(ids.get(b)), pts, { kind: 'highway', lanes: 3, laneWidth: 3.6, limit: 31, roadId: main.id, dir })
+      }
+    }
+  }
+  yield
+  const hwIn = new Map(), hwOut = new Map(), byRamp = new Map()
+  for (const q of edges) { if (q.kind === 'highway') { hwIn.set(q.b, q); hwOut.set(q.a, q) } if (q.ramp) (byRamp.get(q.ramp) || byRamp.set(q.ramp, []).get(q.ramp)).push(q) }
+  for (const [id, E] of ends) for (const e of E) {
+    const into = hwIn.get(e.node.id), out = hwOut.get(e.node.id), ramp = (byRamp.get(id) || []).find(q => (e.type === 'merge' ? q.b : q.a) === e.node.id)
+    if (!ramp) continue
+    if (e.type === 'merge') merges.push({ node: e.node.id, through: into?.id ?? null, entering: ramp.id, priority: 'through', length: R.taper })
+    else diverges.push({ node: e.node.id, through: out?.id ?? null, leaving: ramp.id })
+  }
+  const countries = new Map()
+  for (const { acc, ramp, gn, exit } of grounds) {
+    const st = acc.street, ax = st.axis === 'x', g = [gn.x, gn.y, gn.z], t = ax ? g[2] : g[0], q = st.half / 2 - 0.4
+    let tc
+    if (st.kind === 'field') tc = ax ? acc.at[1] : acc.at[0]
+    else { const P = st.kind === 'urban' ? FAUST_RINGS.block : FAUST_RINGS.sub.pitch, lo = Math.floor(t / P) * P; tc = t - lo <= lo + P - t ? lo : lo + P }
+    const nx = ax ? st.c : tc, nz = ax ? tc : st.c, key = nx + ':' + nz
+    const sn = node('street ' + key, { x: nx, y: 0.05, z: nz, deck: 0.05, kind: 'street', street: { kind: st.kind, key, graph: st.kind === 'suburb' } })
+    const lanePt = (along, sg) => ax ? [st.c - sg * q, 0.05, along] : [along, 0.05, st.c + sg * q]
+    const sg = Math.sign(exit ? tc - t : t - tc) || 1
+    const pts = exit ? [g, lanePt(t, sg), lanePt(tc, sg)] : [lanePt(tc, sg), lanePt(t, sg), g]
+    exit ? edge(gn, sn, pts, { kind: 'street-link', lanes: 1, laneWidth: 2 * q, limit: 10, roadId: ramp.id }) : edge(sn, gn, pts, { kind: 'street-link', lanes: 1, laneWidth: 2 * q, limit: 10, roadId: ramp.id })
+    if (acc.country && !countries.has(key)) countries.set(key, { acc, sn })
+  }
+  const urban = new Map()
+  for (const { acc } of grounds) if (acc.street.kind === 'urban' && !urban.has(acc)) { const st = acc.street, ax = st.axis === 'x', q = st.half / 2 - 0.4
+    const sns = [...new Set(edges.filter(e => e.kind === 'street-link' && acc.ramps.some(r => r.id === e.roadId)).flatMap(e => [e.a, e.b]).map(id => byId.get(id)).filter(n => n.kind === 'street'))].sort((m, n) => ax ? m.z - n.z : m.x - n.x)
+    urban.set(acc, sns)
+    for (let k = 0; k + 1 < sns.length; k++) for (const [A, B] of [[sns[k], sns[k + 1]], [sns[k + 1], sns[k]]]) { const dx = Math.sign(B.x - A.x), dz = Math.sign(B.z - A.z), o = [-dz * q, dx * q]
+      edge(A, B, [[A.x + o[0], 0.05, A.z + o[1]], [B.x + o[0], 0.05, B.z + o[1]]], { kind: 'street', lanes: 1, laneWidth: 2 * q, limit: 10, roadId: 'street ' + (ax ? 'x = ' : 'z = ') + st.c }) } }
+  for (const [key, { acc, sn }] of countries) {
+    const [ax0, az0, bx0, bz0, h] = acc.country, q = h / 2 - 0.4
+    for (const [ex, ez] of [[ax0, az0], [bx0, bz0]]) {
+      const en = node('country end ' + ex + ':' + ez, { x: ex, y: 0.05, z: ez, deck: 0.05, kind: 'end', end: 'country' })
+      for (const [A, B] of [[sn, en], [en, sn]]) { const dx = Math.sign(B.x - A.x), dz = Math.sign(B.z - A.z), o = [-dz * q, dx * q]
+        edge(A, B, [[A.x + o[0], 0.05, A.z + o[1]], [B.x + o[0], 0.05, B.z + o[1]]], { kind: 'country', lanes: 1, laneWidth: 2 * q, limit: 14, roadId: 'country ' + key }) }
+    }
+  }
+  const graph = { key: plan.key, version: 1, nodes, edges, merges, diverges, problems }
+  faustHighwayGraphMemo = { plan, graph }
+  return graph
 }
 function* faustRoadCellSteps(plan, key, emit, look) {
   const R = FAUST_ROADS, T = { asphalt: 0x2a2d33, shoulder: 0x575c63, concrete: 0x5c6168, fascia: 0x8a8f95, parapet: 0x9ea2a7, median: 0x8a8f95,
@@ -4402,7 +4718,7 @@ function* faustRoadCellSteps(plan, key, emit, look) {
       const g2 = road.gore.find(x => x[0] === j)
       if (g2) emit.face(ri2, g2[2], g2[1], e, up, T.asphalt, true)
     }
-    if (look) {
+    if (look && !road.taper) {
       const lines = road.kind === 'ramp' ? [[-(road.half[i] - 1), 1], [0, 0], [road.half[i] - 1, 1]]
         : [-12.2, -8.6, -5.0, -1.4, 1.4, 5.0, 8.6, 12.2].map(o => [o * Math.min(1, ha / R.half), Math.abs(o) === 1.4 || Math.abs(o) === 12.2 ? 1 : 0])
       for (const [o, solid] of lines) {
@@ -4420,7 +4736,7 @@ function* faustRoadCellSteps(plan, key, emit, look) {
       emit.face(beam(-hw, -1), beam(hw, -1), beam(hw, 1), beam(-hw, 1), [0, -1, 0], T.concrete, false, G.beam)
       for (const sg of [-1, 1]) emit.face(beam(-hw, sg), beam(hw, sg), beam(hw, sg, 0.8), beam(-hw, sg, 0.8), [u[0] * sg, 0, u[1] * sg], T.concrete, false, G.beam)
     }
-    if (a[1] >= R.bridge - 3 && b[1] >= R.bridge - 3 && road.kind !== 'ramp' && i % 8 === 0) for (const sg of [-1, 1]) {
+    if (a[1] >= R.bridge - 3 && b[1] >= R.bridge - 3 && road.kind !== 'ramp' && i % 8 === 0 && !road.noTower?.has(i)) for (const sg of [-1, 1]) {
       const c = at(a, sa, sg * (ha + 1.4))
       emit.box(faustBox(c[0], a[1] + 5 - 1.2, c[2], 1.3, 5 + 1.2, 1.3), T.tower, G.tower, true)
       emit.box(faustBox(c[0], a[1] + 12, c[2], 0.85, 2, 0.85), T.tower, G.tower, true)
@@ -5531,8 +5847,11 @@ function faustRingRoads(plan, x0, z0, x1, z1) {
     for (const [ri, k] of plan.cells.get(i + ' ' + j) || []) {
       const road = plan.roads[ri], P = road.pts, a = P[k], b = P[(k + 1) % P.length]
       if (Math.max(a[0], b[0]) < x0 - M || Math.min(a[0], b[0]) > x1 + M || Math.max(a[2], b[2]) < z0 - M || Math.min(a[2], b[2]) > z1 + M) continue
-      out.push([a[0], a[2], b[0], b[2], Math.max(road.half[k], road.half[(k + 1) % P.length]) + FAUST_RINGS.clear])
+      out.push([a[0], a[2], b[0], b[2], Math.max(road.half[k], road.half[(k + 1) % P.length]) + FAUST_RINGS.clear, Math.min(a[1], b[1]), Math.max(road.half[k], road.half[(k + 1) % P.length])])
     }
+  for (const q of plan.access || []) if (q.country) { const [ax, az, bx, bz, h] = q.country
+    if (Math.max(ax, bx) < x0 - M || Math.min(ax, bx) > x1 + M || Math.max(az, bz) < z0 - M || Math.min(az, bz) > z1 + M) continue
+    out.push([ax, az, bx, bz, h + 4, 0.05, h, 'country']) }
   return out
 }
 function faustRingClear(segs, x, z, ex, ez) {
@@ -5551,8 +5870,15 @@ function faustRingStreets(seed, S, plan, i, j) {
 }
 function faustRingStreetsIn(x0, z0, x1, z1, segs) {
   const U = FAUST_RINGS.sub, P = U.pitch, C = FAUST_RINGS.cell, out = []
-  for (let k = Math.ceil(x0 / P); k * P < x1; k++) if (faustRingClear(segs, k * P, (z0 + z1) / 2, U.street, C / 2)) out.push({ a: [k * P, z0], b: [k * P, z1], half: U.street })
-  for (let k = Math.ceil(z0 / P); k * P < z1; k++) if (faustRingClear(segs, (x0 + x1) / 2, k * P, C / 2, U.street)) out.push({ a: [x0, k * P], b: [x1, k * P], half: U.street })
+  const water = segs.filter(q => q.length < 7), decks = segs.filter(q => q.length >= 7 && q[5] < 4 && q[7] !== 'country')
+  const segD = (ax, az, bx, bz, cx, cz, dx, dz) => { const pt = (px, pz, sx, sz, ex, ez) => { const vx = ex - sx, vz = ez - sz, L = vx * vx + vz * vz || 1, t = Math.max(0, Math.min(1, ((px - sx) * vx + (pz - sz) * vz) / L)); return Math.hypot(sx + vx * t - px, sz + vz * t - pz) }
+    const o = (px, pz, qx, qz, rx, rz) => Math.sign((qx - px) * (rz - pz) - (qz - pz) * (rx - px))
+    if (o(ax, az, bx, bz, cx, cz) * o(ax, az, bx, bz, dx, dz) < 0 && o(cx, cz, dx, dz, ax, az) * o(cx, cz, dx, dz, bx, bz) < 0) return 0
+    return Math.min(pt(ax, az, cx, cz, dx, dz), pt(bx, bz, cx, cz, dx, dz), pt(cx, cz, ax, az, bx, bz), pt(dx, dz, ax, az, bx, bz)) }
+  const clear = (ax, az, bx, bz) => decks.every(q => { const lx = bx - ax, lz = bz - az, qx = q[2] - q[0], qz = q[3] - q[1], cs = Math.abs(lx * qx + lz * qz) / (Math.hypot(lx, lz) * Math.hypot(qx, qz) || 1)
+    return segD(ax, az, bx, bz, q[0], q[1], q[2], q[3]) > U.street + q[6] * cs + 0.3 })
+  for (let k = Math.ceil(x0 / P); k * P < x1; k++) if (faustRingClear(water, k * P, (z0 + z1) / 2, U.street, C / 2) && clear(k * P, z0, k * P, z1)) out.push({ a: [k * P, z0], b: [k * P, z1], half: U.street })
+  for (let k = Math.ceil(z0 / P); k * P < z1; k++) if (faustRingClear(water, (x0 + x1) / 2, k * P, C / 2, U.street) && clear(x0, k * P, x1, k * P)) out.push({ a: [x0, k * P], b: [x1, k * P], half: U.street })
   return out
 }
 function faustSubBlock(seed, S, plan, bi, bj) {
@@ -5671,6 +5997,13 @@ function faustRingCell(seed, S, plan, i, j) {
   const x0 = i * C, z0 = j * C, x1 = x0 + C, z1 = z0 + C, segs = faustRingRoads(plan, x0, z0, x1, z1).concat(faustChanSegs(seed, S, x0, z0, x1, z1)).concat(faustWaterSegs(seed, S, x0, z0, x1, z1)), A = S * 48, cuts = faustChannels(seed, S).rects.concat(faustWaterRectsIn(seed, S, x0, z0, x1, z1))
   const H = (k, a, b = 0) => faustMix(seed ^ k, a, b), pick = (list, h) => list[h % list.length]
   const inCity = (x, z, e) => Math.abs(x) < A + R.city + e && Math.abs(z) < A + R.city + e
+  const mouths = (kind, axis, c) => { const o = []
+    for (const q of plan.access || []) if (q.street.kind === kind && q.street.axis === axis && q.street.c === c) for (const r of q.ramps) {
+      const [gx, gz] = r.groundEnd, t = axis === 'x' ? gz : gx, d = (axis === 'x' ? gx : gz) - c
+      o.push([Math.sign(d), t - FAUST_ROADS.rampHalf - 1.5, t + FAUST_ROADS.rampHalf + 1.5, q.street.half, Math.abs(d)]) }
+    return o }
+  const apron = (axis, c, m, lo, hi) => { const [sg, t0, t1, e0, e1] = m, a = Math.max(lo, t0), b = Math.min(hi, t1), p0 = c + sg * e0, p1 = c + sg * (e1 - 0.05)
+    if (b - a > 0.5) axis === 'x' ? flat(Math.min(p0, p1), a, Math.max(p0, p1), b, 0.05, T.street) : flat(a, Math.min(p0, p1), b, Math.max(p0, p1), 0.05, T.street) }
   const flat = (a, b, c, d, y, tint) => {
     for (const q of a < A && c > -A && b < A && d > -A ? [[a, b, -A, d], [A, b, c, d], [-A, b, A, -A], [-A, A, A, d]] : [[a, b, c, d]]) {
       const qa = Math.max(q[0], a), qb = Math.max(q[1], b), qc = Math.min(q[2], c), qd = Math.min(q[3], d)
@@ -5714,7 +6047,9 @@ function faustRingCell(seed, S, plan, i, j) {
       let from = lo
       for (let k = Math.ceil((lo - 7) / P); k * P - 7 < hi; k++) { if (k * P - 7 > from) runs.push([from, Math.min(hi, k * P - 7)]); from = Math.max(from, k * P + 7) }
       if (from < hi) runs.push([from, hi])
-      for (const [a, b] of runs) for (const sg of [-1, 1]) {
+      const ms = mouths('suburb', alongZ ? 'x' : 'z', c)
+      for (const m of ms) apron(alongZ ? 'x' : 'z', c, m, lo, hi)
+      for (const [a0, b0] of runs) for (const sg of [-1, 1]) for (const [a, b] of ms.filter(m => m[0] === sg).reduce((ps, m) => ps.flatMap(([u, v]) => m[2] <= u || m[1] >= v ? [[u, v]] : [[u, m[1]], [m[2], v]].filter(([p, q]) => q - p > 0.5)), [[a0, b0]])) {
         const p0 = c + sg * 5, p1 = c + sg * 7
         alongZ ? flat(Math.min(p0, p1), a, Math.max(p0, p1), b, 0.09, T.pave) : flat(a, Math.min(p0, p1), b, Math.max(p0, p1), 0.09, T.pave)
         out.pavements.push(alongZ ? [Math.min(p0, p1), a, Math.max(p0, p1), b] : [a, Math.min(p0, p1), b, Math.max(p0, p1)])
@@ -5842,6 +6177,10 @@ function faustRingCell(seed, S, plan, i, j) {
     return out
   }
   const Sh = R.shanty, r = Math.max(Math.abs(x0 + C / 2), Math.abs(z0 + C / 2)), t = Math.max(0, Math.min(1, (r - R.suburb) / (R.edge - R.suburb)))
+  for (const q of segs) if (q[7] === 'country') { const h = q[6]
+    flat(Math.max(x0, Math.min(q[0], q[2]) - h), Math.max(z0, Math.min(q[1], q[3]) - h), Math.min(x1, Math.max(q[0], q[2]) + h), Math.min(z1, Math.max(q[1], q[3]) + h), 0.05, T.street)
+    const axis = q[0] === q[2] ? 'x' : 'z', c = axis === 'x' ? q[0] : q[1]
+    for (const m of mouths('field', axis, c)) apron(axis, c, m, axis === 'x' ? z0 : x0, axis === 'x' ? z1 : x1) }
   const h0 = H(0x5a47, i, j)
   if (faustFrac(h0) >= Sh.odds[0] + (Sh.odds[1] - Sh.odds[0]) * t) return out
   const rad = Sh.radius[0] + faustFrac(H(0x5a48, i, j)) * (Sh.radius[1] - Sh.radius[0]), m = rad + 10
@@ -8821,6 +9160,7 @@ function* faustBuildWorldSteps() {
 }
 const FAUSTLAND_API = { interior: faustInterior, storey: faustStorey, plan: faustPlan, roadRoute: faustNav, budget: FAUST,
   roads: () => faustState && faustRoadsPlan(faustState.seed, faustState.S), roadLanes: faustRoadLanes,
+  highwayGraph: () => faustState && faustHighwayGraph(faustState.seed, faustState.S),
   ring: { cell: (i, j) => { const F = faustState, plan = F && faustRoadsReady(F); return plan ? faustRingPlan(F, plan, i, j) : null },
     at: (x, z) => [Math.floor(x / FAUST_RINGS.cell), Math.floor(z / FAUST_RINGS.cell)], size: () => FAUST_RINGS.cell,
     streets: (i, j) => { const F = faustState, plan = F && faustRoadsReady(F); return plan ? faustRingStreets(F.seed, F.S, plan, i, j) : null },
@@ -21880,7 +22220,7 @@ function rigCape(a, R, dt) {
     if (low < ground0) { R.inst.position.y += ground0 - low; R.inst.updateMatrixWorld(true) }
   }
   rigF.set(1, 0, 0).applyQuaternion(a.mesh.getWorldQuaternion(rigW))
-  const S = R.lod < 2 ? capeRig(R) : null, solve = S && (R.lod < 1 || R.frame % 2 === 0)
+  const S = R.lod < 2 ? capeRig(R) : null, solve = S && !swimming && (R.lod < 1 || R.frame % 2 === 0)
   R.capeSwV += (-R.capeSw * 40 - R.capeSwV * 9) * h; R.capeSw += R.capeSwV * h
   if (!S) { R.capeOff = R.capeSw = R.capeSwV = 0; lo.fill(-Infinity); hi.fill(Infinity) }
   const vault = a.moveState === 4 && !dying && !seated
@@ -21901,6 +22241,7 @@ function rigCape(a, R, dt) {
     const share = (bend[k] ?? 1) + ((CAPE_RUN_BEND[k] ?? 1) - (bend[k] ?? 1)) * run, amp = (0.04 + 0.03 * k) + ((CAPE_RUN_RIPPLE[k] ?? 0.1) - (0.04 + 0.03 * k)) * run
     const want = dying ? 0 : lift * share + Math.sin(R.capePh - k * 1.1 + a.cid) * amp * ripple + plumb * (k ? 1 : 0.85)
     wants[k] = want
+    if (swimming) { R.capeT[k] = [-0.25, -0.3, -0.2][k] + Math.sin(R.capeClock * 1.8 - k * 0.9 + a.cid) * (0.05 + 0.02 * k); R.capeW[k] = 0; R.capeG[k] = 1; capePose(R, k, k); return }
     const sf = Math.max(run, !dying && R.capeClock - (R.capeWallAt ?? -1e9) < CAPE_WALL_HOLD ? 1 : 0)
     const wantS = sf && lo[k] > -Infinity && !dying ? want + (Math.max(want, lo[k] - CAPE_SOFT_IN) - want) * sf : want
     const sk = vault && k ? CAPE_VAULT_STIFF : 1
