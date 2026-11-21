@@ -30453,7 +30453,7 @@ function dsSignalLook(L, i, n, s) {
   if (!pole) return
   const K = dsSigKit ||= { q: new THREE.Quaternion(), v: new THREE.Vector3(), a: new THREE.Vector3(), s: new THREE.Vector3(1, 1, 1), m: new THREE.Matrix4() }
   const w = (pole.info >> 3 & 63) / 64 * 2 * Math.PI, fx = Math.cos(w), fz = Math.sin(w)
-  const age = Number.isFinite(pole.t) ? Math.max(0, (drawNow() - pole.t) / 1000) : 99, u = Math.min(1, age / DS_SIG.fallS), phi = (Math.PI / 2 - 0.04) * u * u
+  const age = Number.isFinite(pole.t) ? Math.max(0, (drawNow() - pole.t) / 1000) : 99, u = Math.min(1, age / DS_SIG.fallS), phi = dsFallAngle(age, DS_SIG.fallS, Math.PI / 2 - 0.04)
   K.q.setFromAxisAngle(K.a.set(fz, 0, -fx), phi)
   const x = n.x + s * 9, z = n.z + s * 9, lift = DS_SIG.pole * u
   for (const [mesh, h] of [[L.poles, 2.3], [L.lamps, DS_SIG.y]]) {
@@ -30576,15 +30576,28 @@ function dsBreak(kind, key, info) {
   return true
 }
 const dsGunPower = G => G?.kind === 'radius' ? 3 : G?.name === 'Haymaker' || G?.name === 'Cinderblock' ? 2 : 1
-// a post knocked over the way (dx, dz) points (64 ways, in info's spot bits)
-function dsFell(post, dx, dz, power = 2) {
-  const a = Math.atan2(dz, dx), w = Math.round((a / (2 * Math.PI) % 1 + 1) % 1 * 64) & 63
-  return dsBreak(DS_KIND.post, post.key, (power & 3) | w << 3)
+// the way a knocked post or signal goes over (64 ways, in info's spot bits): the way the hit went (dx, dz), and when it was hit
+// by something going that way (from: where that is, { x, z }: a car, a runner, a thrown thing, a blow, the block) turned
+// DS_FELL_TURN off it, back across that thing's line from the side the post at (x, z) stands on: into the road it came along,
+// open ground (the other way a kerbside post would lie in the facade beside it). Dead on the line: a side by its key. The
+// hitter's camera is behind it, and a post falling straight away from a camera reads as sinking into the road (QA's impact
+// sheet on #63): turned, it is seen going over
+const DS_FELL_TURN = 0.6
+function dsFellWay(x, z, key, dx, dz, from) {
+  let a = Math.atan2(dz, dx)
+  if (from && Number.isFinite(from.x) && Number.isFinite(from.z) && Number.isFinite(x) && Number.isFinite(z)) {
+    const L = Math.hypot(dx, dz), side = (x - from.x) * -dz + (z - from.z) * dx
+    a -= (L > 1e-9 && Math.abs(side) > 0.05 * L ? Math.sign(side) : key % 2 ? 1 : -1) * DS_FELL_TURN
+  }
+  return Math.round((a / (2 * Math.PI) % 1 + 1) % 1 * 64) & 63
 }
-// a signal knocked over the way (dx, dz) points (its pole's key; 64 ways, as a post's)
-function dsFellSignal(sg, dx, dz, power = 2) {
-  const a = Math.atan2(dz, dx), w = Math.round((a / (2 * Math.PI) % 1 + 1) % 1 * 64) & 63
-  return dsBreak(DS_KIND.pole, sg.pole, (power & 3) | w << 3)
+// a post knocked over the way (dx, dz) points, by a hitter at from (dsFellWay)
+function dsFell(post, dx, dz, power = 2, from) {
+  return dsBreak(DS_KIND.post, post.key, (power & 3) | dsFellWay(post.x, post.z, post.key, dx, dz, from) << 3)
+}
+// a signal knocked over (its pole's key), as a post is
+function dsFellSignal(sg, dx, dz, power = 2, from) {
+  return dsBreak(DS_KIND.pole, sg.pole, (power & 3) | dsFellWay(sg.x, sg.z, sg.pole, dx, dz, from) << 3)
 }
 // the standing posts a horizontal path (x0, z0)..(x1, z1) passes within r of, below height top at the place it passes
 function dsPostsOnPath(x0, z0, x1, z1, r) {
@@ -30607,18 +30620,18 @@ function dsPostsTick(all, dt) {
     const fw = rotq(o.q, [0, 0, -1]), rt = rotq(o.q, [1, 0, 0]), hw = (o.V.w || 1.8) / 2 + 0.2, hl = (o.V.l || 4.8) / 2 + 0.2 + sp * dt * 3
     for (const p of dsPostsNear(o.x, o.z, hl + hw + 1)) {
       const dx = p.x - o.x, dz = p.z - o.z
-      if (Math.abs(dx * fw[0] + dz * fw[2]) < hl && Math.abs(dx * rt[0] + dz * rt[2]) < hw) dsFell(p, vx / sp, vz / sp, 2)
+      if (Math.abs(dx * fw[0] + dz * fw[2]) < hl && Math.abs(dx * rt[0] + dz * rt[2]) < hw) dsFell(p, vx / sp, vz / sp, 2, o)
     }
     for (const p of dsSignalsNear(o.x, o.z, hl + hw + 1)) {
       const dx = p.x - o.x, dz = p.z - o.z
-      if (Math.abs(dx * fw[0] + dz * fw[2]) < hl + DS_SIG.pole && Math.abs(dx * rt[0] + dz * rt[2]) < hw + DS_SIG.pole) dsFellSignal(p, vx / sp, vz / sp, 2)
+      if (Math.abs(dx * fw[0] + dz * fw[2]) < hl + DS_SIG.pole && Math.abs(dx * rt[0] + dz * rt[2]) < hw + DS_SIG.pole) dsFellSignal(p, vx / sp, vz / sp, 2, o)
     }
   }
   for (const c of all) {
     const v = c.dsV, sp = v ? Math.hypot(v[0], v[2]) : 0
     if (sp < DESTRUCT.body || c.dead > 0 || seatOf(c) || c.y - c.h - c.r > 8.5) continue
-    for (const p of dsPostsOnPath(c.x - v[0] * dt, c.z - v[2] * dt, c.x, c.z, c.r + 0.15)) dsFell(p, v[0] / sp, v[2] / sp, 2)
-    if (c.y - c.h - c.r < DS_SIG.top) for (const p of dsPolesOnPath(c.x - v[0] * dt, c.z - v[2] * dt, c.x, c.z, c.r + 0.1)) dsFellSignal(p, v[0] / sp, v[2] / sp, 2)
+    for (const p of dsPostsOnPath(c.x - v[0] * dt, c.z - v[2] * dt, c.x, c.z, c.r + 0.15)) dsFell(p, v[0] / sp, v[2] / sp, 2, c)
+    if (c.y - c.h - c.r < DS_SIG.top) for (const p of dsPolesOnPath(c.x - v[0] * dt, c.z - v[2] * dt, c.x, c.z, c.r + 0.1)) dsFellSignal(p, v[0] / sp, v[2] / sp, 2, c)
   }
 }
 // objects at speed (a car flung or rammed, anything thrown), tested at 20 Hz: the pane each flies into (a ray from its middle
@@ -30643,8 +30656,8 @@ function dsObjectsTick(dt) {
     for (const q of dsLampsAlong(a, b, r)) dsBreak(DS_KIND.lamp, q.key, 2 | 4 << 3 | 4 << 6)
     for (const q of dsSignalsAlong(a, b, r)) dsBreak(DS_KIND.signal, q.key, 2 | 4 << 3 | 4 << 6)
     if (o.V) continue
-    if (o.y - r < 9) for (const p of dsPostsOnPath(o.x, o.z, b[0], b[2], r)) dsFell(p, vx, vz, 2)
-    if (o.y - r < DS_SIG.top) for (const p of dsPolesOnPath(o.x, o.z, b[0], b[2], r)) dsFellSignal(p, vx, vz, 2)
+    if (o.y - r < 9) for (const p of dsPostsOnPath(o.x, o.z, b[0], b[2], r)) dsFell(p, vx, vz, 2, o)
+    if (o.y - r < DS_SIG.top) for (const p of dsPolesOnPath(o.x, o.z, b[0], b[2], r)) dsFellSignal(p, vx, vz, 2, o)
   }
 }
 // a ray (a punch, a shot) that met nothing else: the first lamp head it passes, up to where it stopped at t (reach: on nothing),
@@ -30658,7 +30671,7 @@ function dsShot(ox, oy, oz, dx, dy, dz, t, reach, G) {
   // a haymaker (or heavier) at a post: over it goes, the way the blow went
   if (dsGunPower(G) >= 2 && Math.hypot(dx, dz) > 0.2) for (const p of dsPostsOnPath(ox, oz, ox + dx * t, oz + dz * t, 0.3)) {
     const y = oy + dy * t * p.f
-    if (y > 0 && y < 9) dsFell(p, dx, dz, 2)
+    if (y > 0 && y < 9) dsFell(p, dx, dz, 2, { x: ox, z: oz })
   }
   if (dsGunPower(G) >= 2 && Math.hypot(dx, dz) > 0.2) for (const p of dsPolesOnPath(ox, oz, ox + dx * t, oz + dz * t, 0.3)) {
     const y = oy + dy * t * p.f
@@ -30712,8 +30725,8 @@ function dsBodiesAfter(all, dt) {
       if (c.dsBlock && Math.hypot(g.p[0] - c.dsBlock[0], g.p[1] - c.dsBlock[1], g.p[2] - c.dsBlock[2]) > 0.05) {
         for (const h of dsLampsAlong(c.dsBlock, g.p, 0.25)) dsBreak(DS_KIND.lamp, h.key, 2 | 4 << 3 | 4 << 6)
         for (const h of dsSignalsAlong(c.dsBlock, g.p, 0.25)) dsBreak(DS_KIND.signal, h.key, 2 | 4 << 3 | 4 << 6)
-        if (Math.min(c.dsBlock[1], g.p[1]) < 9) for (const p of dsPostsOnPath(c.dsBlock[0], c.dsBlock[2], g.p[0], g.p[2], 0.35)) dsFell(p, g.p[0] - c.dsBlock[0], g.p[2] - c.dsBlock[2], 2)
-        if (Math.min(c.dsBlock[1], g.p[1]) < DS_SIG.top) for (const p of dsPolesOnPath(c.dsBlock[0], c.dsBlock[2], g.p[0], g.p[2], 0.35)) dsFellSignal(p, g.p[0] - c.dsBlock[0], g.p[2] - c.dsBlock[2], 2)
+        if (Math.min(c.dsBlock[1], g.p[1]) < 9) for (const p of dsPostsOnPath(c.dsBlock[0], c.dsBlock[2], g.p[0], g.p[2], 0.35)) dsFell(p, g.p[0] - c.dsBlock[0], g.p[2] - c.dsBlock[2], 2, { x: c.dsBlock[0], z: c.dsBlock[2] })
+        if (Math.min(c.dsBlock[1], g.p[1]) < DS_SIG.top) for (const p of dsPolesOnPath(c.dsBlock[0], c.dsBlock[2], g.p[0], g.p[2], 0.35)) dsFellSignal(p, g.p[0] - c.dsBlock[0], g.p[2] - c.dsBlock[2], 2, { x: c.dsBlock[0], z: c.dsBlock[2] })
       }
       c.dsBlock = g.p.slice()
     } else c.dsBlock = null
@@ -31219,6 +31232,15 @@ function dsFxStep(dt) {
 // ---- fallen lamps: each felled lamp's parts in one instanced draw of boxes, falling about its post's foot when new (0.9 s,
 // gathering speed), lying in the road after; twisted about the post as it goes, so its arm lies flat across the fall
 const DS_FALLEN = { cap: 3 * 160, fallS: 0.9, cells: 3 }
+// a knocked post's or signal's angle (0 standing, top lying) s seconds on: going at once (the knock's kick: DS_FELL_KICK of its
+// growth linear), gathering speed to the ground at fallS, then two small bounces as it lands (DS_FELL_BOUNCE s)
+const DS_FELL_KICK = 0.3, DS_FELL_BOUNCE = 0.4
+function dsFallAngle(s, fallS, top) {
+  if (!(s > 0)) return 0
+  if (s < fallS) { const u = s / fallS; return top * (DS_FELL_KICK * u + (1 - DS_FELL_KICK) * u * u) }
+  const b = (s - fallS) / DS_FELL_BOUNCE
+  return b >= 1 ? top : top - 0.08 * (1 - b) * Math.abs(Math.sin(b * 2 * Math.PI))
+}
 let dsFallen = null
 function dsFallenKit() {
   if (dsFallen) return dsFallen
@@ -31252,7 +31274,7 @@ function dsFallenStep() {
     // the twist: the arm turned to lie across the fall (the nearer of the two ways across)
     if (P.arm[0] || P.arm[1]) { const c1 = [-fz, fx], k = P.arm[0] * c1[0] + P.arm[1] * c1[1] >= 0 ? 1 : -1
       K.qy.setFromUnitVectors(K.a.set(P.arm[0], 0, P.arm[1]).normalize(), K.b.set(c1[0] * k, 0, c1[1] * k)) } else K.qy.identity()
-    const age = Number.isFinite(r.t) ? Math.max(0, (T - r.t) / 1000) : 99, u = Math.min(1, age / DS_FALLEN.fallS), phi = Math.PI / 2 * u * u
+    const age = Number.isFinite(r.t) ? Math.max(0, (T - r.t) / 1000) : 99, phi = dsFallAngle(age, DS_FALLEN.fallS, Math.PI / 2)
     K.q.setFromAxisAngle(K.a.set(fz, 0, -fx), phi).multiply(K.qy)
     const lift = 0.12 * phi / (Math.PI / 2)
     for (const [B, hex] of P.parts) {
@@ -31760,7 +31782,7 @@ GAME.destruction = {
   // lamp posts: the standing ones near a point, a post's state, knocking one over (host) the way (dx, dz) points
   postsNear: (x, z, r) => dsCheck() ? dsPostsNear(x, z, r).map(p => p.key) : [],
   post(key) { if (!dsCheck()) return null; const p = dsPost(key); return p && { key, lamp: key - DS_POST + DS_LAMP, foot: p.foot, collider: !!p.box, felled: dsState.all.has(key) } },
-  fell(key, dx = 1, dz = 0) { const p = dsCheck() && dsPost(key); return !!p && dsFell({ key }, dx, dz, 2) },
+  fell(key, dx = 1, dz = 0, from) { const p = dsCheck() && dsPost(key); return !!p && dsFell({ key, x: p.foot[0], z: p.foot[1] }, dx, dz, 2, from) },
   get fallen() { return dsFallen ? dsFallen.mesh.count / 3 : 0 },
   // traffic signals (#34): the standing ones near a point, a signal's state (by its lamp's key), putting its lamp out, knocking it over
   signalsNear: (x, z, r) => dsCheck() ? dsSignalsNear(x, z, r).map(s => s.key) : [],
