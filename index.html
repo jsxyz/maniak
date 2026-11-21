@@ -5537,7 +5537,9 @@ function faustRingsFrame() {
     const S = F.ringShapes ||= faustRingShapes(), caps = R.caps, col = new THREE.Color()
     const pools = {}, idx = new Map()      // idx: 'id/role' -> an enterable building's wall or door instance in its pool (card #78 hides them when it opens)
     const KINDS = ['flat', 'pool', 'far', 'body', 'roof', 'light', 'pane', 'lit', 'shed']
-    for (const k of KINDS) pools[k] = { m: new Float32Array(caps[k] * 16), c: new Float32Array(caps[k] * 3), n: 0 }
+    // (card #18: one scratch pool for the game, reused by every refill)
+    const scratch = F.ringScratch ||= Object.fromEntries(KINDS.map(k => [k, { m: new Float32Array(caps[k] * 16), c: new Float32Array(caps[k] * 3) }]))
+    for (const k of KINDS) pools[k] = { m: scratch[k].m, c: scratch[k].c, n: 0 }
     // an instance: scale, then roll about z, then yaw about y, then the place (alongZ: a quarter turn of yaw)
     const put = (k, sx, sy, sz, tx, ty, tz, tint, alongZ, yaw = alongZ ? Math.PI / 2 : 0, roll = 0) => {
       const P = pools[k]
@@ -5562,21 +5564,34 @@ function faustRingsFrame() {
       c.part.forEach(([k, sx, sy, sz, x, y, z, yaw, roll, tint], pi) => { const role = roles.get(pi); if (role !== undefined && pools[k].n < caps[k]) idx.set(role, pools[k].n); put(k, sx, sy, sz, x, y, z, tint, false, yaw, roll) })
       if (n % R.part === R.part - 1) yield
     }
-    // the swap: new meshes in, the old ones out (their geometry is shared; only the instance buffers go)
-    const old = F.ringMeshes || []
-    F.ringIdx = idx
-    F.ringMeshes = []
+    // the swap (card #18): two sets of meshes kept for the game, one shown. The hidden set takes the new instances in place (a
+    // mesh is remade only when too small, with room to spare), its upload waits for a frame with room for it (uploadSlot), then
+    // it is shown and the other hidden: no instance buffers made or freed a refill
+    const sets = F.ringSets ||= [{}, {}], set = sets[F.ringShown === 0 ? 1 : 0], other = set === sets[0] ? sets[1] : sets[0]
+    let bytes = 0
     for (const k of KINDS) {
       const P = pools[k]
-      if (!P.n) continue
-      const mesh = new THREE.InstancedMesh(S[k], k === 'far' ? F.materials.far : F.materials.stone, P.n)
-      mesh.instanceMatrix.array.set(P.m.subarray(0, P.n * 16)); mesh.instanceMatrix.needsUpdate = true
-      mesh.instanceColor = new THREE.InstancedBufferAttribute(P.c.slice(0, P.n * 3), 3)
-      mesh.computeBoundingSphere(); mesh.castShadow = false; mesh.receiveShadow = k === 'flat'
-      mesh.userData.faustRings = k
-      worldGroup.add(mesh); F.ringMeshes.push(mesh)
+      let mesh = set[k]
+      if (!P.n) { if (mesh) mesh.count = 0; continue }
+      if (!mesh || mesh.instanceMatrix.count < P.n) {
+        if (mesh) { worldGroup.remove(mesh); mesh.dispose() }
+        const cap = Math.min(caps[k], Math.ceil(P.n * 1.3) + 64)
+        mesh = set[k] = new THREE.InstancedMesh(S[k], k === 'far' ? F.materials.far : F.materials.stone, cap)
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+        mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3); mesh.instanceColor.setUsage(THREE.DynamicDrawUsage)
+        mesh.castShadow = false; mesh.receiveShadow = k === 'flat'; mesh.userData.faustRings = k; mesh.visible = false
+        worldGroup.add(mesh); bytes += cap * 76
+      } else bytes += P.n * 76
+      const M = mesh.instanceMatrix, Q = mesh.instanceColor
+      M.array.set(P.m.subarray(0, P.n * 16)); M.clearUpdateRanges(); M.addUpdateRange(0, P.n * 16); M.needsUpdate = true
+      Q.array.set(P.c.subarray(0, P.n * 3)); Q.clearUpdateRanges(); Q.addUpdateRange(0, P.n * 3); Q.needsUpdate = true
+      mesh.count = P.n; mesh.computeBoundingSphere()
     }
-    for (const m of old) { worldGroup.remove(m); m.dispose() }
+    while (!background.uploadSlot(bytes)) yield 'frame'
+    for (const k of KINDS) { if (set[k]) set[k].visible = pools[k].n > 0; if (other[k]) other[k].visible = false }
+    F.ringShown = set === sets[0] ? 0 : 1
+    F.ringIdx = idx
+    F.ringMeshes = KINDS.filter(k => set[k] && pools[k].n > 0).map(k => set[k])
     faustRingInRehide(F)
     F.ringCounts = Object.fromEntries(Object.entries(pools).map(([k, P]) => [k, P.n]))
     yield 'frame'
@@ -7987,7 +8002,10 @@ function faustFieldsFrame() {
   if (f.at === cx + ' ' + cz) return
   f.job = background.run('faust fields', function* () {
     const g = yield* faustFieldsSteps(cx, cz, F.seed)
+    yield      // (card #18: the swap and its upload in frames of their own, the upload admitted by uploadSlot)
+    { const bytes = geometryBytes({ traverse: fn => fn({ geometry: g }) }); while (!background.uploadSlot(bytes)) yield 'frame' }
     f.mesh.geometry.dispose(); f.mesh.geometry = g; f.at = cx + ' ' + cz
+    yield 'frame'
   }, { valid: () => faustState === F && F.fields === f }).catch(e => frameFailed('fields', e)).finally(() => { f.job = null })
 }
 function faustOutskirts() {
