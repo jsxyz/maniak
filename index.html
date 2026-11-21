@@ -3828,7 +3828,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 21, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
+  const content = { version: 22, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -8285,7 +8285,7 @@ const FAUST_NIGHT = {
 // both kerbs, and the other roads keep out of its roadway. own: the avenue's pair that every cell draws already. Pure: every
 // client finds the same lamps, and none of it is on the wire.
 function faustLampSites(P) {
-  const L = FAUST_NIGHT.lamps, X = (P.ci - P.S / 2) * 96, Z = (P.cj - P.S / 2) * 96, out = []
+  const L = FAUST_NIGHT.lamps, X = (P.ci - P.S / 2) * 96, Z = (P.cj - P.S / 2) * 96, out = [], dirs = new Map()
   for (const q of faustLampOffsets(P.diagonal)) out.push({ x: X + 8.6, z: Z + q, nx: 1, nz: 0, own: true })
   for (const road of P.roads) {
     const dx = road.b[0] - road.a[0], dz = road.b[2] - road.a[2], length = Math.hypot(dx, dz), ux = dx / length, uz = dz / length
@@ -8295,10 +8295,33 @@ function faustLampSites(P) {
       continue
     }
     const nx = dx ? 0 : 1, nz = dx ? 1 : 0, own = !dx && road.avenue && road.a[0] === X
-    for (const side of [1, -1]) for (const along of side > 0 ? own ? [] : L.near : L.far)
-      out.push({ x: road.a[0] + ux * along + nx * side * L.head, z: road.a[2] + uz * along + nz * side * L.head, nx: nx * side, nz: nz * side })
+    for (const side of [1, -1]) for (const along of side > 0 ? own ? [] : L.near : L.far) {
+      const s = { x: road.a[0] + ux * along + nx * side * L.head, z: road.a[2] + uz * along + nz * side * L.head, nx: nx * side, nz: nz * side }
+      out.push(s); dirs.set(s, [ux, uz])
+    }
   }
   if (P.plaza && !P.diagonal) for (const [dx, dz] of FAUST_FEAT.lamps) out.push({ x: X + 48 + dx, z: Z + 48 + dz, nx: 0, nz: 0 })      // card #69
+  // a door's approach: no lamp post within 1.75 m of the line from a door out 2.5 m across the pavement (a street door, a back door, a club's back
+  // door); the lamp moves along its road, at most 3 m, to the nearest spot that is clear and 8 m from every other lamp's post
+  if (P.lots && dirs.size) {
+    const doors = []
+    for (const l of P.lots) {
+      doors.push([l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, l.z + l.d, 0, 1])
+      for (const b of l.backDoors || []) doors.push([b.x, b.z, b.out[0], b.out[1]])
+      if (l.club?.back && l.club.backOut) doors.push([l.club.back[0], l.club.back[1], l.club.backOut[0], l.club.backOut[1]])
+    }
+    const reach = L.post - L.head, gap = (px, pz) => { let g = 1e9
+      for (const [dx0, dz0, ux, uz] of doors) { const t = Math.max(0, Math.min(2.5, (px - dx0) * ux + (pz - dz0) * uz)); g = Math.min(g, Math.hypot(px - dx0 - ux * t, pz - dz0 - uz * t)) }
+      return g }
+    const posts = out.map(s => [s.x + s.nx * reach, s.z + s.nz * reach])
+    out.forEach((s, i) => {
+      const d = dirs.get(s); if (!d || gap(posts[i][0], posts[i][1]) >= 1.75) return
+      for (let k = 1; k <= 12; k++) for (const sg of [1, -1]) {
+        const m = sg * k * 0.25, px = posts[i][0] + d[0] * m, pz = posts[i][1] + d[1] * m
+        if (gap(px, pz) >= 1.75 && !posts.some((q, j) => j !== i && Math.hypot(q[0] - px, q[1] - pz) < 8)) { s.x += d[0] * m; s.z += d[1] * m; posts[i] = [px, pz]; return }
+      }
+    })
+  }
   const clear = (x, z) => Math.abs(z - x - (Z - X)) * Math.SQRT1_2 > 14
   return P.diagonal ? out.filter(s => s.own || !s.nx && !s.nz || clear(s.x, s.z) && clear(s.x + s.nx * (L.post - L.head), s.z + s.nz * (L.post - L.head))) : out
 }
