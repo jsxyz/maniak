@@ -24086,6 +24086,14 @@ const CAPE_CURL = 0.25, CAPE_FLUTTER = 0.12, CAPE_FLUTTER_RATE = 20
 // CAPE_RUN_GATHER of its width (rather than CAPE_GATHER), so the forearm passes outside it. It comes in with the ripple
 // (5 to 9 m/s): standing, walking, his run and dying are as they were
 const CAPE_SOFT = 0.02, CAPE_SOFT_F = 0.25, CAPE_SOFT_IN = 0.04, CAPE_RUN_GATHER = 0.37
+// (#72: vaulting, #63's mantle curls his upper back far forward of his back's line within a few frames, and the cape, bound
+// to it, was carried round with it into a flat sail behind him, its springs too slow to swing it back down) in the mantle
+// (moveState 4) the first bone keeps its angle to his back's line, from where the cape hangs to his hips, as his upper back
+// curls; the bones below swing CAPE_VAULT_STIFF times as stiffly toward hanging down; his body's push is soft, as at speed,
+// and leaves the cloth none of its speed (his knees tuck up into it, and their push flung it up); and over the vault's first
+// CAPE_VAULT_FRESH s, while his upper back curls fastest, the first bone's contact with it is found afresh each frame (held,
+// the cloth caught on his back for a frame and then dropped the whole way at once: #72, a 0.23 m flick)
+const CAPE_VAULT_STIFF = 3, CAPE_VAULT_FRESH = 0.1, capeBk = new THREE.Vector3(), capeBk2 = new THREE.Vector3()
 // (#72, #62's stills in a tenement: the cape's corner through a door jamb, drawn on the far side) walls: when the level's
 // solids are by him (within CAPE_WALL_NEAR either side of his hips, or between his hips and the hem's corners), each of
 // the cloth's edge points is looked at from its row's middle and from his hips; a wall in either way draws that bone's width in until neither line meets it (CAPE_WALL short), as an arm does, so the cloth
@@ -24423,6 +24431,9 @@ function rigCape(a, R, dt) {
   // most of it) about its hinge
   R.capeSwV += (-R.capeSw * 40 - R.capeSwV * 9) * h; R.capeSw += R.capeSwV * h
   if (!S) { R.capeOff = R.capeSw = R.capeSwV = 0; lo.fill(-Infinity); hi.fill(Infinity) }
+  // (vaulting: his back's line, down from where the cape hangs to his hips)
+  const vault = a.moveState === 4 && !dying && !seated
+  if (vault) capeBk.setFromMatrixPosition(R.bones.get('pelvis').matrixWorld).sub(capeBk2.setFromMatrixPosition(R.cape[0].parent.matrixWorld)).normalize()
   R.cape.forEach((b, k) => {
     if (!S) R.capeG[k] = 1
     b.scale.y = k === 0 && a.moveState === 1 ? 1 - 0.3 * (a.moveCharge || 0) : 1
@@ -24430,6 +24441,13 @@ function rigCape(a, R, dt) {
     // plumb across the hinge: straight down, less its part along the hinge; the turn about L from D to it
     rigU.set(L.x * L.y, L.y * L.y - 1, L.z * L.y).normalize()
     const plumb = -Math.atan2(rigV.crossVectors(D, rigU).dot(L), D.dot(rigU))
+    if (!k) {      // (vaulting: the first bone turned back by as much as his upper back curled from his back's line since the last frame)
+      const curl = vault ? plumb + Math.atan2(rigV.crossVectors(capeBk, rigU).dot(L), capeBk.dot(rigU)) : NaN, d = curl - R.capeVl
+      if (Number.isFinite(d)) R.capeT[0] += d - 2 * Math.PI * Math.round(d / (2 * Math.PI))
+      R.capeVl = curl
+      R.capeVs = vault ? (R.capeVs || 0) + h : 0
+      if (vault && R.capeVs < CAPE_VAULT_FRESH + 0.5 * h) lo[0] = -Infinity
+    }
     const share = (bend[k] ?? 1) + ((CAPE_RUN_BEND[k] ?? 1) - (bend[k] ?? 1)) * run, amp = (0.04 + 0.03 * k) + ((CAPE_RUN_RIPPLE[k] ?? 0.1) - (0.04 + 0.03 * k)) * run
     const want = dying ? 0 : lift * share + Math.sin(R.capePh - k * 1.1 + a.cid) * amp * ripple + plumb * (k ? 1 : 0.85)
     wants[k] = want
@@ -24437,7 +24455,8 @@ function rigCape(a, R, dt) {
     // (by a wall too: the cape drawn in there settles onto his back rather than slamming into it)
     const sf = Math.max(run, !dying && R.capeClock - (R.capeWallAt ?? -1e9) < CAPE_WALL_HOLD ? 1 : 0)
     const wantS = sf && lo[k] > -Infinity && !dying ? want + (Math.max(want, lo[k] - CAPE_SOFT_IN) - want) * sf : want
-    R.capeW[k] += ((wantS - R.capeT[k]) * 40 - R.capeW[k] * 9) * h; R.capeT[k] += R.capeW[k] * h
+    const sk = vault && k ? CAPE_VAULT_STIFF : 1
+    R.capeW[k] += ((wantS - R.capeT[k]) * 40 * sk - R.capeW[k] * 9 * Math.sqrt(sk)) * h; R.capeT[k] += R.capeW[k] * h
     if (R.capeT[k] < lo[k]) { R.capeT[k] = lo[k]; R.capeW[k] = Math.max(R.capeW[k], 0) }
     if (R.capeT[k] > hi[k]) { R.capeT[k] = hi[k]; R.capeW[k] = Math.min(R.capeW[k], 0) }
     if (seated && R.capeT[k] > CAPE_SEAT) { R.capeT[k] = CAPE_SEAT; R.capeW[k] = Math.min(R.capeW[k], 0) }
@@ -24611,15 +24630,15 @@ function rigCape(a, R, dt) {
         // (dying or on the ground, it folds at CAPE_FOLD rad/s at most: falling, the road can come up a long way in a frame)
         let lift = capeLift(R, S, k, H, L, skin, floor, down, up, ground, dying)
         if (dying || ground) lift = Math.max(-CAPE_FOLD * hs, Math.min(CAPE_FOLD * hs, lift))
-        else if ((run || walls) && lift > 0) {      // (at speed or by a wall, soft: a share of it, no less than keeps it within CAPE_SOFT of its skin)
-          const sf = Math.max(run, walls ? 1 : 0), stuck = capeStuck, need = capeSearch(S, k, H, L, skin - CAPE_SOFT * sf, floor, 0, down, up, top, false, false)
+        else if ((run || walls || vault) && lift > 0) {      // (at speed, by a wall or vaulting, soft: a share of it, no less than keeps it within CAPE_SOFT of its skin)
+          const sf = Math.max(run, walls || vault ? 1 : 0), stuck = capeStuck, need = capeSearch(S, k, H, L, skin - CAPE_SOFT * sf, floor, 0, down, up, top, false, false)
           capeStuck = stuck
           lift = Math.max(need, lift * (1 - (1 - CAPE_SOFT_F) * sf))
         }
         if (lift) {
           R.capeT[k] += lift
           // (at speed the cloth keeps the push's speed, so when his body stops pushing it carries on and the spring slows it)
-          if (lift > 0) { lo[k] = R.capeT[k]; hi[k] = Math.max(hi[k], lo[k]); R.capeW[k] = Math.max(R.capeW[k], (run || walls) && !dying && !ground && !(R.capeClock < R.capeCalm) ? Math.max(run, walls ? 1 : 0) * lift / hs : 0) }
+          if (lift > 0) { lo[k] = R.capeT[k]; hi[k] = Math.max(hi[k], lo[k]); R.capeW[k] = Math.max(R.capeW[k], (run || walls) && !dying && !ground && !vault && !(R.capeClock < R.capeCalm) ? Math.max(run, walls ? 1 : 0) * lift / hs : 0) }
           else { hi[k] = R.capeT[k]; lo[k] = Math.min(lo[k], hi[k]); R.capeW[k] = Math.min(R.capeW[k], 0) }
           capePose(R, k); capeSkinPts(S); moved = true
         }
