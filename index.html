@@ -718,6 +718,7 @@ const NAMES = {
   'Freak': 'Freak', 'Brute': 'Brute', 'Teardrop': 'Teardrop', 'Misery Master': 'Misery Master', 'Thug': 'Thug', 'Tony': 'Tony',
   'Pacifier': 'Pacifier', 'Street performer': 'Street performer', 'Enforcer': 'Enforcer', 'Enforcer heavy': 'Heavy enforcer',
   'Baby': 'Baby',                      // the armed pram baby (SL_BABY)
+  'Dealer': 'Dealer', 'Lookout': 'Lookout',      // card #97, the alley pushers
   'Pram': 'Pram',                      // the pram's blast, in its death line
   'The Maniak': 'The Maniak', 'Alistair': 'Alistair',      // the player's own rows
 }
@@ -767,6 +768,13 @@ const TEXT = {
   demands: ['Spare change for the arts?', 'Tip the talent!', 'Faust taxes the sun. I tax you.', 'Applause is free. Coins aren\'t.',
     'You watched. You pay.', 'Pay the performer, citizen!', 'Coins in the cup, or a hole in the gut.', 'Support the arts. Or bleed.',
     'That dance cost you a dollar.', 'A coin for the show, friend?', 'The cup is hungry!', 'Nobody walks past my show for free.'],   // the street performer's speech bubbles
+  // card #97, the alley dealers' speech bubbles (their VOICES rows name these keys): to passers-by, the offer to him, a threat when hit, a lookout's cry
+  dealHiss: ['Psst. Over here.', 'Hey. Hey, you. Psst.', 'Looking for a little forgetting?', 'Quiet street. Quiet prices.', 'Faust-grade. Cut with nothing. Almost.',
+    'Psst. Care for a little sunshine?', 'Don\'t look. Just walk this way.', 'Cheap oblivion, friend.'],
+  dealOffer: ['Psst. Hey, big man. You look like you need something.', 'Big man. Big appetite. I\'ve got the glass for it.', 'For you, big man, the good stuff. Tonight only.',
+    'That\'s a lot of muscle. It needs a lot of medicine.', 'Hey, big fella. Pipe running dry?', 'First hit\'s free, big man. The second costs a hand.'],
+  dealThreat: ['Wrong alley, big man!', 'You want a piece? Here\'s a piece!', 'Nobody touches the merchandise!', 'I\'ll open you up!', 'Bad for business, pal!'],
+  dealCall: ['Heads up! Trouble!', 'Scatter! Scatter!', 'Faust\'s boys!', 'Run, run, run!'],
 }
 const enemyName = id => NAMES[id] ?? id
 const gameText = (key, v) => TEXT[key].replace(/\{(\w+)\}/g, (m, k) => v?.[k] ?? m)
@@ -891,6 +899,11 @@ const VOICES = {
   'Street performer': {                          // card #59
     demand: { text: 'demands', files: [], synth: 'perfVoice', vol: 0.9, reach: 1.6 },   // each demand, said where he stands as his speech bubble shows (about every 20 s to someone near)
   },
+  // card #97, the alley dealers: silent until there is audio (files: [], no synth); the words show in their speech bubbles
+  Dealer: {
+    hiss: { text: 'dealHiss', files: [], synth: null, vol: 0.8, reach: 1.2 }, offer: { text: 'dealOffer', files: [], synth: null, vol: 0.9, reach: 1.4 },
+    threat: { text: 'dealThreat', files: [], synth: null, vol: 1, reach: 1.6 }, call: { text: 'dealCall', files: [], synth: null, vol: 1, reach: 2 },
+  },
   // 'The Maniak': { taunt: { text: 'maniakTaunts', files: ['taunt1.1a2b3c4d.mp3', ...] } },   // card #13: add the text to TEXT first
   // Enforcer: { shout: { text: 'enforcerShouts', files: [...] } },                                // card #14, card #13
 }
@@ -975,6 +988,11 @@ const CHARS = [
   // demands money", ragged and homeless. A shank in one hand, a tin cup in the other (MODELS.street_performer cup)
   { name: 'Street performer', side: 'freaks', hidden: true, atk: 'Shank', model: 'street_performer', r: 0.35, h: 0.55, speed: 6.8, jump: 8.2, hp: 80,
     color: 0x5b5246, role: 'Faustland\'s own busker · a dance, a tin cup and a shank' },
+  // card #97: the alley pushers, hidden, never in the free-for-all fill: the host fields them at their spots (dealerTick)
+  { name: 'Dealer', side: 'freaks', hidden: true, atk: 'Shank', model: 'dealer', r: 0.35, h: 0.55, speed: 6.3, jump: 8, hp: 60,
+    color: 0x2a2a30, role: 'An alley pusher in a trench coat and hat · a blade, or a pistol' },
+  { name: 'Lookout', side: 'freaks', hidden: true, atk: 'Shank', model: 'dealer', r: 0.35, h: 0.55, speed: 6.8, jump: 8, hp: 45,
+    color: 0x2a2a30, role: 'The pusher\'s lookout · runs at the first sign of trouble' },
   // card #14: Faust's enforcers, hidden, never in the free-for-all fill: the heat system fields them (see HEAT)
   { name: 'Enforcer', side: 'freaks', hidden: true, atk: 'Baton', model: 'enforcer', r: 0.36, h: 0.54, speed: 7.2, jump: 8.4, hp: 70, color: 0x1c1b1f,
     role: 'Faust\'s enforcer · a baton, a revolver and a warrant' },
@@ -1131,6 +1149,13 @@ const PACIFIER = { char: 'Pacifier', cid: 'Pacifier', crew: 'pacifiers', range: 
 // for hold s and dancing between s after each stab; pedEvery s between passers-by
 const PERFORMER = { char: 'Street performer', cid: 'Street performer', range: 1.3, fireRange: 2.4, aimErr: 0.06, jumpy: 0, turn: 7,
   busk: { ask: 4.5, askEvery: 14, engage: 14, mad: 8, walk: 0.45, hold: 1.2, between: 0.8, pedEvery: 6 } }
+// card #97, the alley dealers: `deal` rows are a pool the host adds and drops at the seeded spots (dealerTick); never the free-for-all fill. deal:
+// scare m from an enforcer and the s it runs (scareS); mad s a hit one fights (dealer); fleeS s a lookout runs; offer m (and every s) it offers the
+// Maniak a deal; hiss m it hisses at a passer-by (every s); leash m from its post it gives up a chase; alarm m from a hurt dealer it joins in
+const DEAL_CFG = { scare: 35, scareS: 5, mad: 12, fleeS: 5, offer: 9, offerEvery: 20, hiss: 5, hissEvery: 9, leash: 45, alarm: 22 }
+const DEALER = { char: 'Dealer', cid: 'Dealer', deal: DEAL_CFG, range: 1.3, fireRange: 2.4, aimErr: 0.06, jumpy: 0.2, turn: 6, copies: 2 }
+const DEALER_ARMED = { ...DEALER, far: 'Pistol', farAt: 5, range: 10, fireRange: 26, aimErr: 0.08, copies: 2 }
+const LOOKOUT = { char: 'Lookout', cid: 'Lookout', deal: { ...DEAL_CFG, lookout: true }, range: 1.3, fireRange: 2.4, aimErr: 0.06, jumpy: 0.2, turn: 7, copies: 2 }
 // card #14: Faust's enforcers: `enforcer` rows are a pool the heat system adds and drops (never the free-for-all fill); each hunts the one
 // player whose heat it belongs to (ai.hunt). Baton: swarms round him. Armed: a revolver from farAt m. copies: the pool's size
 const ENFORCER = { char: 'Enforcer', cid: 'Enforcer', enforcer: true, range: 1.6, fireRange: 3.5, aimErr: 0.07, jumpy: 0.5, turn: 6, swarm: true, copies: 8 }
@@ -1153,6 +1178,7 @@ const BOTS = [
   { char: 'Tony', cid: 'Tony', crew: 'mob', boss: true, rare: true, visits: 8, range: 7, fireRange: 18, aimErr: 0.05, jumpy: 0.2, turn: 4 },
   { ...PERFORMER, rare: true, visits: 4 },
   ENFORCER, ENFORCER_ARMED, ENFORCER_HEAVY, ENFORCER_ELITE,
+  DEALER, DEALER_ARMED, LOOKOUT,          // card #97
 ]
 // a LEVELS row's `theme` overrides THEME. TOR_TOP: tornado top (m), or the lid if lower
 const TOR_TOP = 25
@@ -1474,6 +1500,10 @@ const MODELS = {
     clips: { ...RIG_FREAK.clips, walk: 'dance_walk' }, pace: { ...RIG_FREAK.pace, walk: 0.605 },
     dances: ['dance_charleston', 'dance_lindy', 'dance_bear', 'dance_chicken', 'dance_charleston_fancy'], demand: 'perf_demand', cup: 'Tin cup',
     punches: { stab: [['perf_stab_a', 0.02], ['perf_stab_b', 0.02]] } },
+  // card #97, the alley dealers: a pedestrian's trench coat and fedora (assets/civ_m_coat.*, card #65's) on the performer's clips: the hand
+  // held out (demand: an offer or a hand-off), a blade held and stabbed with, the pistol as the villains hold it
+  dealer: { ...RIG_FREAK, file: RIG_FILES.civ_m_coat, anims: [RIG_FILES.anims, RIG_FILES.freak_anims, RIG_FILES.performer_anims], demand: 'perf_demand',
+    aims: { knife: 'knife_idle' }, punches: { stab: [['perf_stab_a', 0.02], ['perf_stab_b', 0.02]] } },
   man: {
     url: ASSETS + 'box_man.glb',
     yaw: Math.PI,
@@ -10486,6 +10516,8 @@ for (const C of CHARS) C.shift &&= ref(C.shift)
 const ENFORCER_ROWS = { baton: [], armed: [], heavy: [], pacifier: [] }
 const ENFORCER_KIND = B => B.elite ? 'pacifier' : B.heavy ? 'heavy' : B.far ? 'armed' : 'baton'
 BOTS.forEach((B, i) => { if (B.enforcer) ENFORCER_ROWS[ENFORCER_KIND(B)].push(i) })
+const DEAL_ROWS = { dealer: [], armed: [], lookout: [] }          // card #97's pool, by kind
+BOTS.forEach((B, i) => { if (B.deal) DEAL_ROWS[B.deal.lookout ? 'lookout' : B.far ? 'armed' : 'dealer'].push(i) })
 const START = ref('The Maniak')
 // the dated event the room plays, null if none; its rows play only while it is on
 let eventOn = null
@@ -10499,7 +10531,7 @@ const botPairs = list => list.flatMap(i => [[BOT_ID0 + i, BOTS[i].cid], ...BOTS[
 
 const RARE_ONE_IN = 20
 // rare: out of free-for-all; visits: in anyway, on its own roll
-const regulars = () => BOTS.filter(b => !b.rare && !b.enforcer && !offEvent(b)).length
+const regulars = () => BOTS.filter(b => !b.rare && !b.enforcer && !b.deal && !offEvent(b)).length
 const ENTITY_MAX = MAX_PLAYERS + BOTS.length + CHARS.filter(C => C.team).length - Object.keys(TEAMS).length
 let BOT_COUNT = 3
 
@@ -12000,7 +12032,7 @@ function spawnY(c, s) {
   return d < 12 ? top - d + c.h + c.r + 0.02 : s[1]
 }
 function respawn(c) {
-  const s = c.bot?.enforcer && ENFORCER_AT || crewSpawn(c) || pickSpawn(c)       // an enforcer comes in where heatTick put it
+  const s = (c.bot?.enforcer || c.bot?.deal) && ENFORCER_AT || crewSpawn(c) || pickSpawn(c)       // an enforcer comes in where heatTick put it
   if (LV.grow) growNear([[s[0], s[2]]], true)       // before anyone stands there
   c.prot = SPAWN_PROT
   setCharPos(c, s[0], spawnY(c, s), s[2])
@@ -12277,7 +12309,7 @@ function carWant(b, seat, tgt, sd, dt) {
   if (ai.seated && !seat) ai.carCd = 4, ai.roam = null, carNav(ai)
   ai.seated = !!seat
   if (seat) { const o = seat[0]; return { use: o.fuse !== undefined || o.riders[0] === undefined || upOf(o) < 0.3 || speedOf(o) < 5 && (!tgt || sd < 30) } }
-  if (b.bot.enforcer || (ai.carCd = (ai.carCd || 0) - dt) > 0 || tgt && sd < (ai.car ? 50 : BOARD_FAR) || !tgt && !(ai.roam ||= parked.size && roamSpot(b, b.y - b.h - b.r)) || objs.some(o => o.heldBy === b.id)) return ai.car = null
+  if (b.bot.enforcer || b.bot.deal || (ai.carCd = (ai.carCd || 0) - dt) > 0 || tgt && sd < (ai.car ? 50 : BOARD_FAR) || !tgt && !(ai.roam ||= parked.size && roamSpot(b, b.y - b.h - b.r)) || objs.some(o => o.heldBy === b.id)) return ai.car = null
   const free = (o, i) => o.riders[i] === undefined && fits(b, o, i), by = o => players.get(o.riders[0])
   // empty, or a same-side driver's while it waits
   const usable = o => o.V && !o.V.fly && o.car && o.heldBy === undefined && o.thrownBy === undefined && o.fuse === undefined && upOf(o) > 0.7 && !canLift(b, o) &&
@@ -12419,6 +12451,7 @@ function botThink(b, all, dt) {
   const seat = seatOf(b)
   if (seat && !seat[1]) return driveThink(b, seat[0], tgt, dt, all)
   if (spec.busk && !seat) { const o = buskThink(b, tgt, sd, sees, dt); if (o) return o }      // card #59, the street performer
+  if (spec.deal && !seat) { const o = dealThink(b, tgt, sd, sees, dt); if (o) return o }      // card #97, the alley dealers
   const car = carWant(b, seat, tgt, sd, dt)
   // card #7: a crew keeps together on the way to a fight (crewThink)
   ai.wait = false
@@ -12769,8 +12802,9 @@ function perfSay(b, to, T) {
 }
 function perfHeard(d) {
   const id = d.id | 0, n = d.n | 0
-  if (!botOf(id)?.busk || !(n >= 0 && n < PERF_LINES.length) || !Number.isFinite(+d.at)) return
-  perfSays.set(id, { n, to: d.to | 0, at: +d.at, shown: false })
+  const g = d.g | 0, lines = g ? TEXT[DEAL_T[DEAL_G[g - 1]]] : PERF_LINES       // card #97: g names a dealer's group (1 + its index in DEAL_G)
+  if (!(g ? botOf(id)?.deal : botOf(id)?.busk) || !lines || !(n >= 0 && n < lines.length) || !Number.isFinite(+d.at)) return
+  perfSays.set(id, { n, g, to: d.to | 0, at: +d.at, shown: false })
 }
 
 // card #7, crews: a crew's leader is its boss while it's about, else its first member. A member still far from the fight (over
@@ -18455,7 +18489,7 @@ function inkRender(render, s, cam) {
   const outlines = settings.quality !== 'low', display = outlines && !target ? inkDisplaySize(css) : size
   inkUniforms.inkExtent.value = ARENA
   s.background = new THREE.Color(0x050607)
-  if (s.fog) s.fog.color.setHex(0x050607)
+  if (s.fog) s.fog.color.setHex(0x050607).lerp(FOG.paper, weatherInkK())      // card #85: the weather's fog is paper in Ink
   // Touch keeps the shaded geometry pass even at High; only the pen composite uses device pixels.
   const field = outlines && (IS_TOUCH || settings.quality === 'medium')
   const separate = outlines && !IS_TOUCH && settings.quality === 'high' && (size.x !== display.x || size.y !== display.y)
@@ -22341,7 +22375,7 @@ function dropAvatar(id) {
   if (a.mixer) a.mixer.stopAllAction()
   if (a.rig) a.rig.mixer.stopAllAction()
   clearHeld(a)
-  perfDrop(a)
+  perfDrop(a); dealDrop(a)
   if (a.runTrail) {
     const m = a.runTrail.mesh
     m.removeFromParent(); m.geometry.dispose(); m.material.dispose()
@@ -22403,7 +22437,8 @@ function perfBubbles() {
       document.body.appendChild(el)
     }
     k++
-    if (el.lastChild.textContent !== PERF_LINES[s.n]) el.lastChild.textContent = PERF_LINES[s.n]
+    const line = dealLine(s)
+    if (el.lastChild.textContent !== line) el.lastChild.textContent = line
     const x = view.left + (perfAt.x + 1) / 2 * view.width, y = view.top + (1 - perfAt.y) / 2 * view.height, sc = clamp(9 / Math.max(d, 1), 0.55, 1.15)
     const pop = Math.min(1, age / 120), fade = Math.min(1, (PERF_SAY_MS - age) / 300)
     el.style.display = ''
@@ -29029,7 +29064,7 @@ document.addEventListener('visibilitychange', () => {
 GAME.participant = rowFor
 GAME.participantOf = rowOf
 function spawnList(rows) {
-  for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && !c.bot.enforcer && c.owner === undefined) dropBot(c)
+  for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && !c.bot.enforcer && !c.bot.deal && c.owner === undefined) dropBot(c)
   rows.forEach(addBot)
   if (conns.size) pushRoster()
 }
@@ -29073,12 +29108,12 @@ function botsSlider() {
 
 function foesWanted() {
   const on = fieldedTeams()
-  return BOTS.flatMap((B, i) => !B.squad && !B.enforcer && !on.has(B.team) && !offEvent(B) ? [i] : []).sort((a, b) => !!BOTS[a].rare - !!BOTS[b].rare || !BOTS[a].event - !BOTS[b].event).slice(0, BOT_COUNT)
+  return BOTS.flatMap((B, i) => !B.squad && !B.enforcer && !B.deal && !on.has(B.team) && !offEvent(B) ? [i] : []).sort((a, b) => !!BOTS[a].rare - !!BOTS[b].rare || !BOTS[a].event - !BOTS[b].event).slice(0, BOT_COUNT)
 }
 
 function teamsChanged() {
   const want = foesWanted()
-  for (const c of [...players.values()]) if (c.id >= BOT_ID0 && !c.bot.squad && !c.bot.enforcer && !want.includes(c.id - BOT_ID0)) dropBot(c)
+  for (const c of [...players.values()]) if (c.id >= BOT_ID0 && !c.bot.squad && !c.bot.enforcer && !c.bot.deal && !want.includes(c.id - BOT_ID0)) dropBot(c)
   want.forEach(addBot)
   if (conns.size) pushRoster()
 }
@@ -30244,6 +30279,346 @@ MODELS.maniak.anims = [...[MODELS.maniak.anims].flat(), RIG_FILES.maniak_grab]
   L.takeItems = function (d) { take.call(this, d); partsWireIn(d) }
 }
 
+// ---------------------------------------------------------------- the alley dealers (card #97)
+// Noir pushers in trench coats and hats, one or two to a spot, a lookout up the street from some. Pin rule 6: the comic's fictional
+// world only, no real brands, places or people.
+//  * Where: spots are a pure function of the city seed and the cell (dealCell, from slKeep), the same on every machine. Until card
+//    #96's alleys land a spot is a lot ring's corner (the gap between blocks); then dealCell takes GAME.faustland.alleys.spots().
+//  * Who: a pool of hidden bot rows (BOTS `deal`), like the enforcers: the host adds one when a player comes within DEAL.near of
+//    its spot and drops it past DEAL.keep (dealerTick). Bots sync as they always do, so a dealer fights, falls and bleeds by the
+//    engine's own rules and the guests need no new traffic.
+//  * Ambient deals: each spot has street-life customers (SL_K.ped agents on a ring loop that stops at the spot, clip 'talk'): a
+//    schedule on the room clock, the same everywhere. dealPhase tells the dealer's pose and the money and packet (dealDraw) where
+//    in the hand-off the clock is. No record kind is added.
+//  * What a dealer does (dealThink, beside buskThink): leans at its spot, glances up the street, hisses at passers-by, offers the
+//    Maniak a deal; hit, it fights (a Shank, or the Pistol); its lookout runs when a fight starts; both scatter from enforcers.
+//  * Heat: a hit on one is a lesser crime than a citizen's (HEAT.crime.dealer, dealerKill).
+const DEAL = {
+  odds: { core: 0.14, civic: 0.08, tenement: 0.26, industrial: 0.2 },   // the share of cells with a spot, by district
+  second: 0.3,                       // a cell's chance of a second spot
+  armed: 3,                          // 1 spot in n has a dealer with the pistol
+  lookout: 0.5, lookAt: 10,          // the share of spots with a lookout, and how far along the pavement (m) he stands
+  lean: [0.6, 0.45, 0.75, 0.9],   // m the dealer stands in from the ring's corner, toward the wall (the customer stops on the corner): the first that is clear
+  near: 90, keep: 140, cap: 6, goneS: 240,   // add within near m of a player, drop past keep m; most at once; s a killed spot stays empty
+  stand: 4.6, gesture: 0.85, bill: [1.2, 1.7], pack: [2.0, 2.6],   // a customer's stop (s), and the hand-off's moments in it
+  hideS: 12,                         // s a scared dealer stays where it ran before it goes back to its post
+  alley: 0.45,                       // the share of alleys with a dealer
+  clients: 2,                        // customers a spot has, half a loop apart
+}
+const DEAL_G = ['hiss', 'offer', 'threat', 'call']                     // pd's `g` is 1 + the index
+const DEAL_T = { hiss: 'dealHiss', offer: 'dealOffer', threat: 'dealThreat', call: 'dealCall' }
+const dealSpotOf = new Map(), dealBots = new Map(), dealGone = new Map()     // host: bot id -> { sp, role }; 'spot:role' -> bot id; 'spot:role' -> ms
+let dealAcc = 0, dealAlarm = { x: 0, z: 0, at: -1e9, by: -1 }
+const dealYaw = (dx, dz) => Math.atan2(-dx, -dz)                     // a bot's yaw for a heading (street life's is atan2(dx, dz))
+
+// a point d m along a closed path from its vertex i0, and the heading there (a bot's yaw)
+function dealAlong(path, i0, d) {
+  const n = path.length; let rem = d
+  for (let s = 0; s < n; s++) {
+    const p = path[(i0 + s) % n], q = path[(i0 + s + 1) % n], len = Math.hypot(q[0] - p[0], q[1] - p[1])
+    if (rem <= len) { const f = len > 1e-6 ? rem / len : 0; return [p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f, dealYaw(q[0] - p[0], q[1] - p[1])] }
+    rem -= len
+  }
+  return [path[i0][0], path[i0][1], 0]
+}
+// a string's hash (an alley spot's id is a string)
+const dealStr = t => { let h = 2166136261; for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619) >>> 0; return h }
+// a cell's spots and the customers that walk to them: built with the cell (slKeep), pure from the seed
+function dealCell(cell) {
+  cell.spots = []
+  const st = slState, h = slHash(st.seed, cell.ci, cell.cj, 97), A = GAME.faustland.alleys
+  if (A?.spots) { dealAlleys(cell, h, A.spots(cell.ci, cell.cj) || []); return }        // card #96's alleys, once they are in
+  const odds = DEAL.odds[cell.dist] ?? 0
+  if (!odds || !cell.rings.length || slRnd(h, 1) >= odds) return
+  const n = slRnd(h, 2) < DEAL.second ? 2 : 1
+  for (let i = 0; i < n; i++) {
+    const ring = cell.rings[slHash(h, i, 3) % cell.rings.length], j = slHash(h, i, 4) % 4, a = ring.path[ring.corner[j]] || ring.pts[j], r = ring.r
+    const sx = a[0] < (r[0] + r[2]) / 2 ? 1 : -1, sz = a[1] < (r[1] + r[3]) / 2 ? 1 : -1       // toward the lot, over the corner
+    // in from the corner as far as clears every post and lot body (a lamp post or a podium's edge is in the way at some corners)
+    const near = cell.near ||= slNear(cell.ci, cell.cj), blocks = [...near.posts, ...near.bodies]
+    const lean = DEAL.lean.find(L => blocks.every(b => slPointGap(a[0] + sx * L, a[1] + sz * L, b) >= 0.42))
+    if (lean === undefined) continue
+    const sp = dealSpot(cell, (cell.ci * 512 + cell.cj) * 4 + i, h + i, a[0] + sx * lean, a[1] + sz * lean, a[0], a[1], Math.atan2(sx, sz), i)
+    const ip = ring.corner[j]
+    if (slRnd(h, i, 6) < DEAL.lookout) { const [lx, lz, ly] = dealAlong(ring.path, ip, DEAL.lookAt); sp.look = true; sp.lx = lx; sp.lz = lz; sp.lyaw = ly }
+    for (let c = 0; c < DEAL.clients; c++) {
+      const stops = new Map([[j, [DEAL.stand, 1, Math.atan2(sp.x - sp.cx, sp.z - sp.cz)]]])
+      const R = slRingLoop(ring, false, (j + 2) % 4, stops, STREET.walk[0] + 0.15, -slRnd(h, i, 20 + c) * 1e5 - c * 6e4)
+      dealClient(cell, sp, h, i, c, R)
+    }
+  }
+}
+// a spot: the dealer's post (x, z, yaw as a bot's), and where its customer stands (cx, cz)
+function dealSpot(cell, id, h, x, z, cx, cz, yaw, i = 0) {
+  const sp = { id, x, z, cx, cz, yaw, armed: slHash(h, i, 5) % DEAL.armed === 0, clients: [], lx: 0, lz: 0, lyaw: 0, look: false, cell: cell.key }
+  cell.spots.push(sp); return sp
+}
+// a customer for spot sp: an ordinary street person on route R, which stops once (a key of mode 1, speed 0) where it deals
+function dealClient(cell, sp, h, i, c, R, stopI = -1) {
+  if (stopI < 0) for (let k = 0; k < R.n; k++) if (R.keys[k * 5 + 3] === 1 && R.keys[k * 5 + 4] === 0 && R.face?.[k] !== undefined) { stopI = k; break }
+  const stopU = R.keys[stopI * 5]
+  const ag = { id: 0xA00000 + sp.id * 2 + c, kind: SL_K.ped, body: slHash(h, i, 30 + c) % 5, tint: [0.82 + slRnd(h, i, 40 + c) * 0.3, 0.82 + slRnd(h, i, 50 + c) * 0.28, 0.82 + slRnd(h, i, 60 + c) * 0.26], route: R, stand: 'talk', standAt: stopI, client: sp }
+  sp.clients.push({ route: R, stopU, ag }); cell.agents.push(ag)
+}
+// card #96's spots by alley (an id is 'al:ci:cj:seg:m0' / ':r0' / ':d0'): some alleys have a dealer in a recess (else at the mouth),
+// and a lookout at the mouth when the dealer is further in. Customers walk in along the alley from just outside its mouth.
+function dealAlleys(cell, h, spots) {
+  const by = new Map()
+  for (const s of spots) { const k = String(s.id).replace(/:[^:]*$/, ''); if (!by.has(k)) by.set(k, []); by.get(k).push(s) }
+  const near = cell.near ||= slNear(cell.ci, cell.cj), blocks = [...near.posts, ...near.bodies], free = (x, z) => blocks.every(b => slPointGap(x, z, b) >= 0.42)
+  for (const [key, list] of by) {
+    const kh = slHash(h, dealStr(key)), mouth = list.find(s => s.kind === 'mouth'), rec = list.find(s => s.kind === 'recess'), post = rec || mouth
+    if (!post || !mouth || slRnd(kh, 1) >= DEAL.alley) continue
+    const ax = -Math.sin(mouth.yaw), az = -Math.cos(mouth.yaw)                    // out of the alley, along its length (north-south: its walls are east and west)
+    if (Math.abs(az) < 0.7) continue
+    const lat = -(post.side || 1), cx = post.x + lat * 1.0, cz = post.z                // the customer stands a metre toward the middle, facing him
+    if (!free(post.x, post.z) || !free(cx, cz)) continue
+    const sp = dealSpot(cell, 200000 + kh % 300000, kh, post.x, post.z, cx, cz, post.yaw)
+    sp.alley = true
+    if (rec && slRnd(kh, 2) < DEAL.lookout) { sp.look = true; sp.lx = mouth.x; sp.lz = mouth.z; sp.lyaw = mouth.yaw }
+    // in from E, 3 m outside the mouth, along the line through the customer's stand, and out again; it waits at E between
+    const out = (mouth.x - cx) * ax + (mouth.z - cz) * az + 3, Ex = cx + ax * out, Ez = cz + az * out, d = Math.hypot(Ex - cx, Ez - cz), v = STREET.walk[0] + 0.15
+    const face = Math.atan2(post.x - cx, post.z - cz), faceIn = Math.atan2(-ax, -az)
+    for (let c = 0; c < DEAL.clients; c++) {
+      const wait = 22 + slRnd(kh, 3 + c) * 20, t1 = wait + d / v, t2 = t1 + DEAL.stand, t3 = t2 + d / v
+      const R = slRoute([[0, Ex, Ez, 1, 0], [wait, Ex, Ez, 0, v], [t1, cx, cz, 1, 0], [t2, cx, cz, 0, v], [t3, Ex, Ez, 1, 0]], t3, -slRnd(kh, 7 + c) * 1e5 - c * 4e4)
+      R.face = []; R.face[0] = faceIn; R.face[2] = face; R.face[4] = faceIn
+      dealClient(cell, sp, kh, 0, c, R, 2)
+    }
+  }
+}
+// the hand-off on the room clock at spot sp: { age s into the customer's stop, t0 ms the stop began } or null
+function dealPhase(sp, T) {
+  let best = null
+  for (const c of sp.clients) {
+    const R = c.route, per = R.period, tt = (T - R.t0) / 1000, u = (tt % per + per) % per, age = u - c.stopU
+    if (!(age >= 0 && age < DEAL.stand) || best && age >= best.age) continue
+    const t0 = Math.round(R.t0 + (Math.floor(tt / per) * per + c.stopU) * 1000)
+    if (sp.cut === t0) continue
+    // the customer hit, killed or scared off its stop (a street-life record, card #101's death included): the hand-off is off for this stop
+    const p = dealPose ||= SL_POSE(); slPose(c.ag, T, p)
+    if (p.rec || p.down || p.dead || p.hidden || p.scale < 1) { sp.cut = t0; sp.cutAt = T; sp.cutPos = { x: p.x, z: p.z }; continue }
+    best = { age, t0 }
+  }
+  return best
+}
+// the spot a dealer at (x, z) stands at, within 3 m of its post (any machine)
+function dealSpotNear(x, z) {
+  const st = slState; if (!st) return null
+  const A = st.S * 48, ci = Math.floor((x + A) / 96), cj = Math.floor((z + A) / 96)
+  for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) {
+    const c = i >= 0 && j >= 0 && i < st.S && j < st.S && st.cells.get(i + ' ' + j)
+    if (c?.spots) for (const sp of c.spots) if (Math.hypot(sp.x - x, sp.z - z) < 3 || sp.look && Math.hypot(sp.lx - x, sp.lz - z) < 3) return sp
+  }
+  return null
+}
+
+// ---- the host: who is in the world
+function dealerTick(dt, all) {
+  if (!isHost || !LV.faust || !slState) return
+  dealAcc += dt
+  if (dealAcc < 0.4) return
+  dealAcc = 0
+  const T = tickAt || now(), st = slState, A = st.S * 48, humans = all.filter(c => !c.bot && c.id < BOT_ID0 && !(c.dead > 0)), want = new Map()
+  dealerWatch(all, humans, T)
+  for (const p of humans) {
+    const ci = Math.floor((p.x + A) / 96), cj = Math.floor((p.z + A) / 96)
+    for (let i = Math.max(0, ci - 1); i <= Math.min(st.S - 1, ci + 1); i++) for (let j = Math.max(0, cj - 1); j <= Math.min(st.S - 1, cj + 1); j++)
+      for (const sp of slCell(i, j).spots || []) {
+        if (Math.hypot(sp.x - p.x, sp.z - p.z) < DEAL.near) { want.set(sp.id + ':d', { sp, role: 'd' }); if (sp.look) want.set(sp.id + ':l', { sp, role: 'l' }) }
+      }
+  }
+  let moved = false
+  for (const [key, id] of [...dealBots]) {
+    const c = players.get(id), ds = dealSpotOf.get(id)
+    if (!c || !ds) { dealBots.delete(key); dealSpotOf.delete(id); continue }
+    if (!humans.some(p => Math.hypot(p.x - c.x, p.z - c.z) < DEAL.keep && Math.hypot(p.x - ds.sp.x, p.z - ds.sp.z) < DEAL.keep)) { dealerDrop(c); moved = true }
+  }
+  for (const [key, w] of want) if (!dealBots.has(key) && (dealGone.get(key) ?? 0) <= T && dealBots.size < DEAL.cap && dealerAdd(key, w.sp, w.role)) moved = true
+  if (moved && conns.size) pushRoster()
+}
+function dealerAdd(key, sp, role) {
+  const look = role === 'l', kinds = look ? ['lookout'] : sp.armed ? ['armed', 'dealer'] : ['dealer', 'armed']
+  let i; for (const k of kinds) { i = DEAL_ROWS[k].find(r => !players.has(BOT_ID0 + r)); if (i !== undefined) break }
+  if (i === undefined) return false
+  const at = [look ? sp.lx : sp.x, 3, look ? sp.lz : sp.z, look ? sp.lyaw : sp.yaw]
+  ENFORCER_AT = at
+  const ok = addBot(i)
+  ENFORCER_AT = null
+  if (!ok) return false
+  const c = players.get(BOT_ID0 + i)
+  c.prot = 0; c.ai.yaw = at[3]
+  dealBots.set(key, c.id); dealSpotOf.set(c.id, { sp, role, key })
+  return true
+}
+function dealerDrop(c) {
+  const ds = dealSpotOf.get(c.id)
+  if (ds) dealBots.delete(ds.key)
+  dealSpotOf.delete(c.id); dropBot(c)
+}
+// a dead dealer stays down, then leaves; its spot stays empty for a while
+function dealerDown(c) {
+  const ds = dealSpotOf.get(c.id)
+  if (ds) dealGone.set(ds.key, (tickAt || now()) + DEAL.goneS * 1000)
+  dealerDrop(c); if (conns.size) pushRoster()
+}
+function dealerPurge() { for (const c of [...players.values()]) if (c.bot?.deal) dealerDrop(c); dealGone.clear() }
+// a dealer's hurts and falls are crimes of the nearest player (within 35 m), a lesser kind than a citizen's, and an alarm for the rest
+function dealerWatch(all, humans, T) {
+  for (const e of all) {
+    if (!e.bot?.deal) continue
+    const ai = e.ai, hurt = ai.dhp !== undefined && e.hp < ai.dhp - 0.01, fell = e.dead > 0 && !ai.dfell
+    ai.dhp = e.hp
+    if (!hurt && !fell) continue
+    if (fell) ai.dfell = true
+    dealAlarm = { x: e.x, z: e.z, at: T, by: e.id }
+    let who = null, wd = 35
+    for (const p of humans) { const d = Math.hypot(p.x - e.x, p.z - e.z); if (d < wd) { who = p; wd = d } }
+    if (who) heatCrime(who, fell ? 'dealerKill' : 'dealer', e.x, e.z)
+  }
+}
+
+// ---- the mind of a dealer or a lookout (host): null hands it to the bot rules to fight
+function dealFace(b, yaw, dt) {
+  const ai = b.ai, turn = (b.bot.turn || 6) * dt
+  ai.yaw += clamp(wrapPi(yaw - ai.yaw), -turn, turn); ai.pitch = 0
+  return { f: 0, r: 0, j: false, descend: false, fire: false, yaw: ai.yaw, pitch: 0, sprint: false }
+}
+function dealRun(b, fx, fz, dt) {
+  const ai = b.ai, turn = (b.bot.turn || 6) * 1.6 * dt
+  ai.yaw += clamp(wrapPi(Math.atan2(fx - b.x, fz - b.z) - ai.yaw), -turn, turn); ai.pitch = 0
+  return { f: 1, r: 0, j: false, descend: false, fire: false, yaw: ai.yaw, pitch: 0, sprint: true }
+}
+// a look up the street: a turn of the head and shoulders for a moment, then back; pure from the clock
+function dealGlance(sp, look, T) {
+  const per = look ? 3200 : 7000, w = Math.floor(T / per), u = (T - w * per) / 1000, dur = look ? 1.3 : 1.6
+  if (u >= dur) return 0
+  return ((slHash(sp.id, w, look ? 1 : 2) & 1) ? 1 : -1) * (look ? 1.5 : 0.9) * Math.sin(Math.PI * u / dur)
+}
+function dealPasser(b, T, R, said) {
+  let best = null, bd = R
+  if (slState && LV.faust) slAround(b.x, b.z, R, T, (ag, p) => {
+    if (p.down || p.hidden || p.scale < 0.5 || ag.client || ![SL_K.ped, SL_K.idle, SL_K.walker, SL_K.pram].includes(ag.kind) || T - (said.get('s' + ag.id) ?? -Infinity) < 25000) return
+    const d = Math.hypot(p.x - b.x, p.z - b.z)
+    if (d < bd) { bd = d; best = { id: ag.id } }
+  })
+  return best
+}
+function dealScare(b, k, fx, fz, s, T) {
+  if (!(k.flee > 0) && T - (k.cry ?? -1e9) > 5000) { k.cry = T; if (b.bot.deal.lookout) dealSay(b, -1, 'call', T) }
+  k.flee = Math.max(k.flee, s); k.fx = fx; k.fz = fz; k.hide = k.flee + DEAL.hideS       // it runs, then keeps out of sight a while before it goes back
+}
+function dealThink(b, tgt, sd, sees, dt) {
+  const ai = b.ai, B = b.bot.deal, T = tickAt || now(), ds = dealSpotOf.get(b.id)
+  if (!ds) return null
+  const k = ai.deal ||= { hp: b.hp, mad: 0, flee: 0, fx: 0, fz: 0, look: 0, talk: 0, said: new Map() }
+  const sp = ds.sp, look = !!B.lookout, hx = look ? sp.lx : sp.x, hz = look ? sp.lz : sp.z, h0 = look ? sp.lyaw : sp.yaw
+  const hurt = b.hp < k.hp - 0.01
+  k.hp = b.hp; k.mad -= dt; k.flee -= dt; k.hide -= dt; k.talk -= dt; k.look -= dt
+  if (hurt && !(k.flee > 0)) {
+    if (look) dealScare(b, k, tgt ? tgt.x : b.x - 1, tgt ? tgt.z : b.z, B.fleeS, T)
+    else if (tgt) { if (!(k.mad > 0)) dealSay(b, tgt.id, 'threat', T); k.mad = B.mad }
+  }
+  if (k.look <= 0) {
+    k.look = 0.25
+    for (const e of enforcerList()) if (!(e.dead > 0) && Math.hypot(e.x - b.x, e.z - b.z) < B.scare) { dealScare(b, k, e.x, e.z, B.scareS, T); k.mad = 0; break }
+    if (T - dealAlarm.at < 8000 && dealAlarm.by !== b.id && Math.hypot(dealAlarm.x - b.x, dealAlarm.z - b.z) < B.alarm) {
+      if (look) dealScare(b, k, dealAlarm.x, dealAlarm.z, B.fleeS, T)
+      else if (tgt && !(k.flee > 0) && !(k.mad > 0)) { k.mad = B.mad; dealSay(b, tgt.id, 'threat', T) }
+    }
+  }
+  if (k.flee > 0) return dealRun(b, k.fx, k.fz, dt)
+  if (k.hide > 0) return dealFace(b, ai.yaw, dt)
+  if (k.mad > 0) { if (tgt && sd < B.leash && Math.hypot(b.x - hx, b.z - hz) < B.leash) return null; k.mad = 0 }
+  const dh = Math.hypot(hx - b.x, hz - b.z)
+  if (dh > 0.9) return buskTo(b, hx, hz, dh > 8 ? 1 : 0.5, dt)
+  // a customer hit, killed or scared mid hand-off: the dealer says so and keeps its post, its lookout runs
+  if (sp.cutAt && sp.cutAt > (k.cutSeen ?? 0) && T - sp.cutAt < 8000) {
+    k.cutSeen = sp.cutAt
+    if (look) dealScare(b, k, sp.cutPos.x, sp.cutPos.z, B.fleeS, T)
+    else { k.talk = 3; dealSay(b, -1, 'call', T) }
+  }
+  if (k.flee > 0) return dealRun(b, k.fx, k.fz, dt)
+  // at its spot
+  if (!look && k.talk <= 0) {
+    if (tgt && sees && sd < B.offer && T - (k.said.get(tgt.id) ?? -Infinity) > B.offerEvery * 1000) { k.said.set(tgt.id, T); k.talk = 3; dealSay(b, tgt.id, 'offer', T) }
+    else if (T > (k.hissAt ?? 0)) {
+      k.hissAt = T + 700
+      const p = dealPasser(b, T, B.hiss, k.said)
+      if (p && T > (k.hissOk ?? 0)) { k.said.set('s' + p.id, T); k.hissOk = T + B.hissEvery * 1000; k.talk = 1.5; dealSay(b, -1, 'hiss', T) }
+    }
+  }
+  if (k.said.size > 64) for (const [id, at] of k.said) if (T - at > 40000) k.said.delete(id)
+  const ph = !look && dealPhase(sp, T)
+  if (ph) return dealFace(b, dealYaw(sp.cx - b.x, sp.cz - b.z), dt)
+  return dealFace(b, h0 + dealGlance(sp, look, T), dt)
+}
+// a line, by group name: shown over it and heard, on every machine (the performer's `pd` message, with its group in g)
+function dealSay(b, to, group, T) {
+  const lines = TEXT[DEAL_T[group]], n = Math.random() * lines.length | 0, g = DEAL_G.indexOf(group) + 1
+  perfHeard({ id: b.id, n, to, at: T, g })
+  if (conns.size) broadcast({ k: 'pd', id: b.id, n, to, at: Math.round(T), g })
+}
+const dealLine = s => s.g ? TEXT[DEAL_T[DEAL_G[s.g - 1]]]?.[s.n] : PERF_LINES[s.n]
+
+// ---- drawing, on every screen: the hand-off's money and packet, and the offered hand (the performer's demand clip)
+const DEAL_PROP = { bill: { size: [0.17, 0.008, 0.08], color: 0x8fa584, g: null, m: null }, pack: { size: [0.08, 0.03, 0.06], color: 0xe9e1cc, g: null, m: null } }
+const dealV = new THREE.Vector3(), dealW = new THREE.Vector3()
+let dealPose = null          // SL_POSE(), made on first use (it is declared further down)
+function dealPropMesh(a, k) {
+  let m = a['deal_' + k]
+  if (!m) { const P = DEAL_PROP[k]; m = a['deal_' + k] = new THREE.Mesh(P.g ||= new THREE.BoxGeometry(...P.size), P.m ||= new THREE.MeshBasicMaterial({ color: P.color })); avatarGroup.add(m) }
+  return m
+}
+function dealPropOff(a, k) { const m = a['deal_' + k]; if (m) m.visible = false }
+function dealDraw(id, state, t) {
+  const B = botOf(id)?.deal
+  if (!B) return
+  const a = avatars.get(id)
+  if (!a) return
+  const T = isHost ? now() : renderT, s = perfSays.get(id), up = !!state && !(state.dead > 0) && a.mesh.visible
+  if (s && s.g && !s.shown && T >= s.at) {
+    s.shown = true
+    if (up && T - s.at < 1500) { a.sayAt = s.at; playVoice('Dealer', DEAL_G[s.g - 1], s.n, { at: perfPlace(a.mesh.position), cat: 'world' }) }
+  }
+  const sp = up && !B.lookout && slState && LV.faust ? dealSpotNear(a.mesh.position.x, a.mesh.position.z) : null, ph = sp && dealPhase(sp, T)
+  if (!ph) {
+    for (const k of ['bill', 'pack']) {            // a hand-off cut off with something in the air: it drops where it was, and lies a while
+      const m = a['deal_' + k]; if (!m) continue
+      if (m.visible && !m.userData.fall && sp?.cut && T - sp.cutAt < 1500) { m.userData.fall = T; m.userData.y0 = m.position.y }
+      if (m.userData.fall) {
+        const tt = (T - m.userData.fall) / 1000, floor = a.mesh.position.y + 0.03
+        m.position.y = Math.max(floor, m.userData.y0 - 4.9 * tt * tt); m.visible = tt < 8
+        if (!m.visible) m.userData.fall = 0
+      } else m.visible = false
+    }
+    return
+  }
+  for (const k of ['bill', 'pack']) { const m = a['deal_' + k]; if (m) m.userData.fall = 0 }
+  if (ph.age >= DEAL.gesture && a.dealGest !== ph.t0) { a.dealGest = ph.t0; a.sayAt = ph.t0 + 1 }
+  handAt(a, dealV, 1)
+  const dx = sp.cx - sp.x, dz = sp.cz - sp.z, dl = Math.hypot(dx, dz) || 1
+  dealW.set(dealV.x + dx / dl * 0.62, dealV.y - 0.12, dealV.z + dz / dl * 0.62)         // the customer's hand, across from it
+  const fly = (m, [t0, t1], from, to) => {
+    const e = Math.min(1, Math.max(0, (ph.age - t0) / (t1 - t0))), f = e * e * (3 - 2 * e)
+    m.position.set(from.x + (to.x - from.x) * f, from.y + (to.y - from.y) * f + Math.sin(Math.PI * f) * 0.07, from.z + (to.z - from.z) * f)
+    m.rotation.set(0, a.mesh.rotation.y + f * 0.6, 0); m.visible = true
+  }
+  const bill = dealPropMesh(a, 'bill'), pack = dealPropMesh(a, 'pack')
+  if (ph.age >= 0.9 && ph.age < 2.0) fly(bill, DEAL.bill, dealW, dealV); else bill.visible = false
+  if (ph.age >= DEAL.pack[0] && ph.age < 2.9) fly(pack, DEAL.pack, dealV, dealW); else pack.visible = false
+}
+function dealDrop(a) {
+  for (const k of ['bill', 'pack']) { const m = a['deal_' + k]; if (m) { m.removeFromParent(); a['deal_' + k] = null } }
+}
+// the test and capture hooks: spots by cell, the hand-off's clock, what is drawn (cards #97 and #72's frame tables)
+GAME.dealers = {
+  spots: (ci, cj) => slState ? slCell(ci, cj).spots || [] : [], phase: dealPhase, glance: dealGlance, cfg: DEAL, bots: dealBots, near: dealSpotNear,
+  S: () => slState?.S, T: () => isHost ? now() : renderT,
+  clients: (sp, T) => { const o = []; for (const ag of slState?.cells.get(sp.cell)?.agents || []) if (ag.client === sp) { const p = SL_POSE(); slPose(ag, T, p); o.push({ id: ag.id, x: p.x, z: p.z, mode: p.mode, clip: p.clip, hidden: p.hidden, rec: !!p.rec }) } return o },
+  avatar: id => { const a = avatars.get(id), c = players.get(id); return a && { x: a.mesh.position.x, y: a.mesh.position.y, z: a.mesh.position.z, clip: a.rig?.name, sayAt: a.sayAt, bill: !!a.deal_bill?.visible, pack: !!a.deal_pack?.visible, hp: c?.hp, dead: c?.dead, ai: c?.ai?.deal && { mad: +c.ai.deal.mad.toFixed(2), flee: +c.ai.deal.flee.toFixed(2), hide: +(c.ai.deal.hide || 0).toFixed(2) } } },
+}
+
 // ---------------------------------------------------------------- the disguise and the glass pipe (cards #15 and #16)
 // The Maniak changes into Alistair's long white coat and back (G), and takes a hit of his glass pipe to heal (P).
 // Both are host-decided and ride the snapshot as two columns (`disg`, `smk`); every screen draws them from that, so a guest
@@ -30742,7 +31117,7 @@ function slCell(ci, cj) {
   const P = slPlan(ci, cj), S = st.S, gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96, seed = st.seed
   // the same people for every client whatever its quality setting (records name them by id); quality only thins what is drawn
   const q = 1, rng = genRng(slHash(seed, gx, gz, 26)), q_ = () => q
-  cell = { key, ci, cj, X, Z, agents: [], flocks: [], used: performance.now(), rings: [] }
+  cell = { key, ci, cj, X, Z, agents: [], flocks: [], used: performance.now(), rings: [], dist: P.plaza ? 'plaza' : P.diagonal ? 'diag' : P.district }
   const lots = P.lots, rings = lots.map(l => [slLotRing(l), slLotBody(l), !!l.alley]).filter(([r]) => !P.diagonal || r[3] - r[0] - 384 < -21.2 || r[1] - r[2] - 384 > 21.2)
   // pts: the ring's corners; path: the way round it, past the posts (card #56)
   const near = slNear(ci, cj)
@@ -30841,6 +31216,7 @@ function slCell(ci, cj) {
 }
 function slKeep(cell) {
   const st = slState
+  dealCell(cell)          // card #97: the cell's dealer spots and their customers
   for (const owner of cell.agents.filter(ag => ag.kind === SL_K.walker)) {
     const dog = { id: 0x400000 + owner.id, kind: SL_K.stray, companion: owner, body: 0, tint: owner.tint || [0.95, 0.9, 0.85], route: owner.route, home: owner.home }
     owner.dog = dog; cell.agents.push(dog)
@@ -31008,6 +31384,40 @@ function slNearestRing(rings, x, z) {
   return best
 }
 const slDogAt = [{ x: 0, z: 0, yaw: 0 }, { x: 0, z: 0, yaw: 0 }, { x: 0, z: 0, yaw: 0 }]
+// card #63 (#72's defect): a route's heading changed in the frame it reached a corner, a door, a stop's facing or a reversal (90 and 162
+// degrees in one frame). It is now the box average of the route's own headings over +-SL_TURN s (unwrapped in time order, so a
+// reversal sweeps through the shorter way): a 90 degree corner turns over 0.5 s from 0.25 s before it, at most about 13 degrees a frame at 30 Hz
+// for 162 degrees. A pure function of (route, time), the same on every machine; a straight run (the whole window inside one segment) costs nothing
+const SL_TURN = 0.25, SL_TURN_N = 24, slTurnTmp = { x: 0, z: 0, yaw: 0, mode: 0, v: 0, s: 0, i: 0, u: 0 }
+function slSmoothYaw(f) {              // f(k), k in [-1, 1]: the raw heading across the window; unwrapped in time order, the same pairs the same way every frame
+  const n = SL_TURN_N
+  let prev = f(-1), sum = prev
+  for (let k = -n + 1; k <= n; k++) { const y = prev + slWrap(f(k / n) - prev); sum += y; prev = y }
+  return slWrap(sum / (2 * n + 1))
+}
+function slTurnYaw(f, y0) {            // y0 = f(0); the smoothed heading (y0 itself when nothing turns across the window)
+  let still = true
+  for (const k of [-1, -0.5, 0.5, 1]) if (Math.abs(slWrap(f(k) - y0)) > 1e-6) { still = false; break }
+  return still ? y0 : slSmoothYaw(f)
+}
+function slTurn(R, t, o) {             // a walker on a route at room time t (ms): o.yaw from slEval, the exact box average of the route's segment headings over the window
+  const K = R.keys, w = SL_TURN
+  if (o.u - K[o.i * 5] >= w && K[Math.min(o.i + 1, R.n - 1) * 5] - o.u >= w) return          // inside one segment the whole window: the heading is constant
+  const q = slTurnTmp, W = w * 1000, b = t + W, y0 = o.yaw
+  let cur = t - W, prev = 0, sum = 0, tot = 0
+  for (let g = 0; cur < b - 1e-6 && g < 64; g++) {
+    q.yaw = y0; slEval(R, cur, q)
+    const seg = Math.min((R.keys[Math.min(q.i + 1, R.n - 1) * 5] - q.u) * 1000, b - cur)
+    if (!(seg > 1e-6)) { cur += 1e-3; continue }
+    const y = tot ? prev + slWrap(q.yaw - prev) : q.yaw
+    sum += y * seg; tot += seg; prev = y; cur += seg
+  }
+  o.yaw = tot > 0 ? slWrap(sum / tot) : y0
+}
+function slTurnAlong(R, s, dir, o) {   // the run along a route to s, going dir: o.yaw from slAlong (turned round if dir < 0), turned over +-STREET.run * SL_TURN m
+  const q = slTurnTmp, y0 = o.yaw, D = STREET.run * SL_TURN
+  o.yaw = slTurnYaw(k => { q.yaw = dir < 0 ? slWrap(y0 + Math.PI) : y0; slAlong(R, s + dir * k * D, q); return dir < 0 ? slWrap(q.yaw + Math.PI) : q.yaw }, y0)
+}
 // an agent's own schedule at t: on its route, or standing at its spot
 function slAmbient(ag, t, o) {
   if (ag.companion) {
@@ -31028,7 +31438,7 @@ function slAmbient(ag, t, o) {
     if (o.mode === 1) o.mode = 6
     return o
   }
-  if (ag.route) { slEval(ag.route, t, o); if (ag.kind === SL_K.pram) o.yaw = slAhead(ag.route, o, STREET.pramBack, o.yaw); return o }
+  if (ag.route) { slEval(ag.route, t, o); if (ag.kind === SL_K.pram) o.yaw = slAhead(ag.route, o, STREET.pramBack, o.yaw); else slTurn(ag.route, t, o); return o }
   o.x = ag.x; o.z = ag.z; o.yaw = ag.yaw; o.mode = 1; o.v = 0; o.s = 0; return o
 }
 // the route an agent runs along when it panics: its own, or (standing) its lot's ring from the nearest point
@@ -31079,7 +31489,7 @@ function slClip(ag, o, t) {
     case SL_K.pram: o.clip = o.mode === 1 ? 'pushidle' : 'push'; o.ct = o.mode === 1 ? t / 1000 : o.s / (0.57 * H); break
     case SL_K.walker: o.clip = o.mode === 1 ? 'leash_idle' : 'leash_walk'; o.ct = o.mode === 1 ? t / 1000 : o.s / (0.57 * H); break
     case SL_K.stray: o.clip = o.mode === 5 ? 'sniff' : o.mode === 6 ? 'sit' : 'walk'; o.ct = o.mode === 0 ? o.s / 0.95 : t / 1000; break
-    default: o.clip = o.mode === 1 ? 'idle' : 'walk'; o.ct = o.mode === 1 ? t / 1000 + (ag.id % 7) : o.s / (0.57 * H)
+    default: o.clip = o.mode === 1 ? (ag.stand && (ag.standAt === undefined || o.i === ag.standAt) ? ag.stand : 'idle') : 'walk'; o.ct = o.mode === 1 ? t / 1000 + (ag.id % 7) : o.s / (0.57 * H)
   }
 }
 // card #72: a start from v0 to v (m/s) at a constant rate over SL_PUSH s: the distance covered after tr s, and the speed then
@@ -31228,7 +31638,7 @@ function slDetached(ag, r, t, o) {
   // whole run in the first frame
   const v = ag.kind === SL_K.pram ? 3 : dog ? 5.5 : S.run, tr = Math.min(tau - cow, S.fleeS), v0 = cow ? 0 : clamp(at.v || 0, 0, v), run = slPushOff(tr, v0, v)
   if (run < d0) { const f = run / d0; o.x = ax + (q0.x - ax) * f; o.z = az + (q0.z - az) * f; o.yaw = Math.atan2(q0.x - ax, q0.z - az) }
-  else { slAlong(R, s0 + dir * (run - d0), o); if (dir < 0) o.yaw = slWrap(o.yaw + Math.PI) }
+  else { const sp = s0 + dir * (run - d0); slAlong(R, sp, o); if (dir < 0) o.yaw = slWrap(o.yaw + Math.PI); slTurnAlong(R, sp, dir, o) }
   o.v = tau < S.fleeS ? slPushV(tr, v0, v) : 0
   if (tau - cow > S.fleeS) { const g = (tau - cow - S.fleeS) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
   o.s = run
@@ -34278,7 +34688,7 @@ function slBabyFrame(dt) {
 // share of them with a revolver from star 2. spawn: s between arrivals, the ring m they appear in, keep m from him they stay in
 const HEAT = {
   stars: [0, 1, 3.5, 7, 12, 20], cap: 26,
-  crime: { civilian: 1, ram: 1, property: 0.5, hurt: 0.6, kill: 2.5 }, limit: { property: 2.5, hurt: 0.8 },
+  crime: { civilian: 1, ram: 1, property: 0.5, hurt: 0.6, kill: 2.5, dealer: 0.3, dealerKill: 0.5 }, limit: { property: 2.5, hurt: 0.8, dealer: 0.8 },   // card #97: a pusher is a lesser crime than a citizen
   witness: { people: 40, enforcers: 60 },
   sight: 70, seen: 3, hide: 14, hideStar: 4, disguised: 5,
   force: [0, 2, 3, 4, 5, 6], armed: 0.5,
@@ -34461,9 +34871,9 @@ function enforcerDown(c) { enforcerDrop(c); if (conns.size) pushRoster() }
     const m = Array.isArray(d.he) && d.he.length <= 32 && d.he.find(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] === myId)
     heatMine = m ? { stars: clamp(m[1] | 0, 0, 5), state: clamp(m[2] | 0, 0, 2), left: clamp(m[3], 0, 99) } : { stars: 0, state: 0, left: 0 }
   }
-  L.matchStart = function () { ms.call(this); if (isHost) { heat.clear(); for (const e of enforcerList()) dropBot(e); if (conns.size) pushRoster() } }
+  L.matchStart = function () { ms.call(this); if (isHost) { heat.clear(); for (const e of enforcerList()) dropBot(e); dealerPurge(); if (conns.size) pushRoster() } }
   L.left = function (id) { heat.delete(id); return left.call(this, id) }
-  HOST_PHASES.afterPhysics = t => { ap(t); heatTick(t.dt, t.all) }
+  HOST_PHASES.afterPhysics = t => { ap(t); heatTick(t.dt, t.all); dealerTick(t.dt, t.all) }
 }
 function heatHud() {
   const off = isHost && !enforcersEnabled()
@@ -34753,6 +35163,7 @@ function teamDown(c, dt) {
 // back up: a visitor leaves, else its team respawns together (the player last), rebalanced, and a rare bot may turn up
 function teamUp(c, team) {
   if (c.bot?.enforcer) enforcerDown(c)
+  else if (c.bot?.deal) dealerDown(c)
   else if (c.bot && c.owner === undefined && !c.bot.squad && c.bot.rare) leaveRare(c)
   else {      // player last
     for (const m of team.length ? team.filter(m => m.dead > 0 || m === c).sort((a, b) => !a.bot - !b.bot) : [c]) { m.downT = 0; if (isHost && !m.bot) rebalance(m); respawn(m); if (hooked.spawn) hookEmit('spawn', { who: hookWho(m) }) }
@@ -34808,10 +35219,10 @@ GAME.commands = {
               const test = /^(.*\S)\s+(still|walk)$/i.exec(String(a || '').trim())
               if (test) return spawnStill(test[1], test[2].toLowerCase())
               const want = String(a || '').trim().toLowerCase()
-              const on = fieldedTeams(), rows = BOTS.map((b, i) => i).filter(i => !on.has(BOTS[i].team) && !BOTS[i].enforcer).filter(i => want === 'all' ||
+              const on = fieldedTeams(), rows = BOTS.map((b, i) => i).filter(i => !on.has(BOTS[i].team) && !BOTS[i].enforcer && !BOTS[i].deal).filter(i => want === 'all' ||
                 [BOTS[i].name, enemyName(BOTS[i].name)].some(n => n.toLowerCase() === want))
               if (!want || !rows.length)
-                return sysMsg('§cEnemies: §f' + [...new Set(BOTS.filter(b => !b.enforcer).map(b => enemyName(b.name)))].join(', ') + ' §7or §fall')
+                return sysMsg('§cEnemies: §f' + [...new Set(BOTS.filter(b => !b.enforcer && !b.deal).map(b => enemyName(b.name)))].join(', ') + ' §7or §fall')
               const got = rows.filter(addBot)
               if (got.length && conns.size) pushRoster()
               sysMsg(got.length ? '§7Spawned §f' + got.map(i => enemyName(BOTS[i].name)).join(', ')
@@ -34950,7 +35361,9 @@ const testTools = (() => {
       const cx = lx0 + K.lift / 2          // the door's centre line: 0.2 m clear of a jamb each side, so in by it, then across to the UP half
       q.spot = { x: q.x, z: q.z, face: [0, -1], up: 2.5, enter: B, radius: 0.5, via: [{ x: cx, z: C.z1 + 1.5, r: 0.35 }, { x: cx, z: C.z1 - 0.15, r: 0.35 }, { x: cx, z: q.z }] } } })),
     window: c => windowsNear(c, false), brokenwindow: c => windowsNear(c, true),             // intact panes a punch reaches (#77); #46's breaches
-    performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk), enforcer: bots(b => b.enforcer),
+    performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk && !b.deal), enforcer: bots(b => b.enforcer),
+    dealer: bots(b => b.deal && !b.deal.lookout), lookout: bots(b => b.deal?.lookout),      // card #97
+    dealerspot: () => slState ? [...slState.cells.values()].flatMap(c => c.spots || []).map(q => ({ x: q.x, z: q.z, y0: 0, what: 'dealer spot' })) : [],
     squad: () => objs.filter(o => squadIds.has(o.id) && o.squadKind !== 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'squad car (' + (o.V ? o.squadState || 'driving' : 'wrecked') + ')' })),
     roadblock: () => objs.filter(o => squadIds.has(o.id) && o.squadKind === 'block').map(o => ({ x: o.x, z: o.z, y0: 0, what: 'roadblock car' })),
     pram: street('pram'), cyclist: street('cyclist'), ped: street('ped'),
@@ -37286,10 +37699,12 @@ function weatherFog() {
   if (f.isFog) { const end = viewEnd(), near0 = Math.min(ARENA * LV.theme.fog[1] * viewScale, end); f.near = near0 + (FOG.near - near0) * g; f.far = end + (FOG.far - end) * g }
   else if (f.isFogExp2) f.density = REAL_SKY.fogDensity * (1 + FOG.density * g)
   // Ink: fog is paper, as in the comic: the distance fades toward a light grey instead of black, and the outlines lighten into it (the outline pass reads inkFog)
-  if (f.isFog && activeLook === 'ink') { const k = WEATHER_LOOKS.ink ? g : 0; f.color.setHex(LV.theme.fog[0]).lerp(FOG.paper, 0.9 * k); rainState.inkFog = true; weatherInkLines(f, k) }
-  else if (rainState.inkFog) { rainState.inkFog = false; if (f.isFog) f.color.setHex(LV.theme.fog[0]); weatherInkLines(f, 0) }
+  // (inkRender sets the fog colour itself for the frame, to near-black: it takes the paper share from weatherInkK, and restores it after)
+  if (f.isFog && activeLook === 'ink') { const k = WEATHER_LOOKS.ink ? g : 0; rainState.inkK = 0.9 * k; rainState.inkFog = true; weatherInkLines(f, k) }
+  else if (rainState.inkFog) { rainState.inkFog = false; rainState.inkK = 0; weatherInkLines(f, 0) }
   return g
 }
+const weatherInkK = () => rainState.inkK || 0      // how much of the fog colour is paper in the Ink look this frame (0 while Ink is not switched on)
 function weatherInkLines(f, amount) { const u = inkPost?.mesh?.material?.uniforms?.inkFog; if (u) u.value.set(f.near, f.far, amount) }
 const weatherReduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches      // a player who asks for less motion gets one soft flash a bolt (weatherFlashSoft), no flicker
 function weatherLights(k, fogK, flash) {
@@ -37466,6 +37881,7 @@ function draw(dt, t) {
     bodyDraw(o.id, o, t, dt)
     background.acc('bodyDraw')
     perfDraw(o.id, (!sits.has(o.id) || armed) && o, t)        // card #59: a street performer's cup and its demand
+    dealDraw(o.id, (!sits.has(o.id) || armed) && o, t)        // card #97: a dealer's offer and hand-off
     background.acc('perfDraw')
   }
   background.accFlush('av')
@@ -37543,7 +37959,7 @@ let lastTabSig = null, lastProfSig = null
 function standings(others) {
   const me = selfChar()
   return (me ? [{ id: myId, kills: me.kills }] : [])
-    .concat(others.filter(o => (roster.has(o.id) || !CHARS[o.cid]?.team) && !botOf(o.id)?.enforcer).map(o => ({ id: o.id, kills: o.kills || 0 })))
+    .concat(others.filter(o => (roster.has(o.id) || !CHARS[o.cid]?.team) && !botOf(o.id)?.enforcer && !botOf(o.id)?.deal).map(o => ({ id: o.id, kills: o.kills || 0 })))
     .sort((a, b) => b.kills - a.kills)
 }
 function scoreRows(rows) {
