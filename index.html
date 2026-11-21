@@ -32989,9 +32989,157 @@ function slVenue(cell, P, ci, cj) {
     }
   }
 }
+// card #91: street life in the suburbs: one cell per 160 m block of the suburb ring, from the seed and the block as faustSubBlock lays
+// it out (#18's lots, doors, front paths and pavements): walkers out of a front door, down the path, along the pavement and home; a dog
+// walker and a pram along it. Houses, garages and fences are the cell's bodies. Ids 0x1000000 + ((bi + 128) * 256 + (bj + 128)) * 32 + k
+const SL_SUB = { porch: 0.8, lane: 0.45, inset: 1, walkers: 4, dogs: 1, prams: 1, stop: [6, 20], max: 24, walk: [30, 110] }
+function slSubCell(bi, bj) {
+  const key = 'sub ' + bi + ' ' + bj, st = slState
+  let cell = st.cells.get(key)
+  if (cell) { cell.used = performance.now(); return cell }
+  if (st.subNone?.has(key)) return null
+  const F = faustState
+  if (!F) return null
+  const plan = faustRoadsReady(F)
+  if (!plan) return null                       // the roads plan is still being made: try again next time
+  const B = faustSubBlock(F.seed, F.S, plan, bi, bj)
+  if (!B.exists) { (st.subNone ||= new Set()).add(key); return null }
+  const [x0, z0] = B.rect, box = b => [b.cx - b.ex, b.cz - b.ez, b.cx + b.ex, b.cz + b.ez], bodies = []
+  for (const l of B.lots) { bodies.push(box(l.house)); if (l.garage) bodies.push(box(l.garage)) }
+  for (const f of B.fences) bodies.push([Math.min(f[0], f[2]) - 0.05, Math.min(f[1], f[3]) - 0.05, Math.max(f[0], f[2]) + 0.05, Math.max(f[1], f[3]) + 0.05])
+  cell = { key, ci: -1, cj: -1, bi, bj, X: x0, Z: z0, agents: [], flocks: [], used: performance.now(), sub: true, rings: bodies.map(r => ({ r, body: r })) }
+  const chains = slSubPave(B)
+  if (!chains.length) return slKeep(cell)
+  const rng = genRng(slHash(F.seed, bi, bj, 91)), fill = Math.min(1, B.lots.length / 12)
+  const id = k => 0x1000000 + ((bi + 128) * 256 + (bj + 128)) * 32 + k
+  const body = () => { const r = rng(); return r < 0.6 ? (r * 5 / 0.6 | 0) % 3 : 3 + (rng() < 0.5 ? 0 : 1) }     // three men, two women
+  const tint = () => [0.82 + rng() * 0.3, 0.82 + rng() * 0.28, 0.82 + rng() * 0.26]
+  const speed = () => STREET.walk[0] + rng() * (STREET.walk[1] - STREET.walk[0])
+  let k = 0
+  // walkers: a stop on the porch facing the house, down the front path to the pavement, along it and back home
+  const doors = B.lots.filter(l => l.door), nW = Math.round(SL_SUB.walkers * fill * (0.85 + 0.3 * rng()))
+  for (let w = 0; w < nW && doors.length && k < SL_SUB.max; w++) {
+    const d = doors[rng() * doors.length | 0].door, fx = d.face[0], fz = d.face[1], P0 = [d.x + fx * SL_SUB.porch, d.z + fz * SL_SUB.porch]
+    const on = slSubOnto(chains, P0, fx, fz), D = SL_SUB.walk[0] + rng() * (SL_SUB.walk[1] - SL_SUB.walk[0]), dir = rng() < 0.5 ? 1 : -1, v = speed()
+    if (!on) continue
+    const stops = new Map([[0, [SL_SUB.stop[0] + rng() * (SL_SUB.stop[1] - SL_SUB.stop[0]), 1, Math.atan2(-fx, -fz)]]])
+    cell.agents.push({ id: id(k++), kind: SL_K.ped, body: body(), tint: tint(), route: slLoop([P0, ...slSubWalk(on.ch, on.s, dir, D)], v, 0, stops, -rng() * 3e5) })
+  }
+  // a dog walker and a pram along the pavement: round the block where it closes, else from end to end and back
+  const along = v => { const ch = chains[rng() * chains.length | 0], rev = rng() < 0.5
+    const pts = ch.closed ? (rev ? ch.pts.slice().reverse() : ch.pts) : slSubWalk(ch, rev ? ch.len - SL_SUB.inset : SL_SUB.inset, rev ? -1 : 1, ch.len)
+    return slLoop(pts, v, 0, null, -rng() * 3e5) }
+  for (let w = 0; w < Math.round(SL_SUB.dogs * Math.min(1, fill * 1.5)) && k < SL_SUB.max; w++) cell.agents.push({ id: id(k++), kind: SL_K.walker, body: body(), tint: tint(), route: along(speed()) })
+  for (let w = 0; w < Math.round(SL_SUB.prams * Math.min(1, fill * 1.5)) && k < SL_SUB.max; w++) cell.agents.push({ id: id(k++), kind: SL_K.pram, body: 3 + (rng() < 0.5 ? 0 : 1), tint: tint(), route: along(STREET.pram) })
+  return slKeep(cell)
+}
+// a block's pavement as walking lines: faustSubBlock's strips (one along each side that has one, merged if split), their centre
+// lines joined at the corners in order round the block (south west to east, east south to north, north east to west, west north to
+// south): a closed loop where all four sides have one and every corner joins, else each run of sides that join, from its first
+// strip's free end (1 m in) to its last's. A fence across a strip (a corner lot's front fence run into the side pavement) stops the
+// strip 0.8 m short of it, and no line goes round that corner. Each { pts, closed, cum (m along it at each point), len }
+function slSubPave(B) {
+  const [x0, z0, x1, z1] = B.rect, S = {}, I = SL_SUB.inset
+  for (const q of B.pavements) {
+    const alongX = q[2] - q[0] >= q[3] - q[1], c = alongX ? (q[1] + q[3]) / 2 : (q[0] + q[2]) / 2, a = alongX ? q[0] : q[1], b = alongX ? q[2] : q[3]
+    const k = alongX ? (Math.abs(c - z0) < Math.abs(c - z1) ? 's' : 'n') : (Math.abs(c - x0) < Math.abs(c - x1) ? 'w' : 'e')
+    S[k] = S[k] ? { c: S[k].c, a: Math.min(S[k].a, a), b: Math.max(S[k].b, b) } : { c, a, b }
+  }
+  for (const k in S) {
+    const s = S[k], alongX = k === 's' || k === 'n'
+    for (const f of B.fences) {
+      const fx = Math.abs(f[1] - f[3]) < 1e-6, v = alongX ? f[0] : f[1], lo = alongX ? Math.min(f[1], f[3]) : Math.min(f[0], f[2]), hi = alongX ? Math.max(f[1], f[3]) : Math.max(f[0], f[2])
+      if (fx === alongX || !(v > s.a && v < s.b) || hi < s.c - 1 || lo > s.c + 1) continue          // a fence across this strip (at right angles, within it)
+      if (v - s.a < s.b - v) { s.a = Math.max(s.a, v + 0.8 - I); s.cutLo = true } else { s.b = Math.min(s.b, v - 0.8 + I); s.cutHi = true }
+    }
+    if (s.b - s.a < 2 * I + 1) delete S[k]
+  }
+  const order = ['s', 'e', 'n', 'w'], up = k => k === 's' || k === 'e'          // s and e go round from their low end, n and w from their high
+  const startCut = k => up(k) ? S[k].cutLo : S[k].cutHi, endCut = k => up(k) ? S[k].cutHi : S[k].cutLo
+  const joins = j => { const k = order[j], m = order[(j + 1) % 4]; return !!(S[k] && S[m] && !endCut(k) && !startCut(m)) }
+  // where side k starts and ends going round, on its own (1 m in from its strip's ends), and the corner it shares with the next
+  const from = k => k === 's' ? [S.s.a + I, S.s.c] : k === 'e' ? [S.e.c, S.e.a + I] : k === 'n' ? [S.n.b - I, S.n.c] : [S.w.c, S.w.b - I]
+  const to = k => k === 's' ? [S.s.b - I, S.s.c] : k === 'e' ? [S.e.c, S.e.b - I] : k === 'n' ? [S.n.a + I, S.n.c] : [S.w.c, S.w.a + I]
+  const corner = (k, m) => (k === 's' || k === 'n') ? [S[m].c, S[k].c] : [S[k].c, S[m].c]
+  const line = (pts, closed) => { const cum = [0]; for (let i = 1; i < pts.length + (closed ? 1 : 0); i++) { const p = pts[i - 1], q = pts[i % pts.length]; cum.push(cum[i - 1] + Math.hypot(q[0] - p[0], q[1] - p[1])) }
+    return { pts, closed, cum, len: cum[cum.length - 1] } }
+  if ([0, 1, 2, 3].every(joins)) return [line([corner('w', 's'), corner('s', 'e'), corner('e', 'n'), corner('n', 'w')], true)]
+  const out = []
+  for (let j = 0; j < 4; j++) {
+    if (!S[order[j]] || joins((j + 3) % 4)) continue          // a run starts at a side the one before doesn't join
+    const pts = [from(order[j])]; let m = j
+    for (let g = 0; g < 3 && joins(m); g++) { pts.push(corner(order[m], order[(m + 1) % 4])); m = (m + 1) % 4 }
+    pts.push(to(order[m]))
+    if (Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) > 0.5) out.push(line(pts, false))
+  }
+  return out
+}
+// where a front path from P (going fx, fz) meets a pavement line: { ch, s } (m along it), the nearest ahead; null if none
+function slSubOnto(chains, P, fx, fz) {
+  let best = null
+  for (const ch of chains) {
+    const n = ch.pts.length, m = ch.closed ? n : n - 1
+    for (let i = 0; i < m; i++) {
+      const a = ch.pts[i], b = ch.pts[(i + 1) % n], dx = b[0] - a[0], dz = b[1] - a[1], den = fx * dz - fz * dx
+      if (Math.abs(den) < 1e-9) continue
+      const t = ((a[0] - P[0]) * dz - (a[1] - P[1]) * dx) / den, u = ((a[0] - P[0]) * fz - (a[1] - P[1]) * fx) / den
+      if (t > 0 && t < 30 && u >= 0 && u <= 1 && (!best || t < best.t)) best = { ch, s: ch.cum[i] + u * (ch.cum[i + 1] - ch.cum[i]), t }
+    }
+  }
+  return best
+}
+// the point s m along a line (wrapping round a closed one, clamped on an open one)
+function slSubAt(ch, s) {
+  if (ch.closed) s = ((s % ch.len) + ch.len) % ch.len; else s = Math.max(0, Math.min(ch.len, s))
+  const n = ch.pts.length; let i = 0
+  while (i < ch.cum.length - 2 && ch.cum[i + 1] < s) i++
+  const a = ch.pts[i], b = ch.pts[(i + 1) % n], seg = ch.cum[i + 1] - ch.cum[i], f = seg > 1e-9 ? (s - ch.cum[i]) / seg : 0
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]
+}
+// the line's points from s to e (going the way e lies; round a closed line as given), its corners between
+function slSubPart(ch, s, e) {
+  const pts = [slSubAt(ch, s)], dir = e >= s ? 1 : -1, n = ch.pts.length
+  for (let i = 0; i < (ch.closed ? n : ch.cum.length); i++) {          // a closed line's last cum is its first point again
+    const c = ch.cum[i]
+    for (const lap of ch.closed ? [-1, 0, 1, 2] : [0]) { const cc = c + lap * ch.len; if ((cc - s) * dir > 1e-6 && (e - cc) * dir > 1e-6) pts.push([cc, ch.pts[i % n]]) }
+  }
+  const mid = pts.slice(1).sort((p, q) => (p[0] - q[0]) * dir).map(p => p[1])
+  return [pts[0], ...mid, slSubAt(ch, e)]
+}
+// a line's points moved off it by d m to the walking direction's right (at a corner, along its bisector, so the lane keeps its width)
+function slSubOffset(pts, d) {
+  const out = []
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]
+    const n1 = i > 0 ? slSubNormal(a, p) : null, n2 = i < pts.length - 1 ? slSubNormal(p, b) : null
+    let nx = (n1?.[0] || 0) + (n2?.[0] || 0), nz = (n1?.[1] || 0) + (n2?.[1] || 0), L = Math.hypot(nx, nz)
+    if (L < 1e-9) { out.push(p.slice()); continue }
+    nx /= L; nz /= L; const c = n1 && n2 ? Math.max(0.5, n1[0] * nx + n1[1] * nz) : 1
+    out.push([p[0] + nx * d / c, p[1] + nz * d / c])
+  }
+  return out
+}
+function slSubNormal(a, b) { const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz); return L > 1e-9 ? [dz / L, -dx / L] : null }
+// a walk along a line from s, going dir, D m (to an open line's end at most) and back to s: out on one half of the pavement, back
+// on the other (turning round, two quarter turns across it); round a closed line once when D reaches its length. From and to the
+// point at s on the centre line (where a front path meets it)
+function slSubWalk(ch, s, dir, D) {
+  if (ch.closed && D >= ch.len) return slSubPart(ch, s, s + dir * ch.len)          // round and back to s (then up the path)
+  const e = ch.closed ? s + dir * D : Math.max(SL_SUB.inset, Math.min(ch.len - SL_SUB.inset, s + dir * D))
+  const way = slSubPart(ch, s, e)
+  if (way.length < 2 || Math.abs(e - s) < 1) return [way[0]]
+  return [way[0], ...slSubOffset(way, SL_SUB.lane), ...slSubOffset(way.slice().reverse(), SL_SUB.lane)]
+}
+// the suburb's blocks overlapping [x0, x1] x [z0, z1] (into out); none inside the city or in the other rings
+function slSubCellsIn(x0, z0, x1, z1, out) {
+  const P = FAUST_RINGS.sub.pitch
+  if (Math.max(Math.abs(x0), Math.abs(x1), Math.abs(z0), Math.abs(z1)) < FAUST_RINGS.urban - FAUST_RINGS.jitter - 100) return out     // well inside the urban ring
+  for (let bi = Math.floor(x0 / P); bi <= Math.floor(x1 / P); bi++) for (let bj = Math.floor(z0 / P); bj <= Math.floor(z1 / P); bj++) { const c = slSubCell(bi, bj); if (c) out.push(c) }
+  return out
+}
 function slKeep(cell) {
   const st = slState
-  dealCell(cell)          // card #97: the cell's dealer spots and their customers
+  if (!cell.sub) dealCell(cell)          // card #97: the cell's dealer spots and their customers (card #91: not a suburb block's)
   for (const owner of cell.agents.filter(ag => ag.kind === SL_K.walker)) {
     const dog = { id: 0x400000 + owner.id, kind: SL_K.stray, companion: owner, body: 0, tint: owner.tint || [0.95, 0.9, 0.85], route: owner.route, home: owner.home }
     owner.dog = dog; cell.agents.push(dog)
@@ -33447,9 +33595,10 @@ function slAround(x, z, R, T, fn, skip) {
   // is skipped unless a record has it off its route
   const pad = 25, i0 = Math.max(0, Math.floor((x - R - pad + A) / 96)), i1 = Math.min(S - 1, Math.floor((x + R + pad + A) / 96))
   const j0 = Math.max(0, Math.floor((z - R - pad + A) / 96)), j1 = Math.min(S - 1, Math.floor((z + R + pad + A) / 96))
-  for (let i = i0; i <= i1; i++)
-    for (let j = j0; j <= j1; j++) {
-      const cell = slCell(i, j)
+  const cells = []          // card #91: the city's cells in the box, then the suburb's blocks in it
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) cells.push(slCell(i, j))
+  slSubCellsIn(x - R - pad, z - R - pad, x + R + pad, z + R + pad, cells)
+  for (const cell of cells) {
       for (const ag of cell.agents) {
         const b = ag.box
         if (b && (b[0] > x + R || b[2] < x - R || b[1] > z + R || b[3] < z - R) && !st.byId.has(ag.id)) continue
@@ -33489,9 +33638,10 @@ function slRunTo(x, z, dx, dz, d) {
   for (let k = 0; k <= d; k += 0.4) {
     const px = x + dx * k, pz = z + dz * k
     if (cars.some(b => slInBox(b, px, pz))) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
-    if (Math.abs(px) > A - 2 || Math.abs(pz) > A - 2) return [x + dx * Math.max(0, k - 0.4), z + dz * Math.max(0, k - 0.4)]
-    const cell = slCell(Math.floor((px + A) / 96), Math.floor((pz + A) / 96))
-    for (const g of cell.rings) if (slInside(g.body, px, pz, SL_CLEAR.r + 0.1)) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
+    const out = Math.abs(px) > A - 2 || Math.abs(pz) > A - 2
+    if (out && Math.abs(x) <= A - 2 && Math.abs(z) <= A - 2) return [x + dx * Math.max(0, k - 0.4), z + dz * Math.max(0, k - 0.4)]
+    const cell = out ? slSubCell(Math.floor(px / FAUST_RINGS.sub.pitch), Math.floor(pz / FAUST_RINGS.sub.pitch)) : slCell(Math.floor((px + A) / 96), Math.floor((pz + A) / 96))     // card #91
+    if (cell) for (const g of cell.rings) if (slInside(g.body, px, pz, SL_CLEAR.r + 0.1)) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
   }
   return [x + dx * d, z + dz * d]
 }
@@ -34207,10 +34357,15 @@ function slFrame(t, dt, obl) {
   let ln = 0; const lp = kit.leash.geometry.attributes.position.array
   const ci0 = Math.floor((cx + A) / 96), cj0 = Math.floor((cz + A) / 96), m = Math.ceil(D.ped / 96)
   let people = 0
+  // card #91: the city's cells round the camera, then the suburb's blocks round it
+  const cellsNear = []
   for (let i = Math.max(0, ci0 - m); i <= Math.min(st.S - 1, ci0 + m); i++) for (let j = Math.max(0, cj0 - m); j <= Math.min(st.S - 1, cj0 + m); j++) {
     const X = (i - st.S / 2) * 96 + 48, Z = (j - st.S / 2) * 96 + 48
     if (!near(X, Z, D.ped + 70) || !seen(X, 10, Z, 80)) continue
-    const cell = slCell(i, j)
+    cellsNear.push(slCell(i, j))
+  }
+  for (const c of slSubCellsIn(cx - D.ped - 10, cz - D.ped - 10, cx + D.ped + 10, cz + D.ped + 10, [])) if (seen(c.X + 75, 10, c.Z + 75, 110)) cellsNear.push(c)
+  for (const cell of cellsNear) {
     for (const ag of cell.agents) {
       if (ag.rank >= qn && !ag.venue && !st.byId.has(ag.id)) continue          // thinned by the quality setting (never someone a record is about, nor a venue's own people: card #99)
       const p = slPose(ag, T, slPoseA)
