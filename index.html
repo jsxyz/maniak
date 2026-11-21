@@ -3500,6 +3500,16 @@ function faustAlleyParts(f) {
   }
   return P
 }
+// card #98: is lot i of cell (gx, gz) a strip club? Pure in (seed, cell, i), independent of the lot's x and of the Gothic draw (a club forces
+// the Gothic flag off, as a theatre does): about one lot in 160 in the tenements, 80 in the industrial districts and 30 in the core, in a 4-lot
+// cell (an industrial cell has 2 lots), never a transit tower's lot and never a plaza or a one-lot block. The alleys' builder forces an alley in these.
+function faustClubHash(seed, gx, gz, i) { return cityHash(faustMix(seed ^ 0x636c7562, gx * 4 + i, gz)) }
+function faustClubAt(seed, gx, gz, i) {
+  const c = faustCell(seed, gx, gz)
+  if (c.plaza || (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 && i === 0) return false
+  if (!(c.layout === 4 && (c.district === 'core' || c.district === 'tenement') || c.district === 'industrial')) return false
+  return faustClubHash(seed, gx, gz, i) % (c.district === 'core' ? 30 : c.district === 'tenement' ? 160 : 80) === 0
+}
 function faustPlan(seed, ci, cj, S = 20) {
   const gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96
   const rng = genRng(faustMix(seed, gx, gz)), { districtHash, distance, district, centralPlaza, plaza, diagonal, layout } = faustCell(seed, gx, gz)
@@ -3543,6 +3553,8 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (al && !(i & 1)) alD[row] = d
     let gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
     if (landmark === 'theatre') gothic = false       // card #69: a theatre is never the Gothic kind (the rng draws stay as they were)
+    const isClub = faustClubAt(seed, gx, gz, i)       // card #98: a strip club (never Gothic either)
+    if (isClub) gothic = false
     const cath = landmark === 'cathedral' && !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0)
     if (cath) H = 46
     const site = faustSiteFor(seed, gx, gz, i, district, layout, plaza, diagonal, x, z)      // card #82: this lot's plot stays empty and is put to use
@@ -3562,6 +3574,15 @@ function faustPlan(seed, ci, cj, S = 20) {
     const skyMass = cath ? mass.slice(0, 2) : h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, w * 0.73, (H - h0) / 2, d * 0.73)] : mass.slice(0, 2)
     const lot = { x, z, w, d, height: H, gothic, district: style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + i, gz), ...al && { alley: { side: i & 1 ? -1 : 1, half: inCm(al.G / 2) } } }      // card #96: set with the lot, for the club's back door (#98)
     if (landmark && !stop && (landmark !== 'cathedral' || cath)) lot.landmark = landmark
+    // card #98: a strip club's lot data, for the interior (#78) and the people (#63): the street door (the middle of the +z face; a shed's wicket
+    // door at its left), a bouncer's spot and three queue spots along the wall, the back door (the alley's wall on the lot's x side when the
+    // alleys' builder gave this lot an alley, else the -z wall at the lot's x centre) with the way out of it, and the stage's side
+    if (isClub && !lot.landmark) {
+      const dx = style === 'industrial' ? x - 0.6 * w : x, r = v => Math.round(v * 100) / 100, hs = faustClubHash(seed, gx, gz, i) >>> 8, al = lot.alley
+      lot.venue = 'club'; lot.landmark = 'club'
+      lot.club = { name: hs % 4, door: [r(dx), r(z + d)], bouncer: [r(dx + 1.7), r(z + d + 0.9)], queue: [1, 2, 3].map(k => [r(dx + 1.7 + k * 0.9), r(z + d + 0.9)]),
+        back: al ? [r(x + al.side * w), r(z)] : [r(x), r(z - d)], backOut: al ? [al.side, 0] : [0, -1], stage: hs >>> 4 & 1 ? 1 : -1 }
+    }
     if (!lot.landmark && !lot.venue) { const venue = faustVenueFor(seed, gx, gz, i, style, layout, stop, diagonal, gothic); if (venue) lot.venue = venue }      // card #99: a liquor or convenience store
     lots.push(lot); boxes.push(...mass)
     // The strong façade piers also stop the block and chain, including in a server with no rendered city.
@@ -3611,7 +3632,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 17, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
+  const content = { version: 18, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
   // Includes the full plan, including transport hooks; independent of load order and browser state.
   let hash = 2166136261
   const json = JSON.stringify(content)
@@ -3949,6 +3970,8 @@ function faustStorey(B, k) {
     store: IN_TINT.concrete }[type] || (chance(0.5) ? IN_TINT.plaster : IN_TINT.plasterCool)
   const wins = inWindows(B, k)
   const T = K.wall
+  // a club's back door (card #78): its wall and its place along it (x on the -z wall, z on an x wall)
+  const BD = k === 0 && B.club?.back && B.club.backOut ? (B.club.backOut[1] < 0 ? { axis: 0, side: -1, u: B.club.back[0] } : { axis: 1, side: B.club.backOut[0] > 0 ? 1 : -1, u: B.club.back[1] }) : null
   for (const [axis, side] of [[0, 1], [0, -1], [1, 1], [1, -1]]) {
     // axis 0: a face along x at z = P.z1 (side 1) or P.z0; axis 1: along z at x = P.x1 or P.x0
     const along0 = axis ? P.z0 : P.x0, along1 = axis ? P.z1 : P.x1, at = axis ? (side > 0 ? P.x1 : P.x0) : (side > 0 ? P.z1 : P.z0)
@@ -3960,6 +3983,10 @@ function faustStorey(B, k) {
       const dx0 = B.door.x - B.door.w / 2, dx1 = B.door.x + B.door.w / 2
       for (let j = holes.length; j--;) if (holes[j][1] > dx0 - 0.3 && holes[j][0] < dx1 + 0.3) holes.splice(j, 1)
       holes.push([dx0, dx1, 0, B.door.h, 'door'])
+    }
+    if (BD && axis === BD.axis && side === BD.side) {       // the club's back door: a doorway, and no window where it stands
+      for (let j = holes.length; j--;) if (holes[j][1] > BD.u - 1.15 && holes[j][0] < BD.u + 1.15) holes.splice(j, 1)
+      holes.push([BD.u - 0.85, BD.u + 0.85, 0, 2.4])
     }
     // where the ring's front or back wall meets a side face inside a pane (no pier was within reach of it), a pier the wall's
     // width splits the opening there (#72: a mullion where a wall lands in a wide shop bay)
@@ -4195,7 +4222,7 @@ function faustStorey(B, k) {
       } else if (type === 'hall') { const h0 = B.door.x - 1.1, h1 = B.door.x + 1.1
         // a unit either side of the hallway, each behind the shopfront bays on its side of the street door
         spans.push([len0, h0, B.unit, false, true], [h0, h1, 'hallway', true], [h1, len1, B.unit2 || pick(roomKinds.hall), false, B.unit2 ? 'a' : undefined]) }
-      else spans.push([len0, len1, type, true])
+      else spans.push([len0, len1, type, !(type === 'liquor' || type === 'conv' || type === 'club')])
     } else {
       // split at the bays into rooms of 1-3 bays (a pool or a hall: the whole side)
       // (on the ground storey, at the mullions of its own windows, realShop's shopfront bays on that face: k 0's keys)
@@ -4203,7 +4230,7 @@ function faustStorey(B, k) {
       const facadeDeco = inDistrict(mx, mz) < 2 || mass.y1 > 300       // the facade's bays (inFace), not the style's: rooms meet its piers
       const bays = (k === 0 ? wins.filter(q => q.face === face0).flatMap(q => { const m = (q.a1 - q.a0) / 0.86 * 0.07; return [q.a0 - m, q.a1 + m] })
         : Z.along ? inBays((mass.z1 - mass.z0) / 2, facadeDeco, base).map(u => mz + u) : inBays((mass.x1 - mass.x0) / 2, facadeDeco, base).map(u => mx + u))
-        .filter((v, i, a) => v > len0 + 2.4 && v < len1 - 2.4 && a.indexOf(v) === i).sort((p, q) => p - q)
+        .filter((v, i, a) => v > len0 + 2.4 && v < len1 - 2.4 && a.indexOf(v) === i && !(BD && BD.axis === Z.along && BD.side === Z.face && Math.abs(v - BD.u) < 1.7)).sort((p, q) => p - q)
       const kind0 = pick(roomKinds[type] || roomKinds.office)
       if (kind0 === 'pool' && len1 - len0 > 9) spans.push([len0, len1, 'pool'])
       else {
@@ -4225,6 +4252,8 @@ function faustStorey(B, k) {
     for (let j = spans.length; j--;) if (spans[j][1] - spans[j][0] < 1.5) spans.splice(j, 1)
     spans.forEach(([a, b, kind, opening, sideDoor], j) => {
       const r = Z.along ? room(Z.x0, Z.x1, a, b, kind) : room(a, b, Z.z0, Z.z1, kind)
+      if (BD && BD.axis === Z.along && BD.side === Z.face && BD.u > a && BD.u < b)
+        (rooms[r].aprons ||= []).push(BD.axis === 0 ? [BD.u - 1.1, BD.u + 1.1, P.z0, P.z0 + 1.7] : BD.side < 0 ? [P.x0, P.x0 + 1.7, BD.u - 1.1, BD.u + 1.1] : [P.x1 - 1.7, P.x1, BD.u - 1.1, BD.u + 1.1])
       { const zm = Z.along ? (Z.x0 + Z.x1) / 2 : (Z.z0 + Z.z1) / 2, m0 = zm - K.inner[0] / 2 - 0.3, m1 = zm + K.inner[0] / 2 + 0.3
         const near = [spans[j - 1]?.[4] && spans[j - 1][4] !== 'a' ? [a, a + 1.6] : null, spans[j + 1]?.[4] === 'a' ? [b - 1.6, b] : null]
         // (a lobby's run on to its street side: its desk stands across the middle, so the way to a side door is along the wall)
@@ -4245,6 +4274,10 @@ function faustStorey(B, k) {
       } else if (hi - lo >= K.inner[0]) {
         const mid = Math.min(Math.max((a + b) / 2, lo + K.inner[0] / 2), hi - K.inner[0] / 2)
         gaps.push([mid - K.inner[0] / 2, mid + K.inner[0] / 2, K.inner[1]])
+        if (k === 0 && !Z.along && Z.face > 0 && (kind === 'liquor' || kind === 'conv' || kind === 'club')) {      // card #78: the way on to the building's hall: its door stands open in the room
+          const hx = mid - K.inner[0] / 2 - 0.03
+          box(hx - 0.02, hx + 0.02, y, y + K.inner[1] - 0.1, wallAt + 0.05, wallAt + K.inner[0] - 0.1, IN_TINT.woodLight); box(hx - 0.04, hx + 0.04, y + 1.0, y + 1.08, wallAt + K.inner[0] - 0.28, wallAt + K.inner[0] - 0.2, IN_TINT.brass, { m: 1 })
+        }
         // nothing stands in front of it inside the room: an apron 1.6 m deep, a little wider than the door
         const e0 = wallAt, e1 = wallAt + Z.face * 1.6, m0 = mid - K.inner[0] / 2 - 0.3, m1 = mid + K.inner[0] / 2 + 0.3
         ;(rooms[r].aprons ||= []).push(Z.along ? [Math.min(e0, e1), Math.max(e0, e1), m0, m1] : [m0, m1, Math.min(e0, e1), Math.max(e0, e1)])
@@ -4300,7 +4333,7 @@ function faustStorey(B, k) {
   function fitRoom(r) {
     enter(r)
     const kind = R.kind, cx = (R.x0 + R.x1) / 2, cz = (R.z0 + R.z1) / 2, area = w * d
-    const lit = kind === 'lobby' || kind === 'hallway' || chance({ office: 0.75, pool: 0.85, meeting: 0.6, records: 0.5, bed: 0.55, living: 0.8, kitchen: 0.75 }[kind] ?? 0.95)
+    const lit = kind === 'lobby' || kind === 'hallway' || chance({ office: 0.75, pool: 0.85, meeting: 0.6, records: 0.5, bed: 0.55, living: 0.8, kitchen: 0.75, club: 0 }[kind] ?? 0.95)
     R.lit = lit
     const warm = { office: 0xffe0b0, pool: 0xdce8ff, meeting: 0xffe6c0, records: 0xd0dcf0, shop: 0xfff0d8, bar: 0xffb070, diner: 0xf4f8ff,
       lobby: 0xffd8a0, hallway: 0xffcf90, bed: 0xffc880, living: 0xffc880, kitchen: 0xf0f0e0, liquor: 0xffb878, conv: 0xeaf4ff, club: 0xff4a78 }[kind] || 0xffe0b0
@@ -4492,11 +4525,13 @@ function faustStorey(B, k) {
           const u0 = along ? x0 : z0, u1 = along ? x1 : z1, front = [16, 32, 1, 2][side]
           cb(u0, u1, 0.04, 0.6, fy, fy + 0.45, IN_TINT.leather, { c: 1, f: 63 ^ 8 }); cb(u0, u1, 0, 0.2, fy + 0.45, fy + 1.1, IN_TINT.leather, { f: 63 ^ 8 })
           cb(u0 + 0.3, u1 - 0.3, 0.95, 1.5, fy + 0.7, fy + 0.74, IN_TINT.dark, { c: 1, m: 1 }); cb((u0 + u1) / 2 - 0.05, (u0 + u1) / 2 + 0.05, 1.2, 1.3, fy + 0.74, fy + 0.82, 0xff8ab8, { m: 2, r })
+          light(along ? (u0 + u1) / 2 : wall + dsg * 0.9, fy + 1.7, along ? wall + dsg * 0.9 : (u0 + u1) / 2, r, 0.4, 0xff2a48)
           const ua = [u0 + 0.55, u1 - 0.55]
           for (const u of ua) spots.push({ kind: 'seat', x: along ? u : wall + dsg * 0.35, y: fy + 0.45, z: along ? wall + dsg * 0.35 : u, face: along ? [0, dsg] : [dsg, 0] })
         })
       }
       for (let q = 0; q < Math.round(area / 12); q++) inner(0.8, 0.8, (x0, x1, z0, z1) => table(x0, x1, z0, z1, true), true)
+      if (BD) spots.push({ kind: 'backdoor', x: BD.axis === 0 ? BD.u : BD.side < 0 ? P.x0 + 0.6 : P.x1 - 0.6, y: fy, z: BD.axis === 0 ? P.z0 + 0.6 : BD.u, face: BD.axis === 0 ? [0, 1] : [-BD.side, 0] })
       spots.push({ kind: 'bouncer', x: B.door.x + 0.7, y: fy, z: R.z1 - 0.9, face: [0, -1] })
       for (const [px, pz] of [[B.door.x + 2.4, R.z1 - 1.6], [B.door.x - 2.4, R.z1 - 1.6]]) if (clear(px - 0.5, px + 0.5, pz - 0.5, pz + 0.5, true)) spots.push({ kind: 'patron', x: px, y: fy, z: pz, face: [0, 1] })
     } else if (kind === 'liquor' || kind === 'conv') {
@@ -8471,8 +8506,96 @@ function geometryBytes(root) {
     for (const a of [...Object.values(g.attributes || {}), g.index].filter(Boolean)) n += a.array?.byteLength || 0 })
   return n
 }
+// card #98: a strip club's front (lot.landmark === 'club'). A deep canopy over the door (a lit pink soffit, a lamp row, a neon fascia tube),
+// a dark name board over it, in front of the door's pier, with the name in neon letters, a neon-framed vertical blade sign, two showgirl silhouette posters in the street
+// windows (a shed has them beside its wicket door), a red carpet and a pink pool of light. All over 2.2 m, flat on the ground, or flush on the
+// wall (within the front's body limit). Pure in the lot; the colours follow #82's neon (glow about 3).
+const FAUST_CLUB = {
+  names: ['VELVET', 'ROUGE', 'ORCHID', 'FEATHER'],
+  neon: [0xff3a66, 0xff2a2a, 0xff8a1a],
+  font: { A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'], C: ['.####', '#....', '#....', '#....', '#....', '#....', '.####'],
+    D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'], E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+    F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....'], G: ['.####', '#....', '#....', '#.###', '#...#', '#...#', '.###.'],
+    H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'], I: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '#####'],
+    L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'], O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+    R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'], T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+    U: ['#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'], V: ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..'] }
+}
+// a word as merged strokes: rectangles [col0, row0, cols, rows] over the letters' 5x7 grids, a column apart
+function faustClubWord(word) {
+  const out = []
+  for (let k = 0; k < word.length; k++) {
+    const rows = FAUST_CLUB.font[word[k]], ox = k * 6, open = []
+    for (let r = 0; r < 7; r++) {
+      const runs = []
+      for (let c = 0; c < 5; c++) if (rows[r][c] === '#') { const q = runs.at(-1); if (q && q[0] + q[1] === c) q[1]++; else runs.push([c, 1]) }
+      const next = []
+      for (const [c, n] of runs) { const o = open.find(b => b[0] === c && b[1] === n && b[3] === r); if (o) { o[3] = r + 1; o[4]++; next.push(o) } else { const b = [c, n, r, r + 1, 1]; next.push(b); out.push(b) } }
+      open.length = 0; open.push(...next)
+    }
+    for (const b of out) if (b.length === 5 && b[5] === undefined) b[5] = ox
+    for (const b of out) if (b[5] === undefined) b[5] = ox
+  }
+  return out.map(b => [b[0] + b[5], b[2], b[1], b[4]])
+}
+function faustDecoClub(g, lot) {
+  if (lot.landmark !== 'club') return
+  const { x, z, w, d, district } = lot, C = lot.club, D = FAUST_DECO, f = z + d + 0.25, dx = C.door[0], col = FAUST_CLUB.neon[(lot.seed >>> 9) % 3], I = 0x6a7480, E = 0x8b939b, K = 0x0b0f16, tube = 3.2
+  const word = FAUST_CLUB.names[C.name], cell = 0.26, ww = word.length * 6 * cell - cell, hb = Math.min(w - 0.6, ww / 2 + 0.7)
+  // the canopy, 5.2 m wide and 3.4 m out, over the door at 4.6 m; lamps along its edge, a neon tube on its fascia, a lit pink soffit
+  g.box(faustBox(dx, 4.6, f + 1.7, 2.6, 0.12, 1.7), I); g.box(faustBox(dx, 4.74, f + 1.7, 2.7, 0.03, 1.8), E)
+  g.box(faustBox(dx, 4.47, f + 1.7, 2.3, 0.015, 1.5), 0xff5f8a, 0.55)
+  for (let i = 0; i <= 12; i++) g.box(faustBox(dx - 2.4 + i * 0.4, 4.42, f + 3.35, 0.07, 0.07, 0.07), 0xd6d0b2, 1)
+  g.box(faustBox(dx, 4.85, f + 3.42, 2.7, 0.35, 0.05), K); g.box(faustBox(dx, 4.85, f + 3.46, 2.55, 0.04, 0.02), col, tube)
+  for (const sd of [-1, 1]) { g.box(faustBox(dx + sd * 2.6, 4.7, f + 1.7, 0.05, 0.3, 1.7), I) }
+  // the name board over the canopy, in front of the door's pier (over 2.2 m, so clear of the paths), a neon frame and the name
+  const by = 7.7, bz = z + d + 1.3        // in front of the door's pier (its face is at 1.13 m), which would hide the middle letters
+  g.box(faustBox(dx, by, bz, hb, 1.25, 0.14), K)
+  g.box(faustBox(dx, by + 1.2, bz + 0.16, hb - 0.1, 0.04, 0.02), col, tube); g.box(faustBox(dx, by - 1.2, bz + 0.16, hb - 0.1, 0.04, 0.02), col, tube)
+  for (const sd of [-1, 1]) g.box(faustBox(dx + sd * (hb - 0.12), by, bz + 0.16, 0.04, 1.2, 0.02), col, tube)
+  const rects = faustClubWord(word), x0 = dx - ww / 2, y0 = by + 3.5 * cell
+  for (const [c, r, n, m] of rects) g.box(faustBox(x0 + (c + n / 2) * cell, y0 - (r + m / 2) * cell, bz + 0.17, n * cell / 2, m * cell / 2, 0.02), col, tube)
+  // the blade sign: out 2.1 m, 0.3 m thick, a neon border, a lit panel in the club's colour on each face and the name stacked down it in white-hot
+  // neon letters (the first letter alone, large, where the sign is too short for the name), beside the board
+  const bx = Math.min(x + w - 0.5, dx + hb + 1.4), Hs = Math.min(11, Math.max(6, lot.height * 0.5 - 4.6)), yb = 5.2, yc = yb + Hs / 2, zc = f + 1.1, hz = 1.05
+  g.box(faustBox(bx, yc, zc, 0.15, Hs / 2, hz), K)
+  const stack = Hs >= word.length * 1.06 + 0.9, hot = 0xfff4e8
+  for (const sd of [-1, 1]) {
+    const X = bx + sd * 0.17
+    g.box(faustBox(X, yc, zc, 0.012, Hs / 2 - 0.25, hz - 0.15), col, 0.7)
+    for (const e of [-1, 1]) { g.box(faustBox(X + sd * 0.01, yc, zc + e * (hz - 0.05), 0.015, Hs / 2 - 0.1, 0.03), col, tube); g.box(faustBox(X + sd * 0.01, yc + e * (Hs / 2 - 0.12), zc, 0.015, 0.03, hz - 0.05), col, tube) }
+    const letters = stack ? word.split('') : [word[0]], cl = stack ? 0.12 : 0.24, step = stack ? 1.06 : 0, top = stack ? yb + Hs / 2 + (letters.length - 1) * 0.53 + 0.42 : yb + Hs / 2 + 7 * cl / 2
+    letters.forEach((ch, n) => {
+      const y0 = stack ? top - n * 1.06 : top, ww = 5 * cl
+      for (const [c, r, nc, nr] of faustClubWord(ch)) g.box(faustBox(X + sd * 0.02, y0 - (r + nr / 2) * cl, zc + (sd > 0 ? -1 : 1) * (-ww / 2 + (c + nc / 2) * cl), 0.015, nr * cl / 2, nc * cl / 2), hot, 2.6)
+    })
+  }
+  g.box(faustBox(bx, yb + Hs + 0.1, zc, 0.2, 0.1, hz + 0.1), E)
+  // the showgirl posters: a pink lit panel with a black silhouette that fills about 80% of its height (a head, raised arms, shoulders, a nipped
+  // waist, a flared skirt, a wide fan of feathers behind)
+  const px = district === 'industrial' ? [dx - 3.2, dx + 3.2] : [x - w * 0.45, x + w * 0.45]
+  for (const [i, cx] of px.entries()) {
+    const pz = f + 0.1, sd = i ? -1 : 1, K2 = 0x0a0508
+    g.box(faustBox(cx, 1.75, f + 0.07, 1.2, 1.2, 0.03), 0x1a0b16); g.box(faustBox(cx, 1.75, pz + 0.02, 1.08, 1.08, 0.01), 0xff6aa0, 0.9)
+    const T = (a, b, c) => { g.tri([cx + a[0], a[1], pz + 0.04], [cx + b[0], b[1], pz + 0.04], [cx + c[0], c[1], pz + 0.04], K2); g.tri([cx + a[0], a[1], pz + 0.04], [cx + c[0], c[1], pz + 0.04], [cx + b[0], b[1], pz + 0.04], K2) }
+    for (let k = -3; k <= 3; k++) T([sd * 0.08, 1.85], [sd * 0.08 + k * 0.3 - 0.12, 2.82], [sd * 0.08 + k * 0.3 + 0.12, 2.82])                  // the fan
+    for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2, b = (k + 1) / 10 * Math.PI * 2; T([0, 2.5], [0.25 * Math.cos(a), 2.5 + 0.25 * Math.sin(a)], [0.25 * Math.cos(b), 2.5 + 0.25 * Math.sin(b)]) }   // the head
+    for (const e of [-1, 1]) { T([e * 0.38, 2.15], [e * 0.52, 2.15], [e * 0.86, 2.82]); T([e * 0.38, 2.15], [e * 0.86, 2.82], [e * 0.74, 2.82]) }  // the raised arms
+    T([-0.42, 2.18], [0.42, 2.18], [0.17, 1.75]); T([-0.42, 2.18], [0.17, 1.75], [-0.17, 1.75])                                              // shoulders to waist
+    T([-0.17, 1.75], [0.17, 1.75], [0.85, 0.72]); T([-0.17, 1.75], [0.85, 0.72], [-0.85, 0.72])                                              // the skirt
+  }
+  // the back door to the alley, where lot.club.back says (the interior cuts its doorway in the same wall): a steel door flush on the podium's
+  // face (0.3 m off the wall), a red lamp over it and a lamp casing; lot.club.backOut is the way out
+  { const [bx, bz] = C.back, [ox, oz] = C.backOut || [0, -1], tx = ox ? 0.05 : 0.85, tz = ox ? 0.85 : 0.05
+    g.box(faustBox(bx + ox * 0.3, 1.2, bz + oz * 0.3, tx, 1.2, tz), 0x252d37)
+    g.box(faustBox(bx + ox * 0.36, 2.75, bz + oz * 0.36, ox ? 0.06 : 0.14, 0.12, ox ? 0.14 : 0.06), 0xff2a2a, 1.4)
+    g.box(faustBox(bx + ox * 0.34, 2.95, bz + oz * 0.34, ox ? 0.08 : 0.3, 0.05, ox ? 0.3 : 0.08), 0x6a7480) }
+  // the red carpet (flat) and a pink pool of light on the pavement
+  g.box(faustBox(dx, 0.012, f + 2.2, 0.9, 0.012, 2.2), 0x8a1c2a)
+  g.box(faustBox(dx, 0.045, f + 1.8, 2.6, 0.004, 1.9), col, 0.2)
+}
 function* faustVisualSteps(c) {
-  const facade = faustBatch(3072), ornament = faustBatch(40960), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
+  const facade = faustBatch(3072), ornament = faustBatch(65536), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
   if (P.chan) faustChanCellLook(ornament, P.chan.axis, X, Z, P.diagonal)      // card #83: only the strips beyond the lip
   else ornament.box(faustBox(X + 48, -0.08, Z + 48, 48, 0.08, 48), 0x242a33)
@@ -8519,6 +8642,7 @@ function* faustVisualSteps(c) {
     if (district === 'industrial') {
       for (const y of [H + 9, H + 24, H + 35]) ornament.box(faustBox(x - w * 0.6, y, z - d * 0.6, 1.75, 0.5, 1.75), 0x969b9e)
       faustDecoShed(ornament, lot)
+      faustDecoClub(ornament, lot)
       for (const q of [-0.6, 0.3]) faustGap(ornament, faustBox(x + q * w, 2.2, z + d + 0.15, 3, 2.2, 0.15), 0x111a26, q < 0 ? B.door : null)
       yield; continue
     }
@@ -8526,6 +8650,7 @@ function* faustVisualSteps(c) {
       faustRing(ornament, faustBox(x, H, z, w + 0.55, 0.38, d + 0.55), 0xa1a8ae, 1.25)
       faustGap(ornament, faustBox(x, 2, z + d + 0.15, 2, 2, 0.15), 0x080f1a, B.door)
       faustDecoTenement(ornament, lot)
+      faustDecoClub(ornament, lot)
       // Fire escapes: iron landings, rails and alternating diagonal ladders.
       for (const sg of faustTenementEscapes(lot)) for (let y = 5; y < H; y += 5) {      // card #82: on the +x side, the -x side, both or neither
         ornament.box(faustBox(x + sg * (w + 1.1), y, z, 1.1, 0.12, 3), 0x283342)
@@ -8562,6 +8687,7 @@ function* faustVisualSteps(c) {
     ornament.box(faustBox(x, 3.06, z + d + 0.34, 0.85, 0.06, 0.02), 0x8a6a38)
     faustDecoMarquee(ornament, lot)
     faustDecoTheatre(ornament, lot)
+    faustDecoClub(ornament, lot)
     if (gothic) {
       // Pointed portal with a stone archivolt and deep black tympanum.
       const front = z + d + 0.3
@@ -9221,7 +9347,10 @@ function inShell(B) {
         face < 2 ? box(r.a0, r.a1, r.b0, r.b1, c0, c1) : box(c0, c1, r.b0, r.b1, r.a0, r.a1)
     }
     wall(0, m.x0, m.x1, m.z1 - T, m.z1, j === 0 ? [{ a0: D.x - D.w / 2, a1: D.x + D.w / 2, b0: m.y0, b1: D.h }] : [])
-    wall(1, m.x0, m.x1, m.z0, m.z0 + T); wall(2, m.z0 + T, m.z1 - T, m.x1 - T, m.x1); wall(3, m.z0 + T, m.z1 - T, m.x0, m.x0 + T)
+    // a club's back door (card #78): the doorway cut through its wall (lot.club.back on the wall, backOut out of it)
+    const bd = j === 0 && B.club?.back && B.club.backOut ? { face: B.club.backOut[1] < 0 ? 1 : B.club.backOut[0] > 0 ? 2 : 3, u: B.club.backOut[1] < 0 ? B.club.back[0] : B.club.back[1] } : null
+    const back = f => bd && bd.face === f ? [{ a0: bd.u - 0.85, a1: bd.u + 0.85, b0: m.y0, b1: 2.4 }] : []
+    wall(1, m.x0, m.x1, m.z0, m.z0 + T, back(1)); wall(2, m.z0 + T, m.z1 - T, m.x1 - T, m.x1, back(2)); wall(3, m.z0 + T, m.z1 - T, m.x0, m.x0 + T, back(3))
     // its roof: round the mass above it, or (the top) round the stair's hole
     const n = B.masses[j + 1], y0 = m.y1 - K.slab, y1 = m.y1, C = B.core
     const hole = n ? n : B.roof.exit ? { x0: C.x0, x1: C.x1, z0: C.z0, z1: C.z1 } : null
