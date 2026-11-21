@@ -14352,7 +14352,7 @@ function trafficExitBlocked(o, e) {
   })
 }
 function trafficWalkersBlock(e, n) {
-  const J = e.to, list = GAME.streetLife?.obstacles?.(J.x + n.dx * 15, J.z + n.dz * 15, 18)
+  const J = e.to, list = GAME.streetLife?.obstacles?.(J.x + n.dx * 15, J.z + n.dz * 15, 18, true)
   if (!list?.length) return false
   const bx = J.x + n.ox, bz = J.z + n.oz
   for (const p of list) {
@@ -14448,7 +14448,7 @@ function trafficThink(o, dt, people) {
       if (s > 38) return
     }
   }
-  for (const c of GAME.streetLife?.obstacles?.(o.x + fw[0] * 15, o.z + fw[2] * 15, 25) || []) {
+  for (const c of GAME.streetLife?.obstacles?.(o.x + fw[0] * 15, o.z + fw[2] * 15, 25, true) || []) {
     const r = c.radius || 0.6, y = c.y || 1
     obstacle(c.x, y, c.z, r)
     if (c.kind !== 'cyclist' && Math.hypot(c.vx || 0, c.vz || 0) > 0.3) for (const s of [0.8, 1.6]) obstacle(c.x + c.vx * s, y, c.z + c.vz * s, r)
@@ -14493,7 +14493,7 @@ function trafficThink(o, dt, people) {
 }
 function trafficYieldBlocked(o, e, next) {
   const n = e.to, crossing = e.kind !== 'avenue' || next.kind !== 'avenue' || e.dx !== next.dx || e.dz !== next.dz
-  if (crossing) for (const p of GAME.streetLife?.obstacles?.(n.x, n.z, 60) || []) {
+  if (crossing) for (const p of GAME.streetLife?.obstacles?.(n.x, n.z, 60, true) || []) {
     if (p.kind !== 'cyclist') continue
     const vx = p.ahead ? (p.ahead[0] - p.x) / 6 : p.vx || 0, vz = p.ahead ? (p.ahead[1] - p.z) / 6 : p.vz || 0
     const x = p.x - n.x, z = p.z - n.z, v2 = vx * vx + vz * vz
@@ -14674,9 +14674,10 @@ function trafficSpawn(people) {
   const anchors=[];for(const c of people)if(anchors.every(a=>Math.hypot(a.x-c.x,a.z-c.z)>TRAFFIC.radius*1.5))anchors.push(c)
   const density=Math.min((TRAFFIC.density[district]||8)*K,Math.max(1,Math.floor(TRAFFIC.cap*K/anchors.length)))
   if ([...T.cars.values()].filter(o => o.traffic?.ambient && Math.hypot(o.x - p.x, o.z - p.z) < TRAFFIC.radius + 80).length >= density) return
-  const edges = T.edges.filter(e => { const q = trafficPoint(e, e.length / 2), d = Math.hypot(q.x - p.x, q.z - p.z); return d > TRAFFIC.spawnMin && d < TRAFFIC.radius && (e.ring || Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96) })
+  const edges = T.edges.filter(e => { const q = e.mid ??= trafficPoint(e, e.length / 2), d = Math.hypot(q.x - p.x, q.z - p.z); return d > TRAFFIC.spawnMin && d < TRAFFIC.radius && (e.ring || Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96) })
+  const weight = edges.reduce((sum, e) => sum + trafficWeight(e), 0)
   for (let trial = 0; edges.length && trial < 12; trial++) {
-    let pick = Math.random() * edges.reduce((sum, e) => sum + trafficWeight(e), 0)
+    let pick = Math.random() * weight
     const e = edges.find(e => (pick -= trafficWeight(e)) <= 0) || edges.at(-1)
     const mix = e.kind === 'side' ? ['Car','Car','Car','Sports car'] : ['Car','Car','Sports car','Van','Car','Truck','Bus','Car'], name = mix[T.serial % mix.length], k = OBJECTS.findIndex(K => K.name === name)
     const V = vehicleOf(OBJECTS[k]), margin = n => (n.x % 96 === 0 && n.z % 96 === 0 ? TRAFFIC.stop : trafficStop(e, n)) + V.l / 2 + 1
@@ -14764,7 +14765,7 @@ function trafficTick(dt, all) {
   if (!LV.faust) return
   if (!trafficState) trafficReset()
   const t = performance.now(), T = trafficState, people = all.filter(c => !c.bot && c.owner === undefined && c.body), clock = trafficClock()
-  let thinks = 0
+  let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0
   let lane = null, kinNew = []
   parkedTick(dt, people)
   for (const o of [...T.cars.values()]) {
@@ -14786,13 +14787,13 @@ function trafficTick(dt, all) {
           const far = o.kin || trafficFar(o, a, people)
           if ((due || !far) && (thinks < (far ? TRAFFIC.thinkBudget * 0.6 : TRAFFIC.thinkBudget) || !due)) {
             const step = far ? TRAFFIC.thinkFar * (1 + 0.3 * ((o.id * 0.6180339) % 1)) : TRAFFIC.think; thinks++
-            a.far = far; const r = trafficThink(o, step, all); if (o.kin) a.kd = r.d; else a.input = r; a.think = (a.think <= 0 ? a.think : 0) + step
+            a.far = far; const t0 = performance.now(), r = trafficThink(o, step, all); thinkMs += performance.now() - t0; if (o.kin) a.kd = r.d; else a.input = r; a.think = (a.think <= 0 ? a.think : 0) + step
           }
         }
-        if (o.kin) trafficKinStep(o, a, dt, lane ||= trafficKinLane(T))
+        if (o.kin) { const t0 = performance.now(); trafficKinStep(o, a, dt, lane ||= trafficKinLane(T)); kinMs += performance.now() - t0 }
         else {
         const driver = { id: -1000 - o.id, seat: [o, 0] }, saved = o.riders[0]
-        o.riders[0] = driver.id; driveStep(driver, a.input); o.riders[0] = saved
+        o.riders[0] = driver.id; const t0 = performance.now(); driveStep(driver, a.input); driveMs += performance.now() - t0; o.riders[0] = saved
         }
       }
     }
@@ -14807,11 +14808,12 @@ function trafficTick(dt, all) {
   T.departures = T.departures.filter(d => d.until > clock)
   const warm = people.map(p => FAUSTLAND_API.cellAt(p.x,p.z).join(':')).join('|')
   if (warm !== T.warm) { T.warm=warm; T.queue=[...faustRange(people.map(p=>[p.x,p.z]),4)].filter(key=>!T.cells.has(key)) }
-  const cell = T.queue.shift(); if(cell)trafficCell(...cell.split(' ').map(Number))
+  const cell = T.queue.shift(); if (cell) { const t0 = performance.now(); trafficCell(...cell.split(' ').map(Number)); background.simAdd('traffic cells', performance.now() - t0) }
   trafficRingWarm(people)
-  if ((T.spawn -= dt) <= 0) { T.spawn += T.cars.size < TRAFFIC.cap * trafficK() * 0.7 ? 0.2 : 0.35; trafficSpawn(people) }
+  if ((T.spawn -= dt) <= 0) { T.spawn += T.cars.size < TRAFFIC.cap * trafficK() * 0.7 ? 0.2 : 0.35; const t0 = performance.now(); trafficSpawn(people); background.simAdd('traffic spawn', performance.now() - t0) }
   const ms = performance.now() - t; T.stats.ticks++; T.stats.ms += ms; T.stats.maxMs = Math.max(T.stats.maxMs, ms)
   background.simAdd('traffic', ms)
+  background.simAdd('traffic think', thinkMs); background.simAdd('traffic kin', kinMs); background.simAdd('traffic drive', driveMs)
 }
 function trafficRows() {
   return trafficState ? [...trafficState.cars.values()].map(o => [o.id, o.traffic?.driver ? 1 : 0, ...o.trafficExit || []]) : []
@@ -31203,7 +31205,7 @@ function slDetached(ag, r, t, o) {
   const dog = ag.kind === SL_K.stray
   if (r.kind === 4 && tau < 0) { o.hidden = true; o.scale = 0; return }
   if (r.kind === 1 || r.kind === 4 || r.kind === 11) {
-    if (r.kind === 11 && typeof slDeadInWater === 'function' && slDeadInWater(ag, r, t, o)) { slDeadFade(tau, o); return }
+    if (r.kind === 11 && slDeadInWater(ag, r, t, o)) { slDeadFade(tau, o); return }
     if (r.kind === 11) { const q = slDeadLanding(ag, r, t)
       if (q) { o.x = q.x1; o.z = q.z1; o.y = 0; o.yaw = q.yaw; o.clip = dog ? 'idle' : 'death'; o.ct = 2.39; o.down = true; if (dog) { o.roll = Math.PI / 2; o.y = 0.22 }
         if (ag.kind === SL_K.cyclist) { o.bikeDown = q.from ? [q.from.x, q.from.z, q.from.yaw] : [q.x0, q.z0, q.yaw]; o.wheel = 0 }
@@ -31265,12 +31267,16 @@ function slDetached(ag, r, t, o) {
   else { o.clip = 'flee'; o.ct = run / (3.25 * H) }
 }
 
-function slAround(x, z, R, T, fn, skip) {
+function slAround(x, z, R, T, fn, skip, warm = false) {
   const st = slState, S = st.S, A = S * 48, pose = slAroundPose
   const pad = 25, i0 = Math.max(0, Math.floor((x - R - pad + A) / 96)), i1 = Math.min(S - 1, Math.floor((x + R + pad + A) / 96))
   const j0 = Math.max(0, Math.floor((z - R - pad + A) / 96)), j1 = Math.min(S - 1, Math.floor((z + R + pad + A) / 96))
   const cells = []
-  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) cells.push(slCell(i, j))
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+    if (!warm) { cells.push(slCell(i, j)); continue }
+    const c = st.cells.get(i + ' ' + j)
+    if (c) { c.used = performance.now(); cells.push(c) } else (st.warmQ ||= new Map()).set(i + ' ' + j, [i, j])
+  }
   slSubCellsIn(x - R - pad, z - R - pad, x + R + pad, z + R + pad, cells)
   for (const cell of cells) {
       for (const ag of cell.agents) {
@@ -31350,7 +31356,7 @@ function slHurt(ag, p, ux, uz, power, by, T, fling, dmg, gun, cause) {
   const left = (h && T - h.t < SL_HP.heal * 1000 ? h.hp : slHpOf(ag)) - dmg
   if (left > 0) { H.set(ag.id, { hp: left, t: T }); return false }
   H.delete(ag.id)
-  const sw = typeof slSwimAt === 'function' ? slSwimAt(ag, T) : null
+  const sw = slSwimAt(ag, T)
   let x = p.x, z = p.z, x1, z1
   if (sw) { x = x1 = sw.x; z = z1 = sw.z }
   else if (p.down) { x1 = x; z1 = z }
@@ -31411,6 +31417,7 @@ function slForget(st) {
 const slNow = () => isHost ? tickAt || now() : renderT
 function slHostTick() {
   const st = slState; if (!st || !isHost) return
+  slWarmStep()
   const t0 = performance.now(), T = tickAt || now()
   for (const c of players.values()) {
     const g = c.chain
@@ -31532,9 +31539,9 @@ function slStruck(c, h, G, ux, uy, uz) {
   try { slKnock(h.agent, h.pose, ux, uz, power, c, T, undefined, undefined, undefined, h.pram ? 0 : slHit.dmg, GUNS.indexOf(G), G?.kind === 'radius' ? 5 : G?.name === 'Cinderblock' ? 4 : 1) } finally { slHit.part = null; slHit.dmg = Infinity }
 }
 const slRoadFuture = SL_POSE()
-function slRoadList() {
-  const st = slState, T = slNow()
-  if (st.road && Math.abs(T - st.road.T) < 50) return st.road.list
+function slRoadList(warm = false) {
+  const st = slState, T = slNow(), key = warm ? 'roadWarm' : 'road'
+  if (st[key] && Math.abs(T - st[key].T) < 50) return st[key].list
   const list = [], seen = new Set(), back = STREET.backS * 1000
   const quiet = ag => { if (ag.cr || ag.kind === SL_K.cyclist || st.byId.has(ag.id)) return false
     for (const q of st.panics) if (q.t <= T && T - q.t < back && ag.pan?.get(q.key) !== false) return false
@@ -31550,13 +31557,24 @@ function slRoadList() {
     list.push({ id: ag.id, x: p.x, y: p.y, z: p.z, ahead, radius: ag.kind === SL_K.cyclist ? (ag.route ? 0.45 : 0.9) : ag.kind === SL_K.pram ? 0.8 : 0.45,
      
       vx: Math.sin(p.yaw) * p.v, vz: Math.cos(p.yaw) * p.v, kind: ag.kind === SL_K.cyclist ? 'cyclist' : ag.kind === SL_K.pram ? 'pram' : ag.kind === SL_K.stray ? 'dog' : 'ped' })
-  }, quiet)
-  st.road = { T, list }
+  }, quiet, warm)
+  st[key] = { T, list }
   return list
 }
-function slObstacles(x, z, R = 25) {
+function slWarmStep() {
+  const st = slState, q = st.warmQ
+  if (!q?.size || performance.now() - (st.warmAt || 0) < SL_SUB.gap) return
+  for (const [k, [i, j]] of q) {
+    q.delete(k)
+    if (st.cells.has(k)) continue
+    const X = (i - st.S / 2) * 96 + 48, Z = (j - st.S / 2) * 96 + 48
+    if (![...players.values()].some(c => Math.hypot(c.x - X, c.z - Z) < 340)) continue
+    slCell(i, j); st.warmAt = performance.now(); return
+  }
+}
+function slObstacles(x, z, R = 25, warm = false) {
   if (!slState || !LV.faust) return []
-  const list = slRoadList()
+  const list = slRoadList(!!warm)
   return x === undefined ? list : list.filter(o => Math.abs(o.x - x) < R && Math.abs(o.z - z) < R && Math.hypot(o.x - x, o.z - z) < R)
 }
 function slDriverExit({ vehicleId, x, z, dx = 1, dz = 0, hit } = {}) {
@@ -38879,7 +38897,7 @@ function mcPull(o, c, st, T) {
   }
   for (const p of players.values()) if (!(p.dead > 0) && !seatOf(p)) obstacle(p.x, p.y, p.z, p.r || 0.5, p === c ? o.V.w / 2 + 0.15 : undefined)
   for (const p of objs) if (p !== o && p.heldBy === undefined) obstacle(p.x, p.y, p.z, p.V ? Math.min(p.V.w / 2, p.R) : p.R)
-  for (const p of GAME.streetLife?.obstacles?.(o.x + fw[0] * 8, o.z + fw[2] * 8, 14) || []) obstacle(p.x, p.y || 1, p.z, p.radius || 0.6)
+  for (const p of GAME.streetLife?.obstacles?.(o.x + fw[0] * 8, o.z + fw[2] * 8, 14, true) || []) obstacle(p.x, p.y || 1, p.z, p.radius || 0.6)
   const ray = castRay(o.x + fw[0] * (o.V.l / 2 + 0.3), o.y + 0.2, o.z + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], 8, RAY_GROUP | G_OBJ) * 8
   stop = Math.min(stop, Math.max(0, ray - 1.5))
   if (stop < Infinity) desired = Math.min(desired, Math.sqrt(stop * 4))
