@@ -6473,9 +6473,9 @@ function faustDrop(c) {
   faustState.chunks.delete(c.key); faustState.stats.dropped++
 }
 function faustStream(points, viewPoint) {
-  const F = faustState, t = performance.now(), cell = v => Math.floor((v + ARENA) / 96)
+  const F = faustState, t = realNow(), cell = v => Math.floor((v + ARENA) / 96)
   if (F.frameStamp !== last) { F.frameStamp = last; F.frameWork = 0 }
-  const budget = () => F.frameWork + performance.now() - t < 3
+  const budget = () => F.frameWork + realNow() - t < 3
   const altitude = viewPoint[2] ?? camera?.position.y ?? 0, detail = altitude > 420 ? 0 : altitude > 120 ? 1 : FAUST.detail
   const signature = points.map(p => cell(p[0]) + ':' + cell(p[1])).join('|') + '/' + cell(viewPoint[0]) + ':' + cell(viewPoint[1]) + '/' + renderHeadless + '/' + detail
   if (F.selection?.signature !== signature) {
@@ -6505,7 +6505,7 @@ function faustStream(points, viewPoint) {
     }, { valid: () => faustState === F && F.chunks.get(c.key) === c && !!F.selection?.drawn.has(c.key) })
       .catch(e => frameFailed('city preparation', e))
   }
-  const work = performance.now() - t
+  const work = realNow() - t
   F.frameWork += work; F.stats.maxFrameMs = Math.max(F.stats.maxFrameMs, F.frameWork)
   F.stats.maxStreamMs = Math.max(F.stats.maxStreamMs, work)
 }
@@ -9093,6 +9093,9 @@ FAUSTLAND_API.channels = { plan: () => faustState && faustChannels(faustState.se
 // Cooperative background work. Every job is a generator: yield between bounded
 // units, yield 'frame' after a GPU upload, or yield a Promise to await a dependency.
 // Work runs after paint, shares one 4 ms budget, and never holds scene state over a yield.
+// card #53: time budgets in real time. A test may step performance.now as a virtual clock (memory fact:40) that advances
+// almost nothing within a task; a budget read from it never runs out and one slice runs for seconds
+const realNow = /\[native code\]/.test(Function.prototype.toString.call(performance.now)) ? performance.now.bind(performance) : () => Date.now()
 const background = (() => {
   const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [], lateCount: 0 }
   // frame by frame: what ran before each frame and what its draw linked (the last 900 frames)
@@ -9139,13 +9142,13 @@ const background = (() => {
   function slice(deadline) {
     // While the loading overlay is up nothing else is drawn: take 30 ms slices (each still one bounded task).
     const rush = typeof startingGame !== 'undefined' && startingGame
-    const start = performance.now(), cap = rush ? 30 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
+    const start = realNow(), cap = rush ? 30 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
     let steps = 0
     const soft = paceOff()
     if (!rush && !soft && (gpuLast.links || gpuLast.upKB > UPLOAD_KB)) { stats.rests = (stats.rests || 0) + 1; gpuLast = gpuNone; return }
-    if (!soft && fenceOn && signaledFrame < gateFrame && gateHeld < 120 && performance.now() - gateAt < 100) { gateHeld++; stats.gated = (stats.gated || 0) + 1; return }
+    if (!soft && fenceOn && signaledFrame < gateFrame && gateHeld < 120 && realNow() - gateAt < 100) { gateHeld++; stats.gated = (stats.gated || 0) + 1; return }
     gateHeld = 0
-    while (performance.now() - start < cap || !steps) {
+    while (realNow() - start < cap || !steps) {
       const list = [...jobs.values()].sort((a, b) => b.priority - a.priority || a.order - b.order)
       let next = null
       for (const j of list) {
@@ -9153,7 +9156,7 @@ const background = (() => {
         if (!j.waiting && !deferred.has(j) && !(j.gpu && (graphics.state === 'lost' || renderer?.getContext().isContextLost()))) { next = j; break }
       }
       if (!next) break
-      const j = next, t = performance.now(), progs0 = renderer?.info.programs?.length || 0; current = j; j.n = (j.n || 0) + 1
+      const j = next, t = realNow(), progs0 = renderer?.info.programs?.length || 0; current = j; j.n = (j.n || 0) + 1
       try {
         j.gen ||= typeof j.steps === 'function' ? j.steps() : j.steps
         const r = j.error ? j.gen.throw(j.error) : j.gen.next(j.value)
@@ -9164,14 +9167,14 @@ const background = (() => {
           Promise.resolve(r.value).then(v => { j.value = v; j.waiting = false; schedule() }, e => { j.error = e; j.waiting = false; schedule() })
         } else if (r.value === 'frame' || r.value === 'wait') deferred.add(j)
       } catch (e) { finish(j, false, e) }
-      const stepMs = performance.now() - t, linked = (renderer?.info.programs?.length || 0) - progs0; current = null
+      const stepMs = realNow() - t, linked = (renderer?.info.programs?.length || 0) - progs0; current = null
       if (linked > 0 && !soft) { stats.last = j.key; stats.steps++; open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + ' +' + linked + 'p'); break }
       if ((stepMs >= 1 || linked > 0) && open.steps.length < 40) open.steps.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs) + (linked > 0 ? ' +' + linked + 'p' : ''))
       if (stepMs >= 50) { stats.long.push(j.key + (j.phase ? '/' + j.phase : '') + ' ' + Math.round(stepMs)); if (stats.long.length > 12) stats.long.shift() }
       stats.last = j.key; stats.maxStepMs = Math.max(stats.maxStepMs, stepMs); stats.steps++; steps++
       if (navigator.scheduling?.isInputPending?.()) break
     }
-    stats.slices++; stats.maxSliceMs = Math.max(stats.maxSliceMs, performance.now() - start)
+    stats.slices++; stats.maxSliceMs = Math.max(stats.maxSliceMs, realNow() - start)
   }
   return {
     stats,
@@ -9216,7 +9219,7 @@ const background = (() => {
         S.sync += gpuOpen.sync; S.caps += gpuOpen.caps || 0; S.q = Math.max(S.q, q); S.cells += gpuOpen.cells || 0
         S.skip += gpuOpen.skip || 0; S.skipKB += Math.round(gpuOpen.skipKB || 0); S.skel += gpuOpen.skel || 0 }
       if (gpuOpen.skipKB) gpuOpen.skipKB = Math.round(gpuOpen.skipKB)
-      if (gpuOpen.bgLinks || gpuOpen.bgKB >= 256 || gpuOpen.cells) { if (gateFrame <= signaledFrame) gateAt = performance.now(); gateFrame = i }      // background work only, never the draw's own
+      if (gpuOpen.bgLinks || gpuOpen.bgKB >= 256 || gpuOpen.cells) { if (gateFrame <= signaledFrame) gateAt = realNow(); gateFrame = i }      // background work only, never the draw's own
       gpuLast = gpuOpen; gpuOpen = { ...gpuNone }; frameNo = i; planKB = 0
       if (frameLog.length > 900) frameLog.shift()
       open = { steps: [], programs: [], parts: [] }; lastFrameT = t; secT = 0
@@ -9281,7 +9284,7 @@ function* compileObjects(root, cam = camera, target = scene, setup = null, lit =
   const lights = lit || sceneLights(target)
   const ownWalk = Object.hasOwn(target, 'traverseVisible'), walk = target.traverseVisible
   // Programs already built resolve at once: issue about 2 ms of compiles a step, then await them together.
-  let batch = [], t0 = performance.now(), made = 0
+  let batch = [], t0 = realNow(), made = 0
   for (const o of objects) {
     const kind = [o.type, !!o.instanceColor, o.receiveShadow, o.geometry?.attributes.color?.itemSize, !!o.geometry?.attributes.skinIndex].join('/')
     const key = (Array.isArray(o.material) ? o.material : [o.material]).map(m => m?.uuid + ':' + m?.version).join(',') + '/' + kind
@@ -9306,7 +9309,7 @@ function* compileObjects(root, cam = camera, target = scene, setup = null, lit =
       undo()
     }
     // the GPU process is every tab's: its links go one call at a time in play, at most 4 programs at once under the overlay
-    if (made && !softGL() && (!startingGame || made >= 4) || performance.now() - t0 > 2) { yield Promise.all(batch); batch = []; made = 0; t0 = performance.now() }
+    if (made && !softGL() && (!startingGame || made >= 4) || realNow() - t0 > 2) { yield Promise.all(batch); batch = []; made = 0; t0 = realNow() }
   }
   if (batch.length) yield Promise.all(batch)
   // a context lost meanwhile: its programs went with it
@@ -16195,12 +16198,12 @@ function warmSetup(name, target, R, normal = false, sky = false) {
 // lowest priority; what is already warm costs only the walk (the memo in compileObjects).
 // A warm-up given ms of the job's time: then the rest is handed to its own background job (key), and false returned.
 function* warmWithin(ms, name) {
-  const gen = warmSceneSteps(name), end = performance.now() + ms
+  const gen = warmSceneSteps(name), end = realNow() + ms
   let input
   for (;;) {
     const r = gen.next(input)
     if (r.done) return true
-    if (performance.now() > end) {
+    if (realNow() > end) {
       const first = r.value
       background.run('warm-rest:' + name, function* () {
         let x = first?.then ? yield first : undefined
@@ -16247,7 +16250,7 @@ function* warmSceneSteps(name, roots = null) {
       const shadows = []; root.traverse(o => { if (o.isMesh && o.castShadow) shadows.push(o) })
       const depth = warmDepth ||= new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.BackSide })
       const seen = new Set(), lights = sceneLights(scene)
-      let t0 = performance.now()
+      let t0 = realNow()
       // as WebGLShadowMap draws it: into its render target, the object's side, map, alpha test and displacement on the
       // depth material (a custom one too)
       const shadowTarget = sunLight?.shadow?.map || (warmShadowTarget ||= new THREE.WebGLRenderTarget(1, 1))
@@ -16265,7 +16268,7 @@ function* warmSceneSteps(name, roots = null) {
           o.material = mat; renderer.setRenderTarget(shadowTarget)
           return () => { for (let i = undo.length; i--;) { const [x, k, v] = undo[i]; x[k] = v } renderer.setRenderTarget(old) }
         }, lights)
-        if (performance.now() - t0 > 2) { yield; t0 = performance.now() }
+        if (realNow() - t0 > 2) { yield; t0 = realNow() }
       }
     }
   }
@@ -18012,7 +18015,7 @@ function compileForContext(root, cam, target) {
     let pending
     try { pending = [...renderer.compile(root, cam, target)].flatMap(m => [...(renderer.properties.get(m).programs?.values() || [])].map(p => [m, p])) }
     catch (e) { if (gl.isContextLost()) resolve(root); else reject(e); return }
-    const until = performance.now() + COMPILE_WAIT_MS, count = pending.length
+    const until = realNow() + COMPILE_WAIT_MS, count = pending.length
     const poll = () => {
       if (epoch !== graphics.lost || gl.isContextLost()) { resolve(root); return }
       try {
@@ -18020,7 +18023,7 @@ function compileForContext(root, cam, target) {
         if (pending.length < count) compileSignal.seen = true
         if (!pending.length) resolve(root)
         // a signal not yet seen in this context gets 6 s more before it is called broken (a slow first compile)
-        else if (compileSignal.broken || performance.now() > until + (compileSignal.seen ? 0 : 6000)) {
+        else if (compileSignal.broken || realNow() > until + (compileSignal.seen ? 0 : 6000)) {
           // the draw links what is left; a browser whose signal never came is not waited on again
           compileSignal.cuts += pending.length; if (!compileSignal.seen) compileSignal.broken = true
           resolve(root)
@@ -18292,8 +18295,8 @@ function drawJob(i, r) {
 }
 function drawSlices() {
   if (chunkGrew) return void (chunkGrew = false)
-  const t0 = now()
-  while (chunkDraws.length && now() - t0 < CHUNK_MS) {
+  const t0 = realNow()
+  while (chunkDraws.length && realNow() - t0 < CHUNK_MS) {
     let r
     try { r = chunkDraws[0].gen.next() } catch (e) { frameFailed('chunk', e); chunkDraws.shift(); continue }
     if (r.done) drawJob(0, r)
@@ -18528,7 +18531,7 @@ function prepareDamage(id, cid) {
   })
 }
 function prepareStep() {
-  const t0 = now(), idle = offPlay(), more = () => now() - t0 < (idle ? PREP_MS : 1)
+  const t0 = realNow(), idle = offPlay(), more = () => realNow() - t0 < (idle ? PREP_MS : 1)
   for (let i = prepShown.length - 1; i >= 0; i--) if (--prepShown[i][1] < 0) avatarGroup.remove(prepShown.splice(i, 1)[0][0])
   if (!idle && chunkDraws.length) return // in play, queued chunks go first
   let fresh = true
@@ -18783,8 +18786,8 @@ function* floorsSteps() {
   const F = floors
   if (F.boxes !== BOXES) Object.assign(F, { boxes: BOXES, n: 0, lo: Infinity, big: [] }).cells.clear()
   if (BOXES.length <= 128) return
-  let t0 = performance.now()
-  while (F.boxes === BOXES && F.n < BOXES.length) { floorsAdd(BOXES[F.n]); if (performance.now() - t0 > 8) { yield; t0 = performance.now() } }
+  let t0 = realNow()
+  while (F.boxes === BOXES && F.n < BOXES.length) { floorsAdd(BOXES[F.n]); if (realNow() - t0 > 8) { yield; t0 = realNow() } }
 }
 // posed only inside the camera's or the sun shadow camera's frustum
 let cullT = null, culling = false
@@ -18801,8 +18804,8 @@ function drawAvatarShadow(a) {
   const F = floors, many = BOXES.length > 128
   if (F.boxes !== BOXES) Object.assign(F, { boxes: BOXES, n: 0, lo: Infinity, big: [] }).cells.clear()
   if (many && F.n < BOXES.length) {      // boxes streamed in since: at most 1 ms here; the shadow waits for the rest
-    const end = performance.now() + 1
-    while (F.n < BOXES.length && performance.now() < end) floorsAdd(BOXES[F.n])
+    const end = realNow() + 1
+    while (F.n < BOXES.length && realNow() < end) floorsAdd(BOXES[F.n])
     if (F.n < BOXES.length) return
   }
   if (!a.far || !a.mesh.visible || !sunLight || IS_TOUCH || !settings.shadows ||
