@@ -11140,7 +11140,7 @@ function insideObject(c) {
 // than SWIM.deep he wades (the speed eases to SWIM.k as it deepens). Without #92's water every term here is a no-op.
 // Per tick it leaves: c.swK (speed factor), c.swFx, c.swFz (the current), c.swVy (his vertical speed), c.swWx, c.swWz (a bot's way to the bank)
 const SWIM = { deep: 1.4, wet: 0.2, float: 0.2, under: 0.15, k: 0.5, drag: 6, spring: 6, riseV: 3.2, diveV: 3.2, kickV: 6, steerV: 3, lift: 0.8, pitchDive: -0.45,
-  climbV: 5.5, reach: 1.7, climbUp: 1.8, ladderUp: 14, slow: 1.4 }
+  climbV: 5.5, reach: 2.6, climbUp: 1.8, rise: { stairs: 6, low: 1.8, high: 4.2, ladder: 14 }, slow: 1.4 }          // rise: the most a bank may stand over the surface for him to haul himself up it
 const swimOut = { id: '', kind: '', y: 0, floor: 0, flow: [0, 0], bank: null }
 const waterOf = (x, z) => GAME.faustland.water?.at?.(x, z, swimOut) ?? null
 function swimTick(c, inp, wx, wz, dt, J) {
@@ -11150,15 +11150,13 @@ function swimTick(c, inp, wx, wz, dt, J) {
   const W = waterOf(c.x, c.z)
   if (!W) return false
   const s = W.y, feet = c.y - c.h - c.r, head = c.y + c.h + c.r, depth = s - feet, D = s - W.floor
-  let B = W.bank
-  // a bot in water heads for an exit it can use: its stick is set to the bank
-  if (c.bot && depth > SWIM.wet && D >= SWIM.deep) {
-    if (!B || B.kind === 'high') B = GAME.faustland.water.exit?.(c.x, c.z) ?? B
-    if (B) { const dx = B.x - c.x, dz = B.z - c.z, d = Math.hypot(dx, dz) || 1; wx = c.swWx = dx / d; wz = c.swWz = dz / d }
-  }
+  const wet = was || depth > SWIM.wet
+  const B = wet ? GAME.faustland.water.exit?.(c.x, c.z) ?? null : null          // the nearest way out within 12 m: { x, z, y: the bank's top, bank }
+  // a bot in water heads for the exit: its stick is set to the bank
+  if (c.bot && B && depth > SWIM.wet && D >= SWIM.deep) { const dx = B.x - c.x, dz = B.z - c.z, d = Math.hypot(dx, dz) || 1; wx = c.swWx = dx / d; wz = c.swWz = dz / d }
   const f = Math.hypot(wx, wz)
   // climbing out: pressed at a bank he can get up (a latch: once he is up the wall he keeps going till his feet are on top)
-  if (B && B.kind !== 'high' && B.kind !== 'stairs' && feet < B.y - 0.02 && B.y - s <= (B.kind === 'ladder' ? SWIM.ladderUp : SWIM.climbUp) && (was || depth > SWIM.wet)) {
+  if (B && feet < B.y - 0.02 && B.y - s <= (SWIM.rise[B.bank] ?? SWIM.climbUp)) {
     const dx = B.x - c.x, dz = B.z - c.z, d = Math.hypot(dx, dz)
     if (d < SWIM.reach && f > 0.3 && (wx * dx + wz * dz) / (f * (d || 1)) > 0.5) { c.water = 1; c.swVy = SWIM.climbV; return true }
   }
