@@ -29934,11 +29934,11 @@ function bodyState(id, st, t) {
 // Drawn a little oversize, so a pipe reads from the game camera 4 m behind him
 function makePipe() {
   const g = new THREE.Group()
-  const glass = new THREE.MeshStandardMaterial({ color: 0xe6f4f8, emissive: 0x2c3c44, transparent: true, opacity: 0.62, roughness: 0.05, metalness: 0.05, depthWrite: false })
+  const glass = new THREE.MeshStandardMaterial({ color: 0xe6f4f8, emissive: 0x3a5560, transparent: true, opacity: 0.85, roughness: 0.05, metalness: 0.05, depthWrite: false })
   const part = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m }
-  part(new THREE.CylinderGeometry(0.012, 0.012, 0.22, 10), glass, 0, 0.11, 0)               // the stem, mouthpiece at the origin
+  part(new THREE.CylinderGeometry(0.016, 0.016, 0.22, 10), glass, 0, 0.11, 0)               // the stem, mouthpiece at the origin
   part(new THREE.CylinderGeometry(0.02, 0.012, 0.026, 10), glass, 0, 0.006, 0)               // the mouthpiece's flare
-  const bowl = part(new THREE.SphereGeometry(0.04, 14, 10), glass, 0, 0.245, 0)             // the bulb
+  const bowl = part(new THREE.SphereGeometry(0.048, 14, 10), glass, 0, 0.245, 0)             // the bulb
   part(new THREE.SphereGeometry(0.013, 8, 6), glass, 0.028, 0.19, 0)                         // the carb on its side
   const ember = part(new THREE.SphereGeometry(0.021, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff7a2a }), 0, 0.24, 0)
   g.userData = { ember, bowl }
@@ -29955,27 +29955,17 @@ function makePipe() {
 }
 const bodyPipes = new Map()       // each player's pipe prop, by id (not on the avatar, which a change of coat replaces)
 const pipeQ = new THREE.Quaternion(), pipeV = new THREE.Vector3(), pipeM = new THREE.Vector3(), pipeC = new THREE.Color(), pipeL = new THREE.Vector3(), pipeB = new THREE.Vector3()
-const WARM = new THREE.Color(1.0, 0.42, 0.1)
 // how the pipe is held (third person, and rigMovePose's matching hands): the stem level, out to his left PIPE_FIT.angle from straight
 // ahead, the mouthpiece at his lips and his hand grip m along it; the bowl at mouth height and clear of his head, the lighter's
 // hand cupped under it. cap: the live puffs one smoker may keep (each burst is three), so a crowd of smokers can't flood the screen
 const PIPE_FIT = { angle: 0.7, rise: 0.04, grip: 0.075, scale: 1.6, lighter: 1.4, cap: 150, burst: 3, life: 3800 }
 const PIPE_Y = new THREE.Vector3(0, 1, 0), pipeD = new THREE.Vector3()
-// the lighter's and the ember's warm light on him: the lamp grid can't take a lamp that comes and goes and a new light would
-// recompile every program, so his own materials take a little warm glow (emissive, kept apart from what they had), and the flame
-// and the bowl each get a glow sprite
-function bodyWarm(a, k) {
-  if (!a.warm && !(k > 0)) return
-  const mats = a.warm ||= (() => { const out = new Set(); a.mesh.traverse(n => { if (n.isMesh && n.material?.emissive) { const m = n.material; m.userData.emis0 ||= m.emissive.clone(); out.add(m) } }); return [...out] })()
-  for (const m of mats) { const e = m.userData.emis0; m.emissive.setRGB(e.r + WARM.r * k * 0.28, e.g + WARM.g * k * 0.28, e.b + WARM.b * k * 0.28) }
-  if (!(k > 0)) a.warm = null
-}
 function bodyDraw(id, st, t, dt, view = null, fade = 1) {
   const a = avatars.get(id)
   if (!a) return
   const s = a.smk || 0
   let P = bodyPipes.get(id)
-  if (s <= 0) { if (P) { P.visible = false; P.userData.flame.visible = false }; a.smkStage = 0; bodyWarm(a, 0); return }
+  if (s <= 0) { if (P) { P.visible = false; P.userData.flame.visible = false }; a.smkStage = 0; return }
   const at = id === myId ? null : a.mesh.position
   // the sounds, each once from its moment: the lighter's flick, the sizzle of the draw, the long exhale
   const stage = s < 0.12 ? 0 : s < 0.9 ? 1 : s < 2.9 ? 2 : 3
@@ -30020,12 +30010,10 @@ function bodyDraw(id, st, t, dt, view = null, fade = 1) {
   P.updateMatrixWorld(true); L.updateMatrixWorld(true)
   bowl.set(0, 0.245, 0).applyMatrix4(P.matrixWorld)
   lamp.copy(L.position); lamp.y += 0.07 * L.scale.x
-  const warm = (flameOn ? 1 : 0) * flick + 0.65 * inhale * (0.7 + 0.3 * Math.sin(t * 0.03))
   if (a.mesh.visible) {
     // the glow sprites: the flame's while it burns, the bowl's as he draws
-    if (flameOn) burst('flare', lamp.x, lamp.y, lamp.z, 0, 1, 0, 0xffa24a, 0.42 * flick)
-    if (inhale > 0.05) burst('flare', bowl.x, bowl.y, bowl.z, 0, 1, 0, 0xff7a2a, 0.34 * inhale * (0.7 + 0.3 * Math.sin(t * 0.03)))
-    if (!view) bodyWarm(a, warm)
+    if (flameOn) burst('flare', lamp.x, lamp.y, lamp.z, 0, 1, 0, 0xffa24a, 0.17 * flick)
+    if (inhale > 0.05) burst('flare', bowl.x, bowl.y, bowl.z, 0, 1, 0, 0xff7a2a, 0.13 * inhale * (0.7 + 0.3 * Math.sin(t * 0.03)))
   }
   // the smoke: a thin wisp off the bowl while he draws, then the thick plume out of his mouth, rising and drifting back over his head
   const fwd = pipeM.set(-Math.sin(a.mesh.rotation.y), 0, -Math.cos(a.mesh.rotation.y))
