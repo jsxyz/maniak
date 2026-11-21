@@ -37628,6 +37628,10 @@ function dsWetMesh(x, z) {
   const m = new THREE.Mesh(dsWetMesh.geo ||= new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2),
     new THREE.MeshStandardMaterial({ color: 0x06080b, roughness: 0.12, metalness: 0, transparent: true, opacity: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }))
   m.position.set(x, 0.065, z); m.scale.set(0.18, 1, 0.18); m.renderOrder = 1; m.name = 'hydrant-wet'
+  // card #81 fix-forward 3: two more discs inside it (0.8 and 0.6 of its size, each a little higher), so the patch's edge steps down in three faint rims
+  for (const [k, y] of [[0.8, 0.002], [0.6, 0.004]]) {
+    const q = new THREE.Mesh(m.geometry, m.material.clone()); q.position.y = y; q.scale.set(k, 1, k); q.renderOrder = 1; m.add(q)
+  }
   scene.add(m)
   if (typeof inkPrepare === 'function') inkPrepare(m)
   return m
@@ -37680,7 +37684,7 @@ function dsPropJet(x, z, seed) {
   if (dsJets.length >= 6) dsJetEnd(dsJets.shift())
   dsJets.push({ x, z, age: 0, acc: 0, macc: 0, rng: genRng(dsHash(seed >>> 0)), wet: dsWetMesh(x, z), core: dsCoreMesh(x, z) })
 }
-function dsJetEnd(J) { scene.remove(J.wet); J.wet.material.dispose(); for (const q of J.core.userData.shells) { scene.remove(q); q.material.dispose() } scene.remove(J.core); J.core.geometry.dispose(); J.core.material.dispose() }
+function dsJetEnd(J) { scene.remove(J.wet); J.wet.material.dispose(); for (const q of J.wet.children) q.material.dispose(); for (const q of J.core.userData.shells) { scene.remove(q); q.material.dispose() } scene.remove(J.core); J.core.geometry.dispose(); J.core.material.dispose() }
 // card #81 fix-forward 2: made once with the kit, hidden, for the look watch to warm (see dsPropJetStep)
 function dsGeyWarm(K) {
   const core = dsCoreMesh(0, 0), wet = dsWetMesh(0, 0)
@@ -37720,7 +37724,8 @@ function dsPropJetStep(dt) {
     const w = J.wet
     const wr = 0.18 + 1.45 * (1 - Math.exp(-J.age / 2.4)) + 1.0 * (1 - Math.exp(-J.age / 14))      // the patch keeps spreading while it gushes
     w.scale.set(wr, 1, wr)
-    w.material.opacity = 0.55 * Math.min(1, J.age / 0.5) * (J.age > DS_GEY.wetLife - 12 ? Math.max(0, 1 - (J.age - (DS_GEY.wetLife - 12)) / 12) : 1)      // and dries over the last 12 s
+    const wo = 0.42 * Math.min(1, J.age / 0.5) * (J.age > DS_GEY.wetLife - 12 ? Math.max(0, 1 - (J.age - (DS_GEY.wetLife - 12)) / 12) : 1)      // card #81 fix-forward 3: each of three layers 0.23, together 0.55
+    w.material.opacity = wo; for (const q of w.children) q.material.opacity = wo      // and dries over the last 12 s
     if (J.age > DS_GEY.wetLife) { dsJetEnd(J); dsJets.splice(i, 1) }
   }
   // the spray: each drop a camera-facing quad stretched along its velocity as the camera sees it (its screen heading)
@@ -38868,7 +38873,7 @@ const testTools = (() => {
       if (!LV.faust || !F || !dsCheck()) return out
       const ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96)
       for (let r = 1; r <= 3 && !out.length; r++) for (let i = Math.max(0, ci - r); i <= Math.min(F.S - 1, ci + r); i++) for (let j = Math.max(0, cj - r); j <= Math.min(F.S - 1, cj + r); j++)
-        for (const s of dsPropSites(dsPlan(i, j))) if ((!only || s.f.k === only) && !dsState.all.has(dsPropKey(i * F.S + j, s.i))) out.push({ x: s.f.x, z: s.f.z, y0: 0, what: 'intact ' + s.f.k + (s.hard > 2 ? ' (a blast or a car breaks it)' : s.hard > 1 ? ' (a haymaker or a sprint breaks it; hold E to rip it off)' : ' (a punch breaks it; hold E to rip it off)') })
+        for (const s of dsPropSites(dsPlan(i, j))) if ((!only || s.f.k === only) && !dsState.all.has(dsPropKey(i * F.S + j, s.i))) out.push({ x: s.f.x, z: s.f.z, y0: 0, what: 'intact ' + s.f.k + (s.hard > 2 ? ' (a blast or a car breaks it)' : s.hard > 1 ? ' (a haymaker breaks it; hold E to rip it off)' : ' (a punch breaks it; hold E to rip it off)') })
       return out },
     performer: bots(b => b.busk), freak: bots(b => !b.enforcer && !b.busk && !b.deal), enforcer: bots(b => b.enforcer),
     dealer: bots(b => b.deal && !b.deal.lookout), lookout: bots(b => b.deal?.lookout),      // card #97
