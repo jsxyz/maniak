@@ -5447,6 +5447,8 @@ function* faustChanPiece(ch, k, emit, look) {
     const g = []
     for (const b of ch.bridges) { const w = b.kind === 'diag' ? 15 * 1.4142 + 0.6 : b.half + 0.3, at = b.kind === 'diag' ? b.s + side * K.top : b.s; g.push([at - w, at + w]) }
     for (const r of ch.ramps) if (r.side === side) g.push([r.s - r.w / 2 - 0.25, r.s + r.w / 2 + 0.25])
+    // a river's quay is open every 24 m for 6 m (a way up from the bank onto the pavement: the 0.9 m parapet stopped QA's climb at its foot)
+    if (river) for (let q = Math.ceil((s0 - 3) / 24) * 24 + (side > 0 ? 12 : 0); q < s1 + 3; q += 24) g.push([q - 3, q + 3])
     return g.sort((p, q) => p[0] - q[0])
   }
   for (const side of [-1, 1]) {
@@ -8716,11 +8718,21 @@ function faustDecoClub(g, lot) {
     const pz = f + 0.1, sd = i ? -1 : 1, K2 = 0x0a0508
     g.box(faustBox(cx, 1.75, f + 0.07, 1.2, 1.2, 0.03), 0x1a0b16); g.box(faustBox(cx, 1.75, pz + 0.02, 1.08, 1.08, 0.01), 0xff6aa0, 0.9)
     const T = (a, b, c) => { g.tri([cx + a[0], a[1], pz + 0.04], [cx + b[0], b[1], pz + 0.04], [cx + c[0], c[1], pz + 0.04], K2); g.tri([cx + a[0], a[1], pz + 0.04], [cx + c[0], c[1], pz + 0.04], [cx + b[0], b[1], pz + 0.04], K2) }
-    for (let k = -3; k <= 3; k++) T([sd * 0.08, 1.85], [sd * 0.08 + k * 0.3 - 0.12, 2.82], [sd * 0.08 + k * 0.3 + 0.12, 2.82])                  // the fan
-    for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2, b = (k + 1) / 10 * Math.PI * 2; T([0, 2.5], [0.25 * Math.cos(a), 2.5 + 0.25 * Math.sin(a)], [0.25 * Math.cos(b), 2.5 + 0.25 * Math.sin(b)]) }   // the head
-    for (const e of [-1, 1]) { T([e * 0.38, 2.15], [e * 0.52, 2.15], [e * 0.86, 2.82]); T([e * 0.38, 2.15], [e * 0.86, 2.82], [e * 0.74, 2.82]) }  // the raised arms
-    T([-0.42, 2.18], [0.42, 2.18], [0.17, 1.75]); T([-0.42, 2.18], [0.17, 1.75], [-0.17, 1.75])                                              // shoulders to waist
-    T([-0.17, 1.75], [0.17, 1.75], [0.85, 0.72]); T([-0.17, 1.75], [0.85, 0.72], [-0.85, 0.72])                                              // the skirt
+    // the figure, in the panel's own coordinates, mirrored for the second poster: a quad is two triangles
+    const Q = (p, q, r, t) => { T(p, q, r); T(p, r, t) }, M = v => [sd * v[0], v[1]]
+    const q4 = (p, q, r, t) => Q(M(p), M(q), M(r), M(t)), t3 = (p, q, r) => T(M(p), M(q), M(r))
+    const Tf = (p, q, r) => { for (const o of [[p, q, r], [p, r, q]]) g.tri(...o.map(v => [cx + M(v)[0], v[1], pz + 0.035]), 0x6a1a3c) }
+    for (let k = -3; k <= 3; k++) Tf([0, 2.0], [k * 0.3 - 0.12, 2.86], [k * 0.3 + 0.12, 2.86])                                     // the fan of feathers behind, dark magenta so the head shows against it
+    for (let k = 0; k < 14; k++) { const a = k / 14 * Math.PI * 2, b = (k + 1) / 14 * Math.PI * 2; t3([0, 2.5], [0.2 * Math.cos(a), 2.5 + 0.2 * Math.sin(a)], [0.2 * Math.cos(b), 2.5 + 0.2 * Math.sin(b)]) }   // the head
+    q4([-0.07, 2.32], [0.07, 2.32], [0.07, 2.12], [-0.07, 2.12])                                                                 // the neck
+    t3([-0.12, 2.66], [-0.24, 2.82], [-0.04, 2.7]); t3([-0.06, 2.7], [0, 2.84], [0.06, 2.7]); t3([0.04, 2.7], [0.24, 2.82], [0.12, 2.66])      // a feathered headdress
+    const Tc = (p, q, r) => { for (const o of [[p, q, r], [p, r, q]]) g.tri(...o.map(v => [cx + M(v)[0], v[1], pz + 0.05]), 0x7a2a52) }
+    for (const y of [1.98, 1.86, 1.74]) { Tc([-0.12, y], [0.12, y], [0.1, y - 0.03]); Tc([-0.12, y], [0.1, y - 0.03], [-0.1, y - 0.03]) }        // a corset's lacing, in muted magenta
+    q4([-0.3, 2.16], [0.3, 2.16], [0.13, 1.62], [-0.13, 1.62])                                                                   // the shoulders to the waist
+    q4([-0.13, 1.62], [0.13, 1.62], [0.58, 1.12], [-0.58, 1.12])                                                                 // the skirt, to mid-thigh
+    for (const e of [-1, 1]) { q4([e * 0.06, 1.12], [e * 0.27, 1.12], [e * 0.29, 0.82], [e * 0.1, 0.82]); t3([e * 0.1, 0.82], [e * 0.29, 0.82], [e * 0.36, 0.72]) }   // two legs, heels out
+    q4([-0.3, 2.1], [-0.22, 2.14], [-0.5, 2.82], [-0.6, 2.78])                                                                   // one arm up
+    q4([0.3, 2.12], [0.24, 2.04], [0.46, 1.78], [0.54, 1.84]); q4([0.46, 1.78], [0.54, 1.84], [0.3, 1.6], [0.2, 1.54])           // one hand on the hip
   }
   // the back door to the alley, where lot.club.back says (the interior cuts its doorway in the same wall): a steel door flush on the podium's
   // face (0.3 m off the wall), a red lamp over it and a lamp casing; lot.club.backOut is the way out
@@ -29176,7 +29188,7 @@ const HOST_PHASES = {
   for (const [id, c] of players) {
     const inp = cur.get(id) || IDLE_INPUT
     if (id !== 0) c.pitch = inp.pitch || 0
-    bodyStep(c, inp, dt)
+    coatPipeStep(c, inp, dt)
     if (inp.fire || inp.alt || inp.descend) c.aimD = inp.d || 0   // kept for the burst
     c.cool = Math.max(0, c.cool - dt)
     for (const cm of [stepCharge(c, dt, inp), stepAltCharge(c, dt, inp)]) if (cm) { cm.push(id, 1, carHayLow(c, cm) ? 1 : 0); tracers.push(cm); GAME.audio.fx([cm]) }
@@ -30229,7 +30241,7 @@ GAME.disguise = {
 const bodyFree = c => !(c.dead > 0) && !seatOf(c) && !c.leap && !(c.springT > SPRING_TAP) && !c.chain && !c.tie && !c.flying
 
 // one host tick of both, from his (locked) input
-function bodyStep(c, inp, dt) {
+function coatPipeStep(c, inp, dt) {
   const C = CHARS[c.cid]
   if (c.bot || C.disguise === undefined) return
   if (c.disCool > 0) c.disCool -= dt
