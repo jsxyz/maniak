@@ -952,7 +952,7 @@ const CHARS = [
   { name: 'Freak', side: 'freaks', hidden: true, atk: 'Shiv', model: 'freak', r: 0.36, h: 0.5, speed: 7.6, jump: 8.6, hp: 70, color: 0xa59d7c,
     role: 'One of Faustland\'s own · a shiv and a grudge',
     skin: { head: 0xa59d7c, torso: 0x5b3a36, arm: 0xa59d7c, hand: 0x8e8668, leg: 0x34333c, boot: 0x26221f } },
-  { name: 'Brute', side: 'freaks', hidden: true, atk: 'Sledge', model: 'brute', r: 0.44, h: 0.58, speed: 5.2, jump: 7.4, hp: 180, color: 0x6f6a74,
+  { name: 'Brute', side: 'freaks', hidden: true, atk: 'Sledge', model: 'brute', r: 0.44, h: 0.58, speed: 5.2, jump: 7.4, hp: 180, color: 0x6f6a74, accel: 22,
     role: 'In charge of something · a sledgehammer',
     shape: { torso: [1.3, 1, 1.25], arm: [1.3, 1, 1.25], leg: [1.15, 1, 1.12] },
     skin: { head: 0x8c7a68, torso: 0x45454d, arm: 0x8c7a68, hand: 0x7a6a5a, leg: 0x3a3a42, boot: 0x1e1e22 } },
@@ -975,7 +975,7 @@ const CHARS = [
   { name: 'Enforcer', side: 'freaks', hidden: true, atk: 'Baton', model: 'enforcer', r: 0.36, h: 0.54, speed: 7.2, jump: 8.4, hp: 70, color: 0x1c1b1f,
     role: 'Faust\'s enforcer · a baton, a revolver and a warrant' },
   // card #14, stage 3b: the heavy: slow, hard to put down, a truncheon and a riot gun
-  { name: 'Enforcer heavy', side: 'freaks', hidden: true, atk: 'Truncheon', model: 'enforcer_heavy', r: 0.42, h: 0.5, speed: 5.8, jump: 7.2, hp: 220, color: 0x1c1b1f,
+  { name: 'Enforcer heavy', side: 'freaks', hidden: true, atk: 'Truncheon', model: 'enforcer_heavy', r: 0.42, h: 0.5, speed: 5.8, jump: 7.2, hp: 220, color: 0x1c1b1f, accel: 22,
     role: 'Faust\'s heavy · a truncheon and a riot gun' },
 ]
 // card #15: the disguise is a hidden copy of the Maniak's row that only the drawn body reads (the coat); `disguise` on his row
@@ -7084,6 +7084,27 @@ function faustDecoMarquee(g, lot) {
 // card #69 / #82: the tenement kit of a lot (0 the original, 1 door hood and cornice, 2 mansard, 3 gabled with oriels), and its fire escapes
 const faustTenementKit = lot => (lot.seed >>> 11) % 4
 const faustTenementEscapes = lot => [[1], [-1], [], [1, -1]][faustTenementKit(lot)]
+// card #82: a tenement's wall colour goes with its kit (0 the district's blue-greys, 1 red-brown brick, 2 pale render, 3 dark brown
+// brick), a shade by the lot's tint; the near chunks and the far skyline both use it
+const FAUST_TENEMENT_WALLS = [null, [0x6a4236, 0x5e3a30, 0x744838, 0x663f33], [0xb5ae98, 0xc2baa4, 0xaaa38d, 0xbab49e], [0x4a3328, 0x41302a, 0x54382b, 0x46322a]]
+const faustWall = lot => { const k = lot?.district === 'tenement' ? faustTenementKit(lot) : 0; return k ? FAUST_TENEMENT_WALLS[k][lot.tint & 3] : FAUST_COLORS[lot?.tint || 0] }
+// card #82: the window rhythm over the shader's windows. Pilasters at every second bay boundary on kit 2; on kit 3 a dark strip each
+// side of every bay. The bays are inBayCuts's, round all four faces, from over the shopfronts (4.6 m) to under the parapet.
+function faustTenementColumns(g, lot, kit) {
+  if (kit < 2) return
+  const { x, z, w, d, height: H } = lot, y0 = 4.6, y1 = H - 0.6, ym = (y0 + y1) / 2, hy = (y1 - y0) / 2, wall = faustWall(lot)
+  const tint = kit === 2 ? 0xc9c2ad : 0x2f1f19
+  for (const [hw, c, front, sg] of [[w, x, 1, 1], [w, x, 0, -1], [d, z, 1, 2], [d, z, 0, -2]]) {
+    const cuts = inBayCuts(hw, false, true), face = Math.abs(sg) === 1 ? z + Math.sign(sg) * d : x + Math.sign(sg) * w
+    const at = (u, e, h) => Math.abs(sg) === 1 ? g.box(faustBox(c + u, ym, face + Math.sign(sg) * 0.06, e, hy, 0.06), tint) : g.box(faustBox(face + Math.sign(sg) * 0.06, ym, c + u, 0.06, hy, e), tint)
+    for (let j = 0; j < cuts.length - 1; j++) {
+      const a = cuts[j], b = cuts[j + 1]
+      if (kit === 2) { if (j % 2 === 0) at(a, 0.2) }
+      else { at(a + 0.42, 0.18); at(b - 0.42, 0.18) }
+    }
+    if (kit === 2) at(cuts[cuts.length - 1], 0.2)
+  }
+}
 // a quad of four points as two triangles facing away from the interior point c
 function faustSlab(g, p, c, tint) {
   const u = [p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]], v = [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]]
@@ -7092,15 +7113,15 @@ function faustSlab(g, p, c, tint) {
   if (n[0] * m[0] + n[1] * m[1] + n[2] * m[2] >= 0) { g.tri(p[0], p[1], p[2], tint); g.tri(p[0], p[2], p[3], tint) } else { g.tri(p[0], p[2], p[1], tint); g.tri(p[0], p[3], p[2], tint) }
 }
 function faustTenementKitDraw(g, lot, kit) {
-  const { x, z, w, d, height: H, seed } = lot, f = z + d + 0.25, T = 0xa1a8ae, SL = 0x515963, L = 0xd6d0b2, G = 0x1b222b, D = FAUST_DECO
+  const { x, z, w, d, height: H, seed } = lot, f = z + d + 0.25, T = [0xa1a8ae, 0x8c6a5c, 0xc4bdaa, 0x6c5043][kit], SL = 0x515963, L = 0xd6d0b2, G = 0x1b222b, D = FAUST_DECO
   const lamps = () => { for (const sd of [-1, 1]) g.box(faustBox(x + sd * 1.8, 3.3, f + 0.1, 0.12, 0.2, 0.1), D.brass, 1) }
   if (kit === 1) {
     g.box(faustBox(x, 3.5, f + 0.5, 1.7, 0.1, 0.5), T)                                       // a stone door hood on two brackets, all over 2.2 m
     for (const sd of [-1, 1]) g.box(faustBox(x + sd * 1.4, 3.1, f + 0.2, 0.1, 0.3, 0.2), T)
-    g.box(faustBox(x, 0.06, f + 0.12, 1.4, 0.06, 0.12), T)                                    // one flush step (a tenement's body is 0.5 m deep at the front)
+    g.box(faustBox(x, 0.06, f + 0.12, 1.4, 0.06, 0.12), 0xa1a8ae)                                    // one flush step (a tenement's body is 0.5 m deep at the front)
     lamps()
     for (let i = 0, n = Math.floor(w * 2 / 0.9); i < n; i++) g.box(faustBox(x - w + 0.45 + i * 0.9 + (w * 2 - n * 0.9) / 2, H - 0.75, f + 0.05, 0.2, 0.18, 0.12), T)
-    g.box(faustBox(x, 6.2, f + 0.07, w, 0.12, 0.07), 0xadb0b1)
+    g.box(faustBox(x, 6.2, f + 0.07, w, 0.12, 0.07), T)
   } else if (kit === 2) {
     // the mansard: a steep ring of slate from the parapet's top up and in, with dormers on the front slope
     const y0 = H + 0.38, y1 = y0 + 2.8, ox = w + 0.45, oz = d + 0.45, ix = w - 1.6, iz = d - 1.6, c = [x, y0 + 1, z]
@@ -7134,6 +7155,7 @@ function faustTenementKitDraw(g, lot, kit) {
     }
     lamps()
   }
+  faustTenementColumns(g, lot, kit)
 }
 function faustDecoTenement(g, lot) {
   const { x, z, w, d, height: H } = lot, f = z + d + 0.25
@@ -7436,12 +7458,12 @@ function* faustVisualSteps(c) {
     // the top of the building's volume has the stair's hole in its roof (a hatch, or under the stair house): its top face left out
     // and the roof drawn round the hole as thin slabs
     const roof = B.roof.exit ? (district === 'core' || district === 'civic' ? mass[2] : mass[0]) : null
-    for (const b of mass) if (b === house) faustHouse(facade, b, FAUST_COLORS[lot.tint], B)
+    for (const b of mass) if (b === house) faustHouse(facade, b, faustWall(lot), B)
       // its underside left out too (mask 8): drawn from 3 m up, it would hang under the ground storey's ceiling (card #38)
-      else facade.box(b === mass[0] ? faustBox(b.cx, (b.cy + b.ey + 3) / 2, b.cz, b.ex, (b.cy + b.ey - 3) / 2, b.ez) : b, FAUST_COLORS[lot.tint], 0, (b === roof ? 4 : 0) | (b === mass[0] ? 8 : 0))
+      else facade.box(b === mass[0] ? faustBox(b.cx, (b.cy + b.ey + 3) / 2, b.cz, b.ex, (b.cy + b.ey - 3) / 2, b.ez) : b, faustWall(lot), 0, (b === roof ? 4 : 0) | (b === mass[0] ? 8 : 0))
     if (roof) { const C = B.core, y = roof.cy + roof.ey, x0 = roof.cx - roof.ex, x1 = roof.cx + roof.ex, z0 = roof.cz - roof.ez, z1 = roof.cz + roof.ez
       for (const [a0, a1, c0, c1] of [[x0, x1, C.z1, z1], [x0, x1, z0, C.z0], [x0, C.x0, C.z0, C.z1], [C.x1, x1, C.z0, C.z1]])
-        if (a1 - a0 > 0.01 && c1 - c0 > 0.01) facade.box(faustBox((a0 + a1) / 2, y - 0.01, (c0 + c1) / 2, (a1 - a0) / 2, 0.01, (c1 - c0) / 2), FAUST_COLORS[lot.tint], 0, 8) }
+        if (a1 - a0 > 0.01 && c1 - c0 > 0.01) facade.box(faustBox((a0 + a1) / 2, y - 0.01, (c0 + c1) / 2, (a1 - a0) / 2, 0.01, (c1 - c0) / 2), faustWall(lot), 0, 8) }
     // Heavy street podiums and industrial sheds anchor the building at pedestrian scale.
     faustRing(ornament, faustBox(x, 2, z, w + 0.25, 2, d + 0.25), 0x343d4b, 0.95, B.door)
     faustShopfronts(ornament, lot)
@@ -7616,7 +7638,7 @@ function* faustSkylineSteps() {
     if ((x * F.S + z) % 8 === 0) yield
     const plan = faustPlan(F.seed, x, z, F.S)
     faustSkyCell({ ci: x, cj: z, plan }, true)
-    for (let i = 0; i < FAUST_SKY * 4; i++) { const lot = plan.lots[i / FAUST_SKY | 0]; col.setHex(lot && faustSkyBoxes(lot).length === FAUST_SKY && i % FAUST_SKY > 2 ? i % FAUST_SKY === 3 ? FAUST_DECO.crown : FAUST_DECO.steel : FAUST_COLORS[lot?.tint || 0]); sky.setColorAt((x * F.S + z) * FAUST_SKY * 4 + i, col) }
+    for (let i = 0; i < FAUST_SKY * 4; i++) { const lot = plan.lots[i / FAUST_SKY | 0]; col.setHex(lot && faustSkyBoxes(lot).length === FAUST_SKY && i % FAUST_SKY > 2 ? i % FAUST_SKY === 3 ? FAUST_DECO.crown : FAUST_DECO.steel : faustWall(lot)); sky.setColorAt((x * F.S + z) * FAUST_SKY * 4 + i, col) }
   }
   sky.instanceMatrix.clearUpdateRanges(); sky.instanceMatrix.needsUpdate = true
   sky.computeBoundingSphere(); sky.receiveShadow = false; sky.castShadow = false
@@ -9936,7 +9958,7 @@ const HOP_STEER = 6        // m/s² the stick steers a hop by in the air: he kee
 const CHARGE_RUN = 0.85, CHARGE_EASE = 0.5, LEAP_CARRY = 0.8
 const WEB_HOP = 4          // m/s up a swinger takes when it lets go of its web
 // card #42: m/s² a bot on its feet changes its velocity by (a Thug at a run reverses in 0.34 s); players change at once
-const BOT_ACC = 40
+const BOT_ACC = 40        // a row's own accel overrides it (the heavy ones)
 const FLING_ACC = 25       // m/s² the stick steers it by after, until it lands or grabs again
 const ZIP_SPEED = 30       // m/s a zip line pulls it along
 const zipLines = []        // the host's zips shot this tick: [id, fx row, ms], its line from the eye to where it ties (kind 9)
@@ -10229,8 +10251,8 @@ function applyIntent(c, inp, dt) {
   }
   // card #42 (#63's captures): a bot on its feet eases toward what it asks for, as a body with weight does; its AI's turns
   // (approach/retreat, strafe side, dart, slide, a target found) no longer reverse it in one tick. Players stay instant
-  else if (c.bot && c.grounded && !c.dashing && !c.tie) {
-    const vx = (c.vx || 0) - CX, vz = (c.vz || 0) - CZ, dx = mx - vx, dz = mz - vz, d = Math.hypot(dx, dz), k = d > BOT_ACC * dt ? BOT_ACC * dt / d : 1
+  else if (c.bot && !c.dashing && !c.tie) {      // airborne too: a hop's first tick in the air took the input at once
+    const vx = (c.vx || 0) - CX, vz = (c.vz || 0) - CZ, dx = mx - vx, dz = mz - vz, d = Math.hypot(dx, dz), acc = (rowOf(c).accel ?? BOT_ACC) * dt, k = d > acc ? acc / d : 1
     mx = vx + dx * k; mz = vz + dz * k
   }
   if (c.leap) {
@@ -10393,7 +10415,7 @@ function rescue(c) {
   rescues.n++; rescues.last = { who: c.bot ? c.bot.name : 'player ' + c.id, x: c.x, y: c.y, z: c.z, vy: v ? v.y() : NaN, cell, cause }
   if (c === selfChar()) sysMsg('§7rescued from ' + [c.x, c.z, c.y].map(Math.round).join(' ') + ' (' + cause + ')')
   const s = pickSpawn(c)
-  setCharPos(c, s[0], s[1], s[2])
+  setCharPos(c, s[0], spawnY(c, s), s[2])
   c.knT = 0; c.knx = 0; c.knz = 0; c.knUp = 0
   c.jLock = false
 }
@@ -10409,11 +10431,18 @@ function leaveRare(c) {
 const gunsOf = c => !gunless(CHARS[c.cid])
 const atksOf = c => [].concat(CHARS[c.cid].atk ?? [])
 function armRow(c) { c.gun = handsOf(CHARS[c.cid]); c.ammo = Infinity }
+// card #42 (#63, #62's contacts run): a spawn point's capsule stands on the ground under it. Faustland's rows are [x, 3, z]:
+// dropped from 3 m, a body came down a tick's fall (0.1 m) into the street and stood sunk up to 0.6 s. No ground under
+// (its cell not built): the row's height, as before
+function spawnY(c, s) {
+  const top = s[1] + 0.5, d = staticRay(s[0], top, s[2], 0, -1, 0, 12)
+  return d < 12 ? top - d + c.h + c.r + 0.02 : s[1]
+}
 function respawn(c) {
   const s = c.bot?.enforcer && ENFORCER_AT || crewSpawn(c) || pickSpawn(c)       // an enforcer comes in where heatTick put it
   if (LV.grow) growNear([[s[0], s[2]]], true)       // before anyone stands there
   c.prot = SPAWN_PROT
-  setCharPos(c, s[0], s[1], s[2])
+  setCharPos(c, s[0], spawnY(c, s), s[2])
   if (s[3] !== undefined) { c.yaw = s[3]; if (c.ai) c.ai.yaw = s[3] }
   c.hp = (c.bot && c.bot.hp) || CHARS[c.cid].hp
   c.fuel = tankOf(c)
@@ -10758,6 +10787,8 @@ function driveThink(b, o, tgt, dt, all) {
 const HOP_CLEAR = 9, HOP_ROOM = 3
 // card #42: a bot asking to move that has gone under PIN_M m in PIN_S s is pinned, and slides aside for SLIDE_S s
 const PIN_S = 0.3, PIN_M = 0.25, SLIDE_S = 0.8
+// card #42: a bot hops up over an obstacle in its way only when its target's feet are this much (m) above its own
+const HOP_UP = 0.4
 // /spawn <name> still|walk: the test enemy stands (still) or paces side to side across the host's view (walk) at its spot, its yaw held, no target
 // and no fire, until it takes a hit (hp below what it started with) or dies
 function stillInput(b) {
@@ -10871,7 +10902,9 @@ function botThink(b, all, dt) {
       if (plan && (along || plan.there) && up > 0.4) {
         ai.hop = low < 1.2
         ai.climbT = 0.8
-      } else if (ray(foot + 1.45) > low + 0.6) ai.hop = low < 1.6
+      // card #42 (#72 on QA's lobby run): only up toward a target that is up; a desk or crate between it and him on the same floor
+      // it goes round (the side-step below, else its pinned slide) instead of hopping onto it
+      } else if (ray(foot + 1.45) > low + 0.6 && tgt.y - (tgt.h || 0) - (tgt.r || 0) - foot > HOP_UP) ai.hop = low < 1.6
       else if (!along && !crawl) {               // planned ways avoid walls; crawlers climb
         if (ai.blocked <= 0) ai.side = Math.random() < 0.5 ? -1 : 1
         ai.blocked = 0.8
@@ -19292,7 +19325,9 @@ function setAnim(id, want, dt, t, hold, still, ticks, shift) {
   for (let i = 0; i < n; i++) {
     const s = i < n - 1 && ticks[i], h = ticks ? TICK : dt, x = s ? s.px ?? s.x : m.x + sh[0], y = s ? s.py ?? s.y : m.y + sh[1], z = s ? s.pz ?? s.z : m.z + sh[2]
     const d = !a.at ? 0 : ticks?.[i].fresh ? Infinity : Math.hypot(x - a.at.x, z - a.at.z)
-    if (d < 240 * Math.max(h, TICK)) a.v += (d / Math.max(h, 1e-3) - a.v) * timeShare(h, TICK / 0.15)
+    // card #42: a bot eases in the sim (BOT_ACC), so its gait runs at its drawn speed as it is; smoothed 0.15 s it lagged the
+    // eased speed and the feet skated through a stop (3.7 m/s). Players keep the smoothing
+    if (d < 240 * Math.max(h, TICK)) a.v += (d / Math.max(h, 1e-3) - a.v) * timeShare(h, id >= BOT_ID0 ? 1 : TICK / 0.15)
     a.stepD = (a.stepD || 0) + (d < 240 * Math.max(h, TICK) ? d : 0); a.stepH = (a.stepH || 0) + h      // drawn speed over two ticks or more
     if (a.stepH >= 2 * TICK) { a.stepV = a.stepD / a.stepH; a.stepD = a.stepH = 0 }
     ;(a.at ||= new THREE.Vector3()).set(x, y, z)
