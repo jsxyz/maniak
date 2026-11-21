@@ -17177,12 +17177,14 @@ const REAL_TIERS = {
   medium: { msaa: 0, ao: 6,  ssr: 14, shafts: 3, bloom: 5, bloomFrom: 1, lamps: 4, tex: 1024, scale: 1 },
   low:    { msaa: 0, ao: 0,  ssr: 0,  shafts: 0, bloom: 3, bloomFrom: 2, lamps: 2, tex: 512,  scale: 0.75 },
 }
-// test and tuning only: fields merged over the tier (GAME.realistic.override), e.g. { ssr: 0 } to time a frame without it
+// test and tuning only: fields merged over the tier (GAME.realistic.override), e.g. { ssr: 0 } to time a frame without it,
+// or { headStop: 0 } for the shafts without Faust's head as a stop (card #95)
 const realOverride = {}
 // The grade: exposure, bloom (strength, threshold), saturation, split toning (shadows, highlights), vignette, grain,
-// and how much AO, reflections and shafts the composite adds.
+// and how much AO, reflections and shafts the composite adds. beams: the globe's searchlights' share of the shafts (card #95:
+// at 1 their haze near the street washed out Faust's head from the avenue)
 const REAL_GRADE = { exposure: 2.0, bloom: 0.5, threshold: 0.9, saturation: 0.8, shadows: [0.9, 1.0, 1.12],
-  highlights: [1.07, 1.0, 0.9], vignette: 0.5, grain: 0.018, ao: 0.9, ssr: 1, shafts: 1 }
+  highlights: [1.07, 1.0, 0.9], vignette: 0.5, grain: 0.018, ao: 0.9, ssr: 1, shafts: 1, beams: 0.33 }
 // The night: moon direction and light, ambient, fog (colour, density at street level, scale height in m). The street lamps
 // are FAUST_NIGHT's (card #28).
 const REAL_SKY = { moon: [-28, 18, 14], moonColor: 0xb8d3ff, moonLight: 1.4, hemi: 0.06, fog: 0x1a1e27, fogDensity: 0.003,
@@ -17961,7 +17963,7 @@ void main() {
 }`,
   // light shafts: the globe's searchlights and the nearest lamps as cones of lit haze along each view ray, stopped by
   // the city's depth (and, for the sky, by the globe)
-  shafts: `uniform mat4 uCamWorld; uniform vec3 uCamPos; uniform vec4 uConeA[14], uConeB[14], uConeC[14]; uniform int uCones, uSamples; uniform vec4 uGlobe; uniform float uTime;
+  shafts: `uniform mat4 uCamWorld; uniform vec3 uCamPos; uniform vec4 uConeA[14], uConeB[14], uConeC[14]; uniform int uCones, uSamples; uniform vec4 uGlobe; uniform float uTime; uniform mat4 uHead; uniform float uHeadOn;
 vec2 realCone(vec3 ro, vec3 rd, vec3 a, vec3 v, float c2, float L) {
   vec3 co = ro - a; float dv = dot(rd, v), cv = dot(co, v);
   float A = dv * dv - c2, B = 2.0 * (dv * cv - dot(rd, co) * c2), C = cv * cv - dot(co, co) * c2, disc = B * B - 4.0 * A * C;
@@ -17980,6 +17982,13 @@ void main() {
   vec3 pv = realView(vUv, min(d, 0.9999999)), rd = normalize(mat3(uCamWorld) * normalize(pv));
   float tMax = d >= 1.0 ? 9000.0 : length(pv);
   if (d >= 1.0) { vec3 oc = uCamPos - uGlobe.xyz; float b = dot(oc, rd), c = dot(oc, oc) - uGlobe.w * uGlobe.w, h = b * b - c; if (h > 0.0 && -b - sqrt(h) > 0.0) tMax = -b - sqrt(h); }
+  // card #95: Faust's head is drawn in the sky pass (no depth here), so its ellipsoid stops the march too: the cones
+  // behind the head add no haze over its face. t is in metres (rd is a unit vector in world space)
+  if (d >= 1.0 && uHeadOn > 0.5) {
+    vec3 o = (uHead * vec4(uCamPos, 1.0)).xyz, e = mat3(uHead) * rd;
+    float a = dot(e, e), b = dot(o, e), c = dot(o, o) - 1.0, h = b * b - a * c;
+    if (h > 0.0) { float t0 = (-b - sqrt(h)) / a; if (t0 > 0.0) tMax = min(tMax, t0); }
+  }
   float j = realIGN(gl_FragCoord.xy + fract(uTime) * 37.0);
   vec3 sum = vec3(0.0);
   for (int i = 0; i < 14; i++) {
@@ -18137,7 +18146,8 @@ function* realInitSteps() {
   Object.assign(R.pass.glossy.uniforms, { tSrc: { value: null }, tColor: { value: null }, uStep0: { value: new THREE.Vector2() }, uStep: { value: new THREE.Vector2() } })
   const cones = n => Array.from({ length: n }, () => new THREE.Vector4())
   Object.assign(R.pass.shafts.uniforms, { uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() }, uConeA: { value: cones(14) }, uConeB: { value: cones(14) },
-    uConeC: { value: cones(14) }, uCones: { value: 0 }, uSamples: { value: 4 }, uGlobe: { value: new THREE.Vector4(FAUST.globe.x, FAUST.globe.y, FAUST.globe.z, FAUST.globe.radius) }, uTime: { value: 0 } })
+    uConeC: { value: cones(14) }, uCones: { value: 0 }, uSamples: { value: 4 }, uGlobe: { value: new THREE.Vector4(FAUST.globe.x, FAUST.globe.y, FAUST.globe.z, FAUST.globe.radius) }, uTime: { value: 0 },
+    uHead: { value: new THREE.Matrix4() }, uHeadOn: { value: 0 } })
   Object.assign(R.pass.composite.uniforms, { tColor: { value: null }, tAO: { value: null }, tSSR: { value: null }, tShaft: { value: null }, uAO: { value: 0 }, uSSR: { value: 0 }, uShaft: { value: 0 }, uView: { value: new THREE.Matrix4() } })
   Object.assign(R.pass.down.uniforms, { tSrc: { value: null }, uSrcTexel: { value: new THREE.Vector2() }, uFirst: { value: 0 }, uThreshold: { value: REAL_GRADE.threshold } })
   Object.assign(R.pass.up.uniforms, { tSrc: { value: null }, tLow: { value: null }, uLowTexel: { value: new THREE.Vector2() } })
@@ -18249,6 +18259,38 @@ function realRender(raw, s, cam) {
   }
 }
 // the cones the shafts pass lights: the six searchlights from the globe, and the lamps that have a real light
+// card #95: the shafts' second sky stop, an ellipsoid on Faust's head as drawn: the sculpt once it's in the sky scene
+// (placed from FAUST.head.model, so a move, pitch or scale there follows), else the placeholder. The ellipsoid is the one
+// inscribed in the drawn head's box, in its own frame; FAUST.head.model.stop = { centre: [x, y, z], radii: [x, y, z] }
+// (metres, in the model's frame: from FAUST.head.model.position, before its pitch) sets it for the sculpt instead.
+// uHead maps world space to that ellipsoid's unit sphere. The override { headStop: 0 } turns it off (test and tuning)
+function realHeadStop(R, tier) {
+  const u = R.pass.shafts.uniforms, F = faustState, sculpt = !!faustHeadModel && faustHeadModel.parent === F?.skyScene
+  const o = sculpt ? faustHeadModel : F?.headMesh
+  u.uHeadOn.value = 0
+  if (!o || tier.headStop === 0) return
+  const H = R.headStop ||= { m: new THREE.Matrix4(), s: new THREE.Matrix4(), box: new THREE.Box3(), part: new THREE.Box3(), c: new THREE.Vector3(), r: new THREE.Vector3() }
+  const stop = sculpt ? FAUST.head.model.stop : null
+  if (stop) { H.c.fromArray(stop.centre); H.r.fromArray(stop.radii) }
+  else {
+    if (H.of !== o) {
+      // the box in o's own frame: a LOD's levels (its children) through their matrices, or the mesh's geometry
+      H.box.makeEmpty()
+      for (const m of o.isLOD ? o.levels.map(l => l.object) : [o]) {
+        if (!m.geometry) continue
+        if (!m.geometry.boundingBox) m.geometry.computeBoundingBox()
+        H.part.copy(m.geometry.boundingBox); if (m !== o) H.part.applyMatrix4(m.matrix)
+        H.box.union(H.part)
+      }
+      H.of = o
+    }
+    if (H.box.isEmpty()) return
+    H.box.getCenter(H.c); H.box.getSize(H.r).multiplyScalar(0.5)
+  }
+  if (!(H.r.x > 0 && H.r.y > 0 && H.r.z > 0)) return
+  H.m.copy(o.matrixWorld).multiply(H.s.makeTranslation(H.c.x, H.c.y, H.c.z)).multiply(H.s.makeScale(H.r.x, H.r.y, H.r.z))
+  u.uHead.value.copy(H.m).invert(); u.uHeadOn.value = 1
+}
 function realCones(R, cam, tier) {
   const u = R.pass.shafts.uniforms, F = faustState
   let n = 0
@@ -18256,10 +18298,12 @@ function realCones(R, cam, tier) {
     u.uConeA.value[n].set(x, y, z, cosA); u.uConeB.value[n].set(dx, dy, dz, length); u.uConeC.value[n].set(r, g, b, fall); n++ }
   for (const beam of F?.skyBeams || []) {
     const d = R.v3.set(0, -1, 0).applyQuaternion(beam.quaternion), L = beam.userData.length * beam.scale.y
-    put(beam.position.x, beam.position.y, beam.position.z, d.x, d.y, d.z, Math.cos(Math.atan(217 / L)), L, 0.0011, 0.0013, 0.0016, 1e-7)
+    const k = REAL_GRADE.beams ?? 1
+    put(beam.position.x, beam.position.y, beam.position.z, d.x, d.y, d.z, Math.cos(Math.atan(217 / L)), L, 0.0011 * k, 0.0013 * k, 0.0016 * k, 1e-7)
   }
   for (const e of R.litLamps) put(e[1], 8.42, e[2], 0, -1, 0, Math.cos(0.9), 9.5, 0.02, 0.0115, 0.0048, 0.12)
   u.uCones.value = n; u.uSamples.value = tier.shafts
+  realHeadStop(R, tier)
   u.uCamWorld.value.copy(cam.matrixWorld); u.uCamPos.value.setFromMatrixPosition(cam.matrixWorld); u.uTime.value = R.uniforms.time.value
 }
 function realTeardown() {
