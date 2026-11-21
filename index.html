@@ -750,6 +750,7 @@ const SOUNDS = {
   boom: { say: "a vehicle's fuel tank going up: a deep, rolling boom, then falling metal and glass", seed: 0, file: null, synth: null },
   burning: { say: 'a vehicle on fire: a roaring, crackling blaze that builds for three seconds', seed: 0, file: null, synth: null },
   Whistle: { say: 'a piercing two-finger whistle, loud and rising, that carries down the street', seed: 0, file: ['sfx_whistle1.246b8183.mp3', 'sfx_whistle2.d1b2c661.mp3', 'sfx_whistle3.4f70fdbf.mp3'], synth: null, vary: 0.02 },
+  Splash: { say: 'a body hitting water: a smack, a heavy splash and a rush of water falling back', seed: 0, file: null, synth: 'splash', vol: 0.9, vary: 0.08 },
   Eject: { say: 'an ejector seat firing: a hatch blown open with a sharp bang and a short rocket roar going straight up', seed: 0, file: 'sfx_eject1.3493c12c.mp3', synth: null, vary: 0.02 },
 
   pickup: { say: 'lifting something off the ground: a scrape and a short grunt of effort', seed: 0, file: ['sfx_pickup1.bd22f8cf.mp3', 'sfx_pickup2.f8afdb4a.mp3'], synth: null, vary: 0.04 },
@@ -872,6 +873,9 @@ const PARTICLES = {
   dust: { round: true, n: 6, life: [0.45, 0.85], speed: [0.6, 1.8], size: [0.22, 0.36], cone: 1.2, fall: -0.4, grow: 2.6, cell: 0, color: 0xc9c0ae },
   claw: { n: 9, life: [0.12, 0.26], speed: [6, 11], size: [0.06, 0.1], cone: 0.35, fall: 6, grow: 0.3, add: true, cell: 0, stretch: 0.12, hot: 0.4 },
   pipeSmoke: { round: true, n: 3, life: [2.4, 3.8], speed: [0.2, 0.6], size: [0.22, 0.36], cone: 0.5, fall: -0.18, grow: 4.2, cell: 0, color: 0xcfd3d7 },
+  splash: { n: 22, life: [0.45, 0.95], speed: [3, 7.5], size: [0.07, 0.13], cone: 0.55, fall: 15, grow: 0.5, cell: 0, color: 0xd5e6ee },
+  foam: { n: 3, life: [0.9, 1.5], speed: [0.1, 0.5], size: [0.12, 0.22], cone: 1.5, fall: 0, grow: 3, cell: 0, color: 0x6e808a },
+  bubble: { n: 3, life: [0.9, 1.6], speed: [0.5, 1.1], size: [0.05, 0.1], cone: 0.4, fall: -1.4, grow: 1.5, cell: 0, color: 0xdcecf2 },
 }
 const GUN_ROW = { ammo: Infinity, drop: false, pellets: 1, spread: 0 }
 const GUNS = [
@@ -20848,6 +20852,7 @@ function rigAnimate(a, want, dt, t) {
   restoreMovePose(R)
   restoreSeatPose(R)
   R.frame++
+  a.swimming = typeof want === 'string' && want.startsWith('swim') && !!K[want]
   if (camera) {
     const d = a.mesh.parent === avatarGroup ? a.mesh.position.distanceTo(camera.position) : 0, lod = d < M.lods[0] ? 0 : d < M.lods[1] ? 1 : 2
     if (lod !== R.lod) { R.lod = lod; R.lods.forEach((m, i) => { if (m) { m.visible = i === lod; m.castShadow = i < 2 } }) }
@@ -20863,6 +20868,7 @@ function rigAnimate(a, want, dt, t) {
   else if (a.moveState === 3) name = K.leap
   else if (a.moveState === 4) { name = K.run; rate = clamp(v / (M.pace.run * H), 0.8, 1.6); fade = 0.12 }
   else if (hold === 'held') name = K.fall
+  else if (typeof want === 'string' && want.startsWith('swim') && K[want] && !(hold === 'sit')) { name = K[want]; fade = 0.25; rate = want === 'swim' ? clamp(v / 2.6, 0.7, 1.8) : 1 }
   else if (hold === 'sit') name = a.seat === 0 ? K.drive : K.sit
   else if (hold === 'swing' || hold === 'climb' || hold === 'ceiling' || want === 4) name = K.climb
   else if (hold === 'dive' || want === 6) name = K.dive
@@ -21558,11 +21564,11 @@ function capeGuard(R, S) {
 function rigCape(a, R, dt) {
   if (!R.cape.length || !dt || !capePoints(R)) return
   const M = R.M, v = Math.max(0, (a.v || 0) + weatherPush(a)), h = Math.min(dt, 0.05), bend = M.capeBend || [1, 0.55, 0.75]
-  const seated = a.hold === 'sit', dying = a.dying >= 0
-  const lift = seated || dying ? 0 : Math.min(a.chainState?.[0] >= 3 ? 0.35 : a.moveState ? 0.6 : M.capeMax, v * M.capeK)
+  const seated = a.hold === 'sit', dying = a.dying >= 0, swimming = !!a.swimming
+  const lift = seated || dying || swimming ? 0 : Math.min(a.chainState?.[0] >= 3 ? 0.35 : a.moveState ? 0.6 : M.capeMax, v * M.capeK)
   const ease = (x0, x1) => { const t = Math.min(1, Math.max(0, (v - x0) / (x1 - x0))); return t * t * (3 - 2 * t) }
-  const run = seated || dying ? 0 : ease(5, 9), ripple = run
-  const shape = seated || dying ? 0 : ease(1.5, 8)
+  const run = seated || dying || swimming ? 0 : ease(5, 9), ripple = run
+  const shape = seated || dying || swimming ? 0 : ease(1.5, 8)
   R.capeRun = run
   const mo = R.capeMorph ||= [0, 0, 0]
   R.capeFl = ((R.capeFl || 0) + h * CAPE_FLUTTER_RATE) % (2 * Math.PI)
@@ -21648,7 +21654,7 @@ function rigCape(a, R, dt) {
       const E = R.cape[k].matrixWorld.elements, hx = E[12], hy = E[13], hz = E[14], L = capeAxis(R, k, rigF)
       capeNear(S, R, k, skin)
       if (capeLying) S.near[k].length = 0
-      if (!pass && !capeLying) {
+      if (!pass && !capeLying && !swimming) {
         let gather = 1
         for (const i of S.of[k]) {
           const p = S.pts[i]
@@ -25210,6 +25216,32 @@ function playVoice(speaker, group, n = 0, o = {}) {
   return soundPlay(id, { file: L.files?.[n], synth: L.synth, vol: L.vol, vary: L.vary, reach: L.reach }, { ...o, line: n, text: Array.isArray(words) ? words[n] : words }, [id + ':' + n, id])
 }
 function sfxPlay(name, at, cat, lvl, delay, span, who) { return playSound(name, { at, cat, lvl, delay, span, who }) }
+const swimWas = new Map()
+const swimWant = (w, p) => { if (w === 2 || (p.vy || 0) < -1.5) return 'swimDive'; const f = GAME.faustland.water?.at?.(p.x, p.z)?.flow; return Math.hypot((p.vx || 0) - (f ? f[0] : 0), (p.vz || 0) - (f ? f[1] : 0)) > 0.8 ? 'swim' : 'swimIdle' }
+function swimFx(id, w, p, dt) {
+  const S = swimWas.get(id) || swimWas.set(id, { w: 0, vy: 0, rip: 0, air: 0, ring: 0, n: 0 }).get(id), vy = p.vy || 0
+  const W = w || S.w ? GAME.faustland.water?.at?.(p.x, p.z) : null
+  if (W) {
+    if (w && !S.w) { const k = clamp(-S.vy / 9, 0.35, 1.5); burst('splash', p.x, W.y, p.z, 0, 1, 0, 0xd5e6ee, k); burst('foam', p.x, W.y + 0.02, p.z, 0, 1, 0, 0x6e808a, k); sfxPlay('Splash', { x: p.x, y: W.y, z: p.z }, 'world', clamp(k, 0.4, 1), 0, 0, id) }
+    else if (w) {
+      const sp = Math.hypot(p.vx || 0, p.vz || 0)
+      if (w === 1 && (S.rip -= dt) <= 0 && sp > 0.8) { S.rip = 0.22; const sy = Math.sin(p.yaw || 0), cy = Math.cos(p.yaw || 0)
+        for (const k of [-1, 1]) burst('foam', p.x - sy * 0.5 + cy * 0.32 * k, W.y + 0.02, p.z - cy * 0.5 - sy * 0.32 * k, 0, 1, 0, 0x6e808a, 0.6) }
+      if (w === 1 && (S.ring -= dt) <= 0) { S.ring = 0.6; S.n = (S.n || 0) + 1
+        for (let k = 0; k < 4; k++) { const a = S.n * 0.7 + k * Math.PI / 2; burst('foam', p.x + Math.cos(a) * 0.55, W.y + 0.02, p.z + Math.sin(a) * 0.55, 0, 1, 0, 0x6e808a, 0.45) } }
+      if (w === 2 && (S.air -= dt) <= 0) { S.air = 0.9; burst('bubble', p.x, p.y ?? W.y - 1, p.z, 0, 1, 0, 0xdcecf2, 1) }
+    } else if (S.w && vy > 2.5) { burst('splash', p.x, W.y, p.z, 0, 1, 0, 0xd5e6ee, 0.5); sfxPlay('Splash', { x: p.x, y: W.y, z: p.z }, 'world', 0.35, 0, 0, id) }
+  }
+  S.w = w; S.vy = vy
+}
+function carFx(dt) {
+  for (const o of objs) {
+    if (!o.V || o.floodT === undefined) continue
+    const W = GAME.faustland.water?.at?.(o.x, o.z); if (!W) continue
+    if (o.fxT !== o.floodT) { o.fxT = o.floodT; burst('splash', o.x, W.y, o.z, 0, 1, 0, 0xd5e6ee, 1.5); burst('foam', o.x, W.y + 0.02, o.z, 0, 1, 0, 0x6e808a, 1.4); sfxPlay('Splash', { x: o.x, y: W.y, z: o.z }, 'world', 1, 0, 0, o.id) }
+    if ((o.bubT = (o.bubT || 0) - dt) <= 0 && o.y < W.y + 0.3) { o.bubT = 0.25; burst('bubble', o.x, Math.min(o.y + 0.8, W.y), o.z, 0, 1, 0, 0xdcecf2, 1.4) }
+  }
+}
 
 let soundNoise = null, soundRain = null
 function coinRattle(out, t, srcs) {
@@ -25251,6 +25283,17 @@ const SYNTH = {
       k.connect(hp); hp.connect(kg); kg.connect(out); k.start(t, Math.random() * 1.5); k.stop(t + 0.2); srcs.push(k)
     }
     return { srcs, len }
+  },
+  splash(out, t, span, o) {
+    if (!soundNoise) { soundNoise = actx.createBuffer(1, actx.sampleRate * 2, actx.sampleRate); const c = soundNoise.getChannelData(0); for (let i = 0; i < c.length; i++) c[i] = Math.random() * 2 - 1 }
+    const srcs = [], big = 1, n = actx.createBufferSource(), bp = actx.createBiquadFilter(), g = actx.createGain(), th = actx.createOscillator(), tg = actx.createGain()
+    n.buffer = soundNoise; bp.type = 'bandpass'; bp.Q.value = 0.9; bp.frequency.setValueAtTime(2600, t); bp.frequency.exponentialRampToValueAtTime(500, t + 0.5)
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.9 * big, t + 0.012); g.gain.exponentialRampToValueAtTime(0.12, t + 0.18); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.8)
+    n.connect(bp); bp.connect(g); g.connect(out); n.start(t, Math.random()); n.stop(t + 0.85); srcs.push(n)
+    th.type = 'sine'; th.frequency.setValueAtTime(180, t); th.frequency.exponentialRampToValueAtTime(55, t + 0.28)
+    tg.gain.setValueAtTime(0.0001, t); tg.gain.linearRampToValueAtTime(0.7, t + 0.02); tg.gain.exponentialRampToValueAtTime(0.0005, t + 0.4)
+    th.connect(tg); tg.connect(out); th.start(t); th.stop(t + 0.42); srcs.push(th)
+    return { srcs, len: 0.9 }
   },
   coins(out, t) {
     const srcs = [], end = coinRattle(out, t + 0.01, srcs)
@@ -29474,6 +29517,9 @@ GAME.parts = {
 }
 RIG_FILES.maniak_grab = 'maniak_grab.9845e572.glb'
 MODELS.maniak.anims = [...[MODELS.maniak.anims].flat(), RIG_FILES.maniak_grab]
+RIG_FILES.maniak_swim = 'maniak_swim.0ee5f26e.glb'
+MODELS.maniak.anims.push(RIG_FILES.maniak_swim)
+MODELS.maniak.clips.swimIdle = 'maniak_swim_idle'; MODELS.maniak.clips.swim = 'maniak_swim'; MODELS.maniak.clips.swimDive = 'maniak_swim_dive'
 {
   const P = HOST_PHASES, bi = P.beforeIntent, bp = P.beforePhysics, ap = P.afterPhysics
   P.beforeIntent = t => { partsMask(t.cur); bi(t) }
@@ -38074,11 +38120,12 @@ function draw(dt, t) {
   const myTicks = tickSamples.get(myId) || []
   meMesh.rotation.y = GAME.view.faceYaw(myId, me, animOf(me), myHold || firstPerson || carries.has(myId), t, dt, input.fire || input.alt, myTicks)
   if (!drawSeat(meMesh, me, sits.get(myId), obl) && !drawCeiling(meMesh, meD, myHold === 'ceiling', dt, myTicks)) drawTurned(meMesh, meD, animOf(me) === 4 && GAME.participantOf(me)?.wallRun, dt, myTicks)
-  setAnim(myId, crouchOf(myId, me.cid, animOf(me), me.springT > SPRING_TAP, myHold), dt, t, myHold, false, myTicks, [me.x - meD.x, me.y - meD.y, me.z - meD.z])
+  setAnim(myId, me.water && !myHold ? swimWant(me.water, me) : crouchOf(myId, me.cid, animOf(me), me.springT > SPRING_TAP, myHold), dt, t, myHold, false, myTicks, [me.x - meD.x, me.y - meD.y, me.z - meD.z])
   background.sec('me pose')
   const myArmed = GAME.view.passengerAim(myId, me, t, sits.get(myId)?.[1])
   poseSeatAim(myId, myArmed && me, t)
   drawHealth(myId, me.hp)
+  swimFx(myId, me.water | 0, me, dt); carFx(dt)
 
   background.sec('players')
   cullFrom(camera)
@@ -38105,12 +38152,13 @@ function draw(dt, t) {
     if (!drawSeat(m, o, sits.get(o.id), obl) && !drawCeiling(m, o, hold === 'ceiling', dt, ticks)) drawTurned(m, o, o.anim === 4 && C.wallRun, dt, ticks)
     background.acc('turned')
     const still = !posed(m.position)
-    setAnim(o.id, crouchOf(o.id, o.cid, o.anim || 0, o.move === 1, hold), dt, t, hold, still, ticks, o.sim && [o.sim.x - o.x, o.sim.y - o.y, o.sim.z - o.z])
+    setAnim(o.id, o.swim && !hold ? swimWant(o.swim, o) : crouchOf(o.id, o.cid, o.anim || 0, o.move === 1, hold), dt, t, hold, still, ticks, o.sim && [o.sim.x - o.x, o.sim.y - o.y, o.sim.z - o.z])
     background.acc('setAnim')
     const armed = GAME.view.passengerAim(o.id, o, t, sits.get(o.id)?.[1])
     poseSeatAim(o.id, armed && o, t)
     background.acc('seatAim')
     drawHealth(o.id, o.hp)
+    swimFx(o.id, o.swim | 0, o, dt)
     drawEffect(o.id, o.markT > 0 ? o.mark : 0)
     drawStruck(o.id, t)
     drawAura(o.id, o.anim || 0, dt)
