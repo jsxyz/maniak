@@ -8137,6 +8137,8 @@ function faustBatch(capacity = 12288) {
     for (let i = 0; i < 3; i++) { const q = [a, b, c][i]; if (gl) lit = gl[i]; vertex(q[0], q[1], q[2], nx / length, ny / length, nz / length, coords?.[i]?.[0] || 0, coords?.[i]?.[1] || 0) }
     if (gl) lit = 0
   }
+  // card #103: a triangle that glows as a box does (flat letters): `lit` for its three vertices, then 0 again
+  const glowTri = (a, b, c, tint, light) => { lit = light; tri(a, b, c, tint); lit = 0 }
   // light: the box glows (the stone material's emission): below 0 in the lamps' colour, above 0 in its own tint.
   // Flat paint (under 3 cm tall: road markings, kerb and plaza lines) draws its top only: its centimetre-tall sides were
   // slivers far off, which a software rasterizer can draw in front of a near wall (single pixels through it, on the horizon)
@@ -8158,7 +8160,7 @@ function faustBatch(capacity = 12288) {
       g.setAttribute(key, new THREE.BufferAttribute(values.slice(0, count * size), size))
     g.computeBoundingSphere(); return g
   }
-  return { box, tri, geometry, get count() { return count / 3 }, get room() { return capacity - count } }      // card #69: room, in vertices
+  return { box, tri, glowTri, geometry, get count() { return count / 3 }, get room() { return capacity - count } }      // card #69: room, in vertices
 }
 function faustMaterials() {
   const cv = document.createElement('canvas'); cv.width = 128; cv.height = 256
@@ -8299,7 +8301,7 @@ function faustShopTypes(g0, lot) {
   if (lot.district === 'industrial' || lot.stop) return
   // what stands on the shop windows is drawn without its inside (-z) face, and a dark glass pane stands behind each window: from inside a shop the
   // street windows are dark glass, not glowing rectangles (#72, from inside the stores)
-  const g = { box: (b, c, gl, sk) => g0.box(b, c, gl, (sk || 0) | 32), tri: (a, b, c, t) => g0.tri(a, b, c, t), get room() { return g0.room } }
+  const g = { box: (b, c, gl, sk) => g0.box(b, c, gl, (sk || 0) | 32), tri: (a, b, c, t) => g0.tri(a, b, c, t), glowTri: (a, b, c, t, l) => g0.glowTri(a, b, c, t, l), get room() { return g0.room } }
   if (!lot.venue || lot.venue === 'liquor' || lot.venue === 'conv') for (const side of [-1, 1]) g0.box(faustBox(x + side * w * 0.45, 1.7, f - 0.045, 1.22, 1.17, 0.004), 0x0a0e14, 0, 31)
   if (lot.venue === 'liquor' || lot.venue === 'conv') { faustVenueFront(g, lot); return }      // card #99 (A's club has a front of its own)
   if (lot.venue) return
@@ -8402,6 +8404,7 @@ function faustShedFront(g, lot) {
     const word = FAUST_SHED_NAMES[(h >>> 20) % FAUST_SHED_NAMES.length], cell = Math.min(0.42, w * 1.7 / (word.length * 4)), width = word.length * 4 * cell - cell, cx = x - 0.15 * w
     const tint = [0xd9c98a, 0xc9d2d8, 0xd08a3a, 0xd9d4c4][h >>> 4 & 3], zz = wl + 0.05
     g.box(faustBox(cx, 6.1, zz - 0.01, width / 2 + 0.4, 5 * cell / 2 + 0.3, 0.012), 0x1b222b)
+    if (!faustLetters(g, 'cond', word, [cx, 6.1, zz + 0.013], [1, 0, 0], [0, 1, 0], width, 5 * cell, tint, 0.3, 0.8))      // card #103: the pixel face where the faces did not load
     for (let k = 0; k < word.length; k++) { const rows = FAUST_GLYPHS[word[k]] || FAUST_GLYPHS[' '], x0 = cx - width / 2 + k * 4 * cell
       for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) if (rows[r] >> (2 - c) & 1) g.box(faustBox(x0 + (c + 0.5) * cell, 6.1 + (2 - r) * cell, zz, cell / 2, cell / 2, 0.012), tint, 0.3) }
   }
@@ -8532,12 +8535,63 @@ const FAUST_GLYPHS = { A: [2, 5, 7, 5, 5], B: [6, 5, 6, 5, 6], C: [3, 4, 4, 4, 3
   H: [5, 5, 7, 5, 5], I: [7, 2, 2, 2, 7], K: [5, 5, 6, 5, 5], L: [4, 4, 4, 4, 7], M: [5, 7, 7, 5, 5], N: [5, 7, 7, 7, 5], O: [2, 5, 5, 5, 2], P: [6, 5, 6, 4, 4],
   Q: [2, 5, 5, 7, 3], R: [6, 5, 6, 5, 5], S: [3, 4, 2, 1, 6], T: [7, 2, 2, 2, 2], U: [5, 5, 5, 5, 7], W: [5, 5, 7, 7, 5], Y: [5, 5, 2, 2, 2], '2': [6, 1, 2, 4, 7],
   '4': [5, 5, 7, 1, 1], ' ': [0, 0, 0, 0, 0] }
+// card #103: the signs' lettering. Two period faces as flat triangles (assets/signfaces.*.json, outlines taken from two SIL OFL typefaces:
+// see SOURCES.md): 'deco' for neon, marquee and club names, 'cond' for painted boards. A glyph is [advance, [x0, y0, x1, y1, ...], [corner
+// indices, three to a triangle, counter-clockwise]] in 1/1000 of the cap height. Fetched once at page start; a city cell waits for it (at
+// most 4 s of frames), and the 3 x 5 pixel face above stays the fallback where it did not load. The triangles go in the sign's own
+// mesh, so they take the looks' colour and glow as the boxes did.
+const FAUST_FACES = { file: 'signfaces.a0ba8d5e.json', set: null, promise: null, settled: false }
+function faustFacesLoad() {
+  const F = FAUST_FACES
+  if (F.promise) return F.promise
+  if (serverPage()) { F.settled = true; return null }
+  const get = base => fetch(base + F.file).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+  return F.promise = get(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? get(RIG_SITE) : Promise.reject(e))
+    .then(d => { if (d?.deco?.g && d?.cond?.g) F.set = d }, e => console.warn('[maniak] sign faces: ' + (e?.message || e))).then(() => { F.settled = true; if (F.set) faustFacesRedraw() })
+}
+// the faces arrived after some cells were drawn with the pixel letters (c.signFace false): those cells are drawn again, one every 250 ms, each
+// through the city's own background job (dsRelight drops its mesh, the next stream pass draws it from its plan)
+function faustFacesRedraw() {
+  const F = faustState
+  const next = () => {
+    if (!F || faustState !== F) return
+    const c = [...F.chunks.values()].find(q => q.visual && q.signFace === false)
+    if (!c) return
+    c.signFace = true; dsRelight(c); setTimeout(next, 250)
+  }
+  setTimeout(next, 250)
+}
+// a word centred at c on the plane spanned by U (along the text) and V (up), U x V facing the viewer, fitted in wMax x hMax: the cap height
+// hMax tall unless the word is wider than wMax, then narrowed to wMax down to `squeeze` of its natural width, then all smaller. false when
+// the face is not loaded or has no glyph for a letter (nothing drawn: the caller draws the pixel face)
+function faustLetters(g, face, word, c, U, V, wMax, hMax, tint, light, squeeze = 0.7, track = 0.03) {
+  const F = FAUST_FACES.set?.[face]
+  if (!F || !word || !g.glowTri) return false
+  const gl = []
+  for (const ch of word) { const q = F.g[ch]; if (!q) return false; gl.push(q) }
+  const pad = track * F.cap, W = gl.reduce((s, q) => s + q[0], 0) + pad * (gl.length - 1), first = gl[0][1], last = gl[gl.length - 1]
+  let l = 0, r = W
+  if (first.length) { l = Infinity; for (let i = 0; i < first.length; i += 2) l = Math.min(l, first[i]) }
+  if (last[1].length) { let m = -Infinity; for (let i = 0; i < last[1].length; i += 2) m = Math.max(m, last[1][i]); r = W - last[0] + m }
+  if (!(r > l)) return false
+  let sy = hMax / F.cap, sx = sy
+  if ((r - l) * sx > wMax) { sx = wMax / (r - l); if (sx < sy * squeeze) sy = sx / squeeze }
+  const mid = (l + r) / 2, h = F.cap / 2
+  let pen = 0
+  for (const [adv, v, ix] of gl) {
+    const P = i => { const x = (pen + v[i * 2] - mid) * sx, y = (v[i * 2 + 1] - h) * sy; return [c[0] + U[0] * x + V[0] * y, c[1] + U[1] * x + V[1] * y, c[2] + U[2] * x + V[2] * y] }
+    for (let k = 0; k < ix.length; k += 3) g.glowTri(P(ix[k]), P(ix[k + 1]), P(ix[k + 2]), tint, light)
+    pen += adv + pad
+  }
+  return true
+}
 const FAUST_STORE_NAMES = { liquor: [['LIQUOR', 'SPIRITS'], ['LIQUOR', 'WINE'], ['LIQUOR', 'ICE COLD'], ['LIQUOR', 'LAST CALL']],
   conv: [['NITE', 'MART'], ['OWL', 'STOP'], ['ALL NITE', 'FOOD'], ['CORNER', '24 HR']] }
 // neon letters on a dark board of half width hw centred (cx, cy) on the plane z: the cell fits the word
 function faustNeonWord(g, word, cx, cy, z, hw, col, tall) {
   const cell = Math.min(0.1, hw * 2 / (word.length * 4)), ch = tall ? cell * 1.8 : cell, width = word.length * 4 * cell - cell
   g.box(faustBox(cx, cy, z - 0.012, hw + 0.05, 5 * ch / 2 + 0.07, 0.012), 0x0b0f16)
+  if (faustLetters(g, 'deco', word, [cx, cy, z + 0.0125], [1, 0, 0], [0, 1, 0], width, 5 * ch, col, 3.0)) return      // card #103
   for (let k = 0; k < word.length; k++) {
     const rows = FAUST_GLYPHS[word[k]] || FAUST_GLYPHS[' '], x0 = cx - width / 2 + k * 4 * cell
     for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) {
@@ -8589,6 +8643,9 @@ function faustVenueBlade(g, lot, f, col) {
   const cell = 0.07, h = word.length * 6 * cell
   g.box(faustBox(x, 4.0 - h / 2, zc, 0.03, h / 2 + 0.05, 0.2), 0x0b0f16)
   for (let k = 0; k < word.length; k++) { const rows = FAUST_GLYPHS[word[k]]
+    // card #103: the letter in the period face on each face, upright seen from outside (the pixel face where the faces did not load)
+    if (faustLetters(g, 'deco', word[k], [x - 0.036, 3.95 - (k * 6 + 2.5) * cell, zc], [0, 0, 1], [0, 1, 0], cell * 3, cell * 5, col, 3.0) &&
+        faustLetters(g, 'deco', word[k], [x + 0.036, 3.95 - (k * 6 + 2.5) * cell, zc], [0, 0, -1], [0, 1, 0], cell * 3, cell * 5, col, 3.0)) continue
     for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) if (rows[r] >> (2 - c) & 1)
       for (const sd of [-1, 1]) g.box(faustBox(x + sd * 0.034, 3.95 - (k * 6 + r) * cell - cell / 2, zc + (c - 1) * cell, 0.01, cell * 0.42, cell * 0.42), col, 3.0) }
 }
@@ -9381,6 +9438,8 @@ function faustDecoClub(g, lot) {
   g.box(faustBox(dx, by + 1.2, bz + 0.16, hb - 0.1, 0.04, 0.02), col, tube); g.box(faustBox(dx, by - 1.2, bz + 0.16, hb - 0.1, 0.04, 0.02), col, tube)
   for (const sd of [-1, 1]) g.box(faustBox(dx + sd * (hb - 0.12), by, bz + 0.16, 0.04, 1.2, 0.02), col, tube)
   const rects = faustClubWord(word), x0 = dx - ww / 2, y0 = by + 3.5 * cell
+  // card #103: the name in the period face over the frame's width, 7 cells tall (the pixel face where the faces did not load)
+  if (!faustLetters(g, 'deco', word, [dx, by, bz + 0.195], [1, 0, 0], [0, 1, 0], Math.min(ww, 2 * hb - 0.5), 7 * cell, col, tube))
   for (const [c, r, n, m] of rects) g.box(faustBox(x0 + (c + n / 2) * cell, y0 - (r + m / 2) * cell, bz + 0.17, n * cell / 2, m * cell / 2, 0.02), col, tube)
   // the blade sign: out 2.1 m, 0.3 m thick, a neon border, a lit panel in the club's colour on each face and the name stacked down it in white-hot
   // neon letters (the first letter alone, large, where the sign is too short for the name), beside the board
@@ -9394,6 +9453,7 @@ function faustDecoClub(g, lot) {
     const letters = stack ? word.split('') : [word[0]], cl = stack ? 0.12 : 0.24, step = stack ? 1.06 : 0, top = stack ? yb + Hs / 2 + (letters.length - 1) * 0.53 + 0.42 : yb + Hs / 2 + 7 * cl / 2
     letters.forEach((ch, n) => {
       const y0 = stack ? top - n * 1.06 : top, ww = 5 * cl
+      if (faustLetters(g, 'deco', ch, [X + sd * 0.036, y0 - 3.5 * cl, zc], [0, 0, -sd], [0, 1, 0], ww, 7 * cl, hot, 2.6)) return      // card #103
       for (const [c, r, nc, nr] of faustClubWord(ch)) g.box(faustBox(X + sd * 0.02, y0 - (r + nr / 2) * cl, zc + (sd > 0 ? -1 : 1) * (-ww / 2 + (c + nc / 2) * cl), 0.015, nr * cl / 2, nc * cl / 2), hot, 2.6)
     })
   }
@@ -9432,6 +9492,9 @@ function faustDecoClub(g, lot) {
   g.box(faustBox(dx, 0.045, f + 1.8, 2.6, 0.004, 1.9), col, 0.2)
 }
 function* faustVisualSteps(c) {
+  // card #103: the sign letters' faces, fetched at page start: a cell waits for them at most 1.5 s, else it is drawn with the pixel letters and again when they arrive
+  for (let w = 0, t0 = performance.now(); FAUST_FACES.promise && !FAUST_FACES.settled && w < 600 && performance.now() - t0 < 1500; w++) yield 'frame'
+  c.signFace = !!FAUST_FACES.set
   const facade = faustBatch(3072), ornament = faustBatch(65536), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   // Asphalt below pale sidewalks, bike lanes outside motor lanes. Flat kerbs keep car suspension smooth.
   if (P.chan) faustChanCellLook(ornament, P.chan.axis, X, Z, P.diagonal)      // card #83: only the strips beyond the lip
@@ -43211,6 +43274,7 @@ Promise.all([ammoReady, OBJECTS.some(K => K.shape === 'hull') && loadHull().catc
 
 fetch(TITLE_FONT.url, { integrity: TITLE_FONT.sri, mode: 'cors' }).then(r => r.arrayBuffer())
   .then(b => new FontFace(TITLE_FONT.family, b).load()).then(f => document.fonts.add(f)).catch(() => {})
+faustFacesLoad()      // card #103: the signs' period faces, in the background
 
 const nameNow = () => { myName = cleanName(nameIn.value) || suggestedName() }
 function wireMenu() {
