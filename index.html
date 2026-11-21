@@ -7132,27 +7132,45 @@ function faustRingsFrame() {
     // mesh is remade only when too small, with room to spare), its upload waits for a frame with room for it (uploadSlot), then
     // it is shown and the other hidden: no instance buffers made or freed a refill
     const sets = F.ringSets ||= [{}, {}], set = sets[F.ringShown === 0 ? 1 : 0], other = set === sets[0] ? sets[1] : sets[0]
-    let bytes = 0
+    // (card #91) the hidden set's upload, before the swap: each kind in slices of 12,000 instances a frame, the set wearing a
+    // material never drawn (three uploads a visible object's instance buffers before it checks material.visible)
+    const ghost = F.ringGhost ||= Object.assign(new THREE.MeshBasicMaterial(), { visible: false, name: 'faust-ring-ghost' })
+    const real = k => k === 'far' ? F.materials.far : FAUST_FOLIAGE.has(k) ? faustFoliageMaterial(F) : F.materials.stone, CH = 12000
+    const sphere = new THREE.Sphere(new THREE.Vector3(cx, 0, cz), reach + 600)
     for (const k of KINDS) {
       const P = pools[k]
       let mesh = set[k]
-      if (!P.n) { if (mesh) mesh.count = 0; continue }
+      if (!P.n) { if (mesh) { mesh.count = 0; mesh.visible = false } continue }
+      let fresh = false
       if (!mesh || mesh.instanceMatrix.count < P.n) {
         if (mesh) { worldGroup.remove(mesh); mesh.dispose() }
         const cap = Math.min(caps[k], Math.ceil(P.n * 1.3) + 64)
-        mesh = set[k] = new THREE.InstancedMesh(S[k], k === 'far' ? F.materials.far : FAUST_FOLIAGE.has(k) ? faustFoliageMaterial(F) : F.materials.stone, cap)
+        mesh = set[k] = new THREE.InstancedMesh(S[k], ghost, cap)
         mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
         mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3); mesh.instanceColor.setUsage(THREE.DynamicDrawUsage)
-        mesh.castShadow = false; mesh.receiveShadow = k === 'flat'; mesh.userData.faustRings = k; mesh.visible = false
-        worldGroup.add(mesh); bytes += cap * 76
-      } else bytes += P.n * 76
+        mesh.castShadow = false; mesh.receiveShadow = k === 'flat'; mesh.userData.faustRings = k
+        worldGroup.add(mesh); fresh = true
+      }
+      mesh.material = ghost; mesh.visible = true; mesh.frustumCulled = false; mesh.count = P.n
       const M = mesh.instanceMatrix, Q = mesh.instanceColor
-      M.array.set(P.m.subarray(0, P.n * 16)); M.clearUpdateRanges(); M.addUpdateRange(0, P.n * 16); M.needsUpdate = true
-      Q.array.set(P.c.subarray(0, P.n * 3)); Q.clearUpdateRanges(); Q.addUpdateRange(0, P.n * 3); Q.needsUpdate = true
-      mesh.count = P.n; mesh.computeBoundingSphere()
+      if (fresh) {      // a new buffer: filled, then made and uploaded whole on its first frame
+        M.array.set(P.m.subarray(0, P.n * 16)); Q.array.set(P.c.subarray(0, P.n * 3)); M.needsUpdate = true; Q.needsUpdate = true
+        for (let t = 0; t < 30 && !background.uploadSlot(M.array.byteLength + Q.array.byteLength); t++) yield 'frame'
+        yield 'frame'
+      } else for (let a = 0; a < P.n; a += CH) {
+        const z = Math.min(P.n, a + CH)
+        M.array.set(P.m.subarray(a * 16, z * 16), a * 16); Q.array.set(P.c.subarray(a * 3, z * 3), a * 3)
+        M.addUpdateRange(a * 16, (z - a) * 16); Q.addUpdateRange(a * 3, (z - a) * 3); M.needsUpdate = true; Q.needsUpdate = true
+        for (let t = 0; t < 30 && !background.uploadSlot((z - a) * 76); t++) yield 'frame'
+        yield 'frame'
+      }
+      mesh.boundingSphere = sphere
     }
-    for (let t = 0; t < 30 && !background.uploadSlot(bytes); t++) yield 'frame'      // at most 30 frames' wait, then it goes anyway
-    for (const k of KINDS) { if (set[k]) set[k].visible = pools[k].n > 0; if (other[k]) other[k].visible = false }
+    // the swap: materials and visibility only (every buffer is up already)
+    for (const k of KINDS) {
+      if (set[k]) { const on = pools[k].n > 0; set[k].visible = on; if (on) { set[k].material = real(k); set[k].frustumCulled = true } }
+      if (other[k]) other[k].visible = false
+    }
     F.ringShown = set === sets[0] ? 0 : 1
     F.ringIdx = idx
     F.ringMeshes = KINDS.filter(k => set[k] && pools[k].n > 0).map(k => set[k])
