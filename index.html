@@ -15208,7 +15208,7 @@ function animOf(c) {
   if (c.water) return Math.hypot(c.vx, c.vz) > 0.8 ? 1 : 0           // card #94
   if (c.wall > 0 && !c.grounded) return 4         // climbing: a wall it pushes into (a climb row)
   if (!c.grounded) return c.dove ? 6 : c.flying ? 5 : c.overT > 0 ? 1 : c.vy > (airborne ? -3 : 0.6) ? 2 : 3
-  return Math.hypot(c.vx, c.vz) > 0.8 ? 1 : 0
+  return Math.hypot(...carrierRelV(c)) > 0.8 ? 1 : 0         // card #102: in the frame of a train, zeppelin or lift he stands on
 }
 
 // SkinnedMesh.computeBoundingBox() includes bones; geometry bounds don't
@@ -20786,7 +20786,10 @@ function setAnim(id, want, dt, t, hold, still, ticks, shift) {
   const m = a.mesh.position, n = ticks ? ticks.length : 1, sh = shift || [0, 0, 0]
   for (let i = 0; i < n; i++) {
     const s = i < n - 1 && ticks[i], h = ticks ? TICK : dt, x = s ? s.px ?? s.x : m.x + sh[0], y = s ? s.py ?? s.y : m.y + sh[1], z = s ? s.pz ?? s.z : m.z + sh[2]
-    const d = !a.at ? 0 : ticks?.[i].fresh ? Infinity : Math.hypot(x - a.at.x, z - a.at.z)
+    // card #102: less what his carrier moved him (a tick keeps its carrier's velocity; drawn from the wire, it is looked up)
+    const cv = !carriers.size ? null : ticks?.[i] ? ticks[i].cv : carrierVelAt(x, y, z), cx = cv ? cv[0] * h : 0, cz = cv ? cv[2] * h : 0
+    a.cv = cv
+    const d = !a.at ? 0 : ticks?.[i].fresh ? Infinity : Math.hypot(x - a.at.x - cx, z - a.at.z - cz)
     // card #42: a bot eases in the sim (BOT_ACC), so its gait runs at its drawn speed as it is; smoothed 0.15 s it lagged the
     // eased speed and the feet skated through a stop (3.7 m/s). Players keep the smoothing
     if (d < 240 * Math.max(h, TICK)) a.v += (d / Math.max(h, 1e-3) - a.v) * timeShare(h, id >= BOT_ID0 ? 1 : TICK / 0.15)
@@ -27327,6 +27330,11 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   get weather() { return weatherApi() },
   // card #75: frame by frame, what moved wrongly near the host: await gameHooks.motion({ ms: 5000, radius: 40 }); the last result is gameHooks.motion.last
   motion: captureMotion,
+  // card #102: an avatar's legs this frame (yours by default): drawn speed in his carrier's frame (v), the carrier's velocity
+  // there (cv, m/s), the wire's anim, the legs' clip and gait, and every clip playing with its weight and rate
+  rig(id) { const a = avatars.get(id ?? myId), R = a?.rig; if (!R) return null; const r3 = x => Math.round(x * 1000) / 1000
+    return { v: r3(a.v || 0), cv: a.cv ? [r3(a.cv[0]), r3(a.cv[2])] : null, anim: a.anim, name: R.name, gait: R.gait,
+      clips: R.mixer._actions.filter(x => x.isScheduled() && x.enabled && x.getEffectiveWeight() > 0.001).map(x => ({ clip: x.getClip().name, w: r3(x.getEffectiveWeight()), rate: r3(x.timeScale) })) } },
   // No argument: current seed. A uint32 sets the next room, or restarts this host's city. Blank rolls one.
   seed(value) { return arguments.length ? faustSetSeed(value) : phase === 'menu' ? faustParseSeed(el('#host-seed')?.value ?? faustRequestedSeed) : levelGen?.seed },
   // card #46: the city's changes saved now, where this server keeps them (the dedicated server asks before it stops); true once stored
@@ -34509,6 +34517,9 @@ const testTools = (() => {
       const at = a => t.dir === 'z' ? [t.c + a, t.p] : [t.p, t.c + a], [px, pz] = at(0)
       const side = t.pavilions.reduce((b, q) => Math.hypot(q.x - c.x, q.z - c.z) < Math.hypot(b.x - c.x, b.z - c.z) ? q : b).side, [sx, sz] = at(side * 11)
       return { x: px, z: pz, y0: 0, what: 'station ' + (t.name || t.id) + ' (line ' + t.line + ', platform ' + t.level + ' m)', spot: { x: sx, z: sz, face: t.dir === 'z' ? [side, 0] : [0, side] } } }),
+    // card #102: aboard the nearest monorail car, on its floor amidships, facing along it (it carries him from his first tick)
+    train: () => (railState?.cars || []).map(car => { const p = carrierPose(car.carrier), K = RAIL.car, [x, y, z] = carrierWorld(p, 0, K.floor, 0)
+      return { x, z, y0: y, what: 'monorail car ' + car.key + ' at ' + Math.round(Math.hypot(p.vx, p.vz)) + ' m/s', spot: { x, z, face: [-Math.sin(p.yaw), -Math.cos(p.yaw)], up: 1.2 } } }),
     zeppelin: () => (GAME.air?.fleet || []).map(id => { const p = GAME.air.pose(id); return p && { x: p.x, z: p.z, y0: 0, what: id.replace('air:', '') + ' at ' + Math.round(p.y) + ' m' + (p.at ? ', docked' : '') } }).filter(Boolean),
     stop: () => { const seen = new Map()                                       // #5: the platform on the tower's roof, by its mast
       for (const l of GAME.air?.lines || []) for (const s of l.stops) seen.set(s.id, { x: s.x, z: s.z, y0: s.y, what: 'stop ' + s.id + ', roof ' + Math.round(s.y) + ' m (' + l.name + ')' })
@@ -35171,6 +35182,25 @@ const carrierLocal = (p, x, y, z) => { const s = Math.sin(p.yaw), k = Math.cos(p
 const carrierWorld = (p, x, y, z) => { const s = Math.sin(p.yaw), k = Math.cos(p.yaw); return [p.x + k * x + s * z, p.y + y, p.z - s * x + k * z] }
 const carrierTurn = (p, x, y, z) => { const s = Math.sin(p.yaw), k = Math.cos(p.yaw); return [k * x + s * z, y, -s * x + k * z] }
 const carrierPointV = (p, x, z) => [p.vx + p.w * (z - p.z), p.vy, p.vz - p.w * (x - p.x)]
+// card #102: the velocity of the frame of the carrier whose volume holds a point (where a body is drawn), at time t (ms, the
+// drawn clock), or null. Any machine can tell: a carrier's pose is its clock's alone. Nearness by its pose this tick, then
+// its pose at t (without the tick's memo)
+function carrierVelAt(x, y, z, t = isHost ? drawnT() : renderT) {
+  if (!carriers.size) return null
+  for (const c of carriers.values()) {
+    const q = carrierPose(c)
+    if (Math.abs(x - q.x) > c.radius + 40 || Math.abs(z - q.z) > c.radius + 40) continue
+    const p = Number.isFinite(t) ? c.pose(t) : q, [lx, ly, lz] = carrierLocal(p, x, y, z)
+    if (c.volume.some(v => Math.abs(lx - v[0]) <= v[3] && Math.abs(ly - v[1]) <= v[4] + 0.3 && Math.abs(lz - v[2]) <= v[5])) return carrierPointV(p, x, z)
+  }
+  return null
+}
+// card #102: a body's ground velocity [vx, vz] in the frame of the carrier it stands on: a tick's sample keeps that tick's
+// carrier (cv), a body simulated here its own (carryOn, carryV), one from the wire is looked up where it is drawn
+function carrierRelV(s) {
+  const cv = !carriers.size ? null : s.cv !== undefined ? s.cv : s.carryOn !== undefined ? (s.carryOn ? s.carryV : null) : carrierVelAt(s.x, s.y, s.z)
+  return cv ? [(s.vx || 0) - cv[0], (s.vz || 0) - cv[2]] : [s.vx || 0, s.vz || 0]
+}
 // bodies for one carrier, as solid chunks it moves (a level's reload drops every chunk: carrierPlace notices)
 function carrierLoad(c) {
   if (!world || c.chunks) return
@@ -36077,7 +36107,7 @@ function sampleTick(id, c, fresh, fire) {
   let list = tickSamples.get(id)
   if (!list) tickSamples.set(id, list = [])
   const anim = animOf(c)
-  list.push({ x: c.x, y: c.y, z: c.z, yaw: c.yaw, wy: c.wy, vx: c.vx, vy: c.vy, vz: c.vz, anim, turned: anim === 4 && !!GAME.participant(id, c.cid).wallRun, ceil: !!c.ceil, fresh, fire })
+  list.push({ x: c.x, y: c.y, z: c.z, yaw: c.yaw, wy: c.wy, vx: c.vx, vy: c.vy, vz: c.vz, cv: c.carryOn ? c.carryV : null, anim, turned: anim === 4 && !!GAME.participant(id, c.cid).wallRun, ceil: !!c.ceil, fresh, fire })
 }
 // server panel: rates per second, bytes per session
 let ticksRun = 0, tickRate = 0, snapsOut = 0, snapOutRate = 0, bytesUpAll = 0, bytesDownAll = 0
@@ -37283,7 +37313,8 @@ function faceYaw(id, c, anim, own, t, dt, firing, ticks) {
     const tied = a.chainState?.[0] === 3 && Math.hypot(a.chainState[4] - s.x, a.chainState[6] - s.z) > 0.5     // card #43: he faces the caught block
     const attack = a.chainState?.[0] === 1 || (s === c ? firing : s.fire) || at - a.shotAt < Math.max(FACE_MS, G?.punchMs ?? G?.rate * 1000) || at - a.chargeAt < (C?.windup ?? 0) * 1000
     const flyWant = an === 5 && Math.hypot(s.vx, s.vz) > FLY_V * 0.6 ? Math.atan2(-s.vx, -s.vz) : null
-    const want = tied ? Math.atan2(s.x - a.chainState[4], s.z - a.chainState[6]) : attack ? s.yaw : mine && flyWant === null ? s.yaw : flyWant ?? (an === 0 ? s.yaw : an === 1 && Math.hypot(s.vx, s.vz) > 0.8 ? Math.atan2(-s.vx, -s.vz) : y), k = (ticks ? TICK : dt) * FACE_RATE * (mine ? 4 : attack ? 2 : 1)
+    const rv = an === 1 ? carrierRelV(s) : null      // card #102: his way in the frame of what carries him
+    const want = tied ? Math.atan2(s.x - a.chainState[4], s.z - a.chainState[6]) : attack ? s.yaw : mine && flyWant === null ? s.yaw : flyWant ?? (an === 0 ? s.yaw : an === 1 && Math.hypot(rv[0], rv[1]) > 0.8 ? Math.atan2(-rv[0], -rv[1]) : y), k = (ticks ? TICK : dt) * FACE_RATE * (mine ? 4 : attack ? 2 : 1)
     const err = Math.atan2(Math.sin(want - y), Math.cos(want - y))
     const kk = attack && !mine ? (ticks ? TICK : dt) * FACE_RATE * FACE_TURN.attack * Math.max(FACE_TURN.floor, Math.min(1, Math.abs(err) / FACE_TURN.ease)) : k
     a.face = y + clamp(err, -kk, kk)
