@@ -7646,7 +7646,8 @@ function faustShopKind(lot, side) {
 function faustShopTypes(g, lot) {
   const { x, z, w, d } = lot, f = z + d + 0.28, V = FAUST_VAR, S = FAUST_NIGHT.shops
   if (lot.district === 'industrial' || lot.stop) return
-  if (lot.venue && lot.venue !== 'club') { faustVenueFront(g, lot); return }      // card #99 (a club has its own front, card #98)
+  if (lot.venue === 'liquor' || lot.venue === 'conv') { faustVenueFront(g, lot); return }      // card #99 (A's club has a front of its own)
+  if (lot.venue) return
   for (const side of [-1, 1]) {
     const kind = faustShopKind(lot, side), h = cityHash(lot.seed ^ Math.imul(side + 9, 0xc2b2ae35)), cx = x + side * w * 0.45
     const hw = cityHash(lot.seed ^ Math.imul(side + 2, 0x9e3779b9)), lit = hw % 100 < S.lit * 100
@@ -7827,22 +7828,22 @@ function faustVenueFor(seed, gx, gz, i, district, layout, stop, diagonal, gothic
 }
 // 3 x 5 stroke glyphs: five rows of three bits, top row first (bit 2 the left column)
 const FAUST_GLYPHS = { A: [2, 5, 7, 5, 5], B: [6, 5, 6, 5, 6], C: [3, 4, 4, 4, 3], D: [6, 5, 5, 5, 6], E: [7, 4, 6, 4, 7], F: [7, 4, 6, 4, 4], G: [3, 4, 5, 5, 3],
-  H: [5, 5, 7, 5, 5], I: [7, 2, 2, 2, 7], K: [5, 5, 6, 5, 5], L: [4, 4, 4, 4, 7], M: [5, 7, 7, 5, 5], N: [6, 5, 5, 5, 5], O: [2, 5, 5, 5, 2], P: [6, 5, 6, 4, 4],
+  H: [5, 5, 7, 5, 5], I: [7, 2, 2, 2, 7], K: [5, 5, 6, 5, 5], L: [4, 4, 4, 4, 7], M: [5, 7, 7, 5, 5], N: [5, 7, 7, 7, 5], O: [2, 5, 5, 5, 2], P: [6, 5, 6, 4, 4],
   Q: [2, 5, 5, 7, 3], R: [6, 5, 6, 5, 5], S: [3, 4, 2, 1, 6], T: [7, 2, 2, 2, 2], U: [5, 5, 5, 5, 7], W: [5, 5, 7, 7, 5], Y: [5, 5, 2, 2, 2], '2': [6, 1, 2, 4, 7],
   '4': [5, 5, 7, 1, 1], ' ': [0, 0, 0, 0, 0] }
 const FAUST_STORE_NAMES = { liquor: [['LIQUOR', 'SPIRITS'], ['LIQUOR', 'WINE'], ['LIQUOR', 'ICE COLD'], ['LIQUOR', 'LAST CALL']],
   conv: [['NITE', 'MART'], ['OWL', 'STOP'], ['ALL NITE', 'FOOD'], ['CORNER', '24 HR']] }
 // neon letters on a dark board of half width hw centred (cx, cy) on the plane z: the cell fits the word
-function faustNeonWord(g, word, cx, cy, z, hw, col) {
-  const cell = Math.min(0.1, hw * 2 / (word.length * 4)), width = word.length * 4 * cell - cell
-  g.box(faustBox(cx, cy, z - 0.012, hw + 0.05, 5 * cell / 2 + 0.07, 0.012), 0x0b0f16)
+function faustNeonWord(g, word, cx, cy, z, hw, col, tall) {
+  const cell = Math.min(0.1, hw * 2 / (word.length * 4)), ch = tall ? cell * 1.8 : cell, width = word.length * 4 * cell - cell
+  g.box(faustBox(cx, cy, z - 0.012, hw + 0.05, 5 * ch / 2 + 0.07, 0.012), 0x0b0f16)
   for (let k = 0; k < word.length; k++) {
     const rows = FAUST_GLYPHS[word[k]] || FAUST_GLYPHS[' '], x0 = cx - width / 2 + k * 4 * cell
     for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) {
       if (!(rows[r] >> (2 - c) & 1)) continue
       let run = 1; while (c + run < 3 && (rows[r] >> (2 - c - run) & 1)) run++
       if (c && (rows[r] >> (3 - c) & 1)) continue
-      g.box(faustBox(x0 + (c + run / 2) * cell, cy + (2 - r) * cell, z, run * cell / 2, cell * 0.42, 0.012), col, 3.0)
+      g.box(faustBox(x0 + (c + run / 2) * cell, cy + (2 - r) * ch, z, run * cell / 2, ch * 0.42, 0.012), col, 3.0)
       c += run - 1
     }
   }
@@ -7855,7 +7856,7 @@ function faustVenueFront(g, lot) {
   for (const [k, side] of [-1, 1].entries()) {
     const cx = x + side * w * 0.45, zt = f + 0.075
     // the glass: a warm (liquor) or fluorescent (convenience) interior, over the old window
-    g.box(faustBox(cx, 1.7, f + 0.045, 1.22, 1.17, 0.012), liquor ? 0xb07a3a : 0xc8d6dc, liquor ? 0.6 : 0.9)
+    g.box(faustBox(cx, 1.7, f + 0.045, 1.22, 1.17, 0.012), liquor ? 0xb07a3a : 0x93a8b0, liquor ? 0.6 : 0.65)
     g.box(faustBox(cx, 2.8, f + 0.053, 1.2, 0.09, 0.006), liquor ? 0xffd9a0 : 0xf4fbff, 1.1)
     if (liquor) {
       // two shelves of bottles, lit; bars over the glass
@@ -7865,12 +7866,15 @@ function faustVenueFront(g, lot) {
       for (let i = 0; i < 9; i++) g.box(faustBox(cx - 1.2 + i * 0.3, 1.7, f + 0.1, 0.014, 1.2, 0.014), 0x2b333d)
       for (const y of [0.55, 1.7, 2.85]) g.box(faustBox(cx, y, f + 0.1, 1.22, 0.02, 0.016), 0x2b333d)
     } else {
-      // three ads in the glass (red, yellow, blue, each with a pale bar) and a small amber OPEN sign
-      for (let i = 0; i < 3; i++) { const col = [0xc8372d, 0xe0b52a, 0x2a5a9a][(h + i + k) % 3]
-        g.box(faustBox(cx - 0.8 + i * 0.8, 1.9, f + 0.058, 0.3, 0.5, 0.006), col, 0.5); g.box(faustBox(cx - 0.8 + i * 0.8, 1.55, f + 0.062, 0.2, 0.05, 0.004), 0xf0e4c8, 0.5) }
-      if (k) faustNeonWord(g, 'OPEN', cx, 0.95, f + 0.1, 0.38, 0xff5a3a)
+      // the shop through the glass: three shelves of packs, a drinks cooler's glow on one side, two small ads on the glass and a small OPEN sign
+      for (const sy of [1.0, 1.65, 2.3]) { g.box(faustBox(cx, sy, f + 0.056, 1.15, 0.022, 0.006), 0x3a3f46)
+        for (let i = 0; i < 7; i++) g.box(faustBox(cx - 0.95 + i * 0.32, sy + 0.12, f + 0.058, 0.1, 0.1 + ((h >>> (4 + i)) & 3) * 0.015, 0.006), [0xc8372d, 0xe0b52a, 0x2a5a9a, 0x4f9a5a, 0xe8e0c8][(h + i + (sy > 1.5 ? 1 : 0)) % 5], 0.45) }
+      g.box(faustBox(cx + (k ? -0.78 : 0.78), 1.5, f + 0.06, 0.36, 1.0, 0.006), 0xbfeaff, 1.1); for (const y of [1.0, 1.5, 2.0]) g.box(faustBox(cx + (k ? -0.78 : 0.78), y, f + 0.066, 0.36, 0.012, 0.004), 0x2b333d)
+      for (let i = 0; i < 2; i++) { const col = [0xc8372d, 0xe0b52a, 0x2a5a9a][(h + i + k) % 3]
+        g.box(faustBox(cx - 0.85 + i * 1.7, 2.5, f + 0.07, 0.18, 0.24, 0.004), col, 0.5) }
+      if (k) faustNeonWord(g, 'OPEN', cx, 0.78, f + 0.1, 0.38, 0xff5a3a)
     }
-    faustNeonWord(g, names[k], cx, 3.55, f + 0.25, 1.22, cols[k])
+    faustNeonWord(g, names[k], cx, 3.55, f + 0.25, 1.22, cols[k], true)
   }
 }
 // ---------------------------------------------------------------- end city variation
