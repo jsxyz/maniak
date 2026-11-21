@@ -8403,7 +8403,7 @@ function faustShedFront(g, lot) {
   if (kind === 1 || (h >>> 16) % 5 < 2) {      // a painted name on the wall above the doors, a board with cream letters
     const word = FAUST_SHED_NAMES[(h >>> 20) % FAUST_SHED_NAMES.length], cell = Math.min(0.42, w * 1.7 / (word.length * 4)), width = word.length * 4 * cell - cell, cx = x - 0.15 * w
     const tint = [0xd9c98a, 0xc9d2d8, 0xd08a3a, 0xd9d4c4][h >>> 4 & 3], zz = wl + 0.05
-    g.box(faustBox(cx, 6.1, zz - 0.01, width / 2 + 0.4, 5 * cell / 2 + 0.3, 0.012), 0x1b222b)
+    g.box(faustBox(cx, 6.1, zz - 0.01, width / 2 + 0.4, 5 * cell / 2 + 0.3, 0.012), 0x1b2230)      // card #103: the board's own tint (the doors' 0x1b222b is Realistic's door class, which drew door glazing on it)
     if (!faustLetters(g, 'cond', word, [cx, 6.1, zz + 0.013], [1, 0, 0], [0, 1, 0], width, 5 * cell, tint, 0.3, 0.8))      // card #103: the pixel face where the faces did not load
     for (let k = 0; k < word.length; k++) { const rows = FAUST_GLYPHS[word[k]] || FAUST_GLYPHS[' '], x0 = cx - width / 2 + k * 4 * cell
       for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) if (rows[r] >> (2 - c) & 1) g.box(faustBox(x0 + (c + 0.5) * cell, 6.1 + (2 - r) * cell, zz, cell / 2, cell / 2, 0.012), tint, 0.3) }
@@ -8561,6 +8561,10 @@ function faustFacesRedraw() {
   }
   setTimeout(next, 250)
 }
+// the letters' own tints: each a step (2/255 in its largest channel, under 2% of that channel's light) off the tint the same colour has elsewhere
+// in the city, and off every other tint literal in the page, so a look can tell a sign letter from a tube, a panel or a wall of the same
+// colour. Neon letters ('deco') are to glow in their own colour; painted letters ('cond') keep their paint. Not visible in Plain or Ink
+const FAUST_SIGN_TINT = new Map([[0xff3a50, 0xfd3a50], [0xffb347, 0xfdb347], [0x4aff7a, 0x4afd7a], [0x2ac8ff, 0x2ac8fd], [0xff9a3a, 0xfd9a3a], [0xff5a3a, 0xfd5a3a], [0xff3a66, 0xfd3a66], [0xff2a2a, 0xfd2a2a], [0xff8a1a, 0xfd8a1a], [0xfff4e8, 0xfdf4e8], [0xd9c98a, 0xd7c98a], [0xc9d2d8, 0xc9d2d6], [0xd08a3a, 0xce8a3a], [0xd9d4c4, 0xd7d4c4]])
 // a word centred at c on the plane spanned by U (along the text) and V (up), U x V facing the viewer, fitted in wMax x hMax: the cap height
 // hMax tall unless the word is wider than wMax, then narrowed to wMax down to `squeeze` of its natural width, then all smaller. false when
 // the face is not loaded or has no glyph for a letter (nothing drawn: the caller draws the pixel face)
@@ -8576,11 +8580,11 @@ function faustLetters(g, face, word, c, U, V, wMax, hMax, tint, light, squeeze =
   if (!(r > l)) return false
   let sy = hMax / F.cap, sx = sy
   if ((r - l) * sx > wMax) { sx = wMax / (r - l); if (sx < sy * squeeze) sy = sx / squeeze }
-  const mid = (l + r) / 2, h = F.cap / 2
+  const mid = (l + r) / 2, h = F.cap / 2, tone = FAUST_SIGN_TINT.get(tint) ?? tint
   let pen = 0
   for (const [adv, v, ix] of gl) {
     const P = i => { const x = (pen + v[i * 2] - mid) * sx, y = (v[i * 2 + 1] - h) * sy; return [c[0] + U[0] * x + V[0] * y, c[1] + U[1] * x + V[1] * y, c[2] + U[2] * x + V[2] * y] }
-    for (let k = 0; k < ix.length; k += 3) g.glowTri(P(ix[k]), P(ix[k + 1]), P(ix[k + 2]), tint, light)
+    for (let k = 0; k < ix.length; k += 3) g.glowTri(P(ix[k]), P(ix[k + 1]), P(ix[k + 2]), tone, light)
     pen += adv + pad
   }
   return true
@@ -9135,19 +9139,31 @@ function faustDecoShed(g, lot) {
 // card #69 / #82: the civic lots' street level, 4 kits (0 as before, 1 arched windows and steps, 2 pilasters and banners, 3 a columned porch)
 const faustCivicKit = lot => (lot.seed >>> 15) % 4
 const FAUST_CIVIC_WALLS = [null, [0x7a6a52, 0x6e5f4a, 0x84735a, 0x75664f], [0x6d7480, 0x7a818c, 0x636a76, 0x727986], [0x4f6058, 0x485850, 0x58695f, 0x4c5c54]]
-function faustDecoCivic(g, lot) {
+// card #82: a cell's civic floodlight cones as one mesh of their own: additive, vertex-coloured, no lighting, nothing for Realistic to swap
+function faustCivicGlowMesh(cones) {
+  const M = faustState.materials
+  M.civicGlow ||= new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(cones.p, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(cones.c, 3))
+  geo.computeBoundingSphere()
+  const mesh = new THREE.Mesh(geo, M.civicGlow); mesh.renderOrder = 2
+  return mesh
+}
+function faustDecoCivic(g, lot, cones) {
   if (lot.district !== 'civic' || lot.landmark || lot.stop || lot.mass.length < 3) return
   const kit = faustCivicKit(lot)
   const { x, z, w, d, height: H } = lot, D = FAUST_DECO, f = z + d + 0.25, ST = [0, 0xc4b896, 0xb4bcc6, 0x9aaca0][kit], K = 0x0b0f16, L = 0xd6d0b2
   // floodlights: a dark fitting on the belt course in each bay between the piers, and above it a soft cone of warm light on the facade: a grid of
-  // triangles whose vertices glow brightest at the fitting and fade smoothly upward and to the sides (a per-vertex glow, to 0 at the cone's edge)
+  // triangles for the cell's own glow mesh (faustCivicGlowMesh), their vertex colour amber times a falloff that is 0 at the tip and at every edge
   for (const fx of [x - w * 0.43, x + w * 0.43]) {
     g.box(faustBox(fx, 5.18, f + 0.32, 0.22, 0.1, 0.12), 0x1a1d22)
-    const R = 4, C = 4, P = (r, c) => { const v = r / R, u = c / C * 2 - 1, hw = 0.2 + 2.0 * Math.pow(v, 0.8)
-      return [[fx + u * hw, 5.35 + v * 6.0, f + 0.04], 3.4 * Math.pow(1 - v, 1.7) * Math.pow(1 - Math.abs(u), 1.3)] }
+    if (!cones) continue
+    const R = 6, C = 6, P = (r, c) => { const v = r / R, u = c / C * 2 - 1, hw = 0.2 + 2.0 * Math.pow(v, 0.8), k = 0.3 * Math.pow(1 - v, 1.7) * Math.pow(Math.cos(u * Math.PI / 2), 2)
+      return [fx + u * hw, 5.35 + v * 6.0, f + 0.04, k, k * 0.34, k * 0.06] }
+    const put = q => { cones.p.push(q[0], q[1], q[2]); cones.c.push(q[3], q[4], q[5]) }
     for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
       const A = P(r, c), B = P(r, c + 1), D2 = P(r + 1, c), E = P(r + 1, c + 1)
-      g.tri(A[0], B[0], E[0], 0x4a2e14, null, [A[1], B[1], E[1]]); g.tri(A[0], E[0], D2[0], 0x4a2e14, null, [A[1], E[1], D2[1]])
+      put(A); put(B); put(E); put(A); put(E); put(D2)
     }
   }
   if (!kit) return
@@ -9425,22 +9441,23 @@ function faustClubWord(word) {
 function faustDecoClub(g, lot) {
   if (lot.landmark !== 'club') return
   const { x, z, w, d, district } = lot, C = lot.club, D = FAUST_DECO, f = z + d + 0.25, dx = C.door[0], col = FAUST_CLUB.neon[(lot.seed >>> 9) % 3], I = 0x6a7480, E = 0x8b939b, K = 0x0b0f16, tube = 3.2
+  const ctube = FAUST_SIGN_TINT.get(col) ?? col      // card #103: the tubes in the name's reserved tint (a step off col, not visible in Plain or Ink)
   const word = FAUST_CLUB.names[C.name], cell = 0.26, ww = word.length * 6 * cell - cell, hb = Math.min(w - 0.6, ww / 2 + 0.7)
   // the canopy, 5.2 m wide and 3.4 m out, over the door at 4.6 m; lamps along its edge, a neon tube on its fascia, a lit pink soffit
   g.box(faustBox(dx, 4.6, f + 1.7, 2.6, 0.12, 1.7), I); g.box(faustBox(dx, 4.74, f + 1.7, 2.7, 0.03, 1.8), E)
   g.box(faustBox(dx, 4.47, f + 1.7, 2.3, 0.015, 1.5), 0xff5f8a, 0.55)
   for (let i = 0; i <= 12; i++) g.box(faustBox(dx - 2.4 + i * 0.4, 4.42, f + 3.35, 0.07, 0.07, 0.07), 0xd6d0b2, 1)
-  g.box(faustBox(dx, 4.85, f + 3.42, 2.7, 0.35, 0.05), K); g.box(faustBox(dx, 4.85, f + 3.46, 2.55, 0.04, 0.02), col, tube)
+  g.box(faustBox(dx, 4.85, f + 3.42, 2.7, 0.35, 0.05), K); g.box(faustBox(dx, 4.85, f + 3.46, 2.55, 0.04, 0.02), ctube, tube)
   for (const sd of [-1, 1]) { g.box(faustBox(dx + sd * 2.6, 4.7, f + 1.7, 0.05, 0.3, 1.7), I) }
   // the name board over the canopy, in front of the door's pier (over 2.2 m, so clear of the paths), a neon frame and the name
   const by = 7.7, bz = z + d + 1.3        // in front of the door's pier (its face is at 1.13 m), which would hide the middle letters
   g.box(faustBox(dx, by, bz, hb, 1.25, 0.14), K)
-  g.box(faustBox(dx, by + 1.2, bz + 0.16, hb - 0.1, 0.04, 0.02), col, tube); g.box(faustBox(dx, by - 1.2, bz + 0.16, hb - 0.1, 0.04, 0.02), col, tube)
-  for (const sd of [-1, 1]) g.box(faustBox(dx + sd * (hb - 0.12), by, bz + 0.16, 0.04, 1.2, 0.02), col, tube)
+  g.box(faustBox(dx, by + 1.2, bz + 0.16, hb - 0.1, 0.04, 0.02), ctube, tube); g.box(faustBox(dx, by - 1.2, bz + 0.16, hb - 0.1, 0.04, 0.02), ctube, tube)
+  for (const sd of [-1, 1]) g.box(faustBox(dx + sd * (hb - 0.12), by, bz + 0.16, 0.04, 1.2, 0.02), ctube, tube)
   const rects = faustClubWord(word), x0 = dx - ww / 2, y0 = by + 3.5 * cell
   // card #103: the name in the period face over the frame's width, 7 cells tall (the pixel face where the faces did not load)
-  if (!faustLetters(g, 'deco', word, [dx, by, bz + 0.195], [1, 0, 0], [0, 1, 0], Math.min(ww, 2 * hb - 0.5), 7 * cell, col, tube))
-  for (const [c, r, n, m] of rects) g.box(faustBox(x0 + (c + n / 2) * cell, y0 - (r + m / 2) * cell, bz + 0.17, n * cell / 2, m * cell / 2, 0.02), col, tube)
+  if (!faustLetters(g, 'deco', word, [dx, by, bz + 0.195], [1, 0, 0], [0, 1, 0], Math.min(ww, 2 * hb - 0.5), 7 * cell, ctube, tube))
+  for (const [c, r, n, m] of rects) g.box(faustBox(x0 + (c + n / 2) * cell, y0 - (r + m / 2) * cell, bz + 0.17, n * cell / 2, m * cell / 2, 0.02), ctube, tube)
   // the blade sign: out 2.1 m, 0.3 m thick, a neon border, a lit panel in the club's colour on each face and the name stacked down it in white-hot
   // neon letters (the first letter alone, large, where the sign is too short for the name), beside the board
   const bx = Math.min(x + w - 0.5, dx + hb + 1.4), Hs = Math.min(11, Math.max(6, lot.height * 0.5 - 4.6)), yb = 5.2, yc = yb + Hs / 2, zc = f + 1.1, hz = 1.05
@@ -9449,7 +9466,7 @@ function faustDecoClub(g, lot) {
   for (const sd of [-1, 1]) {
     const X = bx + sd * 0.17
     g.box(faustBox(X, yc, zc, 0.012, Hs / 2 - 0.25, hz - 0.15), col, 0.7)
-    for (const e of [-1, 1]) { g.box(faustBox(X + sd * 0.01, yc, zc + e * (hz - 0.05), 0.015, Hs / 2 - 0.1, 0.03), col, tube); g.box(faustBox(X + sd * 0.01, yc + e * (Hs / 2 - 0.12), zc, 0.015, 0.03, hz - 0.05), col, tube) }
+    for (const e of [-1, 1]) { g.box(faustBox(X + sd * 0.01, yc, zc + e * (hz - 0.05), 0.015, Hs / 2 - 0.1, 0.03), ctube, tube); g.box(faustBox(X + sd * 0.01, yc + e * (Hs / 2 - 0.12), zc, 0.015, 0.03, hz - 0.05), ctube, tube) }
     const letters = stack ? word.split('') : [word[0]], cl = stack ? 0.12 : 0.24, step = stack ? 1.06 : 0, top = stack ? yb + Hs / 2 + (letters.length - 1) * 0.53 + 0.42 : yb + Hs / 2 + 7 * cl / 2
     letters.forEach((ch, n) => {
       const y0 = stack ? top - n * 1.06 : top, ww = 5 * cl
@@ -9492,6 +9509,7 @@ function faustDecoClub(g, lot) {
   g.box(faustBox(dx, 0.045, f + 1.8, 2.6, 0.004, 1.9), col, 0.2)
 }
 function* faustVisualSteps(c) {
+  const cones = { p: [], c: [] }      // card #82: the civic floodlight cones (faustCivicGlowMesh)
   // card #103: the sign letters' faces, fetched at page start: a cell waits for them at most 1.5 s, else it is drawn with the pixel letters and again when they arrive
   for (let w = 0, t0 = performance.now(); FAUST_FACES.promise && !FAUST_FACES.settled && w < 600 && performance.now() - t0 < 1500; w++) yield 'frame'
   c.signFace = !!FAUST_FACES.set
@@ -9625,7 +9643,7 @@ function* faustVisualSteps(c) {
     faustDecoTower(ornament, lot)
     faustDecoRelief(ornament, lot)
     faustDecoCathedral(ornament, lot)
-    faustDecoCivic(ornament, lot)
+    faustDecoCivic(ornament, lot, cones)
     yield
   }
   // Slender paired lamps on the avenue, merged with all other street detail.
@@ -9647,6 +9665,7 @@ function* faustVisualSteps(c) {
     else { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry) }                    // card #46: its broken lamp heads dark; card #81: and its broken props gone
   }
   { const feat = faustFeatMesh(P); if (feat) root.add(feat) }      // card #69
+  if (cones.p.length) root.add(faustCivicGlowMesh(cones))      // card #82
   if (faustState.poolMaterial) for (const q of faustLampOffsets(c.plan.diagonal)) {
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
     pool.rotation.x = -Math.PI / 2; pool.position.set(X + 8.6, 0.065, Z + q); root.add(pool)
@@ -15945,7 +15964,7 @@ const TRAFFIC = { cap: 160, fleet: ['Car','Sports car','Van','Truck','Bus'], den
 let trafficState = null
 // card #86: out of every player's TRAFFIC.far metres an ambient car thinks every TRAFFIC.thinkFar s (its lookahead is 38 m, so a stale step of
 // 3 m is safe, and no walker is listed past 160 m), and at once when it comes inside; pursuit and summoned cars keep the full rate
-TRAFFIC.far = 250; TRAFFIC.thinkFar = 0.3; TRAFFIC.thinkBudget = 16
+TRAFFIC.far = 250; TRAFFIC.thinkFar = 0.3; TRAFFIC.thinkBudget = 16; TRAFFIC.spawnMin = 120
 const trafficFar = (o, a, people) => o.trafficAmbient && !a.urgent && !a.follow && people.length > 0 && people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.far)
 // card #86: the host's quality setting scales the ambient fleet (low and medium keep the old 80-car fleet)
 const trafficK = () => (TRAFFIC.quality[settings.quality] ?? 1) * (TRAFFIC.scale ?? 1)
@@ -16545,7 +16564,7 @@ function trafficSpawn(people) {
   const anchors=[];for(const c of people)if(anchors.every(a=>Math.hypot(a.x-c.x,a.z-c.z)>TRAFFIC.radius*1.5))anchors.push(c)
   const density=Math.min((TRAFFIC.density[district]||8)*K,Math.max(1,Math.floor(TRAFFIC.cap*K/anchors.length)))
   if ([...T.cars.values()].filter(o => o.traffic?.ambient && Math.hypot(o.x - p.x, o.z - p.z) < TRAFFIC.radius + 80).length >= density) return
-  const edges = T.edges.filter(e => { const q = trafficPoint(e, e.length / 2), d = Math.hypot(q.x - p.x, q.z - p.z); return d > 120 && d < TRAFFIC.radius && (e.ring || Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96) })
+  const edges = T.edges.filter(e => { const q = trafficPoint(e, e.length / 2), d = Math.hypot(q.x - p.x, q.z - p.z); return d > TRAFFIC.spawnMin && d < TRAFFIC.radius && (e.ring || Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96) })
   for (let trial = 0; edges.length && trial < 12; trial++) {
     let pick = Math.random() * edges.reduce((sum, e) => sum + trafficWeight(e), 0)
     const e = edges.find(e => (pick -= trafficWeight(e)) <= 0) || edges.at(-1)
@@ -20301,7 +20320,7 @@ const REAL_MEAN = [[0.241, 0.241, 0.239], [0.255, 0.170, 0.107], [0.127, 0.120, 
 // iron, else stone). Keep in step with faustVisualSteps' tints.
 const REAL_KIND = { stone: 0, brick: 1, concrete: 2, asphalt: 3, sidewalk: 4, setts: 5, granite: 6, darkGranite: 7,
   paintWhite: 8, paintYellow: 9, paintBike: 10, iron: 11, steel: 12, brass: 13, door: 14, shadow: 15, lamp: 16,
-  pier: 17, cornice: 18, crown: 19, shutter: 20 }
+  pier: 17, cornice: 18, crown: 19, shutter: 20, signNeon: 21, signPaint: 22 }
 const REAL_TINTS = [
   [0x242a33, 'asphalt'], [0x5d626a, 'setts'], [0x404b5b, 'setts'], [0x8e9399, 'granite'], [0x737983, 'sidewalk'],
   [0xa1a5a9, 'granite'], [0x3d5557, 'paintBike'], [0xa3adb0, 'paintWhite'], [0xb4a77d, 'paintYellow'],
@@ -20311,6 +20330,10 @@ const REAL_TINTS = [
   [0xc0c5c7, 'stone'], [0x596574, 'stone'], [0xadb5b9, 'cornice'], [0xc1c6c7, 'stone'], [0xc6c8c3, 'steel'],
   [0x8c939b, 'crown'], [0xa4aab0, 'steel'], [0xc4c9c9, 'steel'], [0xe1d2a9, 'brass'], [0x8b969f, 'steel'],
   [0x252d37, 'iron'], [0x5c6671, 'iron'], [0xd6d0b2, 'lamp'],
+  // card #103's sign letters: neon (their own glow) and painted boards (their paint), and the shed's name board
+  [0xfd3a50, 'signNeon'], [0xfdb347, 'signNeon'], [0x4afd7a, 'signNeon'], [0x2ac8fd, 'signNeon'], [0xfd9a3a, 'signNeon'],
+  [0xfd5a3a, 'signNeon'], [0xfd3a66, 'signNeon'], [0xfd2a2a, 'signNeon'], [0xfd8a1a, 'signNeon'], [0xfdf4e8, 'signNeon'],
+  [0xd7c98a, 'signPaint'], [0xc9d2d6, 'signPaint'], [0xce8a3a, 'signPaint'], [0xd7d4c4, 'signPaint'], [0x1b2230, 'shadow'],
 ]
 
 // The city's surfaces. One fragment library for the street detail (REAL_ORNAMENT), the building masses (REAL_FACADE),
@@ -20380,6 +20403,8 @@ RealK realKind(int k) {
   else if (k == 15) { m.layer = -1.0; m.gain = 0.4; m.rough = 0.9; }
   else if (k == 16) { m.layer = -1.0; m.rough = 0.3; m.emit = vec3(1.0, 0.56, 0.22) * 40.0; }
   else if (k == 17 || k == 18 || k == 19) { m.layer = 0.0; m.gain = 0.9; }
+  else if (k == 21) { m.layer = -1.0; m.rough = 0.3; m.sat = 1.0; }
+  else if (k == 22) { m.layer = -1.0; m.rough = 0.8; m.sat = 1.0; m.gain = 1.25; }
   return m;
 }
 // Art Deco trim on boxes #3 builds (box-local: u across the face, its half width hw, height in the box hy 0..1, half
@@ -20654,6 +20679,9 @@ RealSurf realSurface() {
   s.albedo = mix(vec3(dot(s.albedo, REAL_LW)), s.albedo, m.sat) * tone;
   if (m.rough >= 0.0) s.rough = m.rough;
   s.metal = m.metal; s.emit = m.emit;
+  // card #103: a neon letter glows in its own colour (its strongest channel at 6, bounded); painted letters light faintly
+  if (k == 21) s.emit = min(tint / max(max(tint.r, max(tint.g, tint.b)), 1e-3) * 6.0, vec3(16.0));
+  else if (k == 22) s.emit = tint * 0.25;
   if (isBox && k >= 17) realTrim(k, u, hw, hy, vRealBoxY.y, nT, s);
   if (isBox && k == 7 && abs(N.y) < 0.5 && abs(vRealBoxY.y - 2.0) < 0.15 && y0 < 0.1 && hw > 4.0) realShop(N, T, u, hw, lod, s, nT);
   if (isBox && (k == 14 || k == 20)) realDoor(k, N, T, u, hw, vRealW.y - y0, 2.0 * vRealBoxY.y, dot(s.albedo, REAL_LW) / max(dot(tone, REAL_LW), 1e-4), lod, s, nT);
@@ -38758,12 +38786,14 @@ Object.assign(GAME.commands, {
   tp:    { args: '[<name>] <x> <z>', help: 'host only, test: teleport to the street under a point; a named player (full name or a unique prefix), else you', run: testTools.tp },
   near:  { args: '<thing> [go]', help: 'host only, test: find the nearest (' + testTools.things() + '), go to teleport beside it', run: testTools.near },
   where: { args: '', help: 'test: your x, z, heading and city cell', run: testTools.where },
-  density: { args: '[<cars> [<people>]]', help: 'host only, test: scale the ambient fleet and the drawn crowd, 0 to 1 of what the quality setting gives (card #86); /density 0.5 0.55 is about the city before #86, /density 1 1 puts it back, alone it shows both; cars past the new cap leave as you move off', run: a => {
+  density: { args: '[<cars 0-3> [<people 0-1> [<radius m> [<spawn-min m>]]]]', help: 'host only, test (card #86): scale the ambient fleet (0 to 3 of what the quality setting gives; above 1 is more than shipped) and the drawn crowd (0 to 1); then the spawn band radius in m (150-500, retire = radius + 100) and the nearest spawn edge (60-150); /density 1 1 420 120 is as shipped, alone it shows all; cars past a lowered cap leave as you move off', run: a => {
     if (!isHost) return sysMsg('§cOnly the host can use test commands.')
-    const w = String(a || '').trim().split(/\s+/).filter(Boolean).map(Number)
-    if (w.length && w.some(v => !Number.isFinite(v) || v < 0 || v > 1)) return sysMsg('§cUsage: §f/density [<cars 0-1> [<people 0-1>]]')
-    if (w.length) { TRAFFIC.scale = w[0]; STREET.scale = w[1] ?? w[0] }
-    sysMsg('§7ambient cars x§f' + (TRAFFIC.scale ?? 1) + '§7 (cap §f' + Math.round(TRAFFIC.cap * trafficK()) + '§7), crowd drawn x§f' + (STREET.scale ?? 1))
+    const w = String(a || '').trim().split(/\s+/).filter(Boolean).map(Number), lim = [[0, 3], [0, 1], [150, 500], [60, 150]]
+    if (w.length > 4 || w.some((v, i) => !Number.isFinite(v) || v < lim[i][0] || v > lim[i][1])) return sysMsg('§cUsage: §f/density [<cars 0-3> [<people 0-1> [<radius 150-500> [<spawn-min 60-150>]]]]')
+    if (w.length) { TRAFFIC.scale = w[0]; STREET.scale = w[1] ?? Math.min(1, w[0]) }
+    if (w.length > 2) { TRAFFIC.radius = w[2]; TRAFFIC.retire = w[2] + 100 }
+    if (w.length > 3) TRAFFIC.spawnMin = w[3]
+    sysMsg('§7ambient cars x§f' + (TRAFFIC.scale ?? 1) + '§7 (cap §f' + Math.round(TRAFFIC.cap * trafficK()) + '§7), crowd drawn x§f' + (STREET.scale ?? 1) + '§7, spawn band §f' + TRAFFIC.spawnMin + '§7-§f' + TRAFFIC.radius + '§7 m, retire §f' + TRAFFIC.retire + '§7 m')
   } },
   blackbox: { args: '[on|off|dump]', help: 'test: a flight recorder for the black box that flashes when a car turns (card #74)', run: blackbox.run },
 })
@@ -38875,7 +38905,9 @@ const AIR = {
   // and back; checked offline against the head's collider and the globe (card #95: under the gorget at x = +-60: hull top >= 12 m below the bust, decks within the chain's 60 m)
   globe: [[-60, 840, -950], [-150, 840, -2060], [-150, 716, -2660], [0, 712, -3080], [150, 716, -2660], [150, 840, -2060], [60, 840, -950]],
   // drawing: nearer than `near` in the city pass with its LODs; out to the sky's far plane in the sky pass
-  lod: [260, 900], near: 1900 }
+  lod: [260, 900], near: 1900,
+  // past fade[0] m hulls go into the sky's colour and dissolve (dithered), running lights dim and shrink; at fade[1] nothing is left, and the ship isn't drawn
+  fade: [3000, 6000] }
 const airRadius = z => { const H = AIR.hull; if (z <= H[0][0]) return 0; for (let i = 1; i < H.length; i++) if (z <= H[i][0]) {
   const [z0, r0] = H[i - 1], [z1, r1] = H[i]; return r0 + (r1 - r0) * (z - z0) / (z1 - z0) } return H.at(-1)[1] }
 const airSmooth = u => u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u)
@@ -39255,16 +39287,21 @@ const AIR_FILE = 'zeppelin.59c58b16.glb'
 // the models, by kind: the airship, and the biplane (planes.js adds its own); each loads once, on a machine that draws
 const airKits = { zep: { file: AIR_FILE, lods: ['zep_lod0', 'zep_lod1', 'zep_lod2'], scene: null, ask: false } }
 let airView = null
-const airHazeColor = { value: new THREE.Color(0x243044) }
+const airHazeColor = { value: new THREE.Color(0x243044) }, airSkyColor = { value: new THREE.Color(0x243044) }
+const airFadeGLSL = () => `smoothstep(${AIR.fade[0].toFixed(1)}, ${AIR.fade[1].toFixed(1)}, airD)`
 function airMaterial(m) {
   if (!m.isMeshStandardMaterial) return m
   m.fog = false
   m.onBeforeCompile = sh => {
-    sh.uniforms.airHaze = airHazeColor
-    sh.fragmentShader = 'uniform vec3 airHaze;\n' + sh.fragmentShader.replace('#include <fog_fragment>', `#include <fog_fragment>
-      gl_FragColor.rgb = mix(gl_FragColor.rgb, airHaze, 0.85 * (1.0 - exp(-length(vViewPosition) / 2400.0)));`)
+    sh.uniforms.airHaze = airHazeColor; sh.uniforms.airSky = airSkyColor
+    sh.fragmentShader = 'uniform vec3 airHaze;\nuniform vec3 airSky;\n' + sh.fragmentShader.replace('#include <fog_fragment>', `#include <fog_fragment>
+      float airD = length(vViewPosition);
+      gl_FragColor.rgb = mix(gl_FragColor.rgb, airHaze, 0.85 * (1.0 - exp(-airD / 2400.0)));
+      float airF = ${airFadeGLSL()};
+      gl_FragColor.rgb = mix(gl_FragColor.rgb, airSky, airF);
+      if (airF > fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))))) discard;`)
   }
-  m.customProgramCacheKey = () => 'air-haze-1'
+  m.customProgramCacheKey = () => 'air-haze-2'
   m.userData.shared = true
   return m
 }
@@ -39291,7 +39328,7 @@ function* airWarmSteps(kit) {
   const name = activeLook || 'plain', R = realState, out = name === 'realistic' ? R?.t?.hdr || null : name === 'ink' ? inkPost?.target || null : null
   for (const [target, cam] of [[scene, camera], [faustState?.skyScene, faustState?.skyCamera || camera]]) {
     if (!target) continue
-    const probe = new THREE.Group(); probe.add(kit.clone())
+    const probe = new THREE.Group(); probe.add(kit.clone(), airLights())
     probe.traverse(n => { n.visible = true; n.frustumCulled = false })
     inkPrepare(probe)
     yield* compileObjects(probe, cam, target, warmSetup(name, out, R))
@@ -39321,6 +39358,15 @@ function airLights(kind = 'zep') {
     const [pos, col, size] = airLightSets[kind], g = new THREE.BufferGeometry(); g.userData.shared = true
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
     const m = new THREE.PointsMaterial({ size, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, fog: false, toneMapped: false, blending: THREE.AdditiveBlending })
+    m.onBeforeCompile = sh => {
+      sh.vertexShader = 'varying float airLit;\n' + sh.vertexShader.replace('#include <fog_vertex>', `#include <fog_vertex>
+        float airD = length(mvPosition.xyz);
+        airLit = 1.0 - ${airFadeGLSL()};
+        gl_PointSize *= 0.5 + 0.5 * airLit;`)
+      sh.fragmentShader = 'varying float airLit;\n' + sh.fragmentShader.replace('#include <fog_fragment>', `#include <fog_fragment>
+        gl_FragColor.rgb *= airLit * airLit;`)
+    }
+    m.customProgramCacheKey = () => 'air-lights-1'
     m.userData.shared = true; L = airLightGeos[kind] = { g, m }
   }
   const p = new THREE.Points(L.g, L.m); p.frustumCulled = false; return p
@@ -39361,9 +39407,12 @@ function airDraw() {
   V.t = t; planeFrame++; boatViewsTick()
   for (const [key, v] of planeViews) if (v.seen < planeFrame - 1) { v.root.visible = false; if (v.seen < planeFrame - 600) { v.root.removeFromParent(); planeViews.delete(key) } }
   if (V.far.parent !== faustState?.skyScene && faustState?.skyScene) faustState.skyScene.add(V.far)
-  const cp = camera.position
+  const cp = camera.position, bg = scene?.background
+  airSkyColor.value.copy(bg?.isColor ? bg : airHazeColor.value)
   for (const s of V.ships) {
     const p = s.pose(t), d = Math.hypot(p.x - cp.x, p.y - cp.y, p.z - cp.z), zep = s.kind === 'zep', R = zep ? AIR.lod : PLANE_LOOK.lods
+    s.root.visible = d < AIR.fade[1]
+    if (!s.root.visible) continue
     s.root.position.set(p.x, p.y, p.z); s.root.rotation.set(p.pitch || 0, p.yaw, p.bank || 0, 'YXZ'); s.root.matrixAutoUpdate = true
     const lod = Math.min(d < R[0] ? 0 : d < R[1] ? 1 : 2, s.lods.length - 1)
     s.lods.forEach((g, i) => { g.visible = i === lod })
