@@ -9005,7 +9005,8 @@ function faustDisposeSky() {
   F.skyHead?.geometry.dispose(); F.skyStand?.dispose(); F.skyOccluder = F.skyStand = F.skyHead = F.skyBounds = null
 }
 function faustGlobeMap() {
-  // Original, deliberately angular continent outlines in longitude/latitude. No external imagery.
+  // The fallback map: original, deliberately angular continent outlines in longitude/latitude. It draws first and stays if the
+  // real coastlines (faustGlobeUpgrade) fail to load.
   const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 512
   const g = cv.getContext('2d'), at = ([lon, lat]) => [(lon + 180) / 360 * 1024, (90 - lat) / 180 * 512]
   g.fillStyle = '#324357'; g.fillRect(0, 0, 1024, 512)
@@ -9031,6 +9032,37 @@ function faustGlobeMap() {
   for (let lat = -60; lat <= 60; lat += 30) { const y = at([0, lat])[1]; g.beginPath(); g.moveTo(0, y); g.lineTo(1024, y); g.stroke() }
   const map = new THREE.CanvasTexture(cv); map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4; map.userData.faustOwned = true
   return map
+}
+// card #95: the globe's real coastlines. assets/faust_globe.1d0f00c9.png is Natural Earth's 1:50m land (public domain) in the same style as the
+// fallback map above (pale land, dark ocean, hatching, the 30-degree graticule), 4096x2048 equirectangular on the sphere's own
+// mapping. Fetched as the head's GLB is (assets/ beside the page, else the published site); the bytes are kept across city
+// rebuilds, the bitmap decodes off the main thread, and the texture's upload waits for its frame's upload budget (card #53) and
+// for the start-up to finish. Any failure logs once and leaves the angular map.
+const FAUST_GLOBE_FILE = 'faust_globe.1d0f00c9.png'
+let faustGlobeBlob = null
+function faustGlobeBytes() {
+  const get = base => fetch(base + FAUST_GLOBE_FILE).then(r => r.ok ? r.blob() : Promise.reject(new Error('HTTP ' + r.status)))
+  return faustGlobeBlob ||= get(RIG_BASE).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? get(RIG_SITE) : Promise.reject(e))
+    .catch(e => { faustGlobeBlob = null; throw e })
+}
+function faustGlobeUpgrade(globe) {
+  const material = globe.material, alive = () => !!faustState?.skyScene && globe.parent === faustState.skyScene
+  return background.run('faust-globe/' + globe.uuid, function* () {
+    while (typeof startingGame !== 'undefined' && startingGame || typeof landingBusy === 'function' && landingBusy()) yield 'frame'
+    const bitmap = yield faustGlobeBytes().then(blob => createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none' }))
+    if (!alive()) { bitmap.close?.(); return false }
+    const map = new THREE.Texture(bitmap)
+    map.flipY = false; map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); map.userData.faustOwned = true
+    map.minFilter = THREE.LinearMipmapLinearFilter; map.generateMipmaps = true; map.needsUpdate = true
+    while (!background.uploadSlot(bitmap.width * bitmap.height * 4)) yield 'frame'
+    if (!alive()) { map.dispose(); bitmap.close?.(); return false }
+    renderer.initTexture(map); yield 'frame'
+    if (!alive()) { map.dispose(); return false }
+    const old = material.map
+    material.map = material.emissiveMap = map
+    old?.dispose()
+    return true
+  }, { valid: alive, gpu: true }).catch(e => { console.warn('Faust globe: keeping the angular map,', e?.message || e); return false })
 }
 function faustSkyWeather(far) {
   const F = faustState, G = FAUST.globe, cv = document.createElement('canvas'); cv.width = 256; cv.height = 128
@@ -9169,6 +9201,7 @@ function faustMonument() {
   globe.material.customProgramCacheKey = () => 'faust-globe-flood-1'
   globe.material.userData.inkGlobe = true
   far.add(globe)
+  faustGlobeUpgrade(globe)
   // The placeholder, including its emissive eyes, is one mesh in a centred unit box.
   // A replacement uses the same transform, without re-baking its vertices into world coordinates.
   const eyeStart = batch.count * 3
@@ -14301,7 +14334,7 @@ const TRAFFIC = { cap: 160, fleet: ['Car','Sports car','Van','Truck','Bus'], den
 let trafficState = null
 // card #86: out of every player's TRAFFIC.far metres an ambient car thinks every TRAFFIC.thinkFar s (its lookahead is 38 m, so a stale step of
 // 3 m is safe, and no walker is listed past 160 m), and at once when it comes inside; pursuit and summoned cars keep the full rate
-TRAFFIC.far = 250; TRAFFIC.thinkFar = 0.3
+TRAFFIC.far = 250; TRAFFIC.thinkFar = 0.3; TRAFFIC.thinkBudget = 16
 const trafficFar = (o, a, people) => o.trafficAmbient && !a.urgent && !a.follow && people.length > 0 && people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.far)
 // card #86: the host's quality setting scales the ambient fleet (low and medium keep the old 80-car fleet)
 const trafficK = () => (TRAFFIC.quality[settings.quality] ?? 1) * (TRAFFIC.scale ?? 1)
