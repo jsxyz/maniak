@@ -10255,7 +10255,7 @@ function chainBetween(q, p, k) {
 function haymakerCharge(c, dt, inp) {
   const G = primaryOf(c)
   if (!G?.hayWind) return chargeUp(c, 'altCharge', G, primaryId(c), c.dead <= 0 && !!inp.alt, dt)
-  if (c.dead > 0 || seatOf(c) || c.leap || c.springT > SPRING_TAP || c.chain?.phase === 1) { c.hayT = c.hayAge = 0; c.hayReady = false; return null }
+  if (c.dead > 0 || seatOf(c) || c.leap || smashDiving(c) || c.springT > SPRING_TAP || c.chain?.phase === 1) { c.hayT = c.hayAge = 0; c.hayReady = false; return null }
   c.hayAge = c.hayAge > 0 && c.hayAge < G.rate ? c.hayAge + dt : 0
   if (c.hayT > 0) { c.hayT = Math.max(0, c.hayT - dt); if (!c.hayT) c.hayReady = true }
   if (!inp.alt || c.hayT || c.hayReady || c.spCool > 0) return null
@@ -10376,6 +10376,10 @@ let hubShape = null
 // card #50: a spring row's jump held this long or less is its plain jump (the Maniak's hop); longer, it charges. Taps
 // last about 0.06-0.2 s on a key or a phone's glass, and a frame at 30 fps adds 0.033: none reaches it
 const SPRING_TAP = 0.25   // s
+// card #90: the smash is a right-click while falling at SMASH_FALL_VY m/s or faster (a hop on flat ground lands at 6.6; a
+// fall reaches 8 after 1.45 m: a 2 m drop's last 0.55 m, a 3 m drop, a charged leap's way down). smashDiving: in its dive
+const SMASH_FALL_VY = 8
+const smashDiving = c => !!c.dove && GUNS[c.dove]?.name === 'Leap-smash'
 const HOP_STEER = 6        // m/s² the stick steers a hop by in the air: he keeps his take-off speed, as a heavy man does
 // card #50: charging on the move he keeps CHARGE_RUN of his pace, easing to it over the charge's first CHARGE_EASE s; a leap
 // carries LEAP_CARRY of his ground speed, so a sprinting leap goes further
@@ -10603,10 +10607,12 @@ function applyIntent(c, inp, dt) {
   const CV = carrierCarry(c, dt), CX = CV ? CV[0] : 0, CZ = CV ? CV[2] : 0      // card #5: its frame's velocity, from a carrier
   c.smashCam = Math.max(0, (c.smashCam || 0) - dt)
   if (c.leap && c.air) c.leapAir = true
-  if (c.leap && c.leapAir && c.grounded) { c.slam = Math.max(1, -c.fallVy); c.slamGun = gunNamed('Leap-smash'); c.smashCam = 0.7; c.leap = 0; c.dove = false }
+  if (c.leap && c.leapAir && c.grounded) c.leap = 0      // card #90: no smash of its own
   if (c.hop) { if (c.air) c.hopAir = true; else if (c.hopAir || ++c.hop > 6) c.hop = c.hopAir = 0 }     // card #50: no slam, no smash
   chainIntent(c, inp, dt)
-  if (c.dove && c.grounded) c.slam = -c.fallVy, c.slamGun = c.dove, c.dove = false
+  // card #90: the smash lands at least at its dive's speed (fallVy is the tick before: a dive begun a tick above the ground
+  // would read the fall it cut short)
+  if (c.dove && c.grounded) { const L = smashDiving(c); c.slam = L ? Math.max(GUNS[c.dove].dive.speed, -c.fallVy) : -c.fallVy; c.slamGun = c.dove; if (L) c.smashCam = 0.7; c.dove = false }
   if (c.air) c.fallVy = c.vy
 
   if (c.dashing) inp = { ...inp, f: 1, r: 0, sprint: true }
@@ -10616,7 +10622,7 @@ function applyIntent(c, inp, dt) {
   const m = Math.hypot(wx, wz)
   if (m > 1) { wx /= m; wz /= m }
 
-  if (c.dove && !c.leap && !c.bot && !(c.dove === primaryId(c) ? inp.alt : inp.fire && c.gun === c.dove)) c.dove = false
+  if (c.dove && !smashDiving(c) && !c.leap && !c.bot && !(c.dove === primaryId(c) ? inp.alt : inp.fire && c.gun === c.dove)) c.dove = false
   let vy = c.vy
   const tank = tankOf(c), J = tank > 0 && jetOf(c)
   const SW = swimTick(c, inp, wx, wz, dt, J)           // card #94: in deep water he swims; the jump, wall and web code below stands aside
@@ -10689,7 +10695,11 @@ function applyIntent(c, inp, dt) {
   if (padTouching(c.body)) { vy = Math.max(vy, JUMP_V); if (J) c.jLock = false }
   const D = [inp.alt && primaryOf(c), inp.fire && !objs.some(o => o.heldBy === c.id) && GUNS[c.gun]].find(G => G?.dive && !holdsFire(c, G))
   if (D && c.air && (vy < 0 || J)) c.dove = GUNS.indexOf(D)
-  if (c.leap && c.air && vy <= 0) c.dove = gunNamed('Leap-smash')
+  // card #90: no jump dives on its own; right-click while falling at SMASH_FALL_VY or faster does (a haymaker winding up
+  // gives way to it). Holding something (partsHeld, or the hands busy: parts.act), right-click stays the throw
+  if (!c.dove && c.air && inp.alt && vy <= -SMASH_FALL_VY && GAME.participantOf(c)?.leapSmash && !c.tie && !seatOf(c) && !c.parts?.act && !partsHeld(c)) {
+    c.dove = gunNamed('Leap-smash'); c.hayT = c.hayAge = 0; c.hayReady = false
+  }
   if (c.dove) { const V = GUNS[c.dove].dive; vy = Math.min(vy, -V.speed) - (V.pull || 0) * dt }
 
   // a shove: decaying floor on speed along the throw; across it untouched
@@ -10790,6 +10800,9 @@ function applyIntent(c, inp, dt) {
   // a hard landing lands on the ground: the fall swept, so the capsule doesn't sink into the floor for a tick and bounce out
   if (vy < 0 && !c.zip && !c.tie && !c.flyTurn) { const fall = -vy * dt, feet = c.y - c.h - c.r, d = staticRay(c.x, feet + 0.1, c.z, 0, -1, 0, fall + 0.1, null, RAY_GROUP | G_OBJ) - 0.1
     if (d >= 0 && d < fall) vy = -d / dt }
+  // slanting into a wall, he slides (slideFrom: what he ran at it with, for the glass he breaks: dsBodiesBefore)
+  if (!c.tie && !c.zip && !c.bot && !(c.knT > 0) && !(c.vehT > 0) && c.body) { const wx = mx, wz = mz; [mx, mz] = wallSlide(c, mx, mz, dt); c.slideFrom = mx !== wx || mz !== wz ? [wx, wz] : null }
+  else c.slideFrom = null
   if (!c.tie) {                // on a web, Bullet swings it
     velVec.setValue(mx, vy, mz)
     c.body.setLinearVelocity(velVec)
@@ -13065,8 +13078,35 @@ function sweepHits(c, x, y, z, tx, ty, tz, mask) {
   sweepFrom.setIdentity(); sweepFrom.setRotation(q); rayFrom.setValue(x, y, z); sweepFrom.setOrigin(rayFrom)
   sweepTo.setIdentity(); sweepTo.setRotation(q); rayTo.setValue(tx, ty, tz); sweepTo.setOrigin(rayTo)
   sweepCb.set_m_collisionFilterMask(mask); sweepCb.get_m_hitCollisionObjects().clear(); sweepCb.get_m_hitFractions().clear(); sweepCb.set_m_closestHitFraction(1)
+  sweepCb.get_m_hitNormalWorld().clear(); sweepCb.get_m_hitPointWorld().clear()      // else they grow call on call, out of step with the fractions
   world.convexSweepTest(c.body.getCollisionShape(), sweepFrom, sweepTo, sweepCb, 0)
   return sweepCb
+}
+// A player's move against the static world's walls, before Bullet takes it. Without it a tick's move sinks into a face (0.1 m
+// at 6 m/s), and Bullet's push-out of a contact deeper than 4 cm (m_erp2 0.8) throws him back out: QA's motion3 saw 28% and
+// 14% of his speed reversed in one frame, sprinting at a slant along a row of piers. So his own capsule is swept along the
+// tick's move: the part of it into the first wall it meets goes only as far as touching, and the part along the wall is
+// kept. A slanting run slides along the face and keeps that speed; straight at a wall, he stops against it, with no bounce.
+// A wall: a face within 60 deg of upright (WALL_NY) touched above his step (WALL_STEP), so kerbs, steps, ramps and floors
+// are Bullet's as before. Two passes, for a corner between two faces. Static world only: vehicles and people as before
+const WALL_STEP = 0.35, WALL_NY = 0.5
+function wallSlide(c, mx, mz, dt) {
+  const feet = c.y - c.h - c.r
+  for (let pass = 0; pass < 2; pass++) {
+    if (Math.hypot(mx, mz) * dt < 1e-4) break
+    const H = sweepHits(c, c.x, c.y, c.z, c.x + mx * dt, c.y, c.z + mz * dt, G_STATIC), F = H.get_m_hitFractions(), N = H.get_m_hitNormalWorld(), P = H.get_m_hitPointWorld()
+    let at = 2, nx = 0, nz = 0
+    for (let i = 0; i < F.size(); i++) {
+      const n = N.at(i), h = Math.hypot(n.x(), n.z())
+      if (Math.abs(n.y()) > WALL_NY || h < 1e-6 || P.at(i).y() < feet + WALL_STEP) continue
+      const ux = n.x() / h, uz = n.z() / h
+      if (mx * ux + mz * uz < 0 && F.at(i) < at) { at = F.at(i); nx = ux; nz = uz }      // the first face he moves into
+    }
+    if (at > 1) break
+    const vn = mx * nx + mz * nz, cut = vn * (1 - at)          // into it: only as far as touching; along it: all
+    mx -= cut * nx; mz -= cut * nz
+  }
+  return [mx, mz]
 }
 // after the step, each way round: [ours, other (undefined: static), manifold, touching]
 function touching(list) {
@@ -14110,7 +14150,7 @@ function resolveShot(shooter, targets, onKill, viewT, G, gunId) {
 }
 
 function fireHitscan(shooter, targets, onKill, viewT) {
-  if (shooter.dead > 0 || shooter.cool > 0 || shooter.hayT > 0 || shooter.springT > SPRING_TAP || shooter.leap || shooter.chain?.phase === 1 || holdsFire(shooter)) return []
+  if (shooter.dead > 0 || shooter.cool > 0 || shooter.hayT > 0 || shooter.springT > SPRING_TAP || shooter.leap || smashDiving(shooter) || shooter.chain?.phase === 1 || holdsFire(shooter)) return []
   const G = GUNS[shooter.gun]
   const gunId = shooter.gun
   if (shooter.ammo <= 0) { shooter.gun = 0; shooter.ammo = Infinity; return [] }
@@ -20275,8 +20315,8 @@ function rigAnimate(a, want, dt, t) {
   }
   // the legs' clip
   let name = K.idle, rate = 1, once = false, fade = 0.2
-  const airborne = want === 2 || want === 3 || a.moveState === 2
-  if (want === 'crouch' || want === 'crouchRun' || a.moveState === 2) R.charged = t
+  const airborne = want === 2 || want === 3 || a.moveState >= 2
+  if (a.moveState === 3) R.charged = t      // card #90: the smash dive (its landing: smash_land)
   if (a.dying >= 0) { name = K.death; once = true; fade = 0.1 }
   else if (a.chainState?.[0] === 1 && !(want === 1 || v > 0.6)) { name = 'block_whirl'; fade = 0.15 }      // whirling on the spot; walking, the legs walk (rigMovePose whirls)
   else if (a.chainState?.[0] === 2 && a.chainState[2] < 0.5) { name = 'block_throw'; once = true; fade = 0.05 }
@@ -20284,7 +20324,7 @@ function rigAnimate(a, want, dt, t) {
   // the air, stand braced, or walk
   else if (a.chainState?.[0] >= 3 && (airborne || want === 4 || hold === 'swing')) { name = K.climb; fade = 0.15 }
   else if (a.chainState?.[0] >= 3 && !(want === 1 || v > 0.6)) { name = K.idle; fade = 0.15 }
-  else if (a.moveState === 2) name = K.leap
+  else if (a.moveState === 3) name = K.leap      // card #90: smash_air is the smash's; a leap flies in jump and fall
   else if (hold === 'held') name = K.fall          // card #55: dangling in someone's hands
   else if (hold === 'sit') name = a.seat === 0 ? K.drive : K.sit
   else if (hold === 'swing' || hold === 'climb' || hold === 'ceiling' || want === 4) name = K.climb
@@ -20445,7 +20485,7 @@ function restoreMovePose(R) {
 function rigMovePose(a, R, want, t) {
   if (a.spec.model !== 'maniak' && a.spec.model !== 'alistair' || a.dying >= 0) return
   const smk = a.smk || 0, chg = a.chgAt !== undefined ? (t - a.chgAt) / (DIS_S * 1000) : 2
-  const charge = a.moveState === 1 ? clamp(a.moveCharge || 0, 0, 1) : -1, air = a.moveState === 2, age = a.hayAge || 0
+  const charge = a.moveState === 1 ? clamp(a.moveCharge || 0, 0, 1) : -1, air = a.moveState === 3, age = a.hayAge || 0
   const whirl = Array.isArray(a.chainState) && a.chainState[0] === 1 ? clamp(a.chainState[1] || 0, 0, 1) : -1
   const reel = Array.isArray(a.chainState) && a.chainState.length >= 24 + CHAIN_N * 3 && a.chainState[0] >= 3 ? (a.chainState[10] ? 1 : 0) : -1       // card #43: 1 reeling, 0 held
   if (!(smk > 0) && !(chg >= 0 && chg < 1) && whirl < 0 && reel < 0 && charge < 0 && !air && !(age > 0 && age < 0.9)) {
@@ -25097,10 +25137,10 @@ function openPause() {
 // the desktop keys, for the character played: the status line leaves them to the menu (#39)
 function keyHelp(c) {
   const C = c ? CHARS[c.cid] : CHARS[0]
-  const space = C.jet?.flier ? 'Space fly/rise · Q down' : C.chain ? 'Space tap: jump, hold and release: leap-smash · Q hold and release: chain · hold Q: reel in · Space: let go'
+  const space = C.jet?.flier ? 'Space fly/rise · Q down' : C.chain ? 'Space tap: jump, hold and release: leap · Q hold and release: chain · hold Q: reel in · Space: let go'
     : 'Space jump' + (C.swing ? ' · Q zip' : '')
   return 'WASD move · Shift sprint · ' + space + '<br>' +
-    'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
+    'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker, falling: smash' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
     (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + (C.disguise !== undefined ? ' · G change coat' : '') + (C.pipe ? ' · P pipe' : '') + '<br>' +
     'In a biplane: the mouse aims it · W full throttle · S idle · A/D roll (on the ground, steer) · Space brakes · E get out<br>' +
     'H whistle for your car, at its wheel the ejector seat · T chat · Tab scores · V view · M map · N sound · B radio · F3 debug · Esc menu'
@@ -28220,7 +28260,7 @@ const PLAYER_STATE = stateSchema([
   ['sprof', c => primaryOf(c) ? profBits(c, primaryOf(c).name) : 0, (c, v) => { c.sprof = v | 0 }],
   ['mark', c => c.mark | 0, (c, v) => { c.mark = effId(v) }],
   ['web', c => c.web || 0],
-  ['move', c => c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0],
+  ['move', c => smashDiving(c) ? 3 : c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0],      // card #90: 3, the smash dive
   ['chain', c => chainPack(c), (c, v) => { c.chainNet = chainRead(v) }],
   ['hay', c => r2(c.hayAge || 0), (c, v) => { c.hayAge = Number.isFinite(v) ? clamp(v, 0, 2) : 0 }],
   ['leapCharge', c => r2(c.springT || 0)],
@@ -31585,7 +31625,7 @@ function dsBlockHit(point, n) {
 // before the step: each body's velocity going into it; after: one at speed into a facade breaks the panes it meets (his
 // sprint, a leap, a chain swing, a knock into a wall)
 function dsBodiesBefore(all) {
-  for (const c of all) { const v = c.body?.getLinearVelocity?.(); c.dsV = v ? [v.x(), v.y(), v.z()] : null }
+  for (const c of all) { const v = c.body?.getLinearVelocity?.(); c.dsV = v ? c.slideFrom ? [c.slideFrom[0], v.y(), c.slideFrom[1]] : [v.x(), v.y(), v.z()] : null }     // a wall slide's: what he ran at it with
 }
 function dsBodiesAfter(all, dt) {
   if (!LV.faust || !dsCheck()) return
@@ -36065,7 +36105,7 @@ function draw(dt, t) {
     if (!me) { frameFailed('draw', new Error('the host has no player 0')); return }
     others = [...players].filter(([id]) => id !== 0)
       .map(([id, c]) => ({ id, ...(P => P ? { x: P[0], y: P[1], z: P[2], sim: c } : { x: c.x, y: c.y, z: c.z })(drawnPose(c)), yaw: c.yaw, wy: c.wy, vx: c.vx, vz: c.vz, dead: c.dead,
-                           cid: looksCid(c), disg: c.disguised ? 1 : 0, smk: c.smk || 0, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: drawnChain(c, id), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
+                           cid: looksCid(c), disg: c.disguised ? 1 : 0, smk: c.smk || 0, prot: c.prot, anim: animOf(c), cap: c.cap | 0, web: c.web, move: smashDiving(c) ? 3 : c.leap ? 2 : c.springT > SPRING_TAP ? 1 : 0, chainNet: drawnChain(c, id), hayAge: c.hayAge || 0, springT: c.springT || 0, grab: partsPack(c), act: partsAct(c),
                            gun: c.gun, pitch: c.pitch, hp: c.hp, kills: c.kills | 0, mark: c.mark, markT: c.markT, vy: c.vy, jl: c.jLock }))
     pkl = GAME.view.pickups()
   } else {
@@ -36099,7 +36139,7 @@ function draw(dt, t) {
   const meP = drawnPose(me), meD = carrierShift(me, meP ? { ...me, x: meP[0], y: meP[1], z: meP[2] } : me)
   meMesh.position.set(meD.x, meD.y, meD.z)
   const myHold = holdOf(myId, me) || me.ceil && 'ceiling'
-  avatars.get(myId).moveState = me.leap ? 2 : me.springT > SPRING_TAP ? 1 : 0; avatars.get(myId).moveCharge = clamp(((me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1)
+  avatars.get(myId).moveState = smashDiving(me) ? 3 : me.leap ? 2 : me.springT > SPRING_TAP ? 1 : 0; avatars.get(myId).moveCharge = clamp(((me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1)
   avatars.get(myId).chainState = isHost ? chainPack(me) : me.chainNet; avatars.get(myId).hayAge = me.hayAge || 0
   const myTicks = tickSamples.get(myId) || []
   meMesh.rotation.y = GAME.view.faceYaw(myId, me, animOf(me), myHold || firstPerson || carries.has(myId), t, dt, input.fire || input.alt, myTicks)
