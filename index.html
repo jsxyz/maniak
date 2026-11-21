@@ -30602,10 +30602,10 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
       return GAME.streetLife.knock(id, ux, uz, power, dmg)
     },
     // card #63 (hooks4): light(pramId) sets that pram's fuse going now (2.5 s, no damage), as a hit by the host would: a test
-    light(id) {
+    light(id, calm = false) {
       hookCheck(isHost, 'Only the host can use test commands.')
       hookCheck(Number.isFinite(id), 'light(pramId) needs a pram id (around())')
-      return GAME.streetLife.light(id)
+      return GAME.streetLife.light(id, !!calm)
     },
     // card #63 (hooks5): blasts(): the last 16 blasts in the street (a pram's, a car's): where, by whom, whom each caught and passed over
     blasts() {
@@ -35534,12 +35534,13 @@ const slPramBoom = () => VEHICLES.find(V => V.name === 'Car')?.boom || { radius:
 // radius, whom it was credited to (by: a player's id, or null), whom it caught (id, kind, distance, lying, its damage there, killed
 // by it), the lone prams it struck, and whom inside its radius it passed over and why
 const slBlastLog = []
-function slBlastNote(what, x, z, B, by, caught, prams, skipped, T) {
+function slBlastNote(what, x, z, B, by, caught, prams, skipped, T, hitP = []) {
   const kind = ag => Object.keys(SL_K).find(k => SL_K[k] === ag.kind) ?? null
   slBlastLog.push({ what, t: Math.round(T), x: slR2(x), z: slR2(z), r: B.radius, by: by ? by.id : null,
     caught: caught.map(([ag, p, d]) => ({ id: ag.id, kind: kind(ag), d: slR2(d), lying: !!p.down, dmg: slR2(B.dmg * (1 - d / B.radius)), killed: !p.dead && !!slDeathOf(ag.id, Math.round(T)) })),
     prams: prams.map(([ag, p, d]) => ({ id: ag.id, d: slR2(d), blown: !!slPramGone(ag, T) })),
-    skipped: skipped.map(([ag, why, d]) => ({ id: ag.id, kind: kind(ag), d: slR2(d), why })) })
+    skipped: skipped.map(([ag, why, d]) => ({ id: ag.id, kind: kind(ag), d: slR2(d), why })),
+    players: hitP.map(([c, d, dm]) => ({ id: c.id, d: slR2(d), dmg: slR2(dm), hp: slR2(c.hp), dead: c.dead > 0 })) })
   if (slBlastLog.length > 16) slBlastLog.shift()
 }
 // the wire: new records in the next few snapshots, and every live one every refreshMs (a late joiner, a lost packet)
@@ -36259,12 +36260,13 @@ function slSpawnNearPram(x, z, d) {
   const ag = slSpawnTest(SL_K.ped, q.x + fx * (d + 0.6), q.z + fz * (d + 0.6), q.yaw, 0, false, true)          // he falls 0.6 m back: d m from it
   return ag && { id: ag.id, mother: M.id }
 }
-function slLightPram(id) {
+function slLightPram(id, calm = false) {
   if (!isHost || !slState) return false
   const T = tickAt || now(); let got = null
   for (const c of players.values()) if (!got) slAround(c.x, c.z, 120, T, (ag, p) => { if (!got && ag.id === id && ag.kind === SL_K.pram) got = [ag, { ...p }] })
   if (!got || slPramGone(got[0], T)) return false
   slPramStrike(got[0], got[1], players.get(myId) || null, T, 0)
+  if (calm) slBabyOf(slState).mad.delete(id)
   return true
 }
 GAME.streetLife = {
@@ -38617,11 +38619,12 @@ function slPramBlow(id, x, z, by, T) {
 // (they burn and blow in their own turn), people in it knocked down, the street panicked; one fire-and-smoke record
 function slPramBlast(e, credit) {
   const B = slPramBoom(), at = [e.x, 0.55, e.z], by = e.by, T = e.T          // card #63 (hooks5): its numbers from one place
+  const hitP = []
   for (const c of players.values()) {
     const dx = c.x - at[0], dz = c.z - at[2], d = Math.hypot(dx, c.y - at[1], dz), k = 1 - d / B.radius
     const was = hookHitOn && [c.hp, c.mark, c.markT]
     if (c.dead > 0 || k <= 0 || seatOf(c)) continue      // riders: their vehicle takes it
-    c.hp -= stat(c, 'take', B.dmg * k)
+    const dm = stat(c, 'take', B.dmg * k); c.hp -= dm; hitP.push([c, d, dm])
     if (was && !hookHit(by, c, 'Pram', was)) continue
     knockChar(c, dx / (d || 1), 0.5, dz / (d || 1), B.knock * k)
     if (downed(c)) by && credit ? credit(by.id, by)(c, { name: 'Pram' }) : fell(c, gameText('pramBlast', { pram: enemyName('Pram').toLowerCase() }), 'Pram')
@@ -38641,7 +38644,7 @@ function slPramBlast(e, credit) {
     try { slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }          // card #101
     slBlastHurt(ag, p, by, T)          // card #63 (hooks3): a lying one it hurt
   }
-  slBlastNote('pram', at[0], at[2], B, by, caught, prams, skipped, T)          // card #63 (hooks5): QA's blast log
+  slBlastNote('pram', at[0], at[2], B, by, caught, prams, skipped, T, hitP)          // card #63 (hooks5): QA's blast log
   slBirdsNear(at[0], at[2], B.radius, T, (f, i, q) => slBirdKill(f, i, by, q.x - at[0] || 0.01, q.z - at[2], T))          // card #101: the birds in it
   slPanic(at[0], at[2], T)
   const seed = Math.random() * 2 ** 31 | 0, B_ = slBabyOf(slState)
@@ -38893,7 +38896,8 @@ const heatLog = []
 function heatNote(c, kind, n, T, no, who = null) {          // card #63 (hooks3): who, the street person it was done to
   const H = heat.get(c.id)
   heatLog.push({ t: Math.round(T), id: c.id, kind, add: (HEAT.crime[kind] ?? 1) * n, counted: !no, why: no || undefined, pts: +(H?.pts ?? 0).toFixed(2), stars: H?.stars | 0,
-    victim: who?.id ?? null, victimKind: who ? Object.keys(SL_K).find(k => SL_K[k] === who.kind) ?? null : null })
+    victim: who?.id ?? null, victimKind: who ? Object.keys(SL_K).find(k => SL_K[k] === who.kind) ?? null : null,
+    byHp: Number.isFinite(c.hp) ? +c.hp.toFixed(1) : null, byDead: c.dead > 0 })
   if (heatLog.length > 64) heatLog.shift()
   return !no
 }
