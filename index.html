@@ -5650,11 +5650,17 @@ function* faustChanLook(ch, k) {
 // the water: a unit-wide sheet along the piece at its channel's middle (x, or z, for an axis-1 channel, is u); faustChanWaterSet sets its level
 // and width (the gutter's, then the floor's, then up the banks) from GAME.faustland.channels.water.level
 function* faustChanWater(ch, k) {
-  const buf = faustRoadBuf(), s0 = Math.max(ch.lo, k * 96 - 48), s1 = Math.min(ch.hi, k * 96 + 48), P = (s, u) => ch.axis ? [u, 0, s] : [s, 0, u]
-  buf.face(P(s0, -0.5), P(s1, -0.5), P(s1, 0.5), P(s0, 0.5), [0, 1, 0], FAUST_CHAN.tint.water, FAUST_CHAN.glow.water)
-  const sh = (a, b, u) => buf.face(P(a, -u), P(b, -u), P(b, u), P(a, u), [0, 1, 0], FAUST_CHAN.tint.sheen, 0.3)
-  for (let q = s0 + 3; q + 9 < s1; q += 14) sh(q, q + 9, 0.08)      // a few pale glints along it
-  return buf.geometry()
+  const s0 = Math.max(ch.lo, k * 96 - 48), s1 = Math.min(ch.hi, k * 96 + 48), N = 16, M = 8, col = new THREE.Color(FAUST_CHAN.tint.water)
+  const pos = new Float32Array((N + 1) * (M + 1) * 3), nor = new Float32Array(pos.length), clr = new Float32Array(pos.length), idx = []
+  for (let a = 0; a <= N; a++) for (let q = 0; q <= M; q++) {
+    const o = (a * (M + 1) + q) * 3, s = s0 + (s1 - s0) * a / N, u = q / M - 0.5      // u -0.5..0.5 across, scaled to the water's width by faustChanWaterSet
+    pos[o] = ch.axis ? u : s; pos[o + 2] = ch.axis ? s : u; nor[o + 1] = 1; clr[o] = col.r; clr[o + 1] = col.g; clr[o + 2] = col.b
+    if (a < N && q < M) { const v0 = a * (M + 1) + q, v1 = (a + 1) * (M + 1) + q; idx.push(v0, v0 + 1, v1 + 1, v0, v1 + 1, v1) }
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); geo.setAttribute('color', new THREE.BufferAttribute(clr, 3))
+  geo.setIndex(new THREE.BufferAttribute(new Uint16Array(idx), 1))
+  return geo
 }
 function faustChanWaterSet(F, level) {
   const K = FAUST_CHAN, list = faustChannels(F.seed, F.S).list
@@ -5738,7 +5744,10 @@ function faustChanFrame() {
     background.run('chanlook:' + key, function* () {
       const g = yield* faustChanLook(ch, k)
       v.mesh = new THREE.Mesh(g, F.materials.stone); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
-      v.water = new THREE.Mesh(yield* faustChanWater(ch, k), F.materials.stone); v.water.receiveShadow = true; worldGroup.add(v.water)
+      v.water = new THREE.Mesh(yield* faustChanWater(ch, k), F.materials.stone); v.water.receiveShadow = true
+      v.water.userData.water = { id: ch.id, kind: ch.kind === 'river' ? 'river' : 'channel', level: ch.kind === 'river' ? FAUST_WATER.river.level : FAUST_CHAN.ground - FAUST_CHAN.depth - FAUST_CHAN.gutter[2] + FAUST_CHAN.water }
+      FAUST_WATER.dress?.(v.water, v.water.userData.water)
+      worldGroup.add(v.water)
       F.chanWaterAt = null
     }, { valid: () => faustState === F && F.chanLooks === V && V.get(key) === v }).catch(e => frameFailed('channels', e))
   }
@@ -5768,6 +5777,8 @@ function faustChanMapLayer() {
 //   distance d to the nearest capsule (a river's by its table, a lake's by a slope), so waterAt is analytic and answers from the plan alone.
 //   A cell the water doesn't reach is untouched. Wet where the bed lies under the body's level (below the ground, y 0).
 const FAUST_WATER = { version: 1, cell: 96, grid: 6, reach: 240, look: 1500, part: 1000,
+  // the look builder's hook: dress(mesh, info) is called once after each surface mesh is made (info = mesh.userData.water); null leaves the stone material
+  dress: null,
   // a river: depth by distance from its axis (banks 45 degrees, a 1 m shelf 8 m wide at level -3, a trough 7.5 m deep)
   river: { reach: 3300, level: -3, flow: 1.2, tab: [[28, 0], [20, 4], [12, 4], [8, 7.5], [0, 7.5]],      // banks 26 degrees (the Maniak climbs them: 45 stuck him), a 1 m shelf 8 m wide, a trough
     sec: { foot: 20, h: 4, land: 16, kinds: ['bed', 'bed', 'bed'], inner: [[20, 0], [12, 0], [8, -3.5]] } },
@@ -6101,11 +6112,6 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
       for (let u = 0; u < m; u++) for (let v = 0; v < m; v++) quad(xa + u * gs, za + v * gs, gs, sd[u][v], sd[u + 1][v], sd[u][v + 1], sd[u + 1][v + 1], (u + v + a + b) & 1)
     } else quad(xa, za, g, d00, d10, d01, d11, (a + b) & 1)
   }
-  if (look) {
-    const seen = new Set()
-    for (let k = 0; k < e.length; k += 2) { const b = w.bodies[e[k]]; if (seen.has(e[k]) || b.rim) continue; seen.add(e[k])
-      emit.face([x0, b.level, z0], [x0 + 96, b.level, z0], [x0 + 96, b.level, z0 + 96], [x0, b.level, z0 + 96], [0, 1, 0], T.water, false, 0.2) }
-  }
   // docks whose land end lies in this cell: a deck, piles to the bed, bollards, a lamp at the end
   const ob = (cx, cz, d, hl, hw, y0, y1, tint, glow, solid) => {
     const [dx, dz] = d, nx = -dz, nz = dx, p = (l, v, y) => [cx + dx * l + nx * v, y, cz + dz * l + nz * v], f = (a, b, c, d2, nrm) => emit.face(a, b, c, d2, nrm, tint, solid, glow)
@@ -6169,6 +6175,35 @@ function* faustWaterCell(seed, S, i, j, emit, look) {
     }
   }
 }
+// a cell's water surfaces, one per body it holds: [{ geo, info: { id, kind, level }, rim }]. A 17 x 17 grid (6 m) at the body's level with position, normal (up) and
+// color (the tint) only; the quads kept are those a corner of which has its bed under the level (a reservoir's: under the level the rain can raise it to, and within
+// its circle), so a surface stops at the shore. A reservoir's rides the rain (position.y = faustWaterRise).
+function faustWaterSurface(seed, S, i, j) {
+  const K = FAUST_WATER, w = faustWater(seed, S), e = w.cells.get(faustWaterKey(i, j)), out = [], n = 16, g = 96 / n, x0 = i * 96, z0 = j * 96, sc = { y: 0, depth: 0, body: -1, cap: -1, d: 0 }
+  if (!e) return out
+  const seen = new Set(), col = new THREE.Color(K.tint.water)
+  for (let k = 0; k < e.length; k += 2) {
+    const bi = e[k], b = w.bodies[bi]
+    if (seen.has(bi)) continue
+    seen.add(bi)
+    const bed = new Float32Array((n + 1) * (n + 1)), top = b.level + (b.rim ? K.dam.rise + 0.3 : 0.3), c0 = b.rim ? b.caps[0] : null
+    for (let a = 0; a <= n; a++) for (let q = 0; q <= n; q++) bed[a * (n + 1) + q] = faustWaterDepth(w, e, x0 + a * g, z0 + q * g, sc).y
+    const keep = (a, q) => bed[a * (n + 1) + q] < top && (!c0 || Math.hypot(x0 + a * g - c0[0], z0 + q * g - c0[1]) < c0[4] + g)
+    const idx = []
+    for (let a = 0; a < n; a++) for (let q = 0; q < n; q++) if (keep(a, q) || keep(a + 1, q) || keep(a, q + 1) || keep(a + 1, q + 1)) {
+      const v0 = a * (n + 1) + q, v1 = (a + 1) * (n + 1) + q, v2 = a * (n + 1) + q + 1, v3 = (a + 1) * (n + 1) + q + 1
+      idx.push(v0, v2, v3, v0, v3, v1)
+    }
+    if (!idx.length) continue
+    const pos = new Float32Array((n + 1) * (n + 1) * 3), nor = new Float32Array(pos.length), clr = new Float32Array(pos.length)
+    for (let a = 0; a <= n; a++) for (let q = 0; q <= n; q++) { const o = (a * (n + 1) + q) * 3; pos[o] = x0 + a * g; pos[o + 1] = b.level; pos[o + 2] = z0 + q * g; nor[o + 1] = 1; clr[o] = col.r; clr[o + 1] = col.g; clr[o + 2] = col.b }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); geo.setAttribute('color', new THREE.BufferAttribute(clr, 3))
+    geo.setIndex(new THREE.BufferAttribute(new Uint16Array(idx), 1))
+    out.push({ geo, info: { id: b.id, kind: b.kind, level: b.level }, rim: b.rim ? b : null })
+  }
+  return out
+}
 function* faustWaterCellSolid(seed, S, i, j) {
   const out = []
   // each triangle wound to face its normal: a collider copy is hit by rays only from its front (a deck's top, wound down, let the ground check through)
@@ -6219,21 +6254,12 @@ function faustWaterFrame() {
   const w = faustWater(F.seed, F.S), K = FAUST_WATER
   if (!w.cells.size) return
   const V = F.waterLooks ||= new Map(), p = camera.position, reach = Math.min(viewEnd() + 100, K.look)
-  const Dc = F.waterDiscs ||= new Map()
-  for (const b of w.bodies) if (b.rim) {      // a reservoir's surface: one disc at its level, raised by the rain, there while the camera is within reach of it
-    const c = b.caps[0], near = Math.hypot(p.x - c[0], p.z - c[1]) < c[4] + reach + 100, have = Dc.get(b.id)
-    if (near && !have) {
-      const buf = faustRoadBuf(), N = 72, q = a => [c[0] + Math.cos(a) * (c[4] + 0.5), b.level, c[1] + Math.sin(a) * (c[4] + 0.5)]
-      for (let i = 0; i < N; i++) buf.tri([[c[0], b.level, c[1]], q(i / N * 6.2831853), q((i + 1) / N * 6.2831853)], [0, 1, 0], FAUST_WATER.tint.water, 0.2)
-      const m = new THREE.Mesh(buf.geometry(), F.materials.stone); m.receiveShadow = true; worldGroup.add(m); Dc.set(b.id, m)
-    } else if (!near && have) { worldGroup.remove(have); have.geometry.dispose(); Dc.delete(b.id) }
-    if (have) have.position.y = faustWaterRise(b)
-  }
+  for (const v of V.values()) for (const [m, bd] of v.rise || []) m.position.y = faustWaterRise(bd)      // a reservoir's surfaces ride the rain
   const stamp = Math.floor(p.x / 48) + ' ' + Math.floor(p.z / 48) + ' ' + Math.round(reach / 50)
   if (F.waterStamp === stamp) return
   F.waterStamp = stamp
   const dist = (i, j) => Math.hypot(Math.max(i * 96 - p.x, 0, p.x - i * 96 - 96), Math.max(j * 96 - p.z, 0, p.z - j * 96 - 96)), want = []
-  for (const [key, v] of [...V]) if (dist(v.i, v.j) > reach + 400) { background.cancel('waterlook:' + key); if (v.mesh) { worldGroup.remove(v.mesh); v.mesh.geometry.dispose() } V.delete(key) }
+  for (const [key, v] of [...V]) if (dist(v.i, v.j) > reach + 400) { background.cancel('waterlook:' + key); for (const m of [v.mesh, ...v.surf || []]) if (m) { worldGroup.remove(m); m.geometry.dispose() } V.delete(key) }
   for (let i = Math.floor((p.x - reach) / 96); i <= Math.floor((p.x + reach) / 96); i++) for (let j = Math.floor((p.z - reach) / 96); j <= Math.floor((p.z + reach) / 96); j++) {
     const key = faustWaterKey(i, j), d = dist(i, j)
     if (w.cells.has(key) && !V.has(key) && d < reach) want.push([d, i, j, key])
@@ -6245,6 +6271,12 @@ function faustWaterFrame() {
     background.run('waterlook:' + key, function* () {
       const g = yield* faustWaterCellLook(F.seed, F.S, i, j)
       v.mesh = new THREE.Mesh(g, F.materials.stone); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
+      v.surf = []; v.rise = []
+      for (const sf of faustWaterSurface(F.seed, F.S, i, j)) {
+        const m = new THREE.Mesh(sf.geo, F.materials.stone); m.receiveShadow = true; m.userData.water = sf.info
+        FAUST_WATER.dress?.(m, sf.info)
+        worldGroup.add(m); v.surf.push(m); if (sf.rim) { v.rise.push([m, sf.rim]); m.position.y = faustWaterRise(sf.rim) }
+      }
     }, { valid: () => faustState === F && F.waterLooks === V && V.get(key) === v }).catch(e => frameFailed('water', e))
   }
 }
