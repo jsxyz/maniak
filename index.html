@@ -27930,6 +27930,67 @@ function soundCmd(a) {
     : '§7Nothing plays for §f' + name + '§7: no file or synth is set (or its file is still loading: try again).')
 }
 
+// ---- /hear (cards #11 and #13): candidate sounds to audition in the game, nothing here plays by itself. /hear lists the moves,
+// /hear <move> plays every take in turn (named in chat), /hear <move> <n> one take, /hear <move> live the sound the row plays now. Takes 1 to 3 are
+// 1 clean game-designed impacts (Kenney), 2 crisp recordings (Rubberduck), 3 layered from both with cloth or debris; the files load when asked.
+const HEARS = {
+  jab: { row: 'Fists', takes: ['hear_jab1.c7356afc.mp3', 'hear_jab2.ab8e3685.mp3', 'hear_jab3.a7641516.mp3'] },
+  haymaker: { row: 'Haymaker', takes: ['hear_haymaker1.10284281.mp3', 'hear_haymaker2.71e0da00.mp3', 'hear_haymaker3.9c1972d7.mp3'] },
+  leapsmash: { row: 'Leap-smash', takes: ['hear_leapsmash1.6bf56efd.mp3', 'hear_leapsmash2.3ba16e62.mp3', 'hear_leapsmash3.3272109d.mp3'] },
+  chainthrow: { row: 'Chain throw', takes: ['hear_chainthrow1.27615b3b.mp3', 'hear_chainthrow2.29b48338.mp3', 'hear_chainthrow3.89af19e9.mp3'], note: '1 whoosh and chain, 2 chain only, 3 layered whoosh and chain' },
+  chaincatch: { row: 'Chain catch', takes: ['hear_chaincatch1.f0b2bbb4.mp3', 'hear_chaincatch2.7506d8bd.mp3', 'hear_chaincatch3.2a73b9bd.mp3'] },
+  cinderblock: { row: 'Cinderblock', takes: ['hear_cinderblock1.36588df6.mp3', 'hear_cinderblock2.ec659990.mp3', 'hear_cinderblock3.964f6dbe.mp3'] },
+  glass: { row: 'Glass break', takes: ['hear_glass1.98aa45d8.mp3', 'hear_glass2.bf2afe0a.mp3', 'hear_glass3.3568eb13.mp3'] },
+  carpunch: { row: 'Car punch', takes: ['hear_carpunch1.516af504.mp3', 'hear_carpunch2.b92dbb1f.mp3', 'hear_carpunch3.0d6cc9a8.mp3'] },
+  pipe: { row: 'Pipe', takes: ['hear_pipe1.5d166496.mp3', 'hear_pipe2.b10ecead.mp3', 'hear_pipe3.5bac573c.mp3'] },
+  steps: { row: 'Footstep', takes: ['hear_steps1.4f35ab40.mp3', 'hear_steps2.1ca88245.mp3', 'hear_steps3.dd27fdad.mp3', 'hear_steps4.bb314244.mp3', 'hear_steps5.e3a9ade0.mp3', 'hear_steps6.f9f1b6f4.mp3'], note: 'six heavy boot footfalls on pavement' },
+}
+
+const hearKey = w => String(w || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+let hearRun = 0       // a newer /hear cancels the one still going
+// play the files in turn once they have all loaded: [label, file] each; the first name appears as its take starts
+function hearPlayList(list) {
+  const run = ++hearRun, t0 = now()
+  const go = () => {
+    if (run !== hearRun) return
+    const bad = list.find(([, f]) => soundBad.has(f))
+    if (bad) return sysMsg('§cCould not load §f' + bad[1])
+    if (list.some(([, f]) => !soundBuf.has(f))) {
+      if (now() - t0 > 8000) return sysMsg('§cStill loading, try /hear again in a moment.')
+      list.forEach(([, f]) => soundReady(f))
+      return void setTimeout(go, 150)
+    }
+    let at = 0
+    for (const [label, f] of list) {
+      setTimeout(() => { if (run === hearRun) { sysMsg('§7Playing §f' + label); soundPlay('hear', { file: f }, { cat: 'you' }, []) } }, at * 1000)
+      at += soundBuf.get(f).duration + 0.8
+    }
+  }
+  go()
+}
+function hearCmd(a) {
+  const w = String(a || '').trim()
+  const moves = Object.keys(HEARS)
+  if (!w) {
+    sysMsg('§7/hear <move> plays every take of a move; §f/hear <move> <n>§7 one take; §f/hear <move> live§7 what it plays now. Click in the game first.')
+    return sysMsg('§7Moves: ' + moves.map(m => '§f' + m + ' §8(' + HEARS[m].takes.length + ')').join('§7, '))
+  }
+  const m = w.match(/^(.*?)(?:\s+(\d+|live))?$/), move = moves.find(k => hearKey(k) === hearKey(m[1])), pick = m[2]
+  if (!move) return sysMsg('§cNo move §f' + m[1] + '§c. §7/hear lists them.')
+  if (!settings.sound) return sysMsg('§cSound is off (N).')
+  if (!sfxLive()) return sysMsg('§cSound is not running yet: click in the game, then try again.')
+  const H = HEARS[move]
+  if (pick === 'live') {
+    const v = playSound(H.row, { cat: 'you' })
+    return sysMsg(v ? '§7Playing §f' + move + ' live §8(' + H.row + ')' : '§7Nothing plays for §f' + H.row + '§7 right now.')
+  }
+  const n = pick ? +pick : 0
+  if (pick && !(n >= 1 && n <= H.takes.length)) return sysMsg('§c' + move + ' has takes 1 to ' + H.takes.length + '.')
+  const takes = pick ? [n] : H.takes.map((f, i) => i + 1)
+  if (H.note && !pick) sysMsg('§8' + H.note)
+  hearPlayList(takes.map(i => [move + ' ' + i, H.takes[i - 1]]))
+}
+
 function sfxRoom(cat, gain, t) {
   const now0 = actx.currentTime
   for (let i = sfxVoices.length - 1; i >= 0; i--) if (sfxVoices[i].end <= now0) sfxVoices.splice(i, 1)
@@ -38267,6 +38328,7 @@ GAME.commands = {
               sysMsg(got.length ? '§7Spawned §f' + got.map(i => enemyName(BOTS[i].name)).join(', ')
                                 : '§7Already out.') } },
   sound:  { args: '[key]', help: 'host only, test: play a sound or voice line by its key (blank lists them)', run: soundCmd },
+  hear:   { args: '[move] [take|live]', help: 'play the candidate sounds for a move (blank lists the moves); any player, only you hear it', run: a => hearCmd(a) },
   wanted: { args: '<0-5>', help: 'host only, set your own heat in stars', run: a => {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.')
               const n = parseInt(a, 10)
