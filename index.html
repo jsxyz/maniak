@@ -13961,7 +13961,7 @@ function camRay(me, yaw, pitch, R = heldR(me), eased = null, follow = null) {
   let oz = (-dz * back + Math.cos(yaw) * e) * k
   const len0 = Math.hypot(ox, oy, oz) || 1
   const blocked0 = camBlock(px, py, pz, ox / len0, oy / len0, oz / len0, len0, mask)
-  const baseY = Math.min(me.y, py), rise = Math.max(3.8, py + oy + CAM.pad - baseY)
+  const baseY = Math.max(Math.min(me.y, py), top), rise = Math.max(3.8, py + oy + CAM.pad - baseY)
   const roofHit = camBlock(px, baseY, pz, 0, 1, 0, rise + CAM.pad, mask)
   const ceiling = roofHit < rise - 0.001 ? baseY + roofHit - CAM_ROOM.margin : Infinity
   const low = clamp((top + 1.4 - ceiling) / 1.4, 0, 1), blocked = blocked0 < len0 - CAM.pad - 0.001
@@ -22429,7 +22429,7 @@ function setAnim(id, want, dt, t, hold, still, ticks, shift) {
     const cv = !carriers.size ? null : ticks?.[i] ? ticks[i].cv : carrierVelAt(x, y, z), cx = cv ? cv[0] * h : 0, cz = cv ? cv[2] * h : 0
     a.cv = cv
     const d = !a.at ? 0 : ticks?.[i].fresh ? Infinity : Math.hypot(x - a.at.x - cx, z - a.at.z - cz)
-    if (d < 240 * Math.max(h, TICK)) a.v += (d / Math.max(h, 1e-3) - a.v) * timeShare(h, id >= BOT_ID0 ? 1 : TICK / 0.15)
+    if (d < 240 * Math.max(h, TICK)) a.v += (d / Math.max(h, 1e-3) - a.v) * timeShare(h, id >= BOT_ID0 || ticks && (d < 0.6 * h || a.v < 0.6) ? 1 : TICK / 0.15)
     a.stepD = (a.stepD || 0) + (d < 240 * Math.max(h, TICK) ? d : 0); a.stepH = (a.stepH || 0) + h
     if (a.stepH >= 2 * TICK) { a.stepV = a.stepD / a.stepH; a.stepD = a.stepH = 0 }
     ;(a.at ||= new THREE.Vector3()).set(x, y, z)
@@ -22677,7 +22677,7 @@ function rigAnimate(a, want, dt, t) {
   if (a.landAt !== undefined && a.landAt !== R.landSeen && t - a.landAt < 150) { R.landSeen = a.landAt; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
   R.wasAir = airborne
   const next = name === RIG_GAIT ? null : rigAction(R, name)
-  if (name === RIG_GAIT && R.name !== RIG_GAIT) { rigGaitInto(R, fade); R.name = RIG_GAIT }
+  if (name === RIG_GAIT && R.name !== RIG_GAIT) { rigGaitInto(R, R.name === K.idle ? 0.1 : fade); R.name = RIG_GAIT }
   if (next && R.name !== name) {
     const prev = R.base, gaits = [K.walk, K.run, K.sprint, K.crouchRun]
     next.reset()
@@ -22776,7 +22776,7 @@ function rigGaitBlend(a, R, M, v, step, dt) {
   const w = R.gaitW ||= G.map(() => 0), sp = G.map(g => g.pace * H)
   let i = 0; while (i < n - 2 && v > sp[i + 1]) i++
   const u = n > 1 ? clamp((v - sp[i]) / (sp[i + 1] - sp[i]), 0, 1) : 0
-  w.fill(0); w[i] = 1 - u; if (n > 1) w[i + 1] += u
+  if (on || !w.some(x => x > 0)) { w.fill(0); w[i] = 1 - u; if (n > 1) w[i + 1] += u }
   let Vb = 0, Db = 0
   for (let j = 0; j < n; j++) { Vb += w[j] * sp[j]; Db += w[j] * R.gaitAct[j].getClip().duration }
   const k = Math.max(on ? 0 : 0.35, v / Vb), was = R.gph ?? 0
@@ -22849,7 +22849,12 @@ function rigGait(a, R, M, dt, air) {
         if (f.u >= 1) { f.stand = false; f.k = 0; f.on = false; f.stepping = false; f.lift = 0 } }
       if (f.stand) { f.on = true; f.k = 1 }
       stepping ||= !!f.stepping
-    } else { f.on = down; f.k = down ? 1 : Math.max(0, f.k - dt / F.free); f.lift = 0; f.stepping = false }
+    } else {
+      const enter = R.gaitFade?.[1] === 1
+      if (enter && !f.on && R.gw < 0.2 && ball.y < floor + 0.045) { f.on = true; f.p.copy(ball) }
+      const held = down || enter && f.on && (R.gw < 0.5 || rigGaitDown(R, M, s))
+      f.on = held; f.k = held ? 1 : Math.max(0, f.k - dt / F.free); f.lift = 0; f.stepping = false
+    }
     if (a.cv && (f.k > 0 || f.stand)) { f.p.x += a.cv[0] * dt; f.p.z += a.cv[2] * dt; if (f.from) { f.from.x += a.cv[0] * dt; f.from.z += a.cv[2] * dt } }
     dir.set(0, 0, 0)
     if (f.k > 0) {
