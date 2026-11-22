@@ -43102,16 +43102,20 @@ const nameNow = () => { myName = cleanName(nameIn.value) || suggestedName() }
 function wireMenu() {
   const go = fn => () => {
     nameNow()
-    if (IS_TOUCH && FS_OK && !isFullscreen()) enterFullscreen()
-    if (fn !== startServer && settings.sound) GAME.audio.start(true)
     startLog = { t0: now(), marks: [], frames: [], progs: renderer?.info.programs.length }
     document.body.classList.add('starting'); loadingText('Starting…')
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    let begun = false
+    const begin = () => {
+      if (begun) return
+      begun = true
       if (fn !== startHost) document.body.classList.remove('starting')
       markStart('work')
       withLib(LIBS.peer, fn, e => { startingGame = false; document.body.classList.remove('starting'); setStatus(e.message, 'err') })
       GAME.audio.apply()
-    }))
+    }
+    requestAnimationFrame(() => requestAnimationFrame(begin)); setTimeout(begin, 120)
+    try { if (fn !== startServer && settings.sound) GAME.audio.start(true) } catch (e) { console.error(e) }
+    if (IS_TOUCH && FS_OK && !isFullscreen()) enterFullscreen()
   }
   el('#jittip-x').onclick = () => { settings.jitTip = true; saveSettings(); jitTip() }
   el('#jittip-copy').onclick = () => navigator.clipboard?.writeText(location.protocol + '//' + location.host).catch(() => {})
