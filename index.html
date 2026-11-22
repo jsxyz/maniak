@@ -13684,16 +13684,16 @@ function guardThink(b, spec, tgt, dist, los, toYaw, dt) {
   const ai = b.ai, P = GUARD, g = ai.gd ||= { up: false, cue: 0, broken: 0, counter: 0, swing: P.swing[0] }
   g.up = false
   if (g.broken > 0) { g.broken -= dt; return null }
-  if (!los || dist > P.near || ai.waitTurn) return null
+  if (!los || dist > P.near && !ai.pin) return null
   const yaw = roleFace(b, toYaw, dt, GUARD.turn), G = GUNS[gunNamed([spec.atk].flat()[0])]
   if (g.counter > 0 && (g.counter -= dt) <= 0) g.swing = 0
-  if ((g.swing -= dt) <= 0 && dist < G.range * 0.9 && !(b.cool > 0)) {
+  if ((g.swing -= dt) <= 0 && dist < G.range * 0.9 && !(b.cool > 0) && !ai.waitTurn && !ai.passive) {
     g.swing = P.swing[0] + Math.random() * (P.swing[1] - P.swing[0]); g.cue = 0.5
     return { f: 0, r: 0, fire: true, yaw }
   }
   g.up = true
   if ((g.cue -= dt) <= 0) { g.cue = P.cue; windCue(b, GUARD_GUN) }
-  return { f: dist > P.stand + 0.3 ? 0.45 : dist < P.stand - 0.5 ? -0.3 : 0, r: 0, fire: false, yaw, sprint: false }
+  return { f: ai.pin ? 0 : dist > P.stand + 0.3 ? 0.45 : dist < P.stand - 0.5 ? -0.3 : 0, r: 0, fire: false, yaw, sprint: false }
 }
 function guardBlock(h, c, G) {
   const g = h.ai.gd, dx = c.x - h.x, dz = c.z - h.z, d = Math.hypot(dx, dz) || 1, yaw = h.ai.yaw
@@ -29740,6 +29740,21 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
         lurk: !!c.ai.lurk, tgt: c.ai.tgt, flee: c.ai.fleeT > 0, rush: c.ai.rush?.ph ?? null, rushV: c.ai.rush?.v ?? null, rushTop: c.ai.rush?.top ?? null, rushK: c.rushK || 0,
         speed: Math.round(Math.hypot(c.vx || 0, c.vz || 0) * 100) / 100, shots: [...c.ai.shots || []], guard: !!c.ai.gd?.up, think: c.ai.dbg ? { ...c.ai.dbg } : null })) })),
     env: LV.faust && faustState && selfChar() ? hauntEnv(selfChar()) : null }),
+  hauntSpawn: (kind, dist = 2.5, o = {}) => {
+    const me = selfChar(), i = isHost && me && HAUNT_ROWS[kind]?.find(r => !players.has(BOT_ID0 + r))
+    if (i === undefined || i === false) return null
+    const yaw = input.yaw, key = 'test' + ++hauntSerial
+    ENFORCER_AT = [me.x - Math.sin(yaw) * dist, me.y - me.h - me.r + 0.6, me.z - Math.cos(yaw) * dist, yaw + Math.PI]
+    const ok = addBot(i)
+    ENFORCER_AT = null
+    if (!ok) return null
+    const c = players.get(BOT_ID0 + i)
+    Object.assign(c.ai, { lurk: 0, crew: key, yaw: yaw + Math.PI, pin: !!o.pin, passive: !!o.passive })
+    c.prot = 0
+    hauntCrews.set(key, { key, owner: me.id, env: 'test', ids: [c.id], at: tickAt || now(), help: 2 })
+    if (conns.size) pushRoster()
+    return { id: c.id, kind, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100) }
+  },
   clubs: () => {
     const F = faustState, me = selfChar()
     if (!LV.faust || !F || !me) return []
