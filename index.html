@@ -42177,7 +42177,7 @@ function mcWhistle(c) {
   let o = mcCarOf(st)
   if (o && o.riders.some(r => r !== undefined && r !== c.id)) { mcLetGo(o); o = null }
   if (o && (o.riders.includes(c.id) || o.heldBy !== undefined)) return
-  if (o && (Math.hypot(o.x - c.x, o.z - c.z) > MCAR.come.far || upOf(o) < 0.4)) { mcLetGo(o); o = null }
+  if (o && (Math.hypot(o.x - c.x, o.z - c.z) > MCAR.come.far || upOf(o) < 0.4)) { mcRemove(o); st.car = undefined; o = null }
   if (o) return mcSend(o, c, st, T)
   st.car = undefined; st.mode = 'spawn'; st.since = T; st.nextTry = 0
 }
@@ -42249,7 +42249,7 @@ function mcPlan(c) {
   const at = (x, z) => [(x - ax) * hx + (z - az) * hz, (x - ax) * lx + (z - az) * lz]
   const [sHim, oHim] = at(c.x, c.z), oLane = at(e.from.x + e.ox, e.from.z + e.oz)[1]
   const room = half - w / 2 - 0.3, oCar = clamp(Math.min(room, oHim - MCAR.come.pull - w / 2 - (c.r || 0.5)), -room, room)
-  const [lo, hi] = road ? [Math.min(0, road.len), Math.max(0, road.len)] : [-1e9, 1e9], m = half >= 8 ? 19 : 9
+  const [lo, hi] = road ? [Math.min(0, road.len), Math.max(0, road.len)] : [-1e9, 1e9], m = half >= 8 ? 13 : 7
   let sCar = hi - lo > 2 * m ? clamp(sHim + seatZ, lo + m, hi - m) : (lo + hi) / 2
   let le = e, back = 0
   for (let k = 0; k < 4 && back < MCAR.come.lead + 12 + m; k++) {
@@ -42290,7 +42290,7 @@ function mcSend(o, c, st, T, fresh = false, plan = null) {
   const ahead = (P.pose.x - o.x) * P.hx + (P.pose.z - o.z) * P.hz, across = Math.abs((o.x - P.pose.x) * P.hz - (o.z - P.pose.z) * P.hx)
   if (along > 0.8 && ahead > 3 && ahead < 45 && across < P.half * 2) return mcPullFrom(o, st, T)
   if (along < -0.7 && across < P.half * 2 && Math.abs(ahead) < 40 && mcTurnRound(o, st, T)) return
-  if (!fresh) { mcLetGo(o); st.mode = 'spawn'; st.since = T; st.nextTry = 0; return }
+  if (!fresh) { mcRemove(o); st.car = undefined; st.mode = 'spawn'; st.since = T; st.nextTry = 0; return }
   if (o.traffic) GAME.traffic.cancel(o.id)
   mcPursue(o, c, st, T, fresh)
 }
@@ -42452,7 +42452,7 @@ function mcCome(o, c, st, T) {
   if (d < st.best - 3) { st.best = d; st.bestAt = T }
   if (upOf(o) < 0.4 || T - st.bestAt > MCAR.come.stuck * 1000 || !o.traffic) {
     if (upOf(o) >= 0.4 && !o.traffic && d < 40) return mcPullFrom(o, st, T)
-    mcLetGo(o); st.mode = 'spawn'; st.since = T; return
+    mcRemove(o); st.car = undefined; st.mode = 'spawn'; st.since = T; return
   }
   const f = rotq(o.q, [0, 0, -1]), along = f[0] * P.hx + f[2] * P.hz, lead = Math.hypot(o.x - P.lead.x, o.z - P.lead.z)
   if (!o.traffic.path && along > 0.8 && (lead < 9 || o.traffic.arrived) && d < 45) mcPullFrom(o, st, T)
