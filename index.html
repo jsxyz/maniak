@@ -25508,6 +25508,7 @@ function drawTracers(t, me, others, viewId) {
   for (const o of liveTracers) if (t - o.born < lifeOf(o.f)) liveTracers[kept++] = o
   liveTracers.length = kept
   drawSnow(t, viewId)
+  drawCarSplashes(t)
   boomRank()
   const boomLevel = boomTier()
   for (const o of liveTracers) {
@@ -26937,21 +26938,124 @@ function swimFx(id, w, p, dt) {
   }
   S.w = w; S.vy = vy
 }
+const CAR_SPRAY = { max: 8, drops: 120, segments: 48, speed: 11.5, gravity: 12 }
+const carSprays = []
+let carSprayMesh = null, carSprayEpoch = -1
+function carSprayPlan(x, y, z, vx, vy, vz, width, length, seed, wake = false) {
+  const speed = Math.hypot(vx, vz), k = clamp(Math.hypot(speed, Math.min(0, vy) * 0.35) / CAR_SPRAY.speed, 0, 1)
+  const fx = speed > 0.01 ? vx / speed : 0, fz = speed > 0.01 ? vz / speed : -1, w = width / 2, l = length / 2
+  const power = k * (wake ? 0.65 : 1), n = Math.round((12 + (CAR_SPRAY.drops - 12) * k) * (wake ? 0.45 : 1)), drops = []
+  for (let i = 0; i < n; i++) {
+    const r = fxRand(seed, i * 5), q = fxRand(seed, i * 5 + 1), u = fxRand(seed, i * 5 + 2), side = i & 1 ? 1 : -1, core = i % 4 === 0
+    const bow = i % 3 === 0, across = bow ? (r * 2 - 1) * w : side * w, along = bow ? l : (r * 1.8 - 0.8) * l
+    const outward = (0.3 + 3.8 * power) * (0.5 + q * 0.7), forward = bow ? 0.3 + 2.2 * power : (u - 0.5) * power
+    const ax = bow ? across / Math.max(w, 0.1) : side, lift = (0.55 + 7.3 * power) * (core ? 0.72 + u * 0.28 : 0.5 + u * 0.5)
+    drops.push({ x: x + fx * along - fz * across, y: y + 0.045, z: z + fz * along + fx * across,
+      vx: fx * (forward + speed * 0.16) - fz * ax * outward, vy: lift, vz: fz * (forward + speed * 0.16) + fx * ax * outward,
+      delay: q * 0.09 * k, size: (core ? 0.12 + 0.65 * power : 0.04 + 0.1 * power) * (0.65 + r * 0.7), alpha: core ? 0.65 : 1 })
+  }
+  const rim = Array.from({ length: CAR_SPRAY.segments + 1 }, (_, i) => {
+    const a = i * Math.PI * 2 / CAR_SPRAY.segments
+    return { c: Math.cos(a), s: Math.sin(a), r: 1 + 0.025 * Math.sin(a * 7 + seed) + 0.012 * Math.sin(a * 13 - seed),
+      thick: 0.8 + 0.4 * fxRand(seed, i % CAR_SPRAY.segments), fade: clamp(0.55 + 0.5 * Math.sin(a * 5 + seed) + 0.35 * Math.sin(a * 13 - seed), 0, 1) }
+  })
+  return { x, y, z, fx, fz, w, l, k, seed, wake, life: (0.85 + 2.6 * k) * (wake ? 0.7 : 1), drops, rim }
+}
+function carSprayDrop(p, age, out) {
+  const t = age - p.delay
+  if (t < 0) return false
+  const fall = CAR_SPRAY.gravity, h = p.vy * t - 0.5 * fall * t * t
+  if (h < -0.025) return false
+  const travel = -Math.expm1(-1.4 * t) / 1.4, drag = Math.exp(-1.4 * t)
+  out.x = p.x + p.vx * travel; out.y = p.y + h; out.z = p.z + p.vz * travel
+  out.vx = p.vx * drag; out.vy = p.vy - fall * t; out.vz = p.vz * drag
+  out.alpha = Math.min(1, (h + 0.025) / 0.08) * 0.95 * p.alpha
+  return true
+}
+function carSprayRing(s, age, out) {
+  const u = clamp(age / s.life, 0, 1), spread = (0.35 + 5.5 * s.k) * -Math.expm1(-age / 1.15)
+  out.w = s.w + spread; out.l = s.l + spread; out.width = (0.055 + 0.24 * s.k) * (1 + u * 0.8)
+  out.alpha = (0.35 + 0.6 * s.k) * (1 - u) ** 1.35 * (s.wake ? 0.65 : 1)
+  return out
+}
+function carSplash(o, W, v, wake = false) {
+  if (camera && Math.hypot(o.x - camera.position.x, o.z - camera.position.z) > 100) return
+  const s = carSprayPlan(o.x, W.y, o.z, ...v, o.V.w, o.V.l, (o.id * 7919 + now()) | 0, wake)
+  s.born = now(); s.epoch = geoLevel; s.water = W.id; s.car = o.id
+  if (wake) { const wakes = carSprays.filter(p => p.wake && p.car === o.id); if (wakes.length >= 3) carSprays.splice(carSprays.indexOf(wakes[0]), 1) }
+  if (carSprays.length >= CAR_SPRAY.max) carSprays.shift()
+  carSprays.push(s)
+  if (!wake) sfxPlay('Splash', { x: o.x, y: W.y, z: o.z }, 'world', 0.12 + 0.88 * s.k, 0, 0, o.id)
+}
+function drawCarSplashes(t) {
+  if (carSprayEpoch !== geoLevel) { carSprayEpoch = geoLevel; for (let i = carSprays.length - 1; i >= 0; i--) if (carSprays[i].epoch !== geoLevel) carSprays.splice(i, 1) }
+  for (let i = carSprays.length - 1; i >= 0; i--) if (t - carSprays[i].born >= carSprays[i].life * 1000) carSprays.splice(i, 1)
+  if (!carSprays.length) { if (carSprayMesh) carSprayMesh.visible = false; return }
+  if (!carSprayMesh) {
+    const n = CAR_SPRAY.max * (CAR_SPRAY.drops + CAR_SPRAY.segments * 2), ix = []
+    for (let i = 0; i < n; i++) { const j = i * 4; ix.push(j, j + 1, j + 2, j + 2, j + 1, j + 3) }
+    carSprayMesh = fxRibbon(n * 4, ix, { map: puffTex() })
+    carSprayMesh.geometry.setAttribute('uv', dyn(n * 8, 2))
+    carSprayMesh.frustumCulled = false; carSprayMesh.renderOrder = 2
+  }
+  if (carSprayMesh.parent !== tracerGroup) tracerGroup.add(carSprayMesh)
+  const pos = carSprayMesh.geometry.attributes.position, col = carSprayMesh.geometry.attributes.color, uv = carSprayMesh.geometry.attributes.uv, E = camera.matrixWorld.elements
+  const p = {}, ring = {}, water = { flow: [0, 0] }, W = GAME.faustland.water, clock = trafficClock()
+  let count = 0, spray = false
+  const vertex = (x, y, z, a) => { pos.setXYZ(count, x, y, z); uv.setXY(count, spray ? count & 1 : 0.5, spray ? count >> 1 & 1 : 0.5); col.setXYZW(count++, 0.92, 0.97, 1, a) }
+  for (const s of carSprays) {
+    const age = Math.max(0, (t - s.born) / 1000)
+    spray = true
+    for (const d of s.drops) if (carSprayDrop(d, age, p)) {
+      const dx = p.vx * E[0] + p.vy * E[1] + p.vz * E[2], dy = p.vx * E[4] + p.vy * E[5] + p.vz * E[6], len = Math.hypot(dx, dy) || 1
+      const a = dx / len, b = dy / len, half = d.size * 0.5, tail = d.size + Math.min(0.26, len * 0.022)
+      for (let j = 0; j < 4; j++) {
+        const u = (j & 1 ? half : -half) * (j > 1 ? 0.45 : 1), v = j < 2 ? -tail : half
+        const x = -b * u + a * v, y = a * u + b * v
+        vertex(p.x + E[0] * x + E[4] * y, p.y + E[1] * x + E[5] * y, p.z + E[2] * x + E[6] * y, p.alpha)
+      }
+    }
+    spray = false
+    carSprayRing(s, age, ring)
+    for (const p of s.rim) {
+      const across = p.c * ring.w * p.r, along = p.s * ring.l * p.r
+      p.x = s.x + s.fx * along - s.fz * across; p.z = s.z + s.fz * along + s.fx * across
+      p.dx = (s.fx * p.s - s.fz * p.c) * ring.width * p.thick; p.dz = (s.fz * p.s + s.fx * p.c) * ring.width * p.thick
+      const at = W.at(p.x, p.z, water), surface = at && at.id === s.water && Math.abs(at.y - s.y) < 0.5
+      p.y = (surface ? at.y + (WATER_LOOKS[activeLook] ? W.waveAt(p.x, p.z, clock, at.kind) : 0) : s.y) + 0.035
+      p.alpha = surface ? ring.alpha * p.fade : 0
+    }
+    for (let i = 0; i < CAR_SPRAY.segments; i++) {
+      for (let band = 0; band < 2; band++) for (let j = 0; j < 4; j++) {
+        const p = s.rim[i + (j & 1)], edge = band + (j >> 1), off = edge - 1
+        vertex(p.x + p.dx * off, p.y, p.z + p.dz * off, edge === 1 ? p.alpha : 0)
+      }
+    }
+  }
+  pos.needsUpdate = col.needsUpdate = uv.needsUpdate = true
+  carSprayMesh.geometry.setDrawRange(0, count / 4 * 6); carSprayMesh.visible = count > 0
+}
 function carFx(dt) {
   for (const o of objs) {
-    if (!o.V || o.floodT === undefined) continue
-    const W = GAME.faustland.water?.at?.(o.x, o.z); if (!W) continue
-    if (o.fxT !== o.floodT) {
-      o.fxT = o.floodT
-      const v = o.body.getLinearVelocity(), k = clamp(1.6 + Math.hypot(v.x(), v.y(), v.z()) * 0.3, 2, 5), R = Math.max(1, o.R || 2)
-      for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; burst('splash', o.x + Math.cos(a) * R * 0.6, W.y, o.z + Math.sin(a) * R * 0.6, Math.cos(a) * 0.5, 1, Math.sin(a) * 0.5, 0xd5e6ee, k) }
-      burst('splash', o.x, W.y, o.z, 0, 1, 0, 0xd5e6ee, k * 1.2)
-      for (let i = 0; i < 10; i++) { const a = i * Math.PI / 5; burst('foam', o.x + Math.cos(a) * R, W.y + 0.02, o.z + Math.sin(a) * R, 0, 1, 0, 0x6e808a, 1.2 + k * 0.3) }
-      sfxPlay('Splash', { x: o.x, y: W.y, z: o.z }, 'world', 1, 0, 0, o.id)
+    if (!o.V || o.V.sail || o.V.fly || !o.body) continue
+    const W = GAME.faustland.water?.at?.(o.x, o.z)
+    if (!W) { o.carSprayWet = false; o.carSprayV = undefined; continue }
+    const v = o.body.getLinearVelocity(), velocity = [v.x(), v.y(), v.z()]
+    const bottom = o.y + rotq(o.q, [0, -(o.at0 || hullAt(o.K))[1], 0])[1]
+    const wet = W && bottom < W.y + 0.06 && bottom + o.V.h > W.y - 0.15
+    const fresh = W && o.floodT !== undefined && o.fxT !== o.floodT
+    if (fresh) o.fxT = o.floodT
+    if ((wet && !o.carSprayWet || fresh && !o.carSprayWet) && W) {
+      const prev = o.carSprayV, impact = prev && Math.hypot(...prev) > Math.hypot(...velocity) ? prev : velocity
+      carSplash(o, W, impact); o.carSprayNext = 0.3
+    } else if (wet && Math.hypot(v.x(), v.z()) > 0.6 && (o.carSprayNext = (o.carSprayNext || 0) - dt) <= 0) {
+      carSplash(o, W, velocity, true); o.carSprayNext += 0.22
     }
-    if ((o.bubT = (o.bubT || 0) - dt) <= 0 && o.y < W.y + 0.3) { o.bubT = 0.25; burst('bubble', o.x, Math.min(o.y + 0.8, W.y), o.z, 0, 1, 0, 0xdcecf2, 1.4) }
+    o.carSprayWet = !!wet; o.carSprayV = velocity
+    if (W && o.floodT !== undefined && (o.bubT = (o.bubT || 0) - dt) <= 0 && o.y < W.y + 0.3) { o.bubT = 0.25; burst('bubble', o.x, Math.min(o.y + 0.8, W.y), o.z, 0, 1, 0, 0xdcecf2, 1.4) }
   }
 }
+
 
 let soundNoise = null, soundRain = null
 function coinRattle(out, t, srcs) {
@@ -40496,9 +40600,9 @@ float waterNoise(vec2 p) { vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2
 float waterWhite(vec2 q, float mask) {
   vec2 fl = normalize(uFlow.xy + vec2(0.0001)); float sp = uFlow.z, along = dot(q, fl), across = dot(q, vec2(-fl.y, fl.x));
   if (uCentre.z > 0.5) { vec2 d = q - uCentre.xy; along = length(d); across = atan(d.y, d.x) * max(along, 3.0); }
-  float a = waterNoise(vec2(across * 1.7, along * 0.45 - uTime * sp * 0.45));
-  float b = waterNoise(vec2(across * 4.3 + 7.0, along * 0.75 - uTime * sp * 0.75));
-  float c = waterNoise(vec2(across * 9.0 + 3.0, along * 0.80 - uTime * sp * 0.80));
+  float a = waterNoise(vec2(across * 1.7, along * 0.25 - uTime * sp * 0.25));
+  float b = waterNoise(vec2(across * 4.3 + 7.0, along * 0.375 - uTime * sp * 0.375));
+  float c = waterNoise(vec2(across * 9.0 + 3.0, along * 0.45 - uTime * sp * 0.45));
   float n = a * 0.45 + b * 0.35 + c * 0.25;
   float f0 = smoothstep(0.38, 0.62, 0.5 + (n - 0.525) * 2.6 + (mask - 0.5) * 0.9);
   float band = 0.5 + 0.5 * sin((along - uTime * sp) * 1.15 + waterNoise(vec2(across * 1.3, along * 0.2 - uTime * sp * 0.2)) * 2.6);
@@ -40541,7 +40645,7 @@ function waterMaterialFor(kind, info) {
   m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: WATER.rough, metalness: 0, side: THREE.DoubleSide })
   m.userData.inkWater = true
   m.userData.waterU = { uWhite, uFlow, uCentre }
-  if (kind === 'foam') { m.transparent = true; m.depthWrite = false; m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -2 }
+  if (kind === 'foam') { m.transparent = true; m.forceSinglePass = true; m.depthWrite = false; m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -2 }
   m.onBeforeCompile = shader => {
     faustLampHook(shader, 'pbr')
     Object.assign(shader.uniforms, { uTime: waterU.time, uLook: waterU.look, uRain: waterU.rain, uSky: waterU.sky, uLampRef: { value: FAUST_NIGHT.lamps.candela }, uWhite, uFlow, uCentre, uWaveN: waterU.waveN, uWaveW: waterU.waveW, uWaveA: waterU.waveA, uAmp: amp })
@@ -40592,7 +40696,7 @@ const WATER_LOOKS = { plain: true, ink: true, realistic: false }
 const waterMeshes = new Set()
 let waterSeen = ''
 function waterPick(mesh) {
-  const info = mesh.userData.water, on = !!WATER_LOOKS[activeLook || 'plain']
+  const info = mesh.userData.water, on = !!WATER_LOOKS[activeLook || 'plain'] || activeLook === 'realistic' && !!WATER_WHITE[info?.kind]
   mesh.userData.waterStone ||= mesh.material
   mesh.material = on ? (WATER_WHITE[info?.kind] ? mesh.userData.waterWhite ||= waterMaterialFor(info.kind, info) : waterMaterialFor(info?.kind || 'lake')) : mesh.userData.waterStone
   if (on && activeLook === 'ink') inkPrepare(mesh)
