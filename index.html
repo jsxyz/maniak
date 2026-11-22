@@ -8921,50 +8921,41 @@ function faustDisposeSky() {
   F.skyHead?.geometry.dispose(); F.skyStand?.dispose(); F.skyOccluder = F.skyStand = F.skyHead = F.skyBounds = null
 }
 function faustGlobeShader(real) {
-  const look = real ? `
-      outgoingLight = diffuseColor.rgb * (vec3(0.383, 0.521, 0.8) * 2.0 * max(globeK, 0.0) + vec3(0.237, 0.317, 0.446) * (0.025 + 0.025 * globeN.y)
-        + vec3(0.44, 0.256, 0.128) * 0.16 * clamp(0.3 * globeN.z - 0.7 * globeN.y, 0.0, 1.0) + 0.064);` : `
-      float globeShade = 0.94 * (1.0 - smoothstep(-0.12, 0.25, globeK)) * mix(1.0, 0.4, smoothstep(0.2, 0.85, -globeK));
-      outgoingLight = mix(diffuseColor.rgb * (0.28 + 0.72 * pow(max(globeK, 0.0), 0.8) + 0.42 * smoothstep(0.05, 0.75, -globeK)), vec3(0.012, 0.014, 0.02), globeShade);`
   return shader => {
-    shader.vertexShader = 'varying vec3 faustGlobeNormal;\n' + shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
-      faustGlobeNormal = mat3(modelMatrix) * normal;`)
-    shader.fragmentShader = 'varying vec3 faustGlobeNormal;\n' + shader.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
-      vec3 globeN = normalize(faustGlobeNormal);
-      float globeK = dot(globeN, vec3(-0.7754, 0.4985, 0.3877));
-      reflectedLight.directDiffuse = diffuseColor.rgb * (0.1 + 0.9 * max(globeK, 0.0));
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+      float globeEmission = 0.0;
+      #ifdef USE_MAP
+        vec4 globeSurface = texture2D(map, vMapUv);
+        diffuseColor.rgb *= globeSurface.rgb;
+        globeEmission = globeSurface.a * 2.007874 - 1.007874;
+      #endif`).replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+      float globeLight = 0.10 + 1.7 * dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+      reflectedLight.directDiffuse = diffuseColor.rgb * globeLight;
       reflectedLight.indirectDiffuse = reflectedLight.directSpecular = reflectedLight.indirectSpecular = vec3(0.0);
-      totalEmissiveRadiance = vec3(0.0);`).replace('#include <opaque_fragment>', look + '\n#include <opaque_fragment>')
+      totalEmissiveRadiance = vec3(1.05, 0.57, 0.18) * max(globeEmission, 0.0) + vec3(2.88, 0.04, 0.012) * max(-globeEmission, 0.0);`).replace('#include <opaque_fragment>', `
+      outgoingLight = diffuseColor.rgb * ${real ? '1.12' : '1.0'} + totalEmissiveRadiance;
+      #include <opaque_fragment>`)
   }
 }
 function faustGlobeMap() {
   const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 512
-  const g = cv.getContext('2d'), at = ([lon, lat]) => [(lon + 180) / 360 * 1024, (90 - lat) / 180 * 512]
-  g.fillStyle = '#7b98c0'; g.fillRect(0, 0, 1024, 512)
-  const continents = [
-    [[-168,65],[-145,70],[-130,58],[-115,53],[-105,58],[-90,70],[-60,52],[-53,45],[-72,40],[-80,25],[-96,18],[-106,23],[-120,34],[-126,48],[-150,57]],
-    [[-82,12],[-70,10],[-58,6],[-48,-2],[-35,-7],[-40,-22],[-51,-31],[-58,-44],[-68,-55],[-75,-45],[-72,-29],[-80,-11]],
-    [[-57,83],[-25,77],[-40,60],[-53,61],[-65,72]],
-    [[-10,36],[-11,44],[1,49],[10,55],[5,61],[18,71],[35,70],[45,62],[70,71],[100,76],[145,70],[176,62],[164,50],[145,47],[132,36],[123,25],[106,7],[98,14],[90,22],[79,7],[68,24],[55,27],[43,12],[36,31],[27,40],[15,41]],
-    [[-17,35],[10,37],[31,31],[35,17],[51,11],[42,-9],[35,-22],[18,-35],[10,-30],[2,-5],[-12,5],[-17,20]],
-    [[113,-13],[130,-11],[143,-10],[153,-24],[146,-39],[126,-33],[114,-24]],
-    [[46,-13],[50,-17],[47,-26],[43,-24]], [[130,32],[137,36],[142,44],[146,44],[141,35],[134,31]],
-    [[-180,-77],[-145,-73],[-110,-76],[-70,-69],[-35,-78],[15,-70],[55,-68],[100,-74],[145,-69],[180,-77],[180,-90],[-180,-90]]
-  ]
-  for (const land of continents) {
-    g.beginPath(); land.forEach((p, i) => { const [x, y] = at(p); i ? g.lineTo(x, y) : g.moveTo(x, y) }); g.closePath()
-    g.fillStyle = '#e3e6e4'; g.fill(); g.strokeStyle = '#27384a'; g.lineWidth = 3; g.stroke()
-    g.save(); g.clip(); g.strokeStyle = '#b4bec6'; g.lineWidth = 1
-    for (let x = -512; x < 1024; x += 12) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 512, 512); g.stroke() }
-    g.restore()
+  const g = cv.getContext('2d')
+  g.fillStyle = '#343d43'; g.fillRect(0, 0, 1024, 512)
+  for (let y = 0; y < 512; y += 8) for (let x = 0; x < 1024; x += 12) {
+    g.fillStyle = (x * 7 + y * 11) % 19 < 7 ? '#c59b58' : '#161d22'
+    g.fillRect(x + 4, y + 3, 1, 2)
   }
-  g.strokeStyle = 'rgba(93,113,134,0.55)'; g.lineWidth = 1.5
-  for (let lon = -180; lon <= 180; lon += 30) { const x = at([lon, 0])[0]; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 512); g.stroke() }
-  for (let lat = -60; lat <= 60; lat += 30) { const y = at([0, lat])[1]; g.beginPath(); g.moveTo(0, y); g.lineTo(1024, y); g.stroke() }
+  g.fillStyle = '#67604d'
+  for (let x = 0; x < 1024; x += 1024 / 24) g.fillRect(x - 2, 0, 4, 512)
+  for (let y = 0; y < 512; y += 512 / 12) g.fillRect(0, y - 1, 1024, 2)
+  g.fillRect(0, 247, 1024, 18); g.fillStyle = '#242b30'; g.fillRect(0, 251, 1024, 10)
+  const pixels = g.getImageData(0, 0, 1024, 512)
+  for (let i = 0; i < pixels.data.length; i += 4) pixels.data[i + 3] = pixels.data[i] > 150 ? 255 : 128
+  g.putImageData(pixels, 0, 0)
   const map = new THREE.CanvasTexture(cv); map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4; map.userData.faustOwned = true
   return map
 }
-const FAUST_GLOBE_FILE = 'faust_globe.36f65fbf.png'
+const FAUST_GLOBE_FILE = 'faust_globe_building.748c49ab.webp'
 let faustGlobeBlob = null
 function faustGlobeBytes() {
   const get = base => fetch(base + FAUST_GLOBE_FILE).then(r => r.ok ? r.blob() : Promise.reject(new Error('HTTP ' + r.status)))
@@ -8977,18 +8968,15 @@ function faustGlobeUpgrade(globe) {
     while (typeof startingGame !== 'undefined' && startingGame || typeof landingBusy === 'function' && landingBusy()) yield 'frame'
     const bitmap = yield faustGlobeBytes().then(blob => createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none' }))
     if (!alive()) { bitmap.close?.(); return false }
-    const map = new THREE.Texture(bitmap)
-    map.flipY = false; map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); map.userData.faustOwned = true
-    map.minFilter = THREE.LinearMipmapLinearFilter; map.generateMipmaps = true; map.needsUpdate = true
     while (!background.uploadSlot(bitmap.width * bitmap.height * 4)) yield 'frame'
-    if (!alive()) { map.dispose(); bitmap.close?.(); return false }
+    if (!alive()) { bitmap.close?.(); return false }
+    const map = material.map
+    map.image = bitmap; map.flipY = false; map.premultiplyAlpha = false
+    map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy())
+    map.minFilter = THREE.LinearMipmapLinearFilter; map.generateMipmaps = true; map.needsUpdate = true
     renderer.initTexture(map); yield 'frame'
-    if (!alive()) { map.dispose(); return false }
-    const old = material.map
-    material.map = map
-    old?.dispose()
-    return true
-  }, { valid: alive, gpu: true }).catch(e => { console.warn('Faust globe: keeping the angular map,', e?.message || e); return false })
+    return alive()
+  }, { valid: alive, gpu: true }).catch(e => { console.warn('Faust globe surface:', e?.message || e); return false })
 }
 function faustSkyWeather(far) {
   const F = faustState, G = FAUST.globe, cv = document.createElement('canvas'); cv.width = 256; cv.height = 128
@@ -9105,7 +9093,7 @@ function faustMonument() {
   const globeMap = faustGlobeMap()
   const globe = new THREE.Mesh(globeGeometry, new THREE.MeshStandardMaterial({ map: globeMap, fog: false }))
   globe.material.onBeforeCompile = faustGlobeShader(false)
-  globe.material.customProgramCacheKey = () => 'faust-globe-flood-1'
+  globe.material.customProgramCacheKey = () => 'faust-globe-building-1'
   globe.material.userData.inkGlobe = true
   far.add(globe)
   faustGlobeUpgrade(globe)
@@ -18942,10 +18930,9 @@ function inkPrepare(root) {
           float base = inkLuma(diffuseColor.rgb);
           float light = inkLuma(reflectedLight.directDiffuse + reflectedLight.indirectDiffuse) / max(base, 0.0001);
           ${!paper && !sky ? 'light = max(light, 0.22 + 0.40 * max(0.0, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)))));' : ''}
-          float tone = ${globe ? 'light < 0.08 ? 0.012 : 0.97' : 'light < 0.08 ? 0.012 : light < 0.20 ? 0.55 : light < 0.40 ? 0.82 : 0.97'};
-          float pigment = smoothstep(0.006, ${paper ? '0.025' : '0.14'}, base);
-          tone *= mix(0.025, 1.0, pigment);
-          ${globe ? 'tone *= mix(0.55, 1.0, smoothstep(0.45, 0.65, base));' : ''}
+          float tone = light < 0.08 ? 0.012 : light < 0.20 ? 0.55 : light < 0.40 ? 0.82 : 0.97;
+          float pigment = smoothstep(0.006, ${globe ? '0.08' : paper ? '0.025' : '0.14'}, base);
+          ${globe ? 'tone = clamp(0.10 + 0.80 * base, 0.10, 0.90);' : 'tone *= mix(0.025, 1.0, pigment);'}
           vec3 eye = normalize(-inkViewPosition);
           float facing = abs(dot(normal, eye));
           float rim = (1.0 - smoothstep(0.13, 0.25, facing)) * smoothstep(0.0002, 0.004, length(fwidth(normal)));
@@ -18980,7 +18967,7 @@ function inkPrepare(root) {
           float glow = inkLuma(totalEmissiveRadiance);
           vec3 emission = totalEmissiveRadiance;
           float warm = step(emission.b * 1.3 + 0.015, emission.r) * step(emission.b * 1.15, emission.g);
-          ink = mix(ink, mix(vec3(0.94), vec3(1.0, 0.66, 0.28), warm), ${globe ? '0.0' : 'smoothstep(0.08, 0.5, glow)'});
+          ink = mix(ink, mix(vec3(0.94), vec3(1.0, 0.66, 0.28), warm), smoothstep(0.08, 0.5, glow));
           float blood = inkRed(diffuseColor.rgb);
           ${vehicleLamps ? 'blood = 0.0;' : ''}
           outgoingLight = mix(ink, vec3(max(tone, 0.18), 0.008, 0.012), blood);
@@ -19823,7 +19810,7 @@ function realSwapFor(R, m, o) {
   if (m === F?.poolMaterial) return R.mats.pool
   if (key.startsWith('faust-road-light-1')) return R.mats.roadLights
   if (key.startsWith('faust-downlight-1')) return 'beam'
-  if (key.startsWith('faust-globe-flood-1')) { const r = realGlobeMaterial(m); R.owned.push(r); return r }
+  if (key.startsWith('faust-globe-building-1')) { const r = realGlobeMaterial(m); R.owned.push(r); return r }
   if (m.isMeshStandardMaterial && o.geometry?.type === 'PlaneGeometry' && !m.map && m.color.getHex() === 0x303741) return R.mats.ground
   if (m.isMeshBasicMaterial && !m.map && m.color.getHex() === 0xf1f6ff) return R.mats.lens
   if (m.isSpriteMaterial && m.map?.userData.faustOwned && m.color.getHex() === 0xb3c2d6) return R.mats.cloud
