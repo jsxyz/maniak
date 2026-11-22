@@ -9954,7 +9954,7 @@ function faustSewTick(participants) {
 }
 function faustSewUse(c) {
   const F = faustState
-  if (!F || !LV.faust || !world || !c || c.dead > 0 || !(c.x === c.x) || c.seat) return false
+  if (!F || !LV.faust || !world || !c || c.dead > 0 || !(c.x === c.x) || seatOf(c)) return false
   const K = FAUST_SEW, plan = faustSewers(F.seed, F.S), feet = c.y - (c.h || 0) - (c.r || 0), lift = (c.h || 0) + (c.r || 0) + 0.06
   if (feet > K.floor + 2.5) {
     return faustSewDown(c, false)
@@ -10272,7 +10272,7 @@ function faustSewKinds() {
 }
 function faustSewDown(c, tap) {
   const F = faustState
-  if (!F || !LV.faust || !world || !c || c.dead > 0 || !(c.x === c.x) || c.seat) return false
+  if (!F || !LV.faust || !world || !c || c.dead > 0 || !(c.x === c.x) || seatOf(c)) return false
   const K = FAUST_SEW, plan = faustSewers(F.seed, F.S), Z = faustSewState(F), feet = c.y - (c.h || 0) - (c.r || 0)
   if (feet > 1.3 || feet < -1.2) return false
   const m = faustSewNear(plan, c.x, c.z, 1.7)
@@ -10296,7 +10296,7 @@ function faustSewFalls(plan, Z, participants) {
   if (!Z.open.size) return
   const now_ = performance.now()
   for (const c of participants) {
-    if (!c || !(c.x === c.x) || c.dead > 0 || c.seat || now_ - (c.sewT || 0) < 1500) continue
+    if (!c || !(c.x === c.x) || c.dead > 0 || seatOf(c) || now_ - (c.sewT || 0) < 1500) continue
     const feet = c.y - (c.h || 0) - (c.r || 0)
     if (feet > 0.7 || feet < -0.5) continue
     const m = faustSewNear(plan, c.x, c.z, 0.42)
@@ -14115,7 +14115,7 @@ function holdObjects() {
     const c = whoIs(o.heldBy)
     if (!c) { holdBy(o, null); continue }
     syncFromBody(c)
-    putObject(o, [...(partsHand(c, o) || handOf(c, o)), ...(o.K.limb ? clubOut.q : o.K.cover && partsActOf(c.id)[0] === 6 ? hammerOut.q : [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)]), 0, 0, 0, 0, 0, 0])
+    putObject(o, [...(partsHand(c, o) || handOf(c, o)), ...(o.K.limb ? clubOut.q : o.K.cover ? (partsActOf(c.id)[0] === 6 ? hammerOut.q : coverOut.q) : [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)]), 0, 0, 0, 0, 0, 0])
   }
 }
 let carTuning = null
@@ -28628,7 +28628,7 @@ const objectsDrawn = (others = []) => (objDrawn.clear(), isHost ? objs.map(drawn
   if (C && (o.K.carry || ph)) {
     const p = ph || handOf({ ...c, r: C.r, h: C.h }, { K: o.K, R: objR(o.K) })
     objEase.set(o.id, { at: p })
-    return { ...o, held: true, x: p[0], y: p[1], z: p[2], q: o.K.limb && ph ? clubOut.q.slice() : o.K.cover && ph && partsActOf(c.id)[0] === 6 ? hammerOut.q.slice() : [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)] }
+    return { ...o, held: true, x: p[0], y: p[1], z: p[2], q: o.K.limb && ph ? clubOut.q.slice() : o.K.cover && ph ? (partsActOf(c.id)[0] === 6 ? hammerOut.q : coverOut.q).slice() : [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)] }
   }
   if (!e) return o
   if (!e.off) Object.assign(e, { off: [0, 1, 2].map(i => e.at[i] - [o.x, o.y, o.z][i]), t: renderT })
@@ -30812,6 +30812,7 @@ function partsHand(c, o) {
   if (o.K.limb) return clubPose(o.K, c.id, c.x, c.y, c.z, c.yaw, c).p
   if (o.K.cover && partsActOf(c.id)[0] === 6) return hammerPose(c.id, c.x, c.y, c.z, c.yaw, c).p          // and the whirled cover
   const grip = partsGrip(partsObjectKind(c, o) || 'object', o.R || objR(o.K)), [k] = partsActOf(c.id)
+  if (o.K.cover && grip === 'overhead' && k !== 1) return coverHold(c.x, c.y, c.z, c.yaw, c).p
   if (grip === 'overhead' && k !== 1) return null
   return partsCarryAt(c.id, c.x, c.y, c.z, c.yaw, c, grip === 'overhead' ? 'chest' : grip, o.R || objR(o.K))
 }
@@ -30820,6 +30821,7 @@ function partsDrawHand(o, p, C) {
   if (o.K.limb) return clubPose(o.K, p.id, p.x, p.y, p.z, p.yaw, C).p
   if (o.K.cover && partsActOf(p.id)[0] === 6) return hammerPose(p.id, p.x, p.y, p.z, p.yaw, C).p
   const grip = partsGrip(partsKindOf(o), objR(o.K)), [k] = partsActOf(p.id)
+  if (o.K.cover && grip === 'overhead' && k !== 1) return coverHold(p.x, p.y, p.z, p.yaw, C).p
   if (grip === 'overhead' && k !== 1) return null
   return partsCarryAt(p.id, p.x, p.y, p.z, p.yaw, C, grip === 'overhead' ? 'chest' : grip, objR(o.K))
 }
@@ -30892,7 +30894,8 @@ const LIMB_CFG = {
   capColor: 0x4a0709,
 }
 const GORE_LIMBS = LIMB_CFG.limbs
-const CLUB = { swing: 0.42, hold: 0.9, grip: [0.45, 0.1], lift: 0.25, hit: [0.13, 0.27], reach: 0.15, speed: 9,
+const clubLast = new Map()
+const CLUB = { ease: 0.18, swing: 0.42, hold: 0.9, grip: [0.45, 0.1], lift: 0.25, hit: [0.13, 0.27], reach: 0.15, speed: 9,
   clip: [[0.33, 0.26, -0.36, 0.894, -0.06, -0.443], [0.33, 0.28, -0.35, 0.897, -0.04, -0.441], [0.33, 0.33, -0.33, 0.904, 0.011, -0.427], [0.32, 0.41, -0.29, 0.895, 0.091, -0.437], [0.32, 0.5, -0.25, 0.902, 0.156, -0.403], [0.31, 0.58, -0.23, 0.918, 0.185, -0.35], [0.28, 0.65, -0.23, 0.864, 0.263, -0.43], [0.2, 0.73, -0.26, 0.595, 0.535, -0.6], [0.13, 0.78, -0.3, 0.176, 0.777, -0.604], [0.1, 0.79, -0.37, 0.14, 0.083, -0.987], [0.1, 0.79, -0.41, 0.272, -0.031, -0.962], [0.1, 0.76, -0.42, 0.292, -0.127, -0.948], [0.11, 0.72, -0.42, 0.314, -0.281, -0.907], [0.12, 0.67, -0.42, 0.34, -0.44, -0.831], [0.13, 0.63, -0.42, 0.36, -0.559, -0.746], [0.14, 0.61, -0.42, 0.37, -0.622, -0.69], [0.14, 0.6, -0.42, 0.358, -0.625, -0.693], [0.13, 0.62, -0.39, 0.225, -0.549, -0.805], [0.12, 0.63, -0.36, -0.024, 0.237, -0.971], [0.11, 0.67, -0.36, 0.309, 0.744, -0.592], [0.12, 0.69, -0.35, 0.574, 0.642, -0.508], [0.12, 0.7, -0.33, 0.687, 0.564, -0.458], [0.11, 0.72, -0.31, 0.75, 0.529, -0.398], [0.1, 0.73, -0.28, 0.793, 0.51, -0.333], [0.1, 0.75, -0.26, 0.82, 0.497, -0.283], [0.1, 0.75, -0.25, 0.832, 0.492, -0.256]] }
 const clubOut = { p: [0, 0, 0], q: [0, 0, 0, 1], tip: [0, 0, 0] }
 function clubPose(K, id, x, y, z, yaw, C) {
@@ -30904,10 +30907,20 @@ function clubPose(K, id, x, y, z, yaw, C) {
     const ax = A[3] + (B[3] - A[3]) * u, ay = A[4] + (B[4] - A[4]) * u, az = A[5] + (B[5] - A[5]) * u, n = Math.hypot(ax, ay, az) || 1
     gx = x + lx * c + lz * s; gy = y + ly; gz = z - lx * s + lz * c
     dx = (ax * c + az * s) / n; dy = ay / n; dz = (-ax * s + az * c) / n
+    const e = clubLast.get(id) || clubLast.set(id, [0, 0, 0, 0, 0, 0, 0]).get(id)
+    e[0] = gx; e[1] = gy; e[2] = gz; e[3] = dx; e[4] = dy; e[5] = dz; e[6] = now()
   } else {
     const th = CLUB.hold, f = CLUB.grip[0] * r, dh = Math.cos(th)
     gx = x - s * f; gy = y + CLUB.grip[1] + CLUB.lift * th / 1.9; gz = z - c * f
     dx = -s * dh; dy = Math.sin(th); dz = -c * dh
+    const e = clubLast.get(id), u = e ? (now() - e[6]) / (CLUB.ease * 1000) : 1
+    if (e && u >= 1) clubLast.delete(id)
+    else if (e) {
+      const w = u * u * (3 - 2 * u)
+      gx = e[0] + (gx - e[0]) * w; gy = e[1] + (gy - e[1]) * w; gz = e[2] + (gz - e[2]) * w
+      dx = e[3] + (dx - e[3]) * w; dy = e[4] + (dy - e[4]) * w; dz = e[5] + (dz - e[5]) * w
+      const n = Math.hypot(dx, dy, dz) || 1; dx /= n; dy /= n; dz /= n
+    }
   }
   clubOut.p[0] = gx + dx * L / 2; clubOut.p[1] = gy + dy * L / 2; clubOut.p[2] = gz + dz * L / 2
   clubOut.tip[0] = gx + dx * L; clubOut.tip[1] = gy + dy * L; clubOut.tip[2] = gz + dz * L
@@ -31101,7 +31114,7 @@ function limbBuild(kind, bit, cid, src, yaw, at) {
   const sfx = (kind === 'Arm' ? bit === 1 : bit === 4) ? '_l' : '_r'
   const keep = new Set(), keepTree = n => { keep.add(n); n.children.forEach(c => c.isBone && keepTree(c)) }
   const seated = kind === 'Upper half' && !src?.rig && M.anims && rigClip(M, M.clips?.idle || 'idle')
-  if (seated) { const mx = new THREE.AnimationMixer(inst); mx.clipAction(seated).play(); mx.update(0); mx.stopAllAction(); inst.updateMatrixWorld(true) }
+  if (seated) { const mx = new THREE.AnimationMixer(inst); mx.clipAction(seated).play(); mx.update(0); inst.updateMatrixWorld(true) }
   const local = new THREE.Matrix4().compose(inst.position, inst.quaternion, inst.scale)
   let root, tip
   if (kind === 'Upper half') {
@@ -31189,7 +31202,7 @@ function limbViewFrame(o, K, seen) {
 function limbViewsEnd(seen) { for (const [id, v] of limbViews) if (!seen.has(id)) { v.group.removeFromParent(); limbViews.delete(id) } }
 
 const HAMMER = { r: 0.3, thick: 0.04, T: 1.25, w0: 5, a: 16, R: 0.95, up: 0.12, tilt: 0.3, speed: 36, pitch: 0.04, spin: 48, wobble: [5, 3.5],
-  lift: 0.12, min: 9, cut: 0.45, loss: 0.88, e: 0.5, tangent: 0.85, lodgeV: 16, lodge: 0.8 }
+  lift: 0.12, min: 9, cut: 0.45, loss: 0.88, e: 0.5, tangent: 0.85, lodgeV: 16, lodge: 0.8, hold: 2.22, heldTilt: 0.6 }
 {
   const K = OBJECTS.find(K => K.name === 'Manhole cover')
   if (K) {
@@ -31211,6 +31224,14 @@ function hammerPose(id, x, y, z, yaw, C) {
   hammerQy[1] = Math.sin(a / 2); hammerQy[3] = Math.cos(a / 2); hammerQx[0] = Math.sin(HAMMER.tilt / 2); hammerQx[3] = Math.cos(HAMMER.tilt / 2)
   qmulTo(hammerOut.q, hammerQy, hammerQx)
   return hammerOut
+}
+const coverOut = { p: [0, 0, 0], q: [0, 0, 0, 1] }, coverQy = [0, 0, 0, 1], coverQx = [-Math.sin(HAMMER.heldTilt / 2), 0, 0, Math.cos(HAMMER.heldTilt / 2)]
+function coverHold(x, y, z, yaw, C) {
+  const h = C.h + C.r
+  coverOut.p[0] = x; coverOut.p[1] = y - h + HAMMER.hold * h; coverOut.p[2] = z
+  coverQy[1] = Math.sin(yaw / 2); coverQy[3] = Math.cos(yaw / 2)
+  qmulTo(coverOut.q, coverQy, coverQx)
+  return coverOut
 }
 function goreHammerLaunch(c, held) {
   const o = held.ref, P = hammerPose(c.id, c.x, c.y, c.z, c.yaw, c), [yaw, pitch] = aimAngles(c, 40), [dx, dy, dz] = aimDir(yaw, clamp(pitch * 0.5 + HAMMER.pitch, -0.2, 0.35))
@@ -40565,12 +40586,14 @@ function mcFail(c, st, why) {
 }
 function mcRoom(people) {
   if (objs.length < OBJ_MAX - 8) return true
-  const cars = objs.filter(o => o.V && o.trafficAmbient && !mcCars.has(o.id) && !squadIds.has(o.id) &&
+  const cars = objs.filter(o => o.V && o.trafficAmbient && !mcCars.has(o.id) &&
+    (!squadIds.has(o.id) || o.squadKind === 'chase' && o.squadState === 'parked' && !o.traffic) &&
     !o.riders.some(r => r !== undefined) && o.heldBy === undefined && o.thrownBy === undefined && o.launchBy === undefined && o.fuse === undefined)
     .map(o => ({ o, d: Math.min(...people.map(p => Math.hypot(o.x - p.x, o.z - p.z))) })).sort((a, b) => b.d - a.d)
   for (const { o } of cars) {
     if (!trafficHidden(o.x, o.z, people)) continue
-    mcRemove(o); trafficState.stats.retired++
+    if (squadIds.has(o.id)) squadRemove(o); else mcRemove(o)
+    trafficState.stats.retired++
     if (objs.length < OBJ_MAX - 8) return true
   }
   return false
