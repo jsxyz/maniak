@@ -42337,7 +42337,26 @@ function mcPlan(c) {
     le = q; back += q.length
   }
   const P = (s, o) => ({ x: ax + hx * s + lx * o, z: az + hz * s + lz * o })
-  return { e, hx, hz, half, ax, az, pose: { ...P(sCar, oCar), hx, hz }, lead: P(sCar - MCAR.come.lead, oLane), him: { x: c.x, z: c.z } }
+  const sg = oHim < 0 ? -1 : 1, oWant = oHim - sg * (MCAR.come.pull + w / 2 + (c.r || 0.5))
+  const oEnd = Math.abs(oWant) > room + 0.5 && mcClear(P(sCar, sg * room), P(sCar, oWant), hx, hz, c) ? oWant : oCar
+  return { e, hx, hz, half, ax, az, pose: { ...P(sCar, oEnd), hx, hz }, lead: P(sCar - MCAR.come.lead, oLane), him: { x: c.x, z: c.z } }
+}
+function mcClear(K, T, hx, hz, c) {
+  const dx = T.x - K.x, dz = T.z - K.z, L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L, W = MC_V.w, Lc = MC_V.l, hw = W / 2 + 0.3
+  const g0 = c.y - c.h - c.r - 0.05, mask = RAY_GROUP | G_OBJ
+  for (let t = 0; t <= L + 0.01; t += 1.5)
+    for (const a of [-Lc / 2, 0, Lc / 2]) for (const b of [-hw, hw]) {
+      const x = K.x + ux * t + hx * a + ux * b, z = K.z + uz * t + hz * a + uz * b
+      const f = castRay(x, g0 + 1.5, z, 0, -1, 0, 4, RAY_GROUP)
+      if (f >= 1 || Math.abs(g0 + 1.5 - f * 4 - g0) > 0.45) return false
+    }
+  for (const a of [-Lc / 2, -Lc / 4, 0, Lc / 4, Lc / 2]) for (const h of [0.5, 1.1])
+    if (castRay(K.x + hx * a, g0 + h, K.z + hz * a, ux, 0, uz, L + W / 2 - 0.3, mask) < 1) return false
+  const near = (x, z, r) => { const t = clamp(((x - K.x) * ux + (z - K.z) * uz), 0, L); return Math.hypot(x - K.x - ux * t, z - K.z - uz * t) < hw + r + 0.3 }
+  for (const p of players.values()) if (p !== c && !(p.dead > 0) && !seatOf(p) && near(p.x, p.z, p.r || 0.5)) return false
+  for (const p of objs) if (!mcCars.has(p.id) && p.heldBy === undefined && Math.abs(p.y - c.y) < 4 && near(p.x, p.z, p.V ? Math.min(p.V.w / 2, p.R) : p.R)) return false
+  for (const p of GAME.streetLife?.obstacles?.(K.x + ux * L / 2, K.z + uz * L / 2, L / 2 + 4, true) || []) if (near(p.x, p.z, p.radius || 0.6)) return false
+  return true
 }
 function mcRoad(e, p) {
   if (e.ring) return { ax: e.from.x, az: e.from.z, half: e.width / 2, len: e.length }
