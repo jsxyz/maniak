@@ -13947,8 +13947,8 @@ function leapCamEase(me, tf = frameT || now()) {
   ;[C.m, C.mv] = ease(C.m, C.mv, m); [C.l, C.lv] = ease(C.l, C.lv, l)
   return C
 }
-const CAM_ROOM = { radius: 0.32, margin: 0.04, recover: 0.5, pull: 0.045, settle: 0.14, shoulder: 0.48, side: 1.2, fade: [0.8, 2.8] }
-const followCam = { at: NaN, id: null, warp: null, x: 0, y: 0, z: 0, distance: 0, pivot: 0, side: 0, sign: 1, active: false }
+const CAM_ROOM = { radius: 0.32, margin: 0.04, recover: 0.5, pull: 0.045, settle: 0.14, shoulder: 0.48, side: 1.2, fade: [0.8, 2.8], ahead: [0.1, 0.2, 0.3, 0.45], aheadTurn: 0.6, aheadMax: 1.6, probe: 0.3, speed: 24 }
+const followCam = { at: NaN, id: null, warp: null, x: 0, y: 0, z: 0, distance: 0, pivot: 0, side: 0, sign: 1, active: false, yaw: 0, rate: 0 }
 function camRay(me, yaw, pitch, R = heldR(me), eased = null, follow = null) {
   const [dx, dy, dz] = aimDir(yaw, pitch)
   const raw = eased ? null : leapCamTerms(me), move = eased ? eased.m : raw[0], landing = eased ? eased.l : raw[1]
@@ -13996,13 +13996,30 @@ function camRay(me, yaw, pitch, R = heldR(me), eased = null, follow = null) {
   const len = Math.hypot(ox, oy, oz) || 1, ux = ox / len, uy = oy / len, uz = oz / len
   const clear = camBlock(px, py, pz, ux, uy, uz, len, mask), hit = clear < len - CAM.pad - 0.001
   const limit = Math.max(0, clear - (hit ? CAM_ROOM.margin : 0)), wanted = Math.max(0, limit - (hit ? 0.08 : 0))
-  let t = wanted
-  if (follow && !fresh && (confined || follow.active)) {
-    const rate = wanted < follow.distance ? CAM_ROOM.pull : CAM_ROOM.recover
-    t = Math.min(limit, follow.distance + (wanted - follow.distance) * -Math.expm1(-dt / rate))
-    if (Math.abs(t - wanted) < 0.001) t = wanted
+  const turn = fresh ? 0 : follow.rate
+  let look = Infinity
+  const swings = Math.abs(turn) > CAM_ROOM.aheadTurn ? CAM_ROOM.ahead.map(h => [clamp(turn * h, -CAM_ROOM.aheadMax, CAM_ROOM.aheadMax), 0]) : []
+  if (confined && !fresh) swings.push([-CAM_ROOM.probe, 0], [CAM_ROOM.probe, 0], [0, CAM_ROOM.probe])
+  for (const [sw, up] of swings) {
+    const ya = yaw + sw, [ax, ay, az] = aimDir(ya, pitch)
+    const lx = (-ax * back + Math.sin(ya) * e) * k, lz = (-az * back + Math.cos(ya) * e) * k, ll = Math.hypot(lx, oy + up, lz) || 1
+    const lc = camBlock(px, py, pz, lx / ll, (oy + up) / ll, lz / ll, ll, mask)
+    if (lc < ll - CAM.pad - 0.001) look = Math.min(look, Math.max(0, lc - CAM_ROOM.margin - 0.08))
   }
-  if (follow) Object.assign(follow, { at: tf, id: me.id, warp: me.warp || 0, x: me.x, y: me.y, z: me.z, distance: t, pivot, side, sign, active: confined || t < limit - 0.001 })
+  const goal = Math.min(wanted, look)
+  let t = goal
+  if (follow && !fresh && (confined || follow.active || hit || look < Infinity)) {
+    const rate = goal < follow.distance ? CAM_ROOM.pull : CAM_ROOM.recover
+    t = follow.distance + (goal - follow.distance) * -Math.expm1(-dt / rate)
+    t = Math.min(limit, Math.max(follow.distance - CAM_ROOM.speed * dt, Math.min(t, follow.distance + CAM_ROOM.speed * dt)))
+    if (Math.abs(t - goal) < 0.001) t = goal
+  }
+  if (follow) {
+    let w = yaw - follow.yaw
+    w -= Math.round(w / (2 * Math.PI)) * 2 * Math.PI
+    const inst = fresh || dt < 0.004 ? follow.rate : w / dt
+    Object.assign(follow, { at: tf, id: me.id, warp: me.warp || 0, x: me.x, y: me.y, z: me.z, distance: t, pivot, side, sign, active: confined || t < limit - 0.001 || look < Infinity, yaw, rate: fresh ? 0 : follow.rate + (inst - follow.rate) * 0.5 })
+  }
   const x = px + ux * t, cy = Math.max(floor + 0.35, py + uy * t), z = pz + uz * t
   const target = [me.x + dx * aim, (confined ? Math.min(eyeY, py + 0.1) : eyeY) + dy * aim, me.z + dz * aim]
   const ax = target[0] - x, ay = target[1] - cy, az = target[2] - z, n = Math.hypot(ax, ay, az) || 1
