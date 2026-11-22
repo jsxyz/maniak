@@ -7411,7 +7411,8 @@ function faustTick() {
   const points = [...participants, ...movers].map(c => [c.x, c.z])
   if (!points.length) points.push([0, 144])
   const vp = me ? [me.x, me.z, me.y] : points[0]
-  try { faustStream(points, vp) } catch (e) { frameFailed('city', e) }
+  const solid = [...participants, ...movers.filter(o => !o.kin)].map(c => [c.x, c.z])
+  try { faustStream(solid.length ? solid : points, vp) } catch (e) { frameFailed('city', e) }
   try { faustRoadsTick(points) } catch (e) { frameFailed('roads', e) }; try { faustChanTick(points) } catch (e) { frameFailed('channels', e) }; try { faustWaterTick(points) } catch (e) { frameFailed('water', e) }
   try { faustRingsTick(points) } catch (e) { frameFailed('rings', e) }
   try { faustRingInTick(participants) } catch (e) { frameFailed('ring interiors', e) }
@@ -11054,7 +11055,7 @@ const background = (() => {
       const t = performance.now()
       const ms = lastFrameT ? Math.round(t - lastFrameT) : 0
       gpuOpen.upKB = Math.round(gpuOpen.upKB)
-      const sim = [...simMap].filter(([, v]) => v >= 1).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + Math.round(v)); simMap.clear()
+      const sim = [...simMap].filter(([, v]) => v >= 0.3).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + (v < 10 ? v.toFixed(1) : Math.round(v))); simMap.clear()
       const js = frameJsAt ? +(realNow() - frameJsAt).toFixed(1) : 0, bg = +(open.bgMs || 0).toFixed(1)
       frameLog.push({ i, t: Math.round(t), ms, speed: gameSpeed, js, bg, gap: +Math.max(0, ms - js - bg).toFixed(1), draw: Math.round(draw), phase, q, ticks: simTicks, sim, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen }); simTicks = 0
       if (q >= 3 && !(gpuLog.at(-1)?.kind === 'queue' && gpuLog.at(-1).q >= q)) gpuLog.push({ t: Math.round(t), i, kind: 'queue', q })
@@ -14477,17 +14478,24 @@ const present = list => { let n = 0; for (const c of list) if (players.get(c.id)
 function tickChars(list, inputFor, dt, P, t) {
   carrierPlace()
   if (P) P.beforeIntent(t)
+  let s = realNow()
   preTick(list, inputFor, dt)
+  s = simLap('pre', s)
   if (P) present(list)
   for (const c of list) { carryStep(c, inputFor(c), dt); driveStep(c, inputFor(c)) }
+  s = simLap('carry', s)
   waterTick(list, inputFor, dt)
+  s = simLap('water', s)
   planesTick(list, inputFor, dt)
+  simLap('planes', s)
   if (P) P.beforePhysics(t)
   if (P) present(list)
   const p0 = now()
   stepPhysics(dt)
   const ms = now() - p0
+  s = realNow()
   postTick(list)
+  simLap('post', s)
   if (P) P.afterPhysics(t)
   else holdOff(list, touchOf(list))
   if (!P) GAME.guest.afterPhysics(list)
@@ -14573,15 +14581,21 @@ function carUnstack() {
   for (const [o, f] of unstackHeld) if (!unstackNow.has(o)) { if (o.body && objs.includes(o)) o.body.setFriction(f); unstackHeld.delete(o) }
 }
 function stepPhysics(dt) {
+  let s = realNow()
   padLaunch()
   for (const o of objs) if (o.V && o.body.isActive()) { const v = o.body.getLinearVelocity(); o.v0 = [v.x(), v.y(), v.z()] }
   const swept = carsAtSpeed()
+  s = simLap('physics pre', s)
   world.stepSimulation(dt, 0)
+  s = simLap('bullet', s)
   carSweep(swept)
   carUnstack()
+  s = simLap('car fixes', s)
   holdObjects()
   partsHoldChars()
+  s = simLap('holds', s)
   stepObjects()
+  simLap('objects', s)
 }
 
 const PARKED = { fill: { core: 0.65, tenement: 0.6, civic: 0.45, industrial: 0.3 }, kerb: 9.2, off: 0.5, pitch: 6.5, end: 20, mid: 10,
@@ -15492,11 +15506,14 @@ function trafficSpawn(people) {
     if (objs.some(o => Math.hypot(o.x - q.x, o.z - q.z) < 22) || !trafficHidden(q.x, q.z, people)) continue
     let id = OBJ_MAX - 1; while (id >= 16 && (objs.some(o => o.id === id) || T.departures.some(v => v.id === id && v.until > trafficClock()))) id--
     if (id < 16) return
-    faustEnsure([[q.x, q.z]])
+    const far = people.every(p => Math.hypot(p.x - q.x, p.z - q.z) > TRAFFIC.kinOut)
+    if (!far) faustEnsure([[q.x, q.z]])
     const o = addObject(k, [q.x, 1, q.z], id, Math.atan2(-e.dx, -e.dz))
     if (!o) return
     o.at = [q.x, -o.low + 0.02, q.z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body)
-    trafficAttach(o, e); T.stats.spawned++; return
+    trafficAttach(o, e); T.stats.spawned++
+    if (far) { if (!trafficKinHold(o, o.traffic) && !o.traffic.path) kinOn(o, o.traffic); else faustEnsure([[q.x, q.z]]) }
+    return
   }
 }
 function trafficKinHold(o, a) {
@@ -15512,7 +15529,7 @@ function kinOn(o, a) {
   o.body.setMassProps(0, zeroVec); o.body.updateInertiaTensor()
   o.body.setActivationState(CF_NEVER_SLEEP)
   o.body.setLinearVelocity(zeroVec); o.body.setAngularVelocity(zeroVec)
-  world.addRigidBody(o.body, ...collideFor(o.K))
+  { const [g, m] = collideFor(o.K); world.addRigidBody(o.body, g, m & ~G_STATIC) }
   o.kin = true; a.think = 0; trafficState.stats.kinOn = (trafficState.stats.kinOn || 0) + 1
 }
 function kinOff(o) {
@@ -20711,6 +20728,21 @@ const GOV_LEVELS = [{ s: 1, d: 1, v: 1 }, { s: 0.7, d: 1, v: 1 }, { s: 0.5, d: 1
 let govLevel = 0, govAt = 0
 const govWin = [], govLog = []
 GAME.perfScale = () => GOV_LEVELS[govLevel].s
+const GOV_THINK = [1, 1, 1, 1, 2, 3, 3], GOV_THINK_R = 40
+const botKind = c => !c.bot ? 'guest' : c.bot.enforcer ? 'enforcer' : c.bot.squad ? 'squad' : c.bot.deal ? 'deal' : 'bot'
+const simWho = () => { const k = {}; for (const c of players.values()) { const n = c.id === 0 ? 'me' : botKind(c); k[n] = (k[n] || 0) + 1 }
+  return 'players ' + Object.entries(k).map(e => e.join(' ')).join(', ') + '  objects ' + objs.length + '  bodies ' + objs.filter(o => o.body).length }
+function botDue(c, dt) {
+  c.thinkDt = (c.thinkDt || 0) + dt
+  const n = GOV_THINK[govLevel]
+  if (n > 1 && inputs.has(c.id) && !(c.dead > 0) && (c.thinkSkip = (c.thinkSkip || 0) + 1) < n) {
+    let near = Infinity
+    for (const h of players.values()) if (!h.bot) near = Math.min(near, Math.hypot(h.x - c.x, h.z - c.z))
+    if (near > GOV_THINK_R) { const p = inputs.get(c.id); if (p.sw || p.sh || p.use || p.dis || p.pipe || p.car) inputs.set(c.id, { ...p, sw: false, sh: false, use: false, dis: false, pipe: false, car: false }); return false }
+  }
+  c.thinkSkip = 0
+  return true
+}
 const govAwake = () => { let n = 0; for (const o of objs) if (o.body?.isActive?.()) n++; return n }
 function govSet(level, why, ms) {
   govLevel = level; govAt = realNow()
@@ -25983,14 +26015,14 @@ function drawDebug(me, fps) {
         (startLog.warmProgs != null ? ' (in play +' + v(background.stats.lateCount) + ')' : '')) : '') +
     (rescues.n ? row('rescue', v(rescues.n) + '  last ' + esc(rescues.last.who + ' at ' + [rescues.last.x, rescues.last.y, rescues.last.z].map(Math.round).join(' ') +
         ' vy ' + Math.round(rescues.last.vy) + (rescues.last.cell ? '  cell ' + rescues.last.cell : '') + ' (' + rescues.last.cause + ')')) : '') +
-    row('perf', 'level ' + v(govLevel) + '  scale ' + v(GOV_LEVELS[govLevel].s) + '  pixels x' + v(GOV_LEVELS[govLevel].d) + '  view x' + v(GOV_LEVELS[govLevel].v) + '  awake ' + v(govAwake()) +
+    row('perf', 'level ' + v(govLevel) + '  scale ' + v(GOV_LEVELS[govLevel].s) + '  pixels x' + v(GOV_LEVELS[govLevel].d) + '  view x' + v(GOV_LEVELS[govLevel].v) + '  awake ' + v(govAwake()) + '  ' + esc(simWho()) +
       (govLog.length ? '  ' + esc(govLog.slice(-3).map(e => '#' + e.i + ' L' + e.level + ' (' + e.why + ')').join(', ')) : '')) +
     row('models', (D => 'libs ' + esc(D.libs) + '  workers ' + v(D.workers ?? '-') + (D.noWorkers ? ' (' + esc(D.noWorkers) + ')' : '') + '  files ' + v([...D.files.values()].filter(f => f.state === 'loaded').length) + '/' + v(D.files.size) +
       '  rigs ' + v([...D.rigs.values()].filter(s => s === 'ready').length) + '/' + v(D.rigs.size) + '  cars ' + esc(periodFleet ? periodFleet.failed ? 'failed' : periodFleet.ready ? 'ready' : 'loading' : '-') +
       '  street ' + esc(slKitJob ? slKitJob.failed ? 'failed' : slKitJob.done ? 'ready' : 'loading' : '-') +
       ([...D.files.entries()].some(([, f]) => f.state !== 'loaded') ? '  waiting ' + esc([...D.files.entries()].filter(([, f]) => f.state !== 'loaded').slice(0, 4).map(([k, f]) => k.split('.')[0] + ' ' + f.state + ' ' + Math.round((Date.now() - f.t0) / 1000) + 's').join(', ')) : '') +
       (D.fails.length ? '  <span class="w">failed ' + esc(D.fails.slice(-3).join('; ')) + '</span>' : '') + '  gpu ' + esc(modelGpu()))(modelDiag)) +
-    ((f => f?.sim?.length ? row('sim', 'last frame ' + v(f.ms) + ' ms, ' + v(f.ticks) + ' ticks (cap ' + v(tickCap) + ', speed ' + v(f.speed) + '): ' + esc(f.sim.slice(0, 7).join(', '))) : '')(background.frames(1)[0])) +
+    ((f => f?.sim?.length ? row('sim', 'last frame ' + v(f.ms) + ' ms, ' + v(f.ticks) + ' ticks (cap ' + v(tickCap) + ', speed ' + v(f.speed) + '): ' + esc(f.sim.slice(0, 18).join(', '))) : '')(background.frames(1)[0])) +
     row('bg', 'jobs ' + v(background.pending.length) +
         (background.pending.length ? ' (' + esc(background.jobs.slice(0, 8).join(' ')) + (background.pending.length > 8 ? ' …' : '') + ')' : '') +
         (compileSignal.cuts ? '  compile waits cut ' + v(compileSignal.cuts) + (compileSignal.broken ? ' (no ready signal)' : '') : '') +
@@ -27776,11 +27808,15 @@ function capAfterDraw() {
     const g = capCanvas.getContext('2d'); g.drawImage(cv, 0, 0, w, h)
     try { background.gpu('capture', 1, w + 'x' + h) } catch (e) {}
     const r = v => Math.round(v * 100) / 100, hd = headingOf(input.yaw)
+    const r3 = v => Math.round(v * 1000) / 1000, pos = me && [me.x, me.y, me.z], mesh = avatars.get(myId)?.mesh, drawn = mesh && [mesh.position.x, mesh.position.y, mesh.position.z], prev = job.motion
+    const motion = pos && drawn ? { predicted: pos.map(r3), displayed: drawn.map(r3), predictedStep: prev ? pos.map((v, i) => r3(v - prev.pos[i])) : null,
+      displayedStep: prev ? drawn.map((v, i) => r3(v - prev.drawn[i])) : null, ack: me.ack | 0, reconcileErr: isHost ? 0 : Number.isFinite(reconcileErr) ? r3(reconcileErr) : null, replayed: isHost ? 0 : replaySteps } : null
+    job.motion = motion ? { pos, drawn } : null
     capDir ||= new THREE.Vector3()
     job.frames.push({ url: capCanvas.toDataURL('image/jpeg', job.q), row: { t: Math.round(now() - job.t0), fps: Math.round(fps), w, h,
       x: me && r(me.x), y: me && r(me.y), z: me && r(me.z), vx: me && r(me.vx || 0), vy: me && r(me.vy || 0), vz: me && r(me.vz || 0), speed: me && r(Math.hypot(me.vx || 0, me.vz || 0)),
       heading: Math.round(hd), facing: facing(input.yaw), pitch: Math.round(input.pitch * 180 / Math.PI), look: lookStats.look, grounded: !!me?.grounded, seated: !!(me && seatOf(me)),
-      draws: renderer.info.render.calls, tris: renderer.info.render.triangles,
+      draws: renderer.info.render.calls, tris: renderer.info.render.triangles, motion,
       ...(c => c && now() - c.at < 100 ? { carCam: { x: r(c.cam[0]), y: r(c.cam[1]), z: r(c.cam[2]), heading: Math.round(headingOf(c.yaw)), pitch: Math.round(Math.asin(clamp(camera.getWorldDirection(capDir).y, -1, 1)) * 180 / Math.PI),
         target: c.target.map(r), want: r(c.want), back: r(c.back), len: r(c.len), dist: r(c.dist), lag: r(c.lag), alpha: r(c.alpha) } } : {})(me && seatOf(me) || me && rideOf(me) ? carCamLast : null) } })
     if (job.frames.length >= job.n) job.done()
@@ -28532,7 +28568,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
   models: () => ({ ...modelDiag, files: Object.fromEntries(modelDiag.files), rigs: Object.fromEntries(modelDiag.rigs), cars: periodFleet && { ready: !!periodFleet.ready, failed: !!periodFleet.failed }, street: slKitJob && { done: !!slKitJob.done, failed: !!slKitJob.failed }, gpu: modelGpu() }),
-  perf: () => ({ level: govLevel, ...GOV_LEVELS[govLevel], awake: govAwake(), bodies: objs.filter(o => o.body).length, log: govLog.slice() }),
+  perf: () => ({ level: govLevel, ...GOV_LEVELS[govLevel], awake: govAwake(), bodies: objs.filter(o => o.body).length, who: simWho(), log: govLog.slice() }),
+  perfSet: n => govSet(clamp(n | 0, 0, GOV_LEVELS.length - 1), 'hook', 0),
   fps(n) { if (n !== undefined) fpsCap = +n >= 5 && +n <= 240 ? +n : 0; return fpsCap },
   telescreen: (n = 120) => teleState(n),
   background: (n = 300) => ({ fps: fpsCap, origin: performance.timeOrigin, seconds: GAME.background.seconds(), gate: GAME.background.gate, gated: GAME.background.stats.gated || 0, frames: GAME.background.frames(n), gpu: GAME.background.gpuEvents(), rests: GAME.background.stats.rests || 0, jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
@@ -30310,7 +30347,8 @@ const partsKindOf = o => o.K.carry ? 'object' : PARTS[o.K.name] ? o.K.name : o.V
 const partsGrip = (kind, R = 0) => { const g = PARTS[kind]?.grab?.grip || 'chest'; return g === 'chest' && R > 0.42 ? 'overhead' : g }
 
 function partsHeld(c) {
-  const o = objs.find(o => (o.heldBy ?? (isHost ? undefined : objHeld.get(o.id))) === c.id && !o.K.carry) || objs.find(o => o.heldBy === c.id)
+  const owner = !isHost && c === predicted ? myId : c.id
+  const o = objs.find(o => (o.heldBy !== undefined ? o.heldBy === c.id : !isHost && objHeld.get(o.id) === owner) && !o.K.carry) || objs.find(o => o.heldBy === c.id)
   if (o) return { kind: partsObjectKind(c, o) || 'object', src: 'object', ref: o, R: o.R || objR(o.K), mass: o.K.mass }
   if (isHost) {
     for (const h of players.values()) if (h.grabBy === c.id) return { kind: 'person', src: 'char', ref: h, R: h.r, mass: PARTS.person.mass }
@@ -30319,8 +30357,8 @@ function partsHeld(c) {
     return null
   }
   const F = GAME.schema.col
-  for (const [id, tr] of tracks) if (id !== myId && (tr.at(-1)?.p?.[F.grab] | 0) === c.id + 1) return { kind: 'person', src: 'char', ref: { id }, R: 0.4, mass: 1 }
-  const g = partsStreetHeldBy(c.id)
+  for (const [id, tr] of tracks) if (id !== owner && (tr.at(-1)?.p?.[F.grab] | 0) === owner + 1) return { kind: 'person', src: 'char', ref: { id }, R: 0.4, mass: 1 }
+  const g = partsStreetHeldBy(owner)
   if (g) return { kind: g.what ? 'pram' : g.kindName, src: 'street', ref: { rec: g }, R: g.R, mass: PARTS[g.what ? 'pram' : g.kindName].mass }
   return null
 }
@@ -34208,7 +34246,7 @@ function slFrameSafe(t, dt, obl) { try { slFrame(t, dt, obl) } catch (e) { frame
   L.snapshot = () => ({ ...snap(), ...slWireOut() })
   L.takeItems = function (d) { take.call(this, d); slWireIn(d) }
   const ap = HOST_PHASES.afterPhysics
-  HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust && faustState) { if (!slState || slState.seed !== faustState.seed) slReset(); slHostTick() } }
+  HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust && faustState) { if (!slState || slState.seed !== faustState.seed) slReset(); const s = realNow(); slHostTick(); simLap('street life', s) } }
 }
 const SL_TEST_ID = 0x3F00000
 function slSpawnTest(kind, x, z, yaw, y = 0, dead = false, down = false) {
@@ -39237,7 +39275,7 @@ function hostTick(dt) {
   pageLife.hostAttempts++
   if (!hostTick.timed) { hostTick.timed = true
     for (const [k, f] of Object.entries(GAME.host)) if (typeof f === 'function') GAME.host[k] = function (...a) { const t0 = realNow(); try { return f.apply(this, a) } finally { background.simAdd(k, realNow() - t0) } }
-    const think = GAME.think; if (typeof think === 'function') GAME.think = function (...a) { const t0 = realNow(); try { return think.apply(this, a) } finally { background.simAdd('think', realNow() - t0) } }
+    const think = GAME.think; if (typeof think === 'function') GAME.think = function (...a) { const t0 = realNow(); try { return think.apply(this, a) } finally { background.simAdd('think ' + botKind(a[0]), realNow() - t0) } }
   }
   const tickT0 = realNow()
   try {
@@ -39247,12 +39285,12 @@ function hostTick(dt) {
   if (me) me.pitch = aimed(input).pitch
   const all = [...players.values()]
   spawnAvoid = all
-  meleeTurns(all, dt)
+  let s0 = realNow(); meleeTurns(all, dt); s0 = simLap('melee', s0)
 
   const cur = new Map()
   for (const [id, c] of players)
     cur.set(id, id === 0 ? aimed(input)
-                : c.bot ? (inputs.set(id, GAME.think(c, all, dt)), inputs.get(id))
+                : c.bot ? (botDue(c, dt) && (inputs.set(id, GAME.think(c, all, c.thinkDt)), c.thinkDt = 0), inputs.get(id))
                 : takeInput(id))
   for (const [id, c] of players) cur.set(id, lockInput(c, cur.get(id)))
 
@@ -39266,7 +39304,7 @@ function hostTick(dt) {
   const physMs = tickChars(all, c => cur.get(c.id) || IDLE_INPUT, dt, GAME.host, t)
   msPhys = msPhys * 0.9 + physMs * 0.1
   background.simAdd('physics', physMs)
-  recordHistory(tickAt, all)
+  s0 = realNow(); recordHistory(tickAt, all); simLap('history', s0)
   pageLife.hostTicks++
   } finally { background.simAdd('tick', realNow() - tickT0) }
 }
@@ -39379,6 +39417,7 @@ function checkLiveness(t, own) {
   }
 }
 
+function simLap(name, s) { const t = realNow(); background.simAdd(name, t - s); return t }
 function stepSim(t) {
   let dt = (t - last) / 1000, own = dt > 1
   if (!document.hidden && dt < 1) { spiralRun = dt > spiralDt * 1.05 && lastSteps >= 3 ? spiralRun + 1 : Math.max(0, spiralRun - 1); spiralDt = dt }
@@ -39410,11 +39449,11 @@ function stepSim(t) {
   let steps = 0
   tickSamples.clear()
   while (acc >= TICK && steps < tickCap) {
-    keepPoses()
+    let s0 = realNow(); keepPoses(); s0 = simLap('poses', s0)
     acc -= TICK; steps++; tickAt = t - acc * 1000
     if (lagGive > 0) lagGive--
     if (LV.grow && (isHost || connected)) growTick()
-    if (isHost && players.size) { hostTick(TICK); lookStep(players.get(0), input); ticksRun++; INPUT_SCHEMA.consume(input) }
+    if (isHost && players.size) { hostTick(TICK); s0 = realNow(); lookStep(players.get(0), input); simLap('look', s0); ticksRun++; INPUT_SCHEMA.consume(input) }
     else if (connected && predicted && lagOwed > 0 && lagGive <= 0) {
       lagOwed--; lagGive = LAG_GIVE_TICKS
     }
@@ -39440,7 +39479,7 @@ function stepSim(t) {
       INPUT_SCHEMA.consume(input)
     }
     pageLife.steps++
-    if (isHost && players.size) { for (const [id, c] of players) sampleTick(id, c, false, !id && (input.fire || input.alt)); for (const f of tracers) f.firedAt ??= tickAt }
+    if (isHost && players.size) { s0 = realNow(); for (const [id, c] of players) sampleTick(id, c, false, !id && (input.fire || input.alt)); for (const f of tracers) f.firedAt ??= tickAt; simLap('samples', s0) }
   }
   drawDelay(t); input.view = null
   if (steps && !isHost && connected && predicted) sendHost({ k: 'i', s: lastSeqOut, a: sendRing })
