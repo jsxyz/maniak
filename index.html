@@ -377,10 +377,10 @@
   body.touch .tbtn{padding:0;font-size:10px;letter-spacing:0}
   body.touch #btn-fire{width:76px;height:76px;right:calc(10px + env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));font-size:12px;left:auto}
   body.touch #btn-jump{width:56px;height:56px;right:calc(96px + env(safe-area-inset-right));bottom:calc(24px + env(safe-area-inset-bottom));left:auto}
-  body.touch #btn-sprint{width:52px;height:52px;right:calc(156px + env(safe-area-inset-right));bottom:calc(26px + env(safe-area-inset-bottom));left:auto}
+  body.touch #btn-sprint{width:48px;height:48px;right:calc(160px + env(safe-area-inset-right));bottom:calc(28px + env(safe-area-inset-bottom));left:auto}
   body.touch #btn-alt{width:64px;height:64px;right:calc(14px + env(safe-area-inset-right));bottom:calc(104px + env(safe-area-inset-bottom));font-size:12px;left:auto}
   body.touch #btn-use{width:56px;height:56px;right:calc(96px + env(safe-area-inset-right));bottom:calc(100px + env(safe-area-inset-bottom));left:auto}
-  body.touch #btn-descend{width:52px;height:52px;right:calc(156px + env(safe-area-inset-right));bottom:calc(100px + env(safe-area-inset-bottom));left:auto}
+  body.touch #btn-descend{width:48px;height:48px;right:calc(160px + env(safe-area-inset-right));bottom:calc(104px + env(safe-area-inset-bottom));left:auto}
   body.touch #btn-pipe{width:52px;height:52px;right:calc(12px + env(safe-area-inset-right));bottom:calc(176px + env(safe-area-inset-bottom));left:auto}
   body.touch #btn-disguise{width:52px;height:52px;right:calc(76px + env(safe-area-inset-right));bottom:calc(176px + env(safe-area-inset-bottom));font-size:9px;left:auto}
   body.touch #btn-car{width:52px;height:52px;right:calc(140px + env(safe-area-inset-right));bottom:calc(176px + env(safe-area-inset-bottom));font-size:9px;left:auto}
@@ -389,8 +389,8 @@
   body.touch #hudsound{display:none}
   body.touch #veh{left:calc(8px + env(safe-area-inset-left));bottom:calc(210px + env(safe-area-inset-bottom));font-size:16px;max-width:45vw}
   body.touch #vhpbar{width:120px}
-  body.touch #radioart{position:fixed;top:calc(4px + env(safe-area-inset-top));left:50%;margin:0 0 0 -16px;width:32px;height:32px}
-  body.touch #radio{position:fixed;top:calc(38px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:96px;margin:0;text-align:center;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px #000}
+  body.touch #radioart{position:fixed;top:calc(4px + env(safe-area-inset-top));left:50%;margin:0 0 0 -20px;width:40px;height:40px}
+  body.touch #radio{position:fixed;top:calc(50px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:96px;margin:0;text-align:center;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px #000}
   body.touch #hud,body.touch #chat,body.touch.radar #chat{max-width:calc(50vw - 62px - env(safe-area-inset-left));width:calc(50vw - 62px - env(safe-area-inset-left))}
   @media (orientation:landscape){
     body.touch #radar{top:calc(4px + env(safe-area-inset-top));right:calc(56px + env(safe-area-inset-right));width:72px;height:72px}
@@ -26770,7 +26770,13 @@ function initTouch() {
   const stick = el('#stick')
   const knob = el('#knob')
   const R = 62
-  let moveId = null, moveOx = 0, moveOy = 0
+  let moveId = null, moveOx = 0, moveOy = 0, moveSx = 0
+  const placeKnob = (dx, dy) => {
+    let x = dx + moveSx, y = dy
+    const d = Math.hypot(x, y)
+    if (d > R) { x = x / d * R; y = y / d * R }
+    knob.style.transform = 'translate(' + x + 'px,' + y + 'px)'
+  }
   let lookId = null, lookX = 0, lookY = 0
   const heldTouches = []
   resetTouch = () => {
@@ -26813,9 +26819,11 @@ function initTouch() {
       if (!isFire(t.target) && t.clientX < innerWidth * 0.45 && moveId === null) {
         moveId = t.identifier; moveOx = t.clientX; moveOy = t.clientY
         stick.style.display = 'block'
-        stick.style.left = (moveOx - R) + 'px'
+        const padX = Math.min(moveOx, Math.floor(innerWidth * 0.45) - R)
+        moveSx = moveOx - padX
+        stick.style.left = (padX - R) + 'px'
         stick.style.top = (moveOy - R) + 'px'
-        knob.style.transform = 'translate(0,0)'
+        placeKnob(0, 0)
         used = true
       } else if (lookId === null) {
         lookId = t.identifier; lookX = t.clientX; lookY = t.clientY
@@ -26833,7 +26841,7 @@ function initTouch() {
         let dx = t.clientX - moveOx, dy = t.clientY - moveOy
         const d = Math.hypot(dx, dy)
         if (d > R) { dx = dx / d * R; dy = dy / d * R }
-        knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)'
+        placeKnob(dx, dy)
         INPUT_SCHEMA.stick(dx, dy, R)
         used = true
       } else if (t.identifier === lookId) {
