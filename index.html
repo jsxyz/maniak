@@ -23366,7 +23366,9 @@ function capeGuard(R, S) {
 }
 function rigCape(a, R, dt) {
   if (!R.cape.length || !dt || !capePoints(R)) return
-  const M = R.M, v = Math.max(0, (a.v || 0) + weatherPush(a)), h = Math.min(dt, 0.05), bend = M.capeBend || [1, 0.55, 0.75]
+  const vNow = Math.max(0, (a.v || 0) + weatherPush(a)), vWas = R.capeV ?? vNow
+  R.capeV = vWas + (vNow - vWas) * (1 - Math.exp(-Math.min(dt, 0.25) / (vNow > vWas ? 0.1 : 0.25)))
+  const M = R.M, v = R.capeV, h = Math.min(dt, 0.05), bend = M.capeBend || [1, 0.55, 0.75]
   const seated = a.hold === 'sit', dying = a.dying >= 0, swimming = !!a.swimming
   const lift = seated || dying || swimming ? 0 : Math.min(a.chainState?.[0] >= 3 ? 0.35 : a.moveState ? 0.6 : M.capeMax, v * M.capeK)
   const ease = (x0, x1) => { const t = Math.min(1, Math.max(0, (v - x0) / (x1 - x0))); return t * t * (3 - 2 * t) }
