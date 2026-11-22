@@ -265,6 +265,13 @@
   .ovl{position:fixed;inset:0;display:none;place-items:center;z-index:30;background:rgba(8,8,9,.78);overflow:auto}
   .ovl.open{display:grid}
   #pause{z-index:29;background:rgba(8,8,9,.7)}
+  #ach-toast{position:fixed;top:64px;left:50%;transform:translate(-50%,-12px);z-index:40;padding:10px 18px;border:1px solid #8a7a3a;border-radius:8px;background:rgba(14,13,10,.92);color:#f0e6b8;font-size:14px;font-weight:700;letter-spacing:.04em;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;max-width:90vw;text-align:center}
+  #ach-toast.open{opacity:1;transform:translate(-50%,0)}
+  #ach-list{display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow:auto;margin-bottom:14px}
+  #ach-list .ach{padding:8px 10px;border:1px solid #323236;border-radius:6px}
+  #ach-list .ach b{display:block;font-size:13px}
+  #ach-list .ach span{color:#86847f;font-size:12px}
+  #ach-list .ach.off{opacity:.45}
   #pause-hint{margin-top:16px;color:#86847f;font-size:12px;line-height:1.6}
   .mcol{display:flex;flex-direction:column;gap:8px}
   .mcol button{width:100%;text-align:left;padding:11px 14px}
@@ -443,6 +450,7 @@
     </div>
     <div class="row" id="menu-foot">
       <button id="menu-set">Settings</button>
+      <button id="menu-ach">Achievements</button>
       <button id="serve-btn" class="link" title="Run the room on this machine without playing in it, and join it from another">Run a server</button>
     </div>
   </div>
@@ -566,6 +574,7 @@
   <div class="mcol">
     <button id="pause-resume">Resume</button>
     <button id="pause-settings">Settings</button>
+    <button id="pause-ach">Achievements</button>
     <button id="pause-host">Host</button>
     <button id="pause-world-save">Save world</button>
     <button id="pause-world-load">Load world</button>
@@ -575,6 +584,14 @@
   </div>
   <div id="pause-hint"></div>
 </div></div>
+
+<div id="ach" class="ovl"><div class="mbox">
+  <h2 id="ach-title"></h2>
+  <p id="ach-count"></p>
+  <div id="ach-list"></div>
+  <div class="mrow"><button id="ach-back"></button></div>
+</div></div>
+<div id="ach-toast"></div>
 
 <div id="hostset" class="ovl"><div class="mbox">
   <h2 id="host-title">Host</h2>
@@ -752,6 +769,37 @@ const TEXT = {
   enemyGone: '§f{name} §7is gone.',
   arrive: {
     'Misery Master': 'crashes the party.', 'Tony': 'is here to collect.', 'Street performer': 'sets up on the corner.' },
+  achHeading: 'Achievements',
+  achEarned: '{n} of {total} earned',
+  achLocked: 'Locked',
+  achBack: 'Back',
+  ach: {
+    kill1: ['Customer Service', 'Drop a freak.'],
+    kill10: ['Population Control', 'Drop ten freaks in one game.'],
+    haymaker: ['Free Chiropractic', 'Drop someone with a haymaker.'],
+    smash: ['Gravity Is Your Friend', 'Drop someone with a falling two-arm smash.'],
+    chain: ['Block Party', 'Hit someone with the cinderblock.'],
+    chainkill: ['Concrete Evidence', 'Drop someone with the cinderblock.'],
+    whistle: ['Here, Boy', 'Whistle for your car.'],
+    drive: ['Ride Share', 'Get in a car.'],
+    eject: ['Seat Not Included', 'Fire your passenger out of the ejector seat.'],
+    ejected: ['Complimentary Departure', 'Be fired out of the ejector seat.'],
+    pram: ['Baby on Board', 'Blow up a pram.'],
+    babykill: ['Out of the Mouths of Babes', 'Get dropped by a baby.'],
+    wanted: ['Persona Non Grata', "Get Faust's enforcers after you."],
+    wanted3: ['Public Enemy, Private Jet', 'Reach three stars of heat.'],
+    escape: ['Nothing to See Here', 'Lose the enforcers.'],
+    disguise: ['Business Casual', 'Put on the disguise.'],
+    pipe: ['Medicinal Purposes', 'Smoke the pipe to heal.'],
+    zeppelin: ['Hot Air Politics', 'Stand on a zeppelin.'],
+    monorail: ['Mind the Gap', 'Ride the monorail.'],
+    biplane: ['Ace of Nothing', 'Climb into a biplane.'],
+    outskirts: ['Beyond the Pale', 'Leave the city behind.'],
+    inside: ['Home Invasion', 'Walk into a building.'],
+    window: ['Fresh Air', 'Stand in a building with a broken window.'],
+    rip: ['Hands On', 'Tear a limb off.'],
+    cut: ['Halves and Halves', 'Cut someone in half.'],
+  },
   enforcersAfter: "§cFaust's enforcers are after you",
   enforcersOn: "§7Faust's enforcers are §fon§7: crimes in public bring heat again.",
   enforcersOff: "§7Faust's enforcers are §foff§7: no heat builds and none are out.",
@@ -12421,6 +12469,7 @@ function chainCharacterHit(c, g, from, to, wall) {
 function chainStrike(c,g,hit) {
   const speed = Math.hypot(...g.v), G = blockAttack(), scale = clamp(speed/G.refSpeed,G.minScale,1), P = {...G,dmg:G.dmg*scale,knock:G.knock*scale}
   strike(c,hit.victim,P,...hit.dir)
+  achGrant(c.id, 'chain')
   if (downed(hit.victim)) c.blockKills = [...c.blockKills||[],hit.victim]
   for (const f of impactFx(hit.victim,gunNamed('Cinderblock'),hit.victim.dead>0)) {f.push(c.id);tracers.push(f)}
   chainImpact(c,hit.p,hit.dir.map(v=>-v),speed,2)
@@ -27530,6 +27579,7 @@ function openSettings() {
 function closeSettings() {
   settingsOpen = false
   show('settings')
+  show('ach')
   show('hostset')
 }
 
@@ -28301,6 +28351,102 @@ function bcastSound() {
 
 GAME.audio = { frame: sfxFrame, radio: radioTick, fx: sfxFx, play: sfxPlay, sound: playSound, voice: playVoice, takeRadio, toggle: sfxToggle, cycle: radioCycle, apply: sfxApply, start: sfxStart, gesture: sfxGesture }
 
+const ACH_KEY = 'maniak.ach.v1'
+let achHave = null, achToastT = 0
+function achLoad() {
+  if (achHave) return achHave
+  achHave = {}
+  try { const o = JSON.parse(localStorage.getItem(ACH_KEY) || '{}'); if (o && typeof o === 'object') for (const k in o) if (Object.hasOwn(TEXT.ach, k)) achHave[k] = +o[k] || 1 } catch (e) {}
+  return achHave
+}
+function achReceive(key) {
+  if (!Object.hasOwn(TEXT.ach, key)) return
+  const have = achLoad()
+  if (have[key]) return
+  have[key] = Date.now()
+  try { localStorage.setItem(ACH_KEY, JSON.stringify(have)) } catch (e) {}
+  const t = el('#ach-toast')
+  t.textContent = TEXT.ach[key][0]
+  t.classList.add('open')
+  clearTimeout(achToastT); achToastT = setTimeout(() => t.classList.remove('open'), 4200)
+  if (settingsOpen && el('#ach').classList.contains('open')) achRender()
+}
+function achRender() {
+  const have = achLoad(), keys = Object.keys(TEXT.ach), L = el('#ach-list')
+  el('#ach-title').textContent = TEXT.achHeading
+  el('#ach-back').textContent = TEXT.achBack
+  el('#ach-count').textContent = TEXT.achEarned.replace('{n}', keys.filter(k => have[k]).length).replace('{total}', keys.length)
+  L.textContent = ''
+  for (const k of keys) {
+    const d = L.appendChild(document.createElement('div')), b = d.appendChild(document.createElement('b')), p = d.appendChild(document.createElement('span'))
+    d.className = 'ach' + (have[k] ? '' : ' off')
+    b.textContent = TEXT.ach[k][0]
+    p.textContent = have[k] ? TEXT.ach[k][1] : TEXT.achLocked + ' · ' + TEXT.ach[k][1]
+  }
+}
+function openAch() {
+  settingsOpen = true
+  achRender()
+  show('ach', 1)
+}
+
+const achSim = new Map()
+const achOf = id => achSim.get(id) || achSim.set(id, { got: new Set(), n: {}, heat: 0, smk: 0 }).get(id)
+function achWipe(id) { if (id === undefined) achSim.clear(); else achSim.delete(id) }
+function achGrant(id, key) {
+  if (!isHost || !Object.hasOwn(TEXT.ach, key)) return
+  const c = players.get(id)
+  if (!c || c.bot || id >= BOT_ID0) return
+  const S = achOf(id)
+  if (S.got.has(key)) return
+  S.got.add(key)
+  if (id === myId) achReceive(key)
+  else { const p = conns.get(id); if (p && p.open) try { p.send(JSON.stringify({ k: 'ach', a: key })) } catch (e) {} }
+}
+function achCount(id, key, need) {
+  const S = achOf(id)
+  S.n[key] = (S.n[key] || 0) + 1
+  if (S.n[key] >= need) achGrant(id, key.split(':')[0])
+}
+const achId = by => by && typeof by === 'object' ? by.id : by
+function achKill(k, victim, G) {
+  if (!k || k.bot) return
+  achGrant(k.id, 'kill1')
+  achCount(k.id, 'kill10', 10)
+  if (G.name === 'Haymaker') achGrant(k.id, 'haymaker')
+  if (G.name === 'Leap-smash') achGrant(k.id, 'smash')
+  if (G.name === 'Cinderblock') achGrant(k.id, 'chainkill')
+}
+function achTick(all, dt) {
+  if (!isHost) return
+  for (const c of all) {
+    if (c.bot || c.id >= BOT_ID0 || c.dead > 0) continue
+    const id = c.id, S = achOf(id), st = seatOf(c)
+    if (st) {
+      const o = st[0]
+      if (o.K.plane) achGrant(id, 'biplane')
+      else if (o.K.drive) achGrant(id, 'drive')
+    }
+    if (c.carryOn && typeof c.carryId === 'string') {
+      if (c.carryId.startsWith('air:')) achGrant(id, 'zeppelin')
+      else if (c.carryId.startsWith('rail:')) achGrant(id, 'monorail')
+    }
+    if (LV.faust) {
+      if (Math.max(Math.abs(c.x), Math.abs(c.z)) > ARENA + 200) achGrant(id, 'outskirts')
+      const at = inAt(c.x, c.z, c.y - (c.h || 0) - (c.r || 0))
+      if (at && at.inside) { achGrant(id, 'inside'); if (faustIn.broken.has(at.B.id)) achGrant(id, 'window') }
+    }
+    if (c.disguised) achGrant(id, 'disguise')
+    if (c.smk > 0 && !S.smk && c.hp < CHARS[c.cid].hp) achGrant(id, 'pipe')
+    S.smk = c.smk > 0 ? 1 : 0
+    const H = heat.get(id), stars = H ? H.stars | 0 : 0
+    if (stars >= 1) achGrant(id, 'wanted')
+    if (stars >= 3) achGrant(id, 'wanted3')
+    if (S.heat > 0 && stars === 0) achGrant(id, 'escape')
+    S.heat = stars
+  }
+}
+
 function openPause() {
   faustSeedReadout()
   if (pauseOpen || phase !== 'playing') return
@@ -28349,6 +28495,10 @@ function initPause() {
   el('#city-seed-copy').onclick = faustCopySeed
   el('#pause-resume').onclick = closePause
   el('#pause-settings').onclick = fromPause(openSettings)
+  el('#pause-ach').onclick = fromPause(openAch)
+  el('#menu-ach').onclick = openAch
+  el('#ach-back').onclick = settingsBack
+  backdrop('ach', settingsBack)
   el('#pause-host').onclick = fromPause(openHost)
   el('#pause-world-save').onclick = () => dsWorldExport()
   el('#pause-world-load').onclick = () => el('#world-file').click()
@@ -30489,6 +30639,7 @@ function openHostPeer(attempt) {
       conns.set(id, c)
       lastSeen.set(id, now())
       watchLink(c, id)
+      achWipe(id)
       c.send(welcome(id)); c.send({ k: 'roster', list: rosterList() })
       if (bcastUrl) bcastSay(c)
     })
@@ -30787,6 +30938,7 @@ function rosterTake() {
   applyRoster(list)
 }
 const GUEST_MSGS = {
+  ach: { validate: d => typeof d.a === 'string' && Object.hasOwn(TEXT.ach, d.a) ? d : null, apply: d => { achReceive(d.a) } },
   welcome: { apply: d => {
     myId = d.id | 0
     roomCodeStr = d.code || roomCodeStr
@@ -31070,6 +31222,7 @@ const rejoinMissed = type => {
 }
 
 function resetToMenu() {
+  achWipe()
   rejoinStop()
   try { clearSession() } catch (e) { frameFailed('menu', e) }
   phase = 'menu'
@@ -31536,6 +31689,7 @@ const HOST_PHASES = {
     if (resultsLeft > 0) return
     const k = c.owner !== undefined && players.get(c.owner) || c
     k.kills++
+    achKill(k, victim, G)
     if (hooked.kill) hookEmit('kill', { killer: hookWho(k), victim: hookWho(victim), weapon: G.name, ...c !== k && { via: hookWho(c) } })
     if (fragLimit && k.kills >= fragLimit) endMatch('Frag limit.')
     const vn = (roster.get(victim.id) || {}).name || enemyName(rowOf(victim).name)
@@ -32532,6 +32686,7 @@ function goreRipHost(c, held, credit) {
     slAddRec([12, s.ag.id, T, partsGoreOf(s.ag.id) | bit, 0])
   } else return
   S.ripN = (S.ripN | 0) + 1
+  achGrant(c.id, 'rip')
   const L = goreLimb(bit), k = OBJECTS.findIndex(K => K.name === L.row), id = partsFreeId()
   partsLetGoHost(c, held, 'drop', credit)
   const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw)
@@ -32895,6 +33050,7 @@ function goreCoverFx(at, n, by) {
   tracers.push(f); GAME.audio.fx([f])
 }
 function goreCut(c, o, dir, by) {
+  { const k = achId(by); if (k !== undefined && k !== c.id) achGrant(k, 'cut') }
   const lv = o.body.getLinearVelocity()
   goreMaskSet(c, 12)
   goreHalf(c.x, c.y - c.h - c.r, c.z, dir, Math.hypot(lv.x(), lv.y(), lv.z()), by, c.cid)
@@ -37835,6 +37991,7 @@ function slBlastHurt(ag, p, by, T) {
 function slPramStrike(ag, p, by, T, dmg) { slHit.part = 'pram'; slHit.dmg = dmg ?? Infinity; try { slPramHit(ag, p, by, T) } finally { slHit.part = null; slHit.dmg = Infinity } }
 function slPramBlow(id, x, z, by, T) {
   slAddRec([7, id, Math.round(T), slR2(x), slR2(z)])
+  if (by) achGrant(by.id, 'pram')
   slBabyOf(slState).pending.push({ x, z, by: by && players.get(by.id) === by ? by : null, T })
   slState.bb.live.delete(id); slState.bb.hurt.delete(id); slState.bb.mad.delete(id)
 }
@@ -37873,6 +38030,7 @@ function slPramBlast(e, credit) {
 }
 function slBabyKill(v) {
   if (resultsLeft > 0) return
+  achGrant(v.id, 'babykill')
   const sh = slState?.bb?.shooter
   if (hooked.kill && sh) hookEmit('kill', { killer: hookWho(sh), victim: hookWho(v), weapon: SL_BABY.gun })
   announce(gameText('killBaby', { killer: enemyName(SL_BABY.name), victim: (roster.get(v.id) || {}).name || enemyName(rowOf(v).name), weapon: SL_BABY.gun }), 'b')
@@ -40870,6 +41028,7 @@ function hostTick(dt) {
   background.simAdd('physics', physMs)
   s0 = realNow(); recordHistory(tickAt, all); simLap('history', s0)
   pageLife.hostTicks++
+  try { achTick(all, dt) } catch (e) { frameFailed('achievements', e) }
   } finally { background.simAdd('tick', realNow() - tickT0) }
 }
 
@@ -42355,6 +42514,7 @@ function mcWhistle(c) {
   const T = mcClock(), st = mcStateOf(c.id)
   if (T - (st.whistled ?? -Infinity) < MCAR.whistle.cd * 1000) return
   st.whistled = T; mcWhistles.set(c.id, Math.round(T))
+  achGrant(c.id, 'whistle')
   let o = mcCarOf(st)
   if (o && o.riders.some(r => r !== undefined && r !== c.id)) { mcLetGo(o); o = null }
   if (o && (o.riders.includes(c.id) || o.heldBy !== undefined)) return
@@ -42728,6 +42888,8 @@ function mcEject(o) {
   const id = o.riders[1], p = id !== undefined && players.get(id)
   if (!p || !p.body) return
   o.riders[1] = undefined
+  if (o.riders[0] !== undefined) achGrant(o.riders[0], 'eject')
+  achGrant(p.id, 'ejected')
   if (p.seat?.[0] === o) p.seat = null
   const s = o.V.seats[1], E = MCAR.eject, up = rotq(o.q, [0, 1, 0]), rt = rotq(o.q, [1, 0, 0]), v = o.body.getLinearVelocity()
   const at = seatAt(o, [s[0], o.V.h + p.h + p.r + 0.15, s[2]]), u = [v.x(), v.y(), v.z()].map((x, i) => x * E.keep + up[i] * E.speed + rt[i] * E.side)
