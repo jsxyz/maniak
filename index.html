@@ -1250,7 +1250,7 @@ const VEHICLE_STYLES = (({ black, maroon, wine, green, teal, cream, ivory, grey,
     { style: 'speedster', wheels: 'ww', paints: [[navy, navy, navy, cream], [teal, teal, teal, cream]] },
   ],
 }))(NOIR)
-const PERIOD = { lods: { high: [22, 70], medium: [0, 56], low: [0, 44] }, wheelNear: { high: 16, medium: 0, low: 0 }, lamp: 3.5, wheelCap: 1024, env: 0.2, gloss: 0.12,
+const PERIOD = { lods: { high: [32, 100], medium: [0, 80], low: [0, 64] }, wheelNear: { high: 24, medium: 0, low: 0 }, fade: 0.12, hysteresis: 0.01, lamp: 3.5, wheelCap: 1024, env: 0.2, gloss: 0.12,
   wreck: { sedan: 'sedan', taxi: 'sedan', beater: 'sedan', coupe: 'coupe', speedster: 'speedster', van: 'van', truck: 'truck', bus: 'bus' } }
 const VEHICLE_CABINS = {
   'Maniak car': { floor: 0.27, roof: 1.385, x: [[0.27, 0.86], [0.95, 0.86], [1.0, 0.84], [1.385, 0.72]],
@@ -14775,7 +14775,7 @@ function parkedFor(F) {
   }
   return parkedState
 }
-const PARKED_STAND = { lod2: 120, far: 250, low: 120, edge: 5, hide: 10, keep: 400, rows: 16, cells: 1 }
+const PARKED_STAND = { far: 250, low: 120, edge: 5, keep: 400, rows: 16, cells: 1 }
 let parkedStand = null
 function parkedLook(r) {
   const K = OBJECTS.find(Q => Q.name === r.kind), V = vehicleOf(K), row = V && VEHICLE_STYLES[V.name]
@@ -14783,18 +14783,6 @@ function parkedLook(r) {
   const v = row[variantAt(V, r.seed)] || row[0], h = Math.imul((r.seed || 1) ^ 0x5bd1e995, 0x27d4eb2d) >>> 0
   const cab = !!v.taxi && (h >>> 12) % 100 < v.taxi * 100, style = cab ? 'taxi' : v.style, paints = cab ? v.taxiPaints : v.paints, paint = paints[h % paints.length]
   return periodFleet.geo[style + '_lod2'] ? { key: style + ':' + paint.join(','), style, paint, wheels: v.wheels, shape: V.name, K, V } : null
-}
-function parkedCellOf(g, fall) {
-  const U = g?.attributes.uv, P = g?.attributes.position, I = g?.index
-  if (!U || !P || !I) return fall
-  const A = new Map(), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3()
-  for (let t = 0; t < I.count; t += 3) {
-    const i = I.getX(t), w = a.fromBufferAttribute(P, i).clone().sub(b.fromBufferAttribute(P, I.getX(t + 1))).cross(c.fromBufferAttribute(P, I.getX(t + 2)).sub(b)).length()
-    const k = Math.min(7, Math.floor(U.getX(i) * 8)) + 8 * Math.min(7, Math.floor(U.getY(i) * 8)); A.set(k, (A.get(k) || 0) + w)
-  }
-  let best = -1, k = -1
-  for (const [q, w] of A) if (w > best) best = w, k = q
-  return k < 0 ? fall : [(k % 8 + 0.5) / 8, (Math.floor(k / 8) + 0.5) / 8]
 }
 function parkedStandInit() {
   const F = periodFleet, base = F.base, schemes = new Map()
@@ -14811,49 +14799,19 @@ function parkedStandInit() {
     for (const [a, b] of PARKED_LENS.cells) { const px = go.getImageData(x + a * cell, y + b * cell, cell, cell); for (let k = 0; k < px.data.length; k += 4) px.data[k + 1] = Math.round(PARKED_LENS.rough * 255); go.putImageData(px, x + a * cell, y + b * cell) }
   })
   const tex = (c, t) => { const x = new THREE.CanvasTexture(c); x.colorSpace = t.colorSpace; x.flipY = t.flipY; x.wrapS = x.wrapT = THREE.ClampToEdgeWrapping; x.magFilter = x.minFilter = THREE.NearestFilter; x.generateMipmaps = false; return x }
-  const mat = base.clone(); mat.map = tex(cv, base.map); mat.roughnessMap = mat.metalnessMap = tex(co, base.roughnessMap); mat.emissiveIntensity = 0; mat.name = 'vehicle-period-stand'; mat.userData.vehicleLamps = true
-  return { mat, schemes: new Map(list.map((p, i) => [p.join(','), i])), R, cols, boxes: new Map(), poses: new Map(),
-    uv: { body: [0.5 / 8, 0.5 / 8], roof: [1.5 / 8, 0.5 / 8], glass: [1.5 / 8, 1.5 / 8], tyre: parkedCellOf(F.geo.wheel_bk_lod2, [6.5 / 8, 0.5 / 8]) } }
+  const mat = base.clone(); mat.map = tex(cv, base.map); mat.roughnessMap = mat.metalnessMap = tex(co, base.roughnessMap); mat.emissiveIntensity = 0; mat.name = 'vehicle-period-stand'; mat.userData.vehicleLamps = true; mat.userData.periodAttribute = true
+  return { mat, schemes: new Map(list.map((p, i) => [p.join(','), i])), R, cols, poses: new Map() }
 }
 function parkedPose(S, P) {
   if (!S.poses.has(P.K.name)) { const at = hullAt(P.K); S.poses.set(P.K.name, { at, y: 0.02 - Math.min(...carPts(P.K, P.V.wheels, at).map(p => p[1])) }) }
   return S.poses.get(P.K.name)
 }
-function parkedBoxCar(S, P) {
-  const key = P.style + ':' + P.shape
-  if (S.boxes.has(key)) return S.boxes.get(key)
-  const g0 = periodWhole(P, 2), Pg = g0.attributes.position, Ug = g0.attributes.uv, b = new THREE.Box3().setFromBufferAttribute(Pg), gl = new THREE.Box3(), v = new THREE.Vector3()
-  for (let i = 0; i < Pg.count; i++) { const u = Ug.getX(i), w = Ug.getY(i); if (u >= 0.125 && u < 0.25 && w >= 0.125 && w < 0.25) gl.expandByPoint(v.fromBufferAttribute(Pg, i)) }
-  const H = b.max.y - b.min.y, X = (b.max.x - b.min.x) / 2, sill = gl.isEmpty() ? b.min.y + 0.58 * H : gl.min.y
-  const cab = gl.isEmpty() ? [-X * 0.86, X * 0.86, (b.max.z + b.min.z) / 2 - 0.22 * (b.max.z - b.min.z), (b.max.z + b.min.z) / 2 + 0.22 * (b.max.z - b.min.z)] : [gl.min.x, gl.max.x, gl.min.z, gl.max.z]
-  const pos = [], nor = [], uv = [], idx = []
-  const FACES = [[[1, 0, 0], [0, 0, -1], [0, 1, 0]], [[-1, 0, 0], [0, 0, 1], [0, 1, 0]], [[0, 0, 1], [1, 0, 0], [0, 1, 0]], [[0, 0, -1], [-1, 0, 0], [0, 1, 0]], [[0, 1, 0], [1, 0, 0], [0, 0, -1]]]
-  const box = (x0, x1, y0, y1, z0, z1, side, top) => {
-    const c = [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2], e = [(x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2]
-    for (const [n, a, d] of FACES) {
-      const base = pos.length / 3, t = n[1] ? top : side
-      for (const [p, q] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-        for (let k = 0; k < 3; k++) pos.push(c[k] + n[k] * e[k] + a[k] * p * e[k] + d[k] * q * e[k])
-        nor.push(...n); uv.push(...t)
-      }
-      idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
-    }
-  }
-  box(b.min.x, b.max.x, b.min.y + 0.22 * H, sill, b.min.z, b.max.z, S.uv.body, S.uv.body)
-  box(cab[0], cab[1], sill, b.max.y, cab[2], cab[3], S.uv.glass, S.uv.roof)
-  const W = VEHICLE_SHAPES[P.shape]?.wheels
-  for (const z of new Set((W?.at || []).map(w => w[2]))) { const w = W.at.find(q => q[2] === z); box(b.min.x + 0.02, b.max.x - 0.02, w[1] - W.r, w[1] + W.r, z - 0.8 * W.r, z + 0.8 * W.r, S.uv.tyre, S.uv.tyre) }
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx)
-  S.boxes.set(key, g)
-  return g
-}
 function* parkedStandBuild(S, C, band) {
-  const parts = C.rows.map(r => { const P = parkedLook(r); return P && [r, P, band === 1 ? periodWhole(P, 2) : parkedBoxCar(S, P)] })
+  const parts = C.rows.map(r => { const P = parkedLook(r); return P && [r, P, periodWhole(P, 2)] })
   let nv = 0, ni = 0
   for (const e of parts) if (e) { nv += e[2].attributes.position.count; ni += e[2].index.count }
   yield
-  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), full = new Uint32Array(ni), ranges = new Int32Array(C.rows.length * 2).fill(-1)
+  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), full = new Uint32Array(ni), ranges = new Int32Array(C.rows.length * 2).fill(-1), vertices = new Int32Array(C.rows.length * 2).fill(-1)
   let v0 = 0, i0 = 0
   for (let j = 0; j < parts.length; j++) {
     if (!parts[j]) continue
@@ -14866,18 +14824,19 @@ function* parkedStandBuild(S, C, band) {
       uv[(v0 + q) * 2] = (col + gu[q * 2]) / S.cols; uv[(v0 + q) * 2 + 1] = (row + gu[q * 2 + 1]) / S.R
     }
     for (let q = 0; q < gi.length; q++) full[i0 + q] = gi[q] + v0
-    ranges[j * 2] = i0; ranges[j * 2 + 1] = i0 + gi.length
+    ranges[j * 2] = i0; ranges[j * 2 + 1] = i0 + gi.length; vertices[j * 2] = v0; vertices[j * 2 + 1] = v0 + n
     v0 += n; i0 += gi.length
     if (j % 6 === 5) yield
   }
   if (!ni) { C.sets[band] = { empty: true }; return }
   const geo = new THREE.BufferGeometry()
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2))
+  geo.setAttribute('periodFadeRange', new THREE.BufferAttribute(new Float32Array(nv * 2), 2).setUsage(THREE.DynamicDrawUsage))
   const index = new THREE.BufferAttribute(new Uint32Array(ni), 1); index.setUsage(THREE.DynamicDrawUsage); geo.setIndex(index); geo.setDrawRange(0, 0); geo.computeBoundingSphere()
   const mesh = new THREE.Mesh(geo, S.mat)
   mesh.castShadow = false; mesh.receiveShadow = true; mesh.matrixAutoUpdate = false; mesh.visible = false; mesh.name = 'parked stand-ins'
   objGroup.add(mesh)
-  C.sets[band] = { mesh, full, ranges, fresh: pos.byteLength + nor.byteLength + uv.byteLength }; C.dirty = true; S.stats.builds++
+  C.sets[band] = { mesh, full, ranges, vertices, fades: new Float32Array(C.rows.length * 2).fill(-1), fresh: pos.byteLength + nor.byteLength + uv.byteLength + nv * 8 }; C.dirty = true; S.stats.builds++
 }
 function parkedStandDrop(C) { for (const T of C.sets || []) if (T?.mesh) { T.mesh.removeFromParent(); T.mesh.geometry.dispose() } }
 function parkedStandClear() {
@@ -14885,18 +14844,43 @@ function parkedStandClear() {
   for (const C of parkedStand.cells.values()) parkedStandDrop(C)
   parkedStand.mat.map.dispose(); parkedStand.mat.roughnessMap.dispose(); parkedStand.mat.dispose(); parkedStand = null
 }
+function parkedLiveFade(m, d, state) {
+  const key = (Math.round(2 * m.position.x) + 4096) * 8192 + Math.round(2 * m.position.z) + 4096, row = parkedStand?.rowByKey.get(key)
+  if (!row || !row.C.sets[1]?.mesh || row.C.sets[1].fresh > 0 || row.C.seen < parkedStand.frame - 1) {
+    const f = state.parked ||= {}; f.d = d; f.value = 1; f.t = frameT || performance.now(); return 1
+  }
+  const near = PARKED.near * (trafficK() < 1 ? 0.75 : 1)
+  return Math.ceil(periodBlend(state, 'parked', d, near / (1 + PERIOD.fade * 0.5 + PERIOD.hysteresis)) * 64 - 0.5) / 64
+}
+function parkedStandFade(C) {
+  const T = C.sets[1]
+  if (!T?.mesh) return
+  const f = T.mesh.geometry.attributes.periodFadeRange
+  f.clearUpdateRanges()
+  let dirty = false
+  for (let j = 0; j < C.rows.length; j++) {
+    const lo = C.fades[j * 2], hi = C.fades[j * 2 + 1]
+    if (T.fades[j * 2] === lo && T.fades[j * 2 + 1] === hi) continue
+    T.fades[j * 2] = lo; T.fades[j * 2 + 1] = hi
+    const a = T.vertices[j * 2], z = T.vertices[j * 2 + 1]
+    if (a < 0) continue
+    for (let k = a; k < z; k++) f.setXY(k, lo, hi)
+    f.addUpdateRange(a * 2, (z - a) * 2); dirty = true
+  }
+  if (dirty) f.needsUpdate = true
+}
 function parkedStandFrame() {
   const F = faustState
   if (!LV.faust || !F || !camera || !objGroup || !periodFleet?.ready || typeof document === 'undefined') { if (parkedStand && !LV.faust) parkedStandClear(); return }
   const W = F.seed + ' ' + F.S, Pk = parkedFor(F)
-  if (parkedStand?.world !== W) { parkedStandClear(); parkedStand = { world: W, cells: new Map(), stand: new Map(), frame: 0, stats: { builds: 0, packs: 0, bytes: 0, ms: 0, cells: 0 }, laid: new Set(), laying: new Set(), ...parkedStandInit() } }
+  if (parkedStand?.world !== W) { parkedStandClear(); parkedStand = { world: W, cells: new Map(), stand: new Map(), rowByKey: new Map(), frame: 0, stats: { builds: 0, packs: 0, bytes: 0, ms: 0, cells: 0 }, laid: new Set(), laying: new Set(), ...parkedStandInit() } }
   const t0 = performance.now(), S = parkedStand, K = PARKED_STAND, e = K.edge, cx = camera.position.x, cz = camera.position.z, A = F.S * 48
-  const q = Math.min(1, trafficK()), near = PARKED.near * (q < 1 ? 0.75 : 1) - K.hide, far = q < 1 ? K.low : K.far, lod2 = q < 1 ? 0 : K.lod2
+  const q = Math.min(1, trafficK()), far = q < 1 ? K.low : K.far
   S.frame++
   const stand = S.stand, now = S.frame
   if (now % 600 === 0) stand.clear()
-  for (const m of objOf.values()) if (m.userData?.P) { const a = Math.round(2 * m.position.x) + 4096, b = Math.round(2 * m.position.z) + 4096; for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) stand.set((a + i) * 8192 + b + j, now) }
-  const reach = far + e + 68
+  for (const m of objOf.values()) if (m.visible && m.userData?.P) { m.userData.parkStandFrame = now; const a = Math.round(2 * m.position.x) + 4096, b = Math.round(2 * m.position.z) + 4096; for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) stand.set((a + i) * 8192 + b + j, m) }
+  const reach = far * (1 + PERIOD.fade * 0.5 + PERIOD.hysteresis) + e + 68
   let fresh = 0
   for (let ci = Math.max(0, Math.floor((cx - reach + A) / 96)); ci <= Math.min(F.S - 1, Math.floor((cx + reach + A) / 96)); ci++)
     for (let cj = Math.max(0, Math.floor((cz - reach + A) / 96)); cj <= Math.min(F.S - 1, Math.floor((cz + reach + A) / 96)); cj++) {
@@ -14912,51 +14896,52 @@ function parkedStandFrame() {
           continue
         }
         const rows = parkedCellRows(ci, cj); S.stats.cells++
-        S.cells.set(key, C = { rows, x: (ci + 0.5) * 96 - A, z: (cj + 0.5) * 96 - A, band: new Int8Array(rows.length), keys: rows.map(r => (Math.round(2 * r.x) + 4096) * 8192 + Math.round(2 * r.z) + 4096), sets: [null, null, null], job: [false, false, false], dirty: false, on: false, seen: 0 })
+        S.cells.set(key, C = { rows, x: (ci + 0.5) * 96 - A, z: (cj + 0.5) * 96 - A, band: new Int8Array(rows.length), states: rows.map(() => ({})), fades: new Float32Array(rows.length * 2), keys: rows.map(r => (Math.round(2 * r.x) + 4096) * 8192 + Math.round(2 * r.z) + 4096), sets: [null, null, null], job: [false, false, false], dirty: false, on: false, seen: 0 })
+        C.keys.forEach((k, j) => S.rowByKey.set(k, { C, j }))
       }
       C.seen = S.frame
       if (!C.rows.length) continue
       for (let j = 0; j < C.rows.length; j++) {
         const r = C.rows[j], was = C.band[j], d = Math.hypot(r.x - cx, r.z - cz)
-        let b = 0
-        if (d < far + (was ? e : -e) && d > near + (was ? 0 : e) && (r.seed & 0xffff) / 65536 < q && !Pk.vacated.has(r.slot) && stand.get(C.keys[j]) !== now) b = d < lod2 + (was === 1 ? e : -e) ? 1 : 2
+        const state = C.states[j], drawn = stand.get(C.keys[j]), live = drawn?.userData.parkStandFrame === now ? drawn.userData.parkCoverage ?? 1 : 0
+        const farFade = periodBlend(state, 'far', d, far)
+        const end = (r.seed & 0xffff) / 65536 < q && !Pk.vacated.has(r.slot) ? farFade : 0
+        const lo = Math.min(end, live)
+        C.fades[j * 2] = Math.ceil(lo * 64 - 0.5) / 64; C.fades[j * 2 + 1] = Math.ceil(end * 64 - 0.5) / 64
+        const b = end > 0 ? 1 : 0
         if (b !== was) { C.band[j] = b; C.dirty = true }
       }
-      for (const b of [1, 2]) if (!C.sets[b] && !C.job[b] && C.band.includes(b)) {
+      for (const b of [1]) if (!C.sets[b] && !C.job[b] && C.band.some(v => v & b)) {
         C.job[b] = true
         background.run('parked stand-ins ' + W + ' ' + key + ' ' + b, function* () { yield* parkedStandBuild(S, C, b) }, { valid: () => parkedStand === S && S.cells.get(key) === C })
           .catch(err => frameFailed('parked stand-ins', err)).finally(() => { C.job[b] = false })
       }
       if (C.dirty) parkedStandPack(S, C)
+      parkedStandFade(C)
     }
   for (const [key, C] of S.cells) {
     if (C.seen === S.frame) continue
     if (C.on) { for (const T of C.sets) if (T?.mesh) T.mesh.visible = false; C.band.fill(0); C.on = false }
-    if (Math.hypot(C.x - cx, C.z - cz) > K.keep && !C.job[1] && !C.job[2]) { parkedStandDrop(C); S.cells.delete(key); S.laid.delete(key) }
+    if (Math.hypot(C.x - cx, C.z - cz) > K.keep && !C.job[1] && !C.job[2]) { parkedStandDrop(C); C.keys.forEach(k => S.rowByKey.delete(k)); S.cells.delete(key); S.laid.delete(key) }
   }
   S.stats.ms = performance.now() - t0
 }
 function parkedStandPack(S, C) {
-  const one = C.sets[1] && !C.sets[1].empty
-  let on = false
-  for (const b of [1, 2]) {
-    const T = C.sets[b]
-    if (!T || T.empty) continue
-    const idx = T.mesh.geometry.index, arr = idx.array
-    let n = 0
-    for (let j = 0; j < C.rows.length; j++) {
-      const w = C.band[j]
-      if (!(w === b || b === 2 && w === 1 && !one)) continue
-      const a = T.ranges[2 * j], z = T.ranges[2 * j + 1]
-      if (a < 0) continue
-      arr.set(T.full.subarray(a, z), n); n += z - a
-    }
-    if (n && !background.uploadSlot(n * 4 + (T.fresh || 0))) return
-    if (n) { S.stats.packs++; S.stats.bytes += n * 4 + (T.fresh || 0); T.fresh = 0 }
-    T.mesh.geometry.setDrawRange(0, n); T.mesh.visible = n > 0; on ||= n > 0
-    if (n) { idx.clearUpdateRanges(); idx.addUpdateRange(0, n); idx.needsUpdate = true }
+  const T = C.sets[1]
+  if (!T || T.empty) return
+  const idx = T.mesh.geometry.index, arr = idx.array
+  let n = 0
+  for (let j = 0; j < C.rows.length; j++) {
+    if (!C.band[j]) continue
+    const a = T.ranges[2 * j], z = T.ranges[2 * j + 1]
+    if (a < 0) continue
+    arr.set(T.full.subarray(a, z), n); n += z - a
   }
-  C.dirty = false; C.on = on
+  if (n && !background.uploadSlot(n * 4 + (T.fresh || 0))) return
+  if (n) { S.stats.packs++; S.stats.bytes += n * 4 + (T.fresh || 0); T.fresh = 0 }
+  T.mesh.geometry.setDrawRange(0, n); T.mesh.visible = n > 0
+  if (n) { idx.clearUpdateRanges(); idx.addUpdateRange(0, n); idx.needsUpdate = true }
+  C.dirty = false; C.on = n > 0
 }
 const TRAFFIC = { cap: 160, fleet: ['Car','Sports car','Van','Truck','Bus'], density: {core:108,civic:64,tenement:56,industrial:27}, quality: {low:0.5,medium:0.5,high:1}, radius: 420, retire: 520, think: 0.1, cruise: [7, 11], trim: 15, stop: 21 }
 let trafficState = null
@@ -23464,9 +23449,76 @@ function periodMerge(parts) {
   out.userData.parts = ranges
   return out
 }
+function periodFadeHook(shader, material) {
+  const attribute = material.userData.periodAttribute
+  if (attribute) {
+    shader.vertexShader = 'attribute vec2 periodFadeRange; varying vec2 vPeriodFadeRange;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvPeriodFadeRange = periodFadeRange;')
+  } else shader.uniforms.periodFadeRange = material.userData.periodFade ||= { value: [0, 1] }
+  shader.fragmentShader = (attribute ? 'varying vec2 vPeriodFadeRange;\n' : 'uniform vec2 periodFadeRange;\n') + shader.fragmentShader
+  shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
+    vec2 carCoverage = ${attribute ? 'vPeriodFadeRange' : 'periodFadeRange'};
+    if (carCoverage.x > 0.0 || carCoverage.y < 1.0) {
+      float carX = floor(gl_FragCoord.x), carY = floor(gl_FragCoord.y), carMask = 0.0;
+      for (int i = 0; i < 3; i++) {
+        carMask = 4.0 * carMask + mod(2.0 * mod(carX, 2.0) + 3.0 * mod(carY, 2.0), 4.0);
+        carX = floor(carX * 0.5); carY = floor(carY * 0.5);
+      }
+      carMask = (carMask + 0.5) / 64.0;
+      if (carMask < carCoverage.x || carMask >= carCoverage.y) discard;
+    }`)
+}
 class PeriodCarMaterial extends THREE.MeshStandardMaterial {
-  onBeforeCompile(shader) { faustLampHook(shader, 'pbr') }
-  customProgramCacheKey() { return 'period-car-pbr-1' }
+  onBeforeCompile(shader) { faustLampHook(shader, 'pbr'); periodFadeHook(shader, this) }
+  customProgramCacheKey() { return 'period-car-pbr-2-' + Number(!!this.userData.periodAttribute) }
+}
+class PeriodCarDepthMaterial extends THREE.MeshDepthMaterial {
+  constructor() { super({ depthPacking: THREE.RGBADepthPacking }) }
+  onBeforeCompile(shader) { periodFadeHook(shader, this) }
+  customProgramCacheKey() { return 'period-car-depth-1-' + Number(!!this.userData.periodAttribute) }
+}
+function periodDepth(mesh) {
+  const m = mesh.customDepthMaterial = new PeriodCarDepthMaterial()
+  m.userData.periodDepth = true; m.userData.periodAttribute = mesh.material.userData.periodAttribute
+  m.userData.periodFade = mesh.material.userData.periodFade ||= { value: [0, 1] }
+}
+function periodRange(mesh, lo, hi) {
+  const f = mesh.material.userData.periodFade ||= { value: [0, 1] }
+  f.value[0] = lo; f.value[1] = hi; mesh.visible = hi > lo
+}
+function periodBlend(state, key, d, at) {
+  const t = frameT || performance.now(), h = at * PERIOD.hysteresis, w = Math.max(0.001, at * PERIOD.fade), last = state[key]
+  const distance = last ? clamp(last.d, d - h, d + h) : d, target = at > 0 ? clamp((at + w * 0.5 - distance) / w, 0, 1) : 0
+  const step = last ? Math.min(0.1, Math.max(0, (t - last.t) / 1000)) * 5 : 1
+  const value = last ? clamp(target, last.value - step, last.value + step) : target
+  const next = last || (state[key] = {})
+  next.d = distance; next.value = value; next.t = t
+  return value
+}
+function periodTier() {
+  const k = trafficScale(), q = settings.quality
+  return q === 'low' || k <= 0.5 ? 'low' : q === 'medium' || k <= 0.7 ? 'medium' : 'high'
+}
+function periodSurfaceMatch(low, high) {
+  const parts = []
+  for (const [g, keep] of [[low, false], [high, true]]) {
+    const pos = [], nor = [], uv = [], idx = [], used = new Map(), P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv, I = g.index
+    for (let t = 0; t < I.count; t += 3) {
+      const at = I.getX(t), x = Math.floor(U.getX(at) * 8), y = Math.floor(U.getY(at) * 8)
+      if ((y === 1 && x >= 1 && x <= 5) !== keep) continue
+      for (let k = 0; k < 3; k++) {
+        const v = I.getX(t + k)
+        if (!used.has(v)) { used.set(v, used.size); pos.push(P.getX(v), P.getY(v), P.getZ(v)); nor.push(N.getX(v), N.getY(v), N.getZ(v)); uv.push(U.getX(v), U.getY(v)) }
+        idx.push(used.get(v))
+      }
+    }
+    const part = new THREE.BufferGeometry()
+    part.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); part.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); part.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); part.setIndex(idx)
+    parts.push([part])
+  }
+  const matched = periodMerge(parts)
+  for (const [g] of parts) g.dispose()
+  return matched
 }
 function periodSetup(gltf) {
   const F = periodFleet, geo = {}
@@ -23478,6 +23530,13 @@ function periodSetup(gltf) {
     const d = /^(\w+?)_door_(\w\w)_lod(\d)_hinge([FR])$/.exec(o.name)
     if (d) (doors[d[1] + '_lod' + d[3]] ||= []).push({ id: d[2], edge: d[4], hinge: o.getWorldPosition(new THREE.Vector3()).toArray(), geo: geo[o.name] }) })
   if (!base || !geo.sedan_lod0) throw new Error('not a period fleet file')
+  for (const [name, original] of Object.entries(geo)) if (/_lod[12](?:_|$)/.test(name) && !name.startsWith('wheel_')) {
+    const high = geo[name.replace(/_lod[12]/, '_lod0')], low = name.startsWith('bus_') && name.includes('_lod2') ? geo[name.replace('_lod2', '_lod1')] || original : original
+    if (!high) continue
+    const matched = geo[name] = periodSurfaceMatch(low, high)
+    for (const list of Object.values(doors)) for (const door of list) if (door.geo === original) door.geo = matched
+    original.dispose()
+  }
   for (const t of [base.map, base.emissiveMap, base.roughnessMap, base.metalnessMap]) if (t) { t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true }
   base = new PeriodCarMaterial().copy(base)
   const orm = base.roughnessMap
@@ -23498,8 +23557,11 @@ function periodSetup(gltf) {
   for (const [k, g] of Object.entries(geo)) F.stats[k] = g.index.count / 3
   F.wheels = {}
   for (const kind of ['ww', 'bk']) for (const lod of [0, 1]) {
-    const m = new THREE.InstancedMesh(geo['wheel_' + kind + '_lod' + lod], base, PERIOD.wheelCap)
-    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.castShadow = m.receiveShadow = true; m.count = 0; m.visible = false; m.userData.n = 0; depthFor(m)
+    const g = geo['wheel_' + kind + '_lod' + lod].clone(), mat = base.clone()
+    g.setAttribute('periodFadeRange', new THREE.InstancedBufferAttribute(new Float32Array(PERIOD.wheelCap * 2), 2).setUsage(THREE.DynamicDrawUsage))
+    mat.userData.periodAttribute = true
+    const m = new THREE.InstancedMesh(g, mat, PERIOD.wheelCap)
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.castShadow = m.receiveShadow = true; m.count = 0; m.visible = false; m.userData.n = 0; periodDepth(m)
     F.wheels[kind + lod] = m
   }
   F.ready = true
@@ -23563,23 +23625,29 @@ function periodModel(P, whole) {
     const F = periodFleet, root = new THREE.Group()
     if (P.wreck) root.add(new THREE.Mesh(F.geo[P.style + '_wreck'], F.base))
     else for (let i = 0; i < 3; i++) {
-      const m = new THREE.Mesh(periodBody(P, i, whole), periodPaint(P.paint))
+      const m = new THREE.Mesh(periodBody(P, i, whole), periodPaint(P.paint).clone())
       m.userData.lod = i; m.visible = !i; root.add(m)
     }
     PERIOD_CACHE.set(key, root)
   }
   return PERIOD_CACHE.get(key)
 }
-const periodLods = () => PERIOD.lods[settings.quality] || PERIOD.lods.high
-function periodPick(look, d) {
-  const L = periodLods(), lod = d < L[0] ? 0 : d < L[1] ? 1 : 2
-  for (const c of look.children) if (c.userData.lod !== undefined) c.visible = c.userData.lod === lod
+const periodLods = () => PERIOD.lods[periodTier()]
+function periodPick(look, d, lo = 0, hi = 1, state = look.userData) {
+  const L = periodLods(), a = periodBlend(state, 'body0', d, L[0]), b = Math.max(a, periodBlend(state, 'body1', d, L[1]))
+  const range = [lo, lo + (hi - lo) * a, lo + (hi - lo) * b, hi]
+  for (const c of look.children) if (c.userData.lod !== undefined) periodRange(c, range[c.userData.lod], range[c.userData.lod + 1])
 }
 function periodWheelFits(P, n) { const b = periodFleet.wheels[P.wheels + 0], c = periodFleet.wheels[P.wheels + 1]; return b.userData.n + n <= PERIOD.wheelCap && c.userData.n + n <= PERIOD.wheelCap }
-function periodWheelOut(P, d, pos, quat, r) {
-  const T = objTmp, b = periodFleet.wheels[P.wheels + (d < (PERIOD.wheelNear[settings.quality] ?? 0) ? 0 : 1)]
+function periodWheelOut(P, pos, quat, r, lo, hi, split) {
+  const T = objTmp, mid = lo + (hi - lo) * split
   T[0].compose(T[1].set(...pos), T[2].set(...quat), T[4].set(r, r, r))
-  b.setMatrixAt(b.userData.n++, T[0])
+  for (let lod = 0; lod < 2; lod++) {
+    const a = lod ? mid : lo, z = lod ? hi : mid
+    if (z <= a) continue
+    const b = periodFleet.wheels[P.wheels + lod], n = b.userData.n++
+    b.setMatrixAt(n, T[0]); b.geometry.attributes.periodFadeRange.setXY(n, a, z)
+  }
 }
 function periodWheelsFrame() {
   const F = periodFleet
@@ -23587,7 +23655,7 @@ function periodWheelsFrame() {
   for (const b of Object.values(F.wheels)) {
     if (b.parent !== objGroup) objGroup.add(b)
     b.count = b.userData.n; b.visible = b.count > 0
-    if (b.count) { b.instanceMatrix.needsUpdate = true; b.instanceMatrix.clearUpdateRanges?.(); b.instanceMatrix.addUpdateRange?.(0, b.count * 16); b.computeBoundingSphere() }
+    if (b.count) { b.instanceMatrix.needsUpdate = true; b.instanceMatrix.clearUpdateRanges?.(); b.instanceMatrix.addUpdateRange?.(0, b.count * 16); const f = b.geometry.attributes.periodFadeRange; f.clearUpdateRanges(); f.addUpdateRange(0, b.count * 2); f.needsUpdate = true; b.computeBoundingSphere() }
     b.userData.n = 0
   }
 }
@@ -23840,14 +23908,14 @@ function drawObjects(list, wheelsAt = () => null) {
       const paint = K.drive ? variantColor(K, o.seed, o.id) : K.doorOf ? carDoorPaint(o) : undefined, P = periodLook(K, o), dress = P ? P.key : K.doorOf ? carDoorKey(o) : ''
       if (m.userData.k !== o.k || m.userData.paint !== paint || m.userData.dress !== dress) {
         const mats = new Set()
-        m.traverse(n => { if (n.material) mats.add(n.material) })
+        m.traverse(n => { if (n.material) mats.add(n.material); if (n.customDepthMaterial?.userData.periodDepth) mats.add(n.customDepthMaterial) })
         mats.forEach(x => x.dispose())
         m.traverse(n => { if (n.geometry?.userData.carOwn) n.geometry.dispose() })
         m.clear(); m.userData = { k: o.k, paint, dress, P }; m.matrixWorldNeedsUpdate = true
         for (const whole of K.drive ? [false, true] : [true]) {
           const look = (K.doorOf && carDoorLook(o) || (P ? periodModel(P, whole) : propModel('object', o.k, whole, paint))).clone()
           ownMaterials(look)
-          look.traverse(c => { if (c.isMesh) c.castShadow = c.receiveShadow = true
+          look.traverse(c => { if (c.isMesh) { c.castShadow = c.receiveShadow = true; if (P) periodDepth(c) }
             if (K.drive && c.userData.part === 'wheel') c.visible = false })
           m.add(look); look.position.set(-H.at[0], -H.at[1], -H.at[2])
           look.traverse(c => { c.updateMatrix(); c.matrixAutoUpdate = false })
@@ -23857,14 +23925,19 @@ function drawObjects(list, wheelsAt = () => null) {
       if (p.x !== o.x || p.y !== o.y || p.z !== o.z || q.x !== o.q[0] || q.y !== o.q[1] || q.z !== o.q[2] || q.w !== o.q[3]) { p.set(o.x, o.y, o.z); q.set(...o.q); m.updateMatrix() }
       m.userData.oid = o.id
       const W = K.drive && VEHICLE_SHAPES[K.model || K.name]?.wheels, Q = m.userData.P, d = Q && camera ? camera.position.distanceTo(p) : 0
+      const state = m.userData.periodState ||= {}, dark = W && Q && parkedDark(o), coverage = dark ? parkedLiveFade(m, d, state) : 1
+      let roll = 0
       if (W) {
         const posed = wheelsAt(o), rolling = !!posed && (Q ? periodWheelFits(Q, W.at.length) : wheelN + W.at.length <= WHEEL_CAP)
-        m.children[0].visible = rolling; m.children[1].visible = !rolling
-        if (rolling) for (let i = 0; i < W.at.length; i++) Q ? periodWheelOut(Q, d, posed[i].pos, posed[i].quat, W.r) : wheelOut(posed[i].pos, posed[i].quat, W.r)
+        roll = rolling ? Q ? periodBlend(state, 'rolling', d, WHEELS_NEAR / (1 + PERIOD.fade * 0.5 + PERIOD.hysteresis)) : 1 : 0
+        m.children[0].visible = roll > 0; m.children[1].visible = roll < 1
+        const split = Q ? periodBlend(state, 'wheel', d, PERIOD.wheelNear[periodTier()]) : 0
+        if (roll > 0) for (let i = 0; i < W.at.length; i++) Q ? periodWheelOut(Q, posed[i].pos, posed[i].quat, W.r, 0, roll * coverage, split) : wheelOut(posed[i].pos, posed[i].quat, W.r)
       }
-      if (Q) for (const c of m.children) if (c.visible) periodPick(c, d)
+      if (Q) for (let i = 0; i < m.children.length; i++) if (m.children[i].visible) periodPick(m.children[i], d, i ? roll * coverage : 0, W && !i ? roll * coverage : coverage, state)
+      m.userData.parkCoverage = coverage
       if (W && Q) { const sh = m.children[0].visible || d <= PARKED.shadow; if (m.userData.sh !== sh) { m.userData.sh = sh; m.traverse(c => { if (c.isMesh) c.castShadow = sh }) } }
-      if (W && Q) { const dark = parkedDark(o); if (m.userData.dark !== dark) { m.userData.dark = dark; parkedLamps(m, dark) } }
+      if (W && Q) { if (m.userData.dark !== dark) { m.userData.dark = dark; parkedLamps(m, dark) } }
       if (carDentable(o)) for (const v of m.children) if (v.visible) carDress(v, o)
       continue
     }
