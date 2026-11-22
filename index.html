@@ -29738,7 +29738,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   capture: captureFrames,
   haunts: () => ({ log: JSON.parse(JSON.stringify(hauntLog)), crews: [...hauntCrews.values()].map(K => ({ key: K.key, owner: K.owner, env: K.env, ids: [...K.ids], help: K.help,
       bots: K.ids.map(id => players.get(id)).filter(Boolean).map(c => ({ id: c.id, kind: c.bot.haunt, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100), hp: Math.round(c.hp), dead: c.dead > 0,
-        lurk: !!c.ai.lurk, tgt: c.ai.tgt, flee: c.ai.fleeT > 0, rush: c.ai.rush?.ph ?? null, rushV: c.ai.rush?.v ?? null, rushTop: c.ai.rush?.top ?? null, rushK: c.rushK || 0,
+        yaw: Math.round((c.yaw ?? 0) * 1000) / 1000, aiYaw: Math.round((c.ai.yaw ?? 0) * 1000) / 1000, lurk: !!c.ai.lurk, tgt: c.ai.tgt, flee: c.ai.fleeT > 0, rush: c.ai.rush?.ph ?? null, rushV: c.ai.rush?.v ?? null, rushTop: c.ai.rush?.top ?? null, rushK: c.rushK || 0,
         speed: Math.round(Math.hypot(c.vx || 0, c.vz || 0) * 100) / 100, shots: [...c.ai.shots || []], guard: !!c.ai.gd?.up, think: c.ai.dbg ? { ...c.ai.dbg } : null })) })),
     env: LV.faust && faustState && selfChar() ? hauntEnv(selfChar()) : null }),
   hauntSpawn: (kind, dist = 2.5, o = {}) => {
@@ -29941,7 +29941,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   setEnemies(n) { if (!isHost || !(Number.isInteger(n) && n >= 0) || !hookSend()) return false; GAME.match.bots(n); return true },
   restart() { if (!isHost || !hookSend()) return false; GAME.match.restart(); return true },
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
-  players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z) })) : [],
+  players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z), yaw: Math.round((c.yaw ?? 0) * 1000) / 1000 })) : [],
   models: () => ({ ...modelDiag, files: Object.fromEntries(modelDiag.files), rigs: Object.fromEntries(modelDiag.rigs), cars: periodFleet && { ready: !!periodFleet.ready, failed: !!periodFleet.failed }, street: slKitJob && { done: !!slKitJob.done, failed: !!slKitJob.failed }, gpu: modelGpu() }),
   perf: () => ({ level: govLevel, ...GOV_LEVELS[govLevel], awake: govAwake(), bodies: objs.filter(o => o.body).length, who: simWho(), log: govLog.slice() }),
   perfSet: n => govSet(clamp(n | 0, 0, GOV_LEVELS.length - 1), 'hook', 0),
@@ -33221,7 +33221,7 @@ function hauntTick(dt, all) {
   const T = tickAt || now(), humans = all.filter(c => !c.bot && c.id < BOT_ID0 && !(c.dead > 0))
   let moved = false
   for (const [key, K] of hauntCrews) {
-    for (const id of K.ids) { const c = players.get(id); if (c && !humans.some(p => Math.hypot(p.x - c.x, p.z - c.z) < HAUNT.keep)) { dropBot(c); moved = true } }
+    for (const id of K.ids) { const c = players.get(id); if (c && !all.some(p => !p.bot && p.id < BOT_ID0 && Math.hypot(p.x - c.x, p.z - c.z) < HAUNT.keep)) { dropBot(c); moved = true } }
     K.ids = K.ids.filter(id => players.get(id)?.ai?.crew === key)
     hauntHelp(K, T)
     if (!K.ids.length) { hauntCrews.delete(key); hauntNext.set(K.owner, T + (HAUNT.gap[0] + Math.random() * (HAUNT.gap[1] - HAUNT.gap[0])) * 1000) }
