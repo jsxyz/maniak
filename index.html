@@ -1026,11 +1026,11 @@ const GUNS = [
   { name:'Revolver',     rate:1.00, dmg: 4, spread:0.05, range:50, knock: 1.5, color:0xd8cfb8, scar:'hole' },
   { name:'Truncheon',    rate:1.10, dmg: 5, spread:0.30, pellets:2, range: 2.8, knock: 7.0, color:0x2a2a30, melee:true, punch:'slash', grip:'knife', model:'Baton', heldScale:1.5 },
   { name:'Riot gun',     rate:1.40, dmg: 3, spread:0.09, pellets:7, range:14, knock: 1.4, color:0xd8cfb8, scar:'hole' },
-  { name:'Rush',         rate:1.20, dmg:22, spread:0.50, pellets:3, range: 2.7, knock:18.0, color:0x9a948a, melee:true, held:false, punch:'rush',
+  { name:'Rush',         rate:1.20, dmg:11, spread:0.50, pellets:3, range: 2.7, knock:18.0, color:0x9a948a, melee:true, held:false, punch:'rush',
     wind:['haymaker', 0, 0.42], windS:0.8, strike:['haymaker', 0.42, 1] },
-  { name:'Bottle',       rate:2.20, dmg:10, spread:0.04, range:20, knock: 4.0, color:0x6f8f5a, held:false, punch:'throw', windup:0.65,
+  { name:'Bottle',       rate:2.20, dmg: 8, spread:0.04, range:20, knock: 4.0, color:0x6f8f5a, held:false, punch:'throw', windup:0.65,
     wind:['block_throw', 0, 0.45], strike:['block_throw', 0.45, 1] },
-  { name:'Lunge',        rate:1.10, dmg:14, spread:0.30, pellets:2, range: 2.5, knock: 6.0, color:0xc9c5bb, melee:true, punch:'slash', grip:'knife', model:'Knife',
+  { name:'Lunge',        rate:1.10, dmg: 8, spread:0.30, pellets:2, range: 2.5, knock: 6.0, color:0xc9c5bb, melee:true, punch:'slash', grip:'knife', model:'Knife',
     windup:0.4, wind:['knife_lunge', 0, 0.3], strike:['knife_lunge', 0.3, 1] },
   { name:'Guard', rate:1, dmg:0, range:0, knock:0, color:0x8a877c, held:false, wind:['guard', 0, 0.3], windS:0.2, windHold:2.6 },
   { name:'Reel', rate:1, dmg:0, range:0, knock:0, color:0x8a877c, held:false, wind:['knockback', 0, 0.83], windS:0.83, windHold:0.3 },
@@ -13412,7 +13412,7 @@ function botThink(b, all, dt) {
   ai.tgt = tgt ? tgt.id : -1
 
   const sd = tgt ? Math.hypot(b.x - tgt.x, b.z - tgt.z) : 0
-  if (ai.lurk && (b.hp < ai.lurk || tgt && tgt.id >= 0 && sees && sd < HAUNT.reveal)) hauntReveal(b)
+  if (ai.lurk && (b.hp < ai.lurk || tgt && tgt.id >= 0 && (sees && sd < HAUNT.reveal || sd < HAUNT.touch) || (ai.lurkT = (ai.lurkT || 0) + dt) > HAUNT.lurkS)) hauntReveal(b)
   if (ai.fleeT > 0 && tgt && !seatOf(b)) { ai.fleeT -= dt; const m = sd || 1; return dealRun(b, b.x + (b.x - tgt.x) / m * 20, b.z + (b.z - tgt.z) / m * 20, dt) }
   circle(b, tgt)
 
@@ -13500,7 +13500,7 @@ function botThink(b, all, dt) {
   const flat = Math.hypot(tx, tz)
   const trueYaw = Math.atan2(-tx, -tz)
   const truePitch = clamp(Math.atan2(ay - (b.y + b.h * 0.55), Math.max(flat, 0.01)), -1.1, 0.9)
-  const los = sees
+  const los = sees || !!spec.haunt && tgt.id >= 0 && sd < 2.5
   if (plan && !los) along = true
   const want2 = climbing || (along && !los) ? Math.atan2(-dx, -dz) : trueYaw
   const turn = (spec.turn || (3.0 + (0.07 - spec.aimErr) * 30)) * dt
@@ -13576,7 +13576,7 @@ function botThink(b, all, dt) {
   }
   if (spec.hitRun) { if (ai.awayT > 0) ai.awayT -= dt; else if ((ai.swT = los && dist < reach ? (ai.swT || 0) + dt : 0) > spec.hitRun[0]) ai.awayT = spec.hitRun[1], ai.swT = 0 }
   const fire = heave(b, held, !prey && !car?.to && seatShot(b, G) && los && (held ? dist < 0.7 * H.speed && off < Math.atan2(tgt.r, dist) + 0.02 : (air ? Math.hypot(dist, b.y - tgt.y) : dist) < reach) && onTarget && !(ai.awayT > 0) && !ai.noFire, dt)
-  const RO = spec.role && !ai.lurk && tgt.id >= 0 && !car && !climbing && !held && !follow && !seat && !air && roleThink(b, spec, tgt, dist, los, trueYaw, dt)
+  const RO = (spec.role && !ai.lurk && tgt.id >= 0 && !car && !climbing && !held && !follow && !seat && !air || ai.rush?.ph && tgt.id >= 0 && !seat) && roleThink(b, spec, tgt, dist, los, trueYaw, dt)
   if (RO) return { j: false, descend: false, alt: false, use: false, sprint: true, pitch, ...RO }
   if (ai.rush?.ph) { ai.rush.ph = 0; b.rushK = 0; b.gun = gunNamed([spec.atk].flat()[0]) }
   if (ai.gd) ai.gd.up = false
@@ -29680,6 +29680,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   shaderCheck,
   glassStats: () => FAUST_GLASS_STATS.map(q => ({ ...q })),
   capture: captureFrames,
+  haunts: () => ({ log: JSON.parse(JSON.stringify(hauntLog)), crews: [...hauntCrews.values()].map(K => ({ key: K.key, owner: K.owner, env: K.env, ids: [...K.ids], help: K.help })),
+    env: LV.faust && faustState && selfChar() ? hauntEnv(selfChar()) : null }),
   dropCar(x, z, h = 3, kind = 'Car') {
     if (!isHost || ![x, z, h].every(Number.isFinite) || objs.length >= OBJ_MAX - 8) return false
     const k = OBJECTS.findIndex(K => K.drive && K.name.toLowerCase() === String(kind).toLowerCase())
@@ -33030,7 +33032,7 @@ function dealerDown(c) {
   if (ds) dealGone.set(ds.key, (tickAt || now()) + DEAL.goneS * 1000)
   dealerDrop(c); if (conns.size) pushRoster()
 }
-const HAUNT = { flee: 5, every: 0.5, keep: 110, first: 6, gap: [20, 38], retry: 3, ring: [14, 30], close: [4, 10], reveal: 7, stroll: 0.4, cap: 10 }
+const HAUNT = { touch: 3.5, lurkS: 25, flee: 5, every: 0.5, keep: 110, first: 6, gap: [20, 38], retry: 3, ring: [14, 30], close: [4, 10], reveal: 7, stroll: 0.4, cap: 10 }
 const HAUNT_CREWS = {
   alley: [['freak', 'freak_throw', 'brute_rush'], ['blue', 'freak', 'freak_throw']],
   yards: [['thug_guard', 'thug_throw', 'shooter'], ['thug_rush', 'thug_throw', 'shooter'], ['thug', 'thug_rush', 'thug_throw', 'thug']],
@@ -33143,7 +33145,8 @@ function hauntTick(dt, all) {
       const i = HAUNT_ROWS[kind]?.find(r => !players.has(BOT_ID0 + r))
       if (i === undefined) return
       const o = (n - (kinds.length - 1) / 2) * 1.1
-      ENFORCER_AT = [at.x + sx * o, at.y + 0.6, at.z + sz * o, yaw]
+      const q = [[sx * o, sz * o], [-sx * o, -sz * o], [sz * o, -sx * o], [-sz * o, sx * o], [0, 0]].find(([dx, dz]) => { const t = staticRay(at.x + dx, at.y + 1.2, at.z + dz, 0, -1, 0, 2.4); return t < 2.4 && Math.abs(at.y + 1.2 - t - at.y) < 0.6 }) || [0, 0]
+      ENFORCER_AT = [at.x + q[0], at.y + 0.6, at.z + q[1], yaw]
       const ok = addBot(i)
       ENFORCER_AT = null
       if (!ok) return
