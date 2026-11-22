@@ -1035,6 +1035,7 @@ const GUNS = [
   { name:'Guard', rate:1, dmg:0, range:0, knock:0, color:0x8a877c, held:false, wind:['guard', 0, 0.3], windS:0.2, windHold:2.6 },
   { name:'Reel', rate:1, dmg:0, range:0, knock:0, color:0x8a877c, held:false, wind:['knockback', 0, 0.83], windS:0.83, windHold:0.3 },
   { name:'Heave', rate:1, dmg:0, range:0, knock:0, color:0x8a877c, held:false, wind:['block_throw', 0, 0.45], windS:0.5, windHold:0.4 },
+  { name:'Backswing', rate:1, dmg:0, range:0, knock:0, color:0x8a877c, held:false, wind:['bat_swing', 0, 0.25], windS:0.35, windHold:0.1 },
 ].map(G => ({ ...GUN_ROW, ...G }))
 const POWERS = [
   { name:'Shield',    color:0x58a6ff, dur: 9.0, take: 0.5 },
@@ -13679,8 +13680,8 @@ function throwThink(b, tgt, dist, toYaw, dt) {
   const yaw = roleFace(b, toYaw, dt)
   return { f: dist < 8 ? -1 : dist > 11 ? 0.6 : 0, r: ai.strafe * 0.5, fire: false, yaw, sprint: false }
 }
-const GUARD = { rate: 2, near: 4.5, stand: 2.1, cue: 2.4, swing: [2.2, 3.4], counter: 0.35, broken: 1.8, front: 0.25, take: 0.1, breaks: ['Haymaker', 'Leap-smash', 'Cinderblock', 'Punt', 'Flung'] }
-const GUARD_GUN = gunNamed('Guard'), REEL_GUN = gunNamed('Reel'), HEAVE_GUN = gunNamed('Heave')
+const GUARD = { wind: 0.35, rec: 0.35, rate: 2, near: 4.5, stand: 2.1, cue: 2.4, swing: [2.2, 3.4], counter: 0.35, broken: 1.8, front: 0.25, take: 0.1, breaks: ['Haymaker', 'Leap-smash', 'Cinderblock', 'Punt', 'Flung'] }
+const BACKSWING_GUN = gunNamed('Backswing'), GUARD_GUN = gunNamed('Guard'), REEL_GUN = gunNamed('Reel'), HEAVE_GUN = gunNamed('Heave')
 function guardThink(b, spec, tgt, dist, los, toYaw, dt) {
   const ai = b.ai, P = GUARD, g = ai.gd ||= { up: false, cue: 0, broken: 0, counter: 0, swing: P.swing[0] }
   g.up = false
@@ -13688,9 +13689,16 @@ function guardThink(b, spec, tgt, dist, los, toYaw, dt) {
   if (!los || dist > P.near && !ai.pin) return null
   const yaw = roleFace(b, toYaw, dt, 1, GUARD.rate), G = GUNS[gunNamed([spec.atk].flat()[0])]
   if (g.counter > 0 && (g.counter -= dt) <= 0) g.swing = 0
+  if (g.atk > 0) {
+    if ((g.atk -= dt) > 0) return { f: 0, r: 0, fire: false, yaw, sprint: false }
+    g.rec = P.rec
+    return { f: 0, r: 0, fire: dist < G.range * 0.95 && !(b.cool > 0), yaw, sprint: false }
+  }
+  if (g.rec > 0) { g.rec -= dt; if (g.rec <= 0) g.cue = 0; return { f: 0, r: 0, fire: false, yaw, sprint: false } }
   if ((g.swing -= dt) <= 0 && dist < G.range * 0.9 && !(b.cool > 0) && !ai.waitTurn && !ai.passive) {
-    g.swing = P.swing[0] + Math.random() * (P.swing[1] - P.swing[0]); g.cue = 0.5
-    return { f: 0, r: 0, fire: true, yaw }
+    g.swing = P.swing[0] + Math.random() * (P.swing[1] - P.swing[0]); g.atk = P.wind
+    windCue(b, BACKSWING_GUN)
+    return { f: 0, r: 0, fire: false, yaw, sprint: false }
   }
   g.up = true
   if ((g.cue -= dt) <= 0) { g.cue = P.cue; windCue(b, GUARD_GUN) }
@@ -13699,7 +13707,7 @@ function guardThink(b, spec, tgt, dist, los, toYaw, dt) {
 function guardBlock(h, c, G) {
   const g = h.ai.gd, dx = c.x - h.x, dz = c.z - h.z, d = Math.hypot(dx, dz) || 1, yaw = h.ai.yaw
   if ((-Math.sin(yaw) * dx - Math.cos(yaw) * dz) / d < GUARD.front) return false
-  if (GUARD.breaks.includes(G.name)) { g.up = false; g.broken = GUARD.broken; g.cue = 0; windCue(h, REEL_GUN); return false }
+  if (GUARD.breaks.includes(G.name)) { g.up = false; g.broken = GUARD.broken; g.atk = g.rec = 0; g.cue = 0; windCue(h, REEL_GUN); return false }
   h.hp -= stat(h, 'take', stat(c, 'give', G.dmg * GUARD.take))
   g.counter = GUARD.counter
   if (h.hp <= 0) h.hp = 0.1
