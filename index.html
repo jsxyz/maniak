@@ -8950,6 +8950,200 @@ function faustDecoFacades(g, lot, B, tier, budget) {
   }
 }
 
+const FAUST_STREET = {
+  budget: [1536, 3072, 6144], count: [2, 4, 8],
+  sizes: { bench: [1.18, 0.42], news: [1.48, 0.72], phone: [0.58, 0.52], bus: [2.2, 0.54], trash: [0.72, 0.37], bollard: [0.16, 0.16], planter: [0.58, 0.4] },
+  iron: 0x252d37, steel: 0xa4aab0, brass: 0xe1d2a9, stone: 0xa4a9ac, dark: 0x1b2230,
+  wood: 0x704e3b, red: 0x723b38, leaf: 0x35503c, glass: 0x627d83, bag: 0x282f32, paper: 0xd7d4c4
+}
+const faustStreetTier = () => { const s = Math.min(GAME.perfScale?.() ?? 1, IS_TOUCH ? 0.65 : 1); return s <= 0.35 ? 0 : s <= 0.7 ? 1 : 2 }
+const faustStreetHit = (a, b, pad = 0) => a[0] < b[2] + pad && a[2] > b[0] - pad && a[1] < b[3] + pad && a[3] > b[1] - pad
+function faustStreetBounds(f, parts) {
+  const r = [Infinity, Infinity, -Infinity, -Infinity]
+  const point = (x, z, e = 0) => { const p = faustFeatAt(f, x, z); r[0] = Math.min(r[0], p[0] - e); r[1] = Math.min(r[1], p[1] - e); r[2] = Math.max(r[2], p[0] + e); r[3] = Math.max(r[3], p[1] + e) }
+  for (const p of parts) {
+    if (p.b) { const b = p.b; point(b[0] - b[3], b[2] - b[5]); point(b[0] + b[3], b[2] + b[5]); point(b[0] - b[3], b[2] + b[5]); point(b[0] + b[3], b[2] - b[5]) }
+    else if (p.u) for (const v of p.u) point(v[0], v[2], Math.max(...p.r))
+    else for (const v of p.v) point(v[0], v[2])
+  }
+  return r
+}
+function faustStreetSpace(P) {
+  const X = (P.ci - P.S / 2) * 96, Z = (P.cj - P.S / 2) * 96, solid = [], paths = [], doors = [], roads = []
+  for (const b of P.boxes) if (b.cy + b.ey > 0.2 && b.cy - b.ey < 3.4) solid.push([b.cx - b.ex, b.cz - b.ez, b.cx + b.ex, b.cz + b.ez])
+  for (const f of [...P.props, ...P.features, ...P.sites, ...P.alleyFeat]) {
+    const b = faustStreetBounds(f, faustFeatParts(f)), pad = f.k === 'hydrant' ? 1 : 0.3
+    solid.push([b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad])
+  }
+  for (const s of faustLampSites(P)) {
+    const reach = FAUST_NIGHT.lamps.post - FAUST_NIGHT.lamps.head, x = s.x + (s.own ? 2.8 : (s.nx || 0) * reach), z = s.z + (s.nz || 0) * reach
+    solid.push([x - 0.4, z - 0.4, x + 0.4, z + 0.4])
+  }
+  for (const r of P.roads) roads.push([Math.min(r.a[0], r.b[0]) - r.width / 2, Math.min(r.a[2], r.b[2]) - r.width / 2, Math.max(r.a[0], r.b[0]) + r.width / 2, Math.max(r.a[2], r.b[2]) + r.width / 2])
+  roads.push([X + 86, Z - 10, X + 106, Z + 106], [X - 10, Z + 86, X + 106, Z + 106])
+  for (const x of [X, X + 96]) for (const z of [Z, Z + 96]) solid.push([x - 20, z - 20, x + 20, z + 20])
+  for (const l of P.lots) {
+    const r = slLotRing(l), p = 0.7
+    paths.push([r[0] - p, r[1] - p, r[2] + p, r[1] + p], [r[0] - p, r[3] - p, r[2] + p, r[3] + p],
+      [r[0] - p, r[1] - p, r[0] + p, r[3] + p], [r[2] - p, r[1] - p, r[2] + p, r[3] + p])
+    const dx = l.district === 'industrial' ? l.x - l.w * 0.6 : l.x
+    doors.push([dx - 1.6, l.z + l.d - 0.5, dx + 1.6, l.z + 15])
+    for (const d of [...l.backDoors || [], ...l.club?.back && l.club.backOut ? [{ x: l.club.back[0], z: l.club.back[1], out: l.club.backOut }] : []])
+      doors.push([Math.min(d.x, d.x + d.out[0] * 5) - 1.6, Math.min(d.z, d.z + d.out[1] * 5) - 1.6, Math.max(d.x, d.x + d.out[0] * 5) + 1.6, Math.max(d.z, d.z + d.out[1] * 5) + 1.6])
+    if (l.district === 'tenement') for (const s of faustTenementEscapes(l)) solid.push([l.x + s * (l.w + 1.1) - 1.15, l.z - 3.1, l.x + s * (l.w + 1.1) + 1.15, l.z + 3.1])
+  }
+  return { solid, paths, doors, roads }
+}
+function faustStreetPlan(P) {
+  if (P.chan || P.plaza || P.diagonal || P.layout !== 4 || P.alleys.length) return []
+  const X = (P.ci - P.S / 2) * 96, Z = (P.cj - P.S / 2) * 96, space = faustStreetSpace(P), out = [], candidates = []
+  for (let li = 0; li < P.lots.length; li++) {
+    const l = P.lots[li]
+    if (l.stop || l.landmark || l.venue === 'club') continue
+    for (const [axis, sg, q] of [[0, -1, 3], [0, 1, 1], [1, -1, 2], [1, 1, 0]]) {
+      const h = cityHash(l.seed ^ Math.imul(q + 1, 0x6e657773)), ring = slLotRing(l), origin = axis ? l.z : l.x
+      const edge = sg < 0 ? Math.max(origin - 14.6, (axis ? Z : X) + 10.2) : Math.min(origin + 14.6, (axis ? Z : X) + 85.8)
+      const room = sg < 0 ? ring[axis] - 0.72 - edge : edge - ring[axis + 2] - 0.72
+      const kinds = ['bus', 'news', 'phone', 'bench', 'planter', 'trash', 'bollard'], first = h % kinds.length
+      for (let j = 0; j < kinds.length; j++) {
+        const k = kinds[(first + j) % kinds.length], [ha, hb] = FAUST_STREET.sizes[k]
+        if (2 * hb > room) continue
+        const across = edge - sg * hb, alongs = (h >>> 5) & 1 ? [7, -7, 0] : [-7, 7, 0]
+        for (const along of alongs) {
+          const u = (axis ? l.x : l.z) + along, f = { k, x: axis ? u : across, z: axis ? across : u, q, h, li, s: 1 }
+          const ex = axis ? ha : hb, ez = axis ? hb : ha, r = [f.x - ex, f.z - ez, f.x + ex, f.z + ez]
+          if ([...space.solid, ...space.paths, ...space.doors].some(b => faustStreetHit(r, b, 0.02)) || space.roads.some(b => faustStreetHit(r, b, 0.18))) continue
+          candidates.push({ ...f, r, rank: cityHash(h ^ Math.imul(j + 1, 0x85ebca6b) ^ (along + 16)) }); break
+        }
+        if (candidates.at(-1)?.li === li && candidates.at(-1)?.q === q) break
+      }
+    }
+  }
+  candidates.sort((a, b) => a.rank - b.rank || a.li - b.li || a.q - b.q)
+  for (const f of candidates) if (out.length < 8 && !out.some(o => faustStreetHit(f.r, o.r, 0.8))) out.push(f)
+  for (let li = 0; li < P.lots.length; li++) {
+    const l = P.lots[li]
+    if (l.district !== 'tenement' || l.venue || l.landmark) continue
+    for (const sg of faustTenementEscapes(l).slice(0, 1)) {
+      const f = { k: 'escape', x: l.x + sg * l.w, z: l.z, q: sg > 0 ? 1 : 3, li, h: l.seed, s: 1 }, r = faustStreetBounds(f, faustStreetParts(f))
+      if (!space.roads.some(b => faustStreetHit(r, b, 0.18))) out.push({ ...f, r })
+    }
+    for (const side of [-1, 1]) if (faustShopKind(l, side) === 'plain') {
+      const f = { k: 'awning', x: l.x + side * l.w * 0.45, z: l.z + l.d + 0.3, q: 0, li, h: cityHash(l.seed ^ side), s: 1 }, r = faustStreetBounds(f, faustStreetParts(f))
+      if (!out.some(o => o.r && faustStreetHit(r, o.r, 0.2)) && !space.roads.some(b => faustStreetHit(r, b, 0.18)) && !space.doors.some(b => faustStreetHit(r, b))) out.push({ ...f, r })
+    }
+  }
+  return out
+}
+function faustStreetParts(f) {
+  const T = FAUST_STREET, p = [], metal = f.h & 1 ? T.iron : T.red
+  const B = (x, y, z, a, b, c, t) => p.push({ b: [x, y, z, a, b, c], t })
+  const Q = (a, b, c, d, t, both = true) => { p.push({ v: [a, b, c], t }, { v: [a, c, d], t }); if (both) p.push({ v: [a, c, b], t }, { v: [a, d, c], t }) }
+  const U = (a, b, r, t) => p.push({ u: [a, b], r: [r, r], n: 4, t, turn: 0.5, cap: 0 })
+  const word = (s, y, z, w, h) => {
+    const dx = w / (s.length * 4 - 1), dy = h / 5
+    for (let i = 0; i < s.length; i++) for (let row = 0; row < 5; row++) {
+      const bits = FAUST_GLYPHS[s[i]]?.[row] || 0
+      for (let col = 0; col < 3; col++) if (bits & 1 << (2 - col)) {
+        const x = -w / 2 + (i * 4 + col) * dx, top = y + h / 2 - row * dy
+        Q([x, top - dy, z], [x + dx, top - dy, z], [x + dx, top, z], [x, top, z], T.paper, false)
+      }
+    }
+  }
+  const bench = (w, z) => {
+    for (const a of [-1, 1]) { B(a * (w - 0.15), 0.26, z, 0.06, 0.22, 0.32, T.iron); B(a * (w - 0.1), 0.72, z - 0.08, 0.05, 0.27, 0.05, T.iron); B(a * (w - 0.1), 0.78, z + 0.03, 0.06, 0.04, 0.32, T.brass) }
+    for (const dz of [-0.23, 0, 0.23]) B(0, 0.5, z + dz, w, 0.04, 0.075, T.wood)
+    for (const y of [0.73, 0.97]) B(0, y, z - 0.32, w, 0.075, 0.04, T.wood)
+  }
+  if (f.k === 'bench') bench(1.16, 0)
+  else if (f.k === 'bus') {
+    for (const a of [-1, 1]) { B(a * 1.65, 1.3, -0.32, 0.06, 1.26, 0.06, T.iron); B(a * 1.65, 2.7, -0.08, 0.07, 0.12, 0.44, T.brass) }
+    B(0, 2.62, 0, 1.82, 0.08, 0.54, T.iron); B(0, 2.74, 0, 1.58, 0.04, 0.44, metal)
+    for (const y of [0.34, 1.16, 2.34]) B(0, y, -0.42, 1.65, 0.04, 0.04, T.iron)
+    for (const x of [-1.1, -0.55, 0, 0.55, 1.1]) B(x, 1.34, -0.42, 0.022, 1.0, 0.025, T.steel)
+    bench(1.04, 0.03)
+    B(2.02, 1.55, 0.02, 0.035, 1.51, 0.035, T.iron); B(2.02, 3.02, 0.02, 0.18, 0.31, 0.04, metal)
+    B(2.02, 3.06, 0.067, 0.12, 0.12, 0.01, T.paper); B(2.02, 3.09, 0.081, 0.09, 0.05, 0.008, T.iron)
+    B(0, 2.38, -0.39, 0.64, 0.18, 0.05, metal); word('BUS', 2.39, -0.329, 0.92, 0.22)
+    B(-1.36, 1.68, -0.37, 0.19, 0.46, 0.04, T.paper)
+    for (let i = 0; i < 5; i++) B(-1.36, 1.91 - i * 0.1, -0.318, 0.13, 0.014, 0.006, metal)
+  } else if (f.k === 'news') {
+    B(0, 0.5, -0.12, 1.25, 0.46, 0.56, metal); B(0, 1.62, -0.66, 1.25, 0.67, 0.035, T.dark)
+    for (const a of [-1, 1]) { B(a * 1.25, 1.47, -0.12, 0.055, 1.43, 0.56, metal); B(a * 1.32, 2.43, 0, 0.055, 0.22, 0.59, T.brass) }
+    B(0, 0.98, 0.17, 1.3, 0.05, 0.52, T.wood); B(0, 2.32, 0.02, 1.48, 0.09, 0.7, T.iron); B(0, 2.49, -0.05, 1.26, 0.08, 0.56, metal); B(0, 2.62, -0.05, 0.87, 0.05, 0.43, T.brass)
+    B(0, 2.13, 0.62, 1.15, 0.16, 0.035, metal); word('NEWS', 2.13, 0.664, 1.72, 0.23)
+    for (let i = 0; i < 5; i++) {
+      const x = -0.92 + i * 0.46
+      B(x, 1.43, -0.6, 0.18, 0.29, 0.025, T.paper); B(x, 1.57, -0.568, 0.14, 0.04, 0.006, i & 1 ? T.red : T.iron)
+      for (let j = 0; j < 2; j++) B(x, 1.4 - j * 0.09, -0.566, 0.13, 0.012, 0.006, T.iron)
+      B(x, 1.07, 0.29, 0.18, 0.04 + (i & 1) * 0.02, 0.22, T.paper)
+    }
+  } else if (f.k === 'phone') {
+    B(0, 0.09, 0, 0.56, 0.05, 0.5, T.stone); B(0, 2.38, 0, 0.58, 0.09, 0.52, metal); B(0, 2.53, -0.02, 0.45, 0.06, 0.43, T.brass)
+    for (const a of [-1, 1]) for (const z of [-0.43, 0.43]) B(a * 0.49, 1.21, z, 0.045, 1.12, 0.045, metal)
+    B(0, 1.25, -0.46, 0.47, 1.1, 0.025, T.glass)
+    for (const a of [-1, 1]) { B(a * 0.49, 0.53, 0, 0.025, 0.36, 0.42, metal); for (const y of [0.93, 1.56, 2.2]) B(a * 0.49, y, 0, 0.03, 0.025, 0.43, T.steel) }
+    B(0, 2.18, 0.46, 0.44, 0.12, 0.035, metal); word('CALL', 2.18, 0.504, 0.76, 0.15)
+    B(0, 1.44, -0.32, 0.24, 0.35, 0.1, T.steel); B(-0.11, 1.54, -0.2, 0.045, 0.18, 0.04, T.iron)
+    for (const y of [1.36, 1.72]) B(-0.07, y, -0.18, 0.09, 0.04, 0.045, T.iron)
+    for (const y of [1.35, 1.44, 1.53]) for (const x of [0.04, 0.12]) B(x, y, -0.21, 0.023, 0.025, 0.012, T.dark)
+    U([-0.11, 1.35, -0.17], [-0.13, 1.0, -0.12], 0.018, T.iron); U([-0.13, 1.0, -0.12], [0, 1.19, -0.2], 0.018, T.iron)
+  } else if (f.k === 'trash') {
+    B(-0.29, 0.48, 0, 0.26, 0.44, 0.28, T.iron); B(-0.29, 0.94, 0, 0.29, 0.04, 0.31, T.steel); B(-0.29, 0.995, 0, 0.09, 0.02, 0.045, T.iron)
+    for (const x of [-0.48, -0.29, -0.1]) B(x, 0.48, 0.288, 0.018, 0.34, 0.015, T.steel)
+    for (const [x, z, r, h] of [[0.32, 0.08, 0.29, 0.58], [0.53, -0.17, 0.18, 0.4]]) {
+      p.push({ u: [[x, 0.08, z], [x, h * 0.55, z]], r: [r * 0.65, r], n: 5, t: T.bag, turn: 0.2, cap: 0 },
+        { u: [[x, h * 0.55, z], [x - 0.04, h, z]], r: [r, 0.04], n: 5, t: T.bag, turn: 0.2, cap: 1 })
+      B(x - 0.04, h, z, 0.065, 0.035, 0.04, T.bag)
+    }
+  } else if (f.k === 'bollard') {
+    B(0, 0.12, 0, 0.16, 0.08, 0.16, T.stone); B(0, 0.56, 0, 0.1, 0.36, 0.1, T.iron); B(0, 0.86, 0, 0.13, 0.06, 0.13, T.brass)
+    p.push({ u: [[0, 0.92, 0], [0, 1.12, 0]], r: [0.14, 0], n: 4, t: T.iron, turn: 0.5, cap: 0 })
+  } else if (f.k === 'planter') {
+    B(0, 0.12, 0, 0.52, 0.08, 0.34, T.stone); B(0, 0.42, 0, 0.48, 0.22, 0.32, T.stone); B(0, 0.68, 0, 0.58, 0.04, 0.4, T.brass); B(0, 0.727, 0, 0.49, 0.007, 0.31, T.dark)
+    for (const x of [-0.28, 0, 0.28]) p.push({ u: [[x, 0.75, 0], [x, 1.28 + (x ? 0 : 0.2), 0]], r: [0.23, 0.03], n: 5, t: T.leaf, turn: 0.1, cap: 0 })
+  } else if (f.k === 'awning') {
+    for (let i = 0; i < 6; i++) {
+      const x = -1.32 + i * 0.44, t = i & 1 ? T.paper : metal
+      Q([x, 3.42, 0], [x + 0.44, 3.42, 0], [x + 0.44, 2.91, 1.12], [x, 2.91, 1.12], t)
+      B(x + 0.22, 2.83, 1.1, 0.22, 0.08, 0.02, t)
+    }
+    B(0, 3.43, 0, 1.35, 0.035, 0.04, T.iron)
+    for (const s of [-1, 1]) U([s * 1.27, 2.83, 1.08], [s * 1.27, 2.85, 0], 0.025, T.iron)
+  } else if (f.k === 'escape') {
+    const dir = f.q === 1 ? -1 : 1
+    for (const y of [5, 10]) {
+      for (const x of [-2.05, -1.35, -0.65, 0.05, 0.75, 1.45, 2.15]) B(x, y + 0.65, 2.1, 0.025, 0.58, 0.025, T.iron)
+      for (const z of [0.45, 1.6]) U([-2.6 * dir, y + 0.2, z], [2.6 * dir, y + 5, z], 0.04, T.steel)
+      for (let j = 1; j < 13; j++) {
+        const x = (-2.6 + j * 5.2 / 13) * dir, h = y + j * 5 / 13
+        Q([x - 0.19, h, 0.44], [x - 0.19, h, 1.6], [x + 0.19, h, 1.6], [x + 0.19, h, 0.44], T.steel)
+      }
+      U([-2.6 * dir, y + 1.0, 1.6], [2.6 * dir, y + 6, 1.6], 0.035, T.iron)
+    }
+  }
+  return p
+}
+function faustStreetDraw(g, P) {
+  const tier = faustStreetTier(), start = g.count * 3, out = []
+  let ground = 0, wall = 0
+  for (const f of faustStreetPlan(P)) {
+    const detail = f.k === 'escape' || f.k === 'awning'
+    if (detail ? wall >= tier + 1 : ground >= FAUST_STREET.count[tier]) continue
+    const parts = faustStreetParts(f), cost = parts.reduce((n, p) => n + (p.b ? p.b[4] < 0.015 ? 6 : 36 : p.v ? 3 : p.n * ((p.r[1] < 1e-6 ? 3 : 6) + ((p.cap & 1) && p.r[1] > 1e-6 ? 3 : 0))), 0)
+    if (g.room < cost || g.count * 3 - start + cost > FAUST_STREET.budget[tier]) continue
+    const at = p => { const v = faustFeatAt(f, p[0], p[2]); return [v[0], p[1], v[1]] }
+    for (const p of parts) {
+      if (p.b) g.box(faustFeatBox(f, p.b), p.t)
+      else if (p.v) g.tri(...p.v.map(at), p.t)
+      else faustFeatTube(g, ...p.u.map(at), ...p.r, p.n, p.t, p.turn, p.cap, false)
+    }
+    if (detail) wall++; else ground++
+    out.push(f)
+  }
+  return out
+}
+
 function* faustVisualSteps(c) {
   const cones = { p: [], c: [] }
   for (let w = 0, t0 = performance.now(); FAUST_FACES.promise && !FAUST_FACES.settled && w < 600 && performance.now() - t0 < 1500; w++) yield 'frame'
@@ -9100,6 +9294,7 @@ function* faustVisualSteps(c) {
     const tier = faustDecoTier(), budget = Math.floor(Math.min(FAUST_FACADES.budget[tier], ornament.room) / decoLots.length)
     for (const [lot, B] of decoLots) faustDecoFacades(ornament, lot, B, tier, budget)
   }
+  c.street = faustStreetDraw(ornament, P)
   const root = new THREE.Group()
   for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
     const mesh = new THREE.Mesh(data.geometry(), mat); mesh.castShadow = data === facade; mesh.receiveShadow = true; root.add(mesh)
@@ -19668,6 +19863,7 @@ const REAL_KIND = { stone: 0, brick: 1, concrete: 2, asphalt: 3, sidewalk: 4, se
   paintWhite: 8, paintYellow: 9, paintBike: 10, iron: 11, steel: 12, brass: 13, door: 14, shadow: 15, lamp: 16,
   pier: 17, cornice: 18, crown: 19, shutter: 20, signNeon: 21, signPaint: 22 }
 const REAL_TINTS = [
+  [0x704e3b, 'signPaint'], [0x723b38, 'signPaint'], [0x35503c, 'signPaint'], [0x627d83, 'signPaint'], [0x282f32, 'signPaint'],
   [0xc5b194, 'stone'], [0xb68d69, 'stone'], [0x6a4236, 'brick'], [0xc79a72, 'stone'], [0x9e6349, 'stone'], [0x7d4a37, 'stone'], [0x293a43, 'iron'],
   [0x242a33, 'asphalt'], [0x5d626a, 'setts'], [0x404b5b, 'setts'], [0x8e9399, 'granite'], [0x737983, 'sidewalk'],
   [0xa1a5a9, 'granite'], [0x3d5557, 'paintBike'], [0xa3adb0, 'paintWhite'], [0xb4a77d, 'paintYellow'],
