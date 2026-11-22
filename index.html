@@ -12134,10 +12134,13 @@ function webPoint(v) {
 const CHAIN_N = 17, CHAIN_RADIUS = 0.36, CHAIN_SKIN = 0.05
 const chainHit = [], chainViews = new Map(), chainMask = () => RAY_GROUP | G_OBJ
 const chainSpec = c => GAME.participantOf(c)?.chain
-const WHIRL = { right: 0.3, back: 0.2, up: 1.06, reach: 1.05, lift: 0.14, tilt: 0.12, fist: 0.22, fistGrow: 0.08, lead: 0.55, leadGrow: 0.35 }
+const WHIRL_HIT = { gap: 0.4 }
+const BLOCK_THROW_LEAD = 0.3
+const whirlSpin = q => 9 + 29 * q
+const WHIRL = { right: 0.3, back: 0.2, up: 0.35, reach: 1.45, lift: 0, tilt: 0.2, fist: 0.22, fistGrow: 0.08, fistUp: 0.85, lead: 0.55, leadGrow: 0.35 }
 const whirlCentre = (x, y, z, yaw) => [x + Math.cos(yaw) * WHIRL.right + Math.sin(yaw) * WHIRL.back, y + WHIRL.up, z - Math.sin(yaw) * WHIRL.right + Math.cos(yaw) * WHIRL.back]
 const whirlFist = (C, block, charge) => { const a = Math.atan2(block[2] - C[2], block[0] - C[0]) + WHIRL.lead + WHIRL.leadGrow * charge, r = WHIRL.fist + WHIRL.fistGrow * charge
-  return [C[0] + Math.cos(a) * r, C[1], C[2] + Math.sin(a) * r] }
+  return [C[0] + Math.cos(a) * r, C[1] + WHIRL.fistUp, C[2] + Math.sin(a) * r] }
 const chainHand = c => c.chain?.phase === 1 && c.chain.p ? whirlFist(whirlCentre(c.x, c.y, c.z, c.yaw), c.chain.p, c.chain.charge) : [c.x + Math.cos(c.yaw) * 0.46, c.y + 0.5, c.z - Math.sin(c.yaw) * 0.46]
 const whirling = (c, inp) => !!inp.descend && !c.tie && !c.water && !!chainSpec(c)
 const chainGap = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]))
@@ -12222,18 +12225,19 @@ function chainIntent(c, inp, dt) {
     return
   }
   let g = c.chain
-  if (!g && inp.descend && !c.water && !c.chainLock && !c.leap && !c.hayT && !objs.some(o => o.heldBy === c.id)) { chainBegin(c); g = c.chain }
+  if (!g && inp.descend && !c.water && !c.chainLock && !(c.springT > 0) && !smashDiving(c) && !c.mantle && !c.mantleFall && !c.hayT && !objs.some(o => o.heldBy === c.id)) { chainBegin(c); g = c.chain }
   if (!inp.descend) c.chainLock = false
   if (!g) return
   g.age += dt; g.reeling = false
   if (g.phase === 1) {
     if (inp.descend) {
-      g.charge = Math.min(1, g.charge + dt / S.full); g.angle += (9 + 29 * g.charge) * dt
+      g.charge = Math.min(1, g.charge + dt / S.full); g.angle += whirlSpin(g.charge) * dt
       const hand = chainHand(c), C = whirlCentre(c.x, c.y, c.z, c.yaw)
-      const orbit = [C[0] + Math.cos(g.angle) * WHIRL.reach, C[1] + WHIRL.lift + Math.sin(g.angle) * WHIRL.tilt, C[2] + Math.sin(g.angle) * WHIRL.reach]
+      const orbit = [c.x + Math.cos(g.angle) * WHIRL.reach, C[1] + WHIRL.lift + Math.sin(g.angle) * WHIRL.tilt, c.z + Math.sin(g.angle) * WHIRL.reach]
       const radial = chainSweep(g, hand, orbit), end = radial ? radial.p : orbit
-      const swept = chainSweep(g, g.p, end)
+      const swept = chainSweep(g, g.p, end), from = g.p
       chainPlace(g, swept ? swept.p : end)
+      chainWhirlHits(c, g, from, g.p, swept || radial, dt)
     } else {
       g.phase = 2; g.age = 0; g.start = g.p.slice(); g.range = S.range + S.extra * g.charge
       const target=chainAimPoint(c,g.range),d=target.map((v,i)=>v-g.p[i]),length=Math.hypot(...d)||1
@@ -12333,6 +12337,36 @@ function chainStrike(c,g,hit) {
   for (const f of impactFx(hit.victim,gunNamed('Cinderblock'),hit.victim.dead>0)) {f.push(c.id);tracers.push(f)}
   chainImpact(c,hit.p,hit.dir.map(v=>-v),speed,2)
   chainPlace(g,hit.p);g.phase=4;g.age=0;g.len=Math.max(1,chainGap(chainHand(c),g.p));g.v=hit.dir.map(v=>v*speed*0.08);g.nodes=[]
+}
+function chainWhirlHits(c, g, from, to, wall, dt) {
+  const d = to.map((v, i) => v - from[i]), n = Math.hypot(...d)
+  g.v = n > 1e-6 && dt > 0 ? d.map(v => v / dt) : [0, 0, 0]
+  if (n < 1e-4 || !(dt > 0)) return
+  const hits = g.hits ||= new Map(), speed = whirlSpin(g.charge) * WHIRL.reach, G = blockAttack(), k = clamp(speed / G.refSpeed, G.minScale, 1), P = { ...G, dmg: G.dmg * k, knock: G.knock * k }, dir = d.map(v => v / n), back = dir.map(v => -v)
+  const fresh = key => { const t = hits.get(key); if (t !== undefined && g.age - t < WHIRL_HIT.gap) return false; hits.set(key, g.age); return true }
+  {
+    const a = from, b = to, person = chainCharacterHit(c, g, a, b, null)
+    if (person && fresh('c' + person.victim.id)) {
+      strike(c, person.victim, P, ...dir)
+      if (downed(person.victim)) c.blockKills = [...c.blockKills || [], person.victim]
+      for (const f of impactFx(person.victim, gunNamed('Cinderblock'), person.victim.dead > 0)) { f.push(c.id); tracers.push(f) }
+      chainImpact(c, person.p, back, speed, 2)
+    }
+    const H = sweepHits(g, ...a, ...b, G_OBJ), F = H.get_m_hitFractions(), B = H.get_m_hitCollisionObjects()
+    for (let i = 0; i < F.size(); i++) {
+      const ptr = A.getPointer(B.at(i)), o = objs.find(o => o.body && A.getPointer(o.body) === ptr)
+      if (!o || o.heldBy === c.id || !fresh('o' + o.id)) continue
+      const p = a.map((v, j) => v + (b[j] - v) * F.at(i))
+      strikeObject(c, o, P, ...dir, ...p); chainImpact(c, p, back, speed, 2)
+    }
+  }
+  const wo = wall && objs.find(o => o.body && A.getPointer(o.body) === wall.ptr)
+  if (wo) { if (wo.heldBy !== c.id && fresh('o' + wo.id)) { const S = chainSurface(wall.p, d); strikeObject(c, wo, P, ...dir, ...S.point); chainImpact(c, S.point, S.normal, speed, 2) } }
+  else if (wall && fresh('w')) {
+    const S = chainSurface(wall.p, d)
+    if (LV.faust) dsBlockHit(S.point, S.normal)
+    chainImpact(c, S.point, S.normal, speed, 2)
+  }
 }
 function chainSurface(p, incoming) {
   const n = Math.hypot(...incoming)||1, dir = incoming.map(v=>v/n), h=[]
@@ -12731,6 +12765,7 @@ function applyIntent(c, inp, dt) {
   if (D && c.air && (vy < 0 || J)) c.dove = GUNS.indexOf(D)
   if (!c.dove && c.air && inp.alt && vy <= -SMASH_FALL_VY && GAME.participantOf(c)?.leapSmash && !c.tie && !seatOf(c) && !c.parts?.act && !partsHeld(c)) {
     c.dove = gunNamed('Leap-smash'); c.hayT = c.hayAge = 0; c.hayReady = false
+    if (c.chain) chainClear(c)
   }
   if (c.dove) { const V = GUNS[c.dove].dive; vy = Math.min(vy, -V.speed) - (V.pull || 0) * dt }
 
@@ -22656,8 +22691,8 @@ function rigAnimate(a, want, dt, t) {
   const airborne = want === 2 || want === 3 || a.moveState >= 2
   if (a.moveState === 3) R.charged = t
   if (a.dying >= 0) { name = K.death; once = true; fade = 0.1 }
-  else if (a.chainState?.[0] === 1 && !(want === 1 || v > 0.6)) { name = 'block_whirl'; fade = 0.15 }
-  else if (a.chainState?.[0] === 2 && a.chainState[2] < 0.5) { name = 'block_throw'; once = true; fade = 0.05 }
+  else if (a.chainState?.[0] === 1 && !airborne && !(want === 1 || v > 0.6)) { name = 'block_whirl'; fade = 0.15 }
+  else if (a.chainState?.[0] === 2 && a.chainState[2] < 0.5 && !airborne) { name = 'block_throw'; once = true; fade = 0.05 }
   else if (a.chainState?.[0] >= 3 && (airborne || want === 4 || hold === 'swing')) { name = K.climb; fade = 0.15 }
   else if (a.chainState?.[0] >= 3 && !(want === 1 || v > 0.6)) { name = K.idle; fade = 0.15 }
   else if (a.moveState === 3) name = K.leap
@@ -22695,7 +22730,7 @@ function rigAnimate(a, want, dt, t) {
   if (name === RIG_GAIT && R.name !== RIG_GAIT) { rigGaitInto(R, R.name === K.idle ? 0.1 : fade); R.name = RIG_GAIT }
   if (next && R.name !== name) {
     const prev = R.base, gaits = [K.walk, K.run, K.sprint, K.crouchRun]
-    next.reset()
+    next.reset(); if (name === 'block_throw') next.time = BLOCK_THROW_LEAD
     next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity)
     next.clampWhenFinished = once
     if (prev && gaits.includes(R.name) && gaits.includes(name)) next.time = prev.time / prev.getClip().duration * next.getClip().duration
@@ -22715,6 +22750,7 @@ function rigAnimate(a, want, dt, t) {
   } else R.plantPh = undefined
   const HG = GUNS[a.heldGun], upper = hold === 'lift' ? rigClip(M, K.lift) : a.held?.visible && !(a.dying >= 0) && !M.dances ? rigClip(M, M.aims?.[HG?.grip] ?? M.aims?.[HG?.name] ?? K.aim) : null
   if (upper) rigPose(R, upper, (t / 1000) % upper.duration, 1, RIG_UPPER)
+  if (airborne && a.chainState?.[0] === 2 && a.chainState[2] < 0.5) { const tc = rigClip(M, 'block_throw'); if (tc) rigPose(R, tc, Math.min(a.chainState[2] + BLOCK_THROW_LEAD, tc.duration), 1, RIG_UPPER) }
   if (M.dances && !(a.dying >= 0) && (R.name === K.run || R.name === K.sprint)) { const c = rigClip(M, perfDance(a)); if (c) rigPose(R, c, (t / 1000) % c.duration, 0.6, RIG_UPPER) }
   const wind = GUNS[a.chargeGun], HAY = M.hay || { clip: 'haymaker', rate: 1.4, end: 1.3 }
   if (wind?.hayWind && a.chargeAt !== R.windSeen && t - a.chargeAt < wind.hayWind * 1000) {
@@ -23058,9 +23094,10 @@ function rigMovePose(a, R, want, t) {
     fistW.set(...whirlFist(C, block, whirl))
     local.set(...block); R.inst.worldToLocal(local); const round = Math.atan2(local.x, local.z)
     local.copy(fistW); R.inst.worldToLocal(local); const lead = Math.atan2(local.x, local.z)
-    if (!moving) { const k = ease * (0.35 + 0.65 * whirl)
+    const aloft = want === 2 || want === 3 || want === 6 || a.moveState >= 2
+    if (!moving && !aloft) { const k = ease * (0.35 + 0.65 * whirl)
       for (const side of ['l','r']) { turn('thigh_'+side,[1,0,0],-0.16*k); turn('calf_'+side,[1,0,0],0.30*k); turn('foot_'+side,[1,0,0],-0.13*k) } }
-    else { turn('spine_01',[1,0,0],-0.14*ease); turn('spine_02',[1,0,0],-0.08*ease) }
+    else if (!aloft) { turn('spine_01',[1,0,0],-0.14*ease); turn('spine_02',[1,0,0],-0.08*ease) }
     turn('spine_01',[0,1,0],-0.05*sway*Math.sin(lead)); turn('spine_02',[0,1,0],0.10*sway*Math.sin(lead)); turn('spine_03',[0,1,0],0.08*sway*Math.sin(lead))
     turn('spine_02',[1,0,0],-0.05*ease*whirl); turn('Head',[0,1,0],-0.13*sway*Math.sin(lead))
     turn('clavicle_r',[0,0,1],-0.28*ease)
@@ -25846,7 +25883,7 @@ function drawChains(me, others, t) {
       fxKey = 'chain-whirl-' + id
       const phase = g[2] * (9 + 14.5 * g[1]), opacity = (g[1] - 0.45) * 1.1
       for (let k=0;k<3;k++) for(let j=0;j<7;j++) {
-        const a=phase+k*2.094+j*.11,b=a+.10,r=1.08+k*.055,y=p.y+1.2+(k-1)*.035
+        const a=phase+k*2.094+j*.11,b=a+.10,r=WHIRL.reach-0.03+k*.055,y=p.y+WHIRL.up+WHIRL.lift+(k-1)*.035
         fxBox(p.x+Math.cos(a)*r,y,p.z+Math.sin(a)*r,p.x+Math.cos(b)*r,y,p.z+Math.sin(b)*r,.018,activeLook==='ink'?0x161618:0xe1ddd4,opacity)
       }
     }
@@ -34652,10 +34689,11 @@ function slHostTick() {
   const t0 = performance.now(), T = tickAt || now()
   for (const c of players.values()) {
     const g = c.chain
-    if (!g || g.phase !== 2 || !g.p) { c.slChainAt = null; continue }
+    if (!g || g.phase !== 2 && g.phase !== 1 || !g.p) { c.slChainAt = null; c.slWhirl = null; continue }
     const a = c.slChainAt || g.p, b = g.p, dx = b[0] - a[0], dz = b[2] - a[2], L = Math.hypot(dx, dz), sp = Math.hypot(...g.v)
     c.slChainAt = g.p.slice()
-    if (b[1] > 2.6 || sp < 3) continue
+    if (g.phase === 2 && b[1] > 2.6 || sp < 3) continue
+    const whirl = g.phase === 1, W = c.slWhirl ||= new Map(), Gb = GUNS[gunNamed('Cinderblock')], sw = whirl ? whirlSpin(g.charge) * WHIRL.reach : sp, dmg = whirl ? (Gb?.dmg ?? 45) * clamp(sw / (Gb?.refSpeed ?? 58), Gb?.minScale ?? 0.15, 1) : Gb?.dmg ?? 45
     slAround((a[0] + b[0]) / 2, (a[2] + b[2]) / 2, L / 2 + 1.5, T, (ag, p) => {
       const pq = slPramOnly(ag, p, T)
       if (pq) { const u = L > 1e-6 ? clamp(((pq.x - a[0]) * dx + (pq.z - a[2]) * dz) / (L * L), 0, 1) : 0; if (Math.hypot(a[0] + dx * u - pq.x, a[2] + dz * u - pq.z) < 0.9) slPramStrike(ag, p, c, T, GUNS[gunNamed('Cinderblock')]?.dmg ?? 45); return }
@@ -34667,7 +34705,8 @@ function slHostTick() {
         const u = L > 1e-6 ? clamp(((px - a[0]) * dx + (pz - a[2]) * dz) / (L * L), 0, 1) : 0
         hit ||= Math.hypot(a[0] + dx * u - px, a[2] + dz * u - pz) < 0.9
       }
-      if (hit) slKnock(ag, p, g.v[0], g.v[2], sp * 0.22, c, T, undefined, undefined, undefined, GUNS[gunNamed('Cinderblock')]?.dmg ?? 45, gunNamed('Cinderblock'), 4)
+      if (hit && whirl) { if (ag.kind === SL_K.stray) return; const t = W.get(ag.id); if (t !== undefined && T - t < WHIRL_HIT.gap * 1000) return; W.set(ag.id, T) }
+      if (hit) slKnock(ag, p, g.v[0], g.v[2], sw * 0.22, c, T, undefined, undefined, undefined, dmg, gunNamed('Cinderblock'), 4)
     })
   }
   if ((st.tick = (st.tick || 0) + 1) % 3) return
