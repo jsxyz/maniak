@@ -6194,10 +6194,12 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
   if (band === 'urban') {
     const B = R.block, d = Math.max(0, Math.min(1, 1 - (Math.max(Math.abs(x0 + C / 2), Math.abs(z0 + C / 2)) - A) / (R.urban - A)))
     flat(x0, z0, x1, z1, 0.03, T.street)
+    const air = faustAirfield(seed, S)
     for (let bi = Math.floor(x0 / B); bi < x1 / B; bi++) for (let bj = Math.floor(z0 / B); bj < z1 / B; bj++) {
       yield
       const cx = (bi + 0.5) * B, cz = (bj + 0.5) * B, e = B / 2 - R.street, h = H(0xb10c, bi, bj)
       if (inCity(cx, cz, e) || !faustRingClear(segs, cx, cz, e, e)) continue
+      if (cx + e > air.x - 36 && cx - e < air.x + 36 && cz + e > air.z0 - 25 && cz - e < air.z1 + 25) continue
       flat(cx - e, cz - e, cx + e, cz + e, 0.1, T.walk)
       for (const [lx, lz] of [[cx + e - 0.6, cz + e - 0.6], [cx - e + 0.6, cz + e - 0.6]]) {
         body(lx, 4.5, lz, 0.12, 4.5, 0.12, T.pole, false); out.light.push(faustBox(faustCm(lx), 9.1, faustCm(lz), 0.45, 0.16, 0.45)) }
@@ -40129,9 +40131,9 @@ function airfieldView() {
   if (!LV.faust || !LV.grow || !worldGroup) return null
   const F = faustAirfield(LV.grow.seed, LV.grow.S), g = new THREE.Group(), p = [], c = []
   const quad = (x0, x1, z0, z1, y, col) => { p.push(x0, y, z0, x0, y, z1, x1, y, z1, x0, y, z0, x1, y, z1, x1, y, z0); for (let i = 0; i < 6; i++) c.push(...col) }
-  quad(F.x - F.w / 2, F.x + F.w / 2, F.z0, F.z1, 0.03, [0.16, 0.17, 0.19])
-  for (let z = F.z0 + 30; z < F.z1 - 30; z += 40) quad(F.x - 0.5, F.x + 0.5, z, z + 20, 0.04, [0.75, 0.73, 0.66])
-  for (const z of [F.z0 + 8, F.z1 - 8]) for (let k = -5; k <= 5; k += 2) quad(F.x + k * 1.2 - 0.4, F.x + k * 1.2 + 0.4, z - 6, z + 6, 0.04, [0.75, 0.73, 0.66])
+  quad(F.x - F.w / 2, F.x + F.w / 2, F.z0, F.z1, 0.06, [0.16, 0.17, 0.19])
+  for (let z = F.z0 + 30; z < F.z1 - 30; z += 40) quad(F.x - 0.5, F.x + 0.5, z, z + 20, 0.07, [0.75, 0.73, 0.66])
+  for (const z of [F.z0 + 8, F.z1 - 8]) for (let k = -5; k <= 5; k += 2) quad(F.x + k * 1.2 - 0.4, F.x + k * 1.2 + 0.4, z - 6, z + 6, 0.07, [0.75, 0.73, 0.66])
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(c, 3))
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(p.map((_, i) => i % 3 === 1 ? 1 : 0), 3))
   const strip = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 })); strip.receiveShadow = true; g.add(strip)
