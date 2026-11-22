@@ -1064,11 +1064,11 @@ const ENFORCER_ELITE = { ...PACIFIER, enforcer: true, elite: true, crew: 'hunter
 const HAUNT_KINDS = {
   freak: { char: 'Freak', cid: 'Freak', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 0.6 },
   blue: { char: 'Blue freak', cid: 'Blue freak', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 0.6 },
-  freak_throw: { char: 'Freak', cid: 'Freak', role: 'throw', far: 'Bottle', farAt: 4, range: 11, fireRange: 18, aimErr: 0.06, jumpy: 0.2, cover: { hold: 1.6, peek: 1.8 } },
+  freak_throw: { char: 'Freak', cid: 'Freak', role: 'throw', far: 'Bottle', farAt: 4, range: 10, fireRange: 12, aimErr: 0.06, jumpy: 0.2, cover: { hold: 1.6, peek: 1.8 } },
   brute_rush: { char: 'Brute', cid: 'Brute', role: 'rush', range: 2.4, fireRange: 5, aimErr: 0.05, jumpy: 0.2, turn: 5 },
   thug: { ...THUG, crew: undefined, atk: 'Pipe' },
   thug_rush: { ...THUG, crew: undefined, role: 'rush', turn: 5 },
-  thug_throw: { ...THUG, crew: undefined, role: 'throw', far: 'Bottle', farAt: 4, range: 11, fireRange: 18, aimErr: 0.06, jumpy: 0.2, cover: { hold: 1.6, peek: 1.8 },
+  thug_throw: { ...THUG, crew: undefined, role: 'throw', far: 'Bottle', farAt: 4, range: 10, fireRange: 12, aimErr: 0.06, jumpy: 0.2, cover: { hold: 1.6, peek: 1.8 },
     lift: 2.5, hurl: { speed: 16, seek: 9, reach: 1.6 } },
   thug_guard: { ...THUG, crew: undefined, role: 'guard', atk: 'Pipe', turn: 6 },
   brute_guard: { char: 'Brute', cid: 'Brute', role: 'guard', range: 2.4, fireRange: 5, aimErr: 0.05, jumpy: 0.1, turn: 5 },
@@ -13412,7 +13412,7 @@ function botThink(b, all, dt) {
   ai.tgt = tgt ? tgt.id : -1
 
   const sd = tgt ? Math.hypot(b.x - tgt.x, b.z - tgt.z) : 0
-  if (ai.lurk && (b.hp < ai.lurk || tgt && tgt.id >= 0 && (sees && sd < HAUNT.reveal || sd < HAUNT.touch) || (ai.lurkT = (ai.lurkT || 0) + dt) > HAUNT.lurkS)) hauntReveal(b)
+  if (ai.lurk && (b.hp < ai.lurk || tgt && tgt.id >= 0 && (sees && sd < (spec.far ? spec.fireRange : HAUNT.reveal) || sd < HAUNT.touch) || (ai.lurkT = (ai.lurkT || 0) + dt) > HAUNT.lurkS)) hauntReveal(b)
   if (ai.fleeT > 0 && tgt && !seatOf(b)) { ai.fleeT -= dt; const m = sd || 1; return dealRun(b, b.x + (b.x - tgt.x) / m * 20, b.z + (b.z - tgt.z) / m * 20, dt) }
   circle(b, tgt)
 
@@ -13562,7 +13562,7 @@ function botThink(b, all, dt) {
     if (round) ai.noFire = true
   }
   if (spec.haunt && ai.noCovT > 0) ai.noCovT -= dt
-  if (spec.cover) coverThink(b, spec, tgt, dist, dt, !!(car || climbing || held || air || follow) || !!spec.haunt && (dist > (spec.range ?? 10) + 3 || ai.noCovT > 0))
+  if (spec.cover) coverThink(b, spec, tgt, dist, dt, !!(car || climbing || held || air || follow) || !!spec.haunt && (!!ai.lurk || dist > (spec.range ?? 10) + 3 || ai.noCovT > 0))
   if (spec.haunt) { ai.peekBad = ai.cov?.phase === 'peek' && !los ? (ai.peekBad || 0) + dt : ai.cov ? ai.peekBad || 0 : 0; if (ai.peekBad > 1.5) { ai.cov = null; ai.peekBad = 0; ai.noCovT = 5 } }
   if (ai.cov && !(car || climbing)) {
     const c = ai.cov, px = c.phase === 'peek' ? c.px : c.x, pz = c.phase === 'peek' ? c.pz : c.z, dx = px - b.x, dz = pz - b.z, m = Math.hypot(dx, dz)
@@ -13644,7 +13644,7 @@ function botThink(b, all, dt) {
   if (_chargeJ !== null) sj = _chargeJ
   ai.doCharge = _chargeJ !== null
   if (_wrForward) { mf = 1; mr = 0; sj = false; sy = (_wrYaw ?? yaw) - yaw }
-  const fired = fire || !!G.windup && b.charge > 0 && los && !held && dist < reach * 1.15
+  const fired = fire || !!G.windup && b.charge > 0 && los && !held && dist < reach * 1.1
   if (spec.haunt) ai.dbg = { sees, los, d: r2(dist), reach: r2(reach), onT: onTarget, fire: fired, climbing, along, car: !!car, prey: !!prey, held: !!held, noFire: !!ai.noFire, gun: G.name, charge: r2(b.charge || 0), water: !!b.water, grounded: !!b.grounded }
   const res = {
     f: ai.awayT > 0 && !_wrForward && !orbit && !(ai.slideT > 0) ? -1 : out ? mf : mf * pace * (ai.wait ? 0.3 : 1), r: out ? mr : mr * pace,
@@ -13716,11 +13716,15 @@ function rushThink(b, spec, tgt, dist, los, toYaw, dt) {
   if (R.ph === 1) {
     if (R.t > P.lock) R.yaw = toYaw
     const yaw = roleFace(b, R.yaw, dt, 1.5)
-    if ((R.t -= dt) <= 0) { R.ph = 2; R.t = P.go; b.rushK = P.speed / Math.max(1, bestPace(b)) }
+    if ((R.t -= dt) <= 0) {
+      R.ph = 2; R.t = P.go; b.rushK = P.speed / Math.max(1, bestPace(b)); R.top = 0
+      if (b.body) { const v = b.body.getLinearVelocity(); velVec.setValue(-Math.sin(R.yaw) * P.speed, v.y(), -Math.cos(R.yaw) * P.speed); b.body.setLinearVelocity(velVec); b.body.activate() }
+    }
     return { f: 0, r: 0, fire: false, yaw, sprint: false }
   }
   if (R.ph === 2) {
     const yaw = roleFace(b, R.yaw, dt, 0.5)
+    R.v = Math.round(Math.hypot(b.vx || 0, b.vz || 0) * 100) / 100; R.top = Math.max(R.top || 0, R.v)
     if (los && dist < GUNS[RUSH_GUN].range * 0.9 && Math.abs(wrapPi(toYaw - yaw)) < 0.7) {
       b.gun = RUSH_GUN; b.cool = 0; b.charge = 0; R.ph = 3; R.t = P.rec; b.rushK = 0
       return { f: 0, r: 0, fire: true, yaw }
@@ -17089,6 +17093,7 @@ function fireHitscan(shooter, targets, onKill, viewT, late) {
   if (!late && shooter.ammo <= 0) { shooter.gun = 0; shooter.ammo = Infinity; return [] }
   if (!late && (G.windup && (shooter.charge || 0) < G.windup || G.gate && !(stat(shooter, G.gate) > 0))) return []
   if (!late) {
+    if (shooter.bot?.haunt) { const L = shooter.ai.shots ||= []; L.push({ t: Math.round(now()), gun: G.name }); if (L.length > 6) L.shift() }
     shooter.charge = 0
     shooter.cool = stat(shooter, 'rate', (G.rate + (G.burst > 1 ? (G.burst - 1) * G.burstGap : 0)) *
                    profRate(shooter, G.name) * (shooter.water ? SWIM.slow : 1))
@@ -29726,7 +29731,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   capture: captureFrames,
   haunts: () => ({ log: JSON.parse(JSON.stringify(hauntLog)), crews: [...hauntCrews.values()].map(K => ({ key: K.key, owner: K.owner, env: K.env, ids: [...K.ids], help: K.help,
       bots: K.ids.map(id => players.get(id)).filter(Boolean).map(c => ({ id: c.id, kind: c.bot.haunt, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100), hp: Math.round(c.hp), dead: c.dead > 0,
-        lurk: !!c.ai.lurk, tgt: c.ai.tgt, flee: c.ai.fleeT > 0, rush: c.ai.rush?.ph ?? null, guard: !!c.ai.gd?.up, think: c.ai.dbg ? { ...c.ai.dbg } : null })) })),
+        lurk: !!c.ai.lurk, tgt: c.ai.tgt, flee: c.ai.fleeT > 0, rush: c.ai.rush?.ph ?? null, rushV: c.ai.rush?.v ?? null, rushTop: c.ai.rush?.top ?? null, rushK: c.rushK || 0,
+        speed: Math.round(Math.hypot(c.vx || 0, c.vz || 0) * 100) / 100, shots: [...c.ai.shots || []], guard: !!c.ai.gd?.up, think: c.ai.dbg ? { ...c.ai.dbg } : null })) })),
     env: LV.faust && faustState && selfChar() ? hauntEnv(selfChar()) : null }),
   dropCar(x, z, h = 3, kind = 'Car') {
     if (!isHost || ![x, z, h].every(Number.isFinite) || objs.length >= OBJ_MAX - 8) return false
@@ -33087,7 +33093,7 @@ function dealerDown(c) {
   if (ds) dealGone.set(ds.key, (tickAt || now()) + DEAL.goneS * 1000)
   dealerDrop(c); if (conns.size) pushRoster()
 }
-const HAUNT = { dmg: { Bat: 0.4, Pipe: 0.4, Sledge: 0.35, Pistol: 0.6, Rush: 0.6, Shiv: 1, Knife: 1, Lunge: 1, Bottle: 1 }, touch: 3.5, lurkS: 25, flee: 5, every: 0.5, keep: 110, first: 6, gap: [20, 38], retry: 3, ring: [14, 30], close: [4, 10], reveal: 7, stroll: 0.4, cap: 10 }
+const HAUNT = { dmg: { Bat: 0.4, Pipe: 0.4, Sledge: 0.35, Pistol: 0.6, Rush: 0.6, Shiv: 1, Knife: 1, Lunge: 1, Bottle: 1 }, touch: 3.5, lurkS: 12, flee: 5, every: 0.5, keep: 110, first: 6, gap: [20, 38], retry: 3, ring: [14, 30], close: [4, 10], reveal: 7, stroll: 0.4, cap: 10 }
 const HAUNT_CREWS = {
   alley: [['freak', 'freak_throw', 'brute_rush'], ['blue', 'freak', 'freak_throw']],
   yards: [['thug_guard', 'thug_throw', 'shooter'], ['thug_rush', 'thug_throw', 'shooter'], ['thug', 'thug_rush', 'thug_throw', 'thug']],
