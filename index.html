@@ -13948,7 +13948,7 @@ function leapCamEase(me, tf = frameT || now()) {
   ;[C.m, C.mv] = ease(C.m, C.mv, m); [C.l, C.lv] = ease(C.l, C.lv, l)
   return C
 }
-const CAM_ROOM = { radius: 0.32, margin: 0.04, recover: 0.5, pull: 0.045, settle: 0.14, shoulder: 0.48, side: 1.2, fade: [0.8, 2.8], ahead: [0.1, 0.2, 0.3, 0.45], aheadTurn: 0.6, aheadMax: 1.6, probe: 0.3, speed: 24 }
+const CAM_ROOM = { radius: 0.32, margin: 0.04, recover: 0.5, pull: 0.045, settle: 0.14, shoulder: 0.48, side: 1.2, fade: [0.8, 2.8], ahead: [0.1, 0.2, 0.3, 0.45], aheadTurn: 0.6, aheadMax: 1.6, probe: 0.3, speed: 24, moving: 0.5 }
 const followCam = { at: NaN, id: null, warp: null, x: 0, y: 0, z: 0, distance: 0, pivot: 0, side: 0, sign: 1, active: false, yaw: 0, rate: 0 }
 function camRay(me, yaw, pitch, R = heldR(me), eased = null, follow = null) {
   const [dx, dy, dz] = aimDir(yaw, pitch)
@@ -14047,10 +14047,24 @@ function camBlock(px, py, pz, nx, ny, nz, len, mask = RAY_GROUP) {
   const far = Math.max(0, len - CAM.pad)
   tmpTrans.setIdentity(); posVec.setValue(px, py, pz); tmpTrans.setOrigin(posVec)
   scratchTr.setIdentity(); posVec.setValue(px + nx * far, py + ny * far, pz + nz * far); scratchTr.setOrigin(posVec)
-  camCb.set_m_closestHitFraction(1)
   const ball = mask === RAY_GROUP ? camBall : camRoomBall ||= new A.btSphereShape(CAM_ROOM.radius)
-  world.convexSweepTest(ball, tmpTrans, scratchTr, camCb, 0)
-  return far * camCb.get_m_closestHitFraction()
+  let frac = 1
+  for (let i = 0; i < 4; i++) {
+    camCb.set_m_closestHitFraction(1)
+    world.convexSweepTest(ball, tmpTrans, scratchTr, camCb, 0)
+    frac = camCb.get_m_closestHitFraction()
+    if (frac >= 1) break
+    const body = camCb.get_m_hitCollisionObject(), bh = body.getBroadphaseHandle()
+    if (!(bh.get_m_collisionFilterGroup() & G_OBJ) || !camMoving(body)) break
+    camHide.push([bh, bh.get_m_collisionFilterGroup()]); bh.set_m_collisionFilterGroup(0)
+  }
+  while (camHide.length) { const [bh, g] = camHide.pop(); bh.set_m_collisionFilterGroup(g) }
+  return far * frac
+}
+const camHide = []
+function camMoving(obj) {
+  const v = A.castObject(obj, A.btRigidBody).getLinearVelocity(), p = A.getPointer(obj)
+  return Math.hypot(v.x(), v.y(), v.z()) > CAM_ROOM.moving || objs.some(o => o.V && o.body && A.getPointer(o.body) === p)
 }
 
 const chase = { yaw: NaN, yaw0: NaN, t: 0, look: 0, inYaw: NaN, inPitch: NaN, idle: 0, x: NaN, z: NaN, v: 0, vb: 0, vFilt: 0, vF2: 0, lag: 0, camB: NaN, camBV: 0, camT: NaN }
