@@ -165,6 +165,12 @@
   #tabkeys{columns:2 280px;column-gap:28px;font-size:13px;line-height:1.6;color:#c9c6bf;margin-bottom:14px}
   #tabkeys div{break-inside:avoid}
   #tabkeys b{color:#ece9e2}
+  .pad-glyph{display:inline-block;min-width:1.5em;padding:0 5px;border:1px solid #827969;border-radius:5px;text-align:center;font-size:12px;line-height:1.5}
+  body.pad-active .pad-focus{outline:3px solid #e8cf8c !important;outline-offset:3px}
+  #pad-text{z-index:35}
+  #pad-text-keys{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:12px 0}
+  #pad-text-keys button{padding:9px 0;min-width:0}
+  #pad-text-value{min-height:36px;padding:10px;background:#08080a;overflow-wrap:anywhere;white-space:pre-wrap;color:#eee}
   #tabkeys:empty{display:none}
   #results{position:fixed;inset:0;display:none;place-items:center;z-index:10;pointer-events:none}
   #restitle{color:#c9a55c}
@@ -621,6 +627,30 @@
     <span class="setval" id="set-sens-v"></span>
   </div>
   <div class="setrow">
+    <label for="set-pad-sens">Controller sensitivity</label>
+    <input type="range" id="set-pad-sens" min="0.2" max="3" step="0.05">
+    <span class="setval" id="set-pad-sens-v"></span>
+  </div>
+  <div class="setrow">
+    <label for="set-pad-deadzone">Controller deadzone</label>
+    <input type="range" id="set-pad-deadzone" min="0" max="0.5" step="0.01">
+    <span class="setval" id="set-pad-deadzone-v"></span>
+  </div>
+  <div class="setrow">
+    <label for="set-pad-curve">Controller response curve</label>
+    <input type="range" id="set-pad-curve" min="0.5" max="3" step="0.05">
+    <span class="setval" id="set-pad-curve-v"></span>
+  </div>
+  <div class="setrow">
+    <label for="set-pad-accel">Controller look acceleration</label>
+    <input type="range" id="set-pad-accel" min="0" max="2" step="0.05">
+    <span class="setval" id="set-pad-accel-v"></span>
+  </div>
+  <div class="mrow">
+    <button id="set-pad-invert">Controller invert Y: off</button>
+    <button id="set-pad-rumble">Controller rumble: on</button>
+  </div>
+  <div class="setrow">
     <label for="set-fov">Field of view</label>
     <input type="range" id="set-fov" min="60" max="110" step="1">
     <span class="setval" id="set-fov-v"></span>
@@ -651,6 +681,18 @@
   <div class="mrow" style="margin-top:10px">
     <button id="set-back">Back</button>
   </div>
+</div></div>
+
+<div id="pad-text" class="ovl" role="dialog" aria-labelledby="pad-text-title"><div class="mbox">
+  <h2 id="pad-text-title">Text</h2>
+  <div id="pad-text-value" aria-live="polite"></div>
+  <div id="pad-text-keys"></div>
+  <div class="mrow">
+    <button id="pad-text-case">⇧</button><button id="pad-text-space">Space</button>
+    <button id="pad-text-backspace">⌫</button><button id="pad-text-clear">Clear</button>
+    <button id="pad-text-done">Done</button><button id="pad-text-cancel">Cancel</button>
+  </div>
+  <p style="margin:12px 0 0">D-pad / left stick: move · A / ×: choose · B / ○: back</p>
 </div></div>
 
 <div id="endmodal" class="ovl"><div class="mbox">
@@ -905,6 +947,7 @@ const CHARS = [
 ]
 const DISGUISE_CID = CHARS.push({ ...CHARS[0], name: 'Alistair', hidden: true, model: 'alistair', role: 'The Maniak, in his civilian clothes' }) - 1
 CHARS[0].disguise = DISGUISE_CID; CHARS[0].pipe = true
+CHARS.push({ ...CHARS[1], name: 'Blue freak', model: 'blue_freak', color: 0x574cff, role: 'A blue puppet with a red scarf and a shiv' })
 const SCARS = { hole: { r:.13, color:0x17191a, edge:0x706a5e, mix: [.48, .58], fade: [.86, 1] }, scorch: { r:.6, color:0x080706, edge:0x151310 },
   dent: { r:2.6, color:0x2b2722, edge:0x4d463c }, blast: { r:2.2, color:0x0b0908, edge:0x1d1a16 },
   chip: { r:0.7, color:0x1c1a18, edge:0x8f897d, mix: [.3, .62], fade: [.82, 1] } }
@@ -1012,7 +1055,9 @@ const ENFORCER_ARMED = { ...ENFORCER, swarm: false, far: 'Revolver', farAt: 6, r
 const ENFORCER_HEAVY = { char: 'Enforcer heavy', cid: 'Enforcer heavy', enforcer: true, heavy: true, far: 'Riot gun', farAt: 5, range: 8, fireRange: 14, aimErr: 0.07, jumpy: 0.1, turn: 4, copies: 3 }
 const ENFORCER_ELITE = { ...PACIFIER, enforcer: true, elite: true, crew: 'hunters', copies: 4 }
 const BOTS = [
-  TEARDROP, TEARDROP, TEARDROP,
+  TEARDROP, TEARDROP,
+  { char: 'Blue freak', cid: 'Blue freak', crew: 'street', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 1.1 },
+  TEARDROP,
   THUG, SHOOTER, THUG,
   PACIFIER, PACIFIER, PACIFIER, PACIFIER,
   PERFORMER,
@@ -1274,7 +1319,7 @@ const MANIAK_CAR = { row: 'Maniak car', file: 'maniak_car.5ef6eadc.glb', lods: [
 const ASSETS =
   'https://cdn.jsdelivr.net/gh/enable3d/enable3d.github.io@1dd9baa5328249fe19b48507a880de9b11f4b4a0/src/assets/glb/'
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { enforcer_heavy: 'enforcer_heavy.e08a042c.glb', enforcer: 'enforcer.1fea935d.glb', performer_anims: 'performer_anims.672d8111.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.df8c2600.glb', pacifier: 'pacifier.50fcac50.glb', teardrop: 'teardrop.00425f13.glb', thug: 'thug.0bba2eaa.glb', tony: 'tony.58834a5f.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.a77e8cb6.glb', civ_f_coat: 'civ_f_coat.345583a8.glb', civ_f_dress: 'civ_f_dress.c906fc37.glb', civ_freak: 'civ_freak.d91f7098.glb', civ_m_coat: 'civ_m_coat.76780da8.glb', civ_m_suit: 'civ_m_suit.84e7e78a.glb', civ_m_worker: 'civ_m_worker.19027886.glb', maniak: 'maniak.c94c09ac.glb', maniak_moves: 'maniak_moves.b993f999.glb', alistair: 'maniak_alistair.0ea5628d.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
+const RIG_FILES = { blue_freak: 'blue_freak.b5d31811.glb', enforcer_heavy: 'enforcer_heavy.e08a042c.glb', enforcer: 'enforcer.1fea935d.glb', performer_anims: 'performer_anims.672d8111.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.df8c2600.glb', pacifier: 'pacifier.50fcac50.glb', teardrop: 'teardrop.00425f13.glb', thug: 'thug.0bba2eaa.glb', tony: 'tony.58834a5f.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.a77e8cb6.glb', civ_f_coat: 'civ_f_coat.345583a8.glb', civ_f_dress: 'civ_f_dress.c906fc37.glb', civ_freak: 'civ_freak.d91f7098.glb', civ_m_coat: 'civ_m_coat.76780da8.glb', civ_m_suit: 'civ_m_suit.84e7e78a.glb', civ_m_worker: 'civ_m_worker.19027886.glb', maniak: 'maniak.37aa01db.glb', maniak_moves: 'maniak_moves.b993f999.glb', alistair: 'maniak_alistair.0ea5628d.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -1328,6 +1373,7 @@ const MODELS = {
   },
   alistair: { kind: 'rig', like: 'maniak', fitAs: 'maniak', file: RIG_FILES.alistair, cape: [] },
   freak: { ...RIG_CIV, file: RIG_FILES.civ_freak, punches: { jab: [['freak_attack', 0.35]], melee: [['hook', 0.04]] } },
+  blue_freak: { kind: 'rig', like: 'freak', file: RIG_FILES.blue_freak, clips: { ...RIG_CIV.clips, idle: 'idle', walk: 'walk' }, pace: { ...RIG_CIV.pace, walk: 0.62 } },
   brute: { ...RIG_CIV, file: RIG_FILES.civ_brute, anims: [RIG_FILES.anims, RIG_FILES.freak_anims], aims: { bat: 'bat_idle' },
     punches: { jab: [['hook', 0.04]], melee: [['hook', 0.04], ['cross', 0.18]], swing: [['bat_swing', 0.05]] } },
   teardrop: { ...RIG_FREAK, file: RIG_FILES.teardrop, aims: { knife: 'knife_idle' }, punches: { slash: [['knife_a', 0.02], ['knife_b', 0.02]] } },
@@ -25577,8 +25623,306 @@ function profPanel(me, G, P) {
 }
 
 let hitSeenAt = 0
-function sawHit() { hitSeenAt = now() }
+function sawHit() { hitSeenAt = now(); if (padActive && padFocused && !document.hidden && !menuUp()) gamepadInput.rumble(0.45, 90, settings.padRumble) }
 const marksHit = f => f[7] === 1 || f[7] === 3 || f[7] === 7 && f[5]
+
+function createGamepadInput(getPads = () => navigator.getGamepads?.() || []) {
+  const limit = (v, lo, hi) => Math.max(lo, Math.min(hi, Number.isFinite(+v) ? +v : 0))
+  const option = (o, k, fallback, lo, hi) => limit(o[k] === undefined ? fallback : o[k], lo, hi)
+  const radial = (x, y, deadzone, curve) => {
+    x = limit(x, -1, 1); y = limit(y, -1, 1)
+    const d = Math.hypot(x, y)
+    if (d <= deadzone) return { x: 0, y: 0 }
+    const k = Math.pow((Math.min(d, 1) - deadzone) / (1 - deadzone), curve) / d
+    return { x: x * k, y: y * k }
+  }
+  const value = b => limit(typeof b === 'number' ? b : b?.value ?? (b?.pressed ? 1 : 0), 0, 1)
+  let pad = null, id = '', index = -1, previous = [], muted = [], axesMuted = false
+  let last = null, lookTime = 0, lookX = 0, lookY = 0, repeatDir = '', repeatAt = 0, rumbleAt = -Infinity
+  let frame = null
+  function poll(t, options = {}, enabled = true) {
+    t = Number.isFinite(t) ? t : 0
+    const dt = last === null ? 0 : limit((t - last) / 1000, 0, 0.1)
+    last = t
+    const deadzone = option(options, 'deadzone', 0.18, 0, 0.5)
+    const curve = option(options, 'curve', 1.5, 0.5, 3)
+    const lookDeadzone = option(options, 'lookDeadzone', deadzone, 0, 0.5)
+    const lookCurve = option(options, 'lookCurve', curve, 0.5, 3)
+    const threshold = option(options, 'threshold', 0.25, 0.05, 0.95)
+    let pads = []
+    try { pads = Array.from(getPads() || []).filter(p => p && p.connected !== false && p.mapping === 'standard') } catch (e) {}
+    const moving = p => Math.hypot(p.axes?.[0] || 0, p.axes?.[1] || 0) > deadzone ||
+      Math.hypot(p.axes?.[2] || 0, p.axes?.[3] || 0) > lookDeadzone || Array.from(p.buttons || []).some(b => value(b) >= threshold)
+    const current = pads.find(p => p.index === index && p.id === id)
+    const next = current && moving(current) ? current : pads.find(moving) || current || pads[0] || null
+    const changed = (next?.index ?? -1) !== index || (next?.id || '') !== id
+    const old = previous
+    if (changed) { previous = []; muted = []; axesMuted = false; lookTime = 0; lookX = lookY = 0; repeatDir = ''; rumbleAt = -Infinity }
+    pad = next; id = pad?.id || ''; index = pad?.index ?? -1
+    const values = Array.from({ length: Math.max(17, pad?.buttons?.length || 0) }, (_, i) => value(pad?.buttons?.[i]))
+    const raw = values.map(v => v >= threshold)
+    const active = enabled && !!pad && (moving(pad) || raw.some((v, i) => v !== !!previous[i]))
+    if (!enabled) { muted = raw.slice(); axesMuted = true }
+    const held = raw.map((v, i) => { if (!v) muted[i] = false; return enabled && v && !muted[i] })
+    const pressed = held.map((v, i) => v && !previous[i])
+    const released = held.map((v, i) => !v && !!(changed ? old[i] : previous[i]))
+    previous = held.slice()
+    let move = radial(pad?.axes?.[0], pad?.axes?.[1], deadzone, curve)
+    let stick = radial(pad?.axes?.[2], pad?.axes?.[3], lookDeadzone, lookCurve)
+    if (!move.x && !move.y && !stick.x && !stick.y) axesMuted = false
+    if (!enabled || axesMuted) { move = { x: 0, y: 0 }; stick = { x: 0, y: 0 } }
+    const magnitude = Math.hypot(stick.x, stick.y)
+    if (magnitude < 0.85 || stick.x * lookX + stick.y * lookY <= 0) lookTime = 0
+    const rampStart = lookTime
+    if (magnitude >= 0.85) lookTime = Math.min(0.4, lookTime + dt)
+    lookX = stick.x; lookY = stick.y
+    const acceleration = option(options, 'acceleration', 0.5, 0, 2)
+    const rampArea = x => x < 0.4 ? x * x / 0.8 : x - 0.2
+    const elapsed = dt + acceleration * (magnitude >= 0.85 ? rampArea(rampStart + dt) - rampArea(rampStart) : 0)
+    const speed = option(options, 'sensitivity', 1, 0.2, 3) * 2.8
+    const look = { x: stick.x * speed * elapsed, y: stick.y * speed * elapsed * (options.invert ? -1 : 1) }
+    let nx = (held[15] ? 1 : 0) - (held[14] ? 1 : 0), ny = (held[13] ? 1 : 0) - (held[12] ? 1 : 0)
+    if (!nx && !ny) {
+      if (Math.max(Math.abs(move.x), Math.abs(move.y)) >= 0.45) {
+        if (Math.abs(move.x) > Math.abs(move.y)) nx = Math.sign(move.x)
+        else ny = Math.sign(move.y)
+      }
+    }
+    if (ny) nx = 0
+    const direction = nx + ',' + ny, nav = { x: 0, y: 0 }
+    if (!nx && !ny) repeatDir = ''
+    else if (direction !== repeatDir || t >= repeatAt) {
+      nav.x = nx; nav.y = ny
+      repeatAt = t + (direction !== repeatDir ? 360 : 120)
+      repeatDir = direction
+    }
+    frame = { connected: !!pad, index, id, changed, active, dt, move, stick, look, values, held, pressed, released, nav }
+    return frame
+  }
+  function stopRumble() {
+    try { const p = pad?.vibrationActuator?.reset?.(); p?.catch?.(() => {}) } catch (e) {}
+  }
+  function reset() {
+    muted = frame?.values.map(v => v >= 0.05) || []
+    previous = []; axesMuted = true; lookTime = 0; lookX = lookY = 0; repeatDir = ''; last = null
+    stopRumble()
+  }
+  function rumble(strength = 0.45, duration = 90, enabled = true) {
+    if (!enabled || !pad?.vibrationActuator?.playEffect || last === null || last - rumbleAt + 0.001 < 60) return false
+    try {
+      const p = pad.vibrationActuator.playEffect('dual-rumble', { startDelay: 0, duration: limit(duration, 0, 500),
+        strongMagnitude: limit(strength, 0, 1), weakMagnitude: limit(strength * 0.6, 0, 1) })
+      p?.catch?.(() => {})
+      rumbleAt = last
+      return true
+    } catch (e) { return false }
+  }
+  return { poll, reset, rumble, stopRumble }
+}
+
+const PAD_MAP = Object.freeze({ jump: 0, chain: 1, use: 2, pipe: 3, car: 4, disguise: 5, alt: 6, fire: 7,
+  controls: 8, menu: 9, sprint: 10, view: 11, map: 12, sound: 13, radio: 14, chat: 15 })
+let padDevices = [], padUnsupported = false
+const gamepadInput = createGamepadInput(() => { padDevices = []; return padDevices = Array.from(navigator.getGamepads?.() || []) })
+const manualInput = { f: 0, r: 0, fire: false, alt: false }
+let padActive = false, padFrame = null, padFocused = true, padTab = false, padContext = '', padFocus = null, padText = null
+function padMode(on) {
+  padActive = !!on
+  document.body.classList.toggle('pad-active', padActive)
+  if (!on && padFocus) { padFocus.classList.remove('pad-focus'); padFocus = null }
+}
+function padReset() {
+  Object.assign(manualInput, { f: 0, r: 0, fire: false, alt: false })
+  padClearActions()
+  gamepadInput.reset(); padTab = false
+}
+function padClearActions() {
+  if (padActive) for (const key of ['grip', 'use', 'dis', 'pipe', 'car', 'sprint']) input[key] = false
+}
+function padRoot() {
+  for (const id of ['pad-text', 'endmodal', 'scanmodal', 'codemodal', 'hostset', 'settings', 'pause', 'map']) {
+    const node = el('#' + id)
+    if (node?.classList.contains('open')) return node
+  }
+  if (chatOpen) return el('#chat')
+  if (phase !== 'playing' || serving) return el('#ui')
+  return null
+}
+function padBack(root) {
+  if (padText) { padTextClose(false); return }
+  const back = { endmodal: resetToMenu, scanmodal: closeScan, codemodal: closeCodeModal, hostset: settingsBack,
+    settings: settingsBack, pause: closePause, map: closeMap, chat: closeChat }
+  back[root?.id]?.()
+}
+function padSelect(node) {
+  if (padFocus === node) return
+  padFocus?.classList.remove('pad-focus')
+  padFocus = node
+  if (!node) return
+  if (node.tabIndex < 0) node.tabIndex = 0
+  node.classList.add('pad-focus')
+  if (!node.matches('input:not([type=range]), textarea')) node.focus({ preventScroll: true })
+  node.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+function padMenu(root, frame) {
+  const buttons = [...root.querySelectorAll('button, input, textarea, select, .card, #code')].filter(n =>
+    !n.disabled && !n.hidden && !n.readOnly && n.type !== 'hidden' && n.type !== 'file' && n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden')
+  if (!buttons.length) { padSelect(null); return }
+  if (!buttons.includes(padFocus)) padSelect(buttons.find(n => n.id === 'host-btn' || n.id === 'pause-resume') || buttons[0])
+  const { x, y } = frame.nav, node = padFocus
+  if (x && node.matches('input[type=range], input[type=number], select')) {
+    if (node.tagName === 'SELECT') node.selectedIndex = clamp(node.selectedIndex + x, 0, node.options.length - 1)
+    else {
+      const lo = node.min === '' ? 0 : +node.min, hi = node.max === '' ? 100 : +node.max, step = +node.step || 1
+      node.value = String(clamp(+node.value + x * step, lo, hi))
+    }
+    node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true }))
+  } else if (x || y) {
+    const box = node.getBoundingClientRect(), cx = box.x + box.width / 2, cy = box.y + box.height / 2
+    let best = null, distance = Infinity
+    for (const other of buttons) {
+      if (other === node) continue
+      const rect = other.getBoundingClientRect(), dx = rect.x + rect.width / 2 - cx, dy = rect.y + rect.height / 2 - cy
+      const forward = x ? dx * x : dy * y, across = x ? Math.abs(dy) : Math.abs(dx)
+      if (forward > 4 && across < (x ? Math.max(box.height, rect.height) : Math.max(box.width, rect.width)) / 2 + 8) {
+        const score = forward + across * 2
+        if (score < distance) { best = other; distance = score }
+      }
+    }
+    if (!best) best = buttons[(buttons.indexOf(node) + (y || x) + buttons.length) % buttons.length]
+    padSelect(best)
+  }
+  if (frame.pressed[PAD_MAP.jump]) {
+    const target = padFocus
+    if (target.matches('input:not([type=range]):not([type=checkbox]), textarea')) padTextOpen(target)
+    else target.click()
+  }
+}
+function padTextOpen(target) {
+  padText = { target, value: target.value, caps: target.id === 'join-code' }
+  el('#pad-text-title').textContent = target.id === 'chatin' ? 'Chat' : target.id === 'join-code' ? 'Room code' : target.id === 'host-seed' ? 'City seed' : 'Name'
+  padTextKeys(); show('pad-text', 1); padSelect(null); gamepadInput.reset()
+}
+function padTextKeys() {
+  const wrap = el('#pad-text-keys'), numeric = padText.target.id === 'host-seed'
+  el('#pad-text-value').textContent = padText.value || ' '
+  wrap.replaceChildren()
+  const letters = numeric ? '' : padText.caps ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' : 'abcdefghijklmnopqrstuvwxyz'
+  for (const ch of letters + '0123456789' + (numeric ? '' : '-_/.?!')) {
+    const b = document.createElement('button'); b.textContent = ch
+    b.onclick = () => padTextWrite(ch)
+    wrap.appendChild(b)
+  }
+  el('#pad-text-case').style.display = el('#pad-text-space').style.display = numeric ? 'none' : ''
+}
+function padTextWrite(ch) {
+  if (!padText) return
+  const max = padText.target.maxLength > 0 ? padText.target.maxLength : 160
+  padText.value = ch === null ? padText.value.slice(0, -1) : (padText.value + ch).slice(0, max)
+  el('#pad-text-value').textContent = padText.value || ' '
+}
+function padTextClose(save) {
+  if (!padText) return
+  const { target, value } = padText
+  padText = null; show('pad-text'); padSelect(null); gamepadInput.reset()
+  if (save) {
+    target.value = value
+    target.dispatchEvent(new Event('input', { bubbles: true })); target.dispatchEvent(new Event('change', { bubbles: true }))
+    if (target.id === 'chatin') target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  } else if (target.id === 'chatin') closeChat()
+}
+function initGamepad() {
+  for (const type of ['keydown', 'pointerdown', 'touchstart']) addEventListener(type, e => { if (e.isTrusted) padMode(false) }, { capture: true, passive: true })
+  addEventListener('mousemove', e => { if (e.isTrusted && (e.movementX || e.movementY)) padMode(false) }, { capture: true, passive: true })
+  addEventListener('blur', () => { padFocused = false; padReset() })
+  addEventListener('focus', () => { padFocused = true; padReset() })
+  addEventListener('gamepaddisconnected', e => { if (e.gamepad.index === padFrame?.index) padReset() })
+  el('#pad-text-backspace').onclick = () => padTextWrite(null)
+  el('#pad-text-space').onclick = () => padTextWrite(' ')
+  el('#pad-text-case').onclick = () => { padText.caps = !padText.caps; padTextKeys(); padSelect(null) }
+  el('#pad-text-clear').onclick = () => { padText.value = ''; el('#pad-text-value').textContent = ' ' }
+  el('#pad-text-done').onclick = () => padTextClose(true)
+  el('#pad-text-cancel').onclick = () => padTextClose(false)
+}
+function padPoll() {
+  const root = padRoot(), context = root?.id || (startingGame ? 'loading' : 'game')
+  if (context !== padContext) { if (padContext) { padClearActions(); gamepadInput.reset() } padSelect(null); padContext = context }
+  const enabled = padFocused && !document.hidden && !startingGame
+  const frame = gamepadInput.poll(now(), { deadzone: settings.padDeadzone, curve: settings.padCurve,
+    sensitivity: settings.padSens, acceleration: settings.padAccel, invert: settings.padInvert }, enabled)
+  padFrame = frame
+  if (enabled && !frame.connected && !padUnsupported && padDevices.some(p => p && p.connected !== false && p.mapping !== 'standard')) {
+    padUnsupported = true
+    const text = "This controller isn't supported in this browser"
+    sysMsg(text)
+    if (phase === 'menu') setStatus(text)
+  }
+  if (frame.active) padMode(true)
+  else if (!frame.connected) padMode(false)
+  padTab = enabled && !root && frame.held[PAD_MAP.controls]
+  if (!enabled || !frame.connected) return null
+  if (root) {
+    if (frame.pressed[PAD_MAP.chain] || frame.pressed[PAD_MAP.menu] || root.id === 'map' && frame.pressed[PAD_MAP.map]) { padBack(root); return null }
+    if (padActive) {
+      if (root.id === 'map') {
+        if (frame.stick.x || frame.stick.y) {
+          mapView.cx += frame.stick.x * 600 * frame.dt / mapView.k
+          mapView.cz += frame.stick.y * 600 * frame.dt / mapView.k
+          mapClampView()
+        }
+        const zoom = frame.values[PAD_MAP.fire] - frame.values[PAD_MAP.alt]
+        if (zoom) mapZoomBy(Math.exp(zoom * frame.dt * 1.8))
+      }
+      padMenu(root, frame)
+    }
+    return null
+  }
+  if (phase !== 'playing' || serving) return null
+  if (frame.pressed[PAD_MAP.menu]) { openPause(); return null }
+  if (padTab) {
+    el('#tab .tabinner').scrollTop += (frame.stick.y * 600 + ((frame.held[PAD_MAP.sound] ? 1 : 0) - (frame.held[PAD_MAP.map] ? 1 : 0)) * 400) * frame.dt
+    padClearActions()
+    return null
+  }
+  if (frame.pressed[PAD_MAP.map]) { openMap(); return null }
+  if (frame.pressed[PAD_MAP.chat]) { openChat(''); padTextOpen(el('#chatin')); return null }
+  if (frame.pressed[PAD_MAP.view]) setView(!firstPerson)
+  if (frame.pressed[PAD_MAP.radio]) GAME.audio.cycle()
+  if (frame.pressed[PAD_MAP.sound]) GAME.audio.toggle()
+  if (frame.pressed[PAD_MAP.sprint]) sprintToggle()
+  return frame
+}
+function padApply(frame) {
+  if (!frame) return
+  const { held, pressed, move, look } = frame
+  input.f = clamp(input.f - move.y, -1, 1); input.r = clamp(input.r + move.x, -1, 1)
+  const length = Math.hypot(input.f, input.r)
+  if (length > 1 && (move.x || move.y)) { input.f /= length; input.r /= length }
+  input.yaw -= look.x; input.pitch = clamp(input.pitch - look.y, -PITCH_MAX, PITCH_MAX)
+  input.fire ||= held[PAD_MAP.fire]; input.alt ||= held[PAD_MAP.alt]
+  if (pressed[PAD_MAP.jump]) jumpTapped = true
+  input.j ||= held[PAD_MAP.jump] || jumpTapped
+  input.descend ||= held[PAD_MAP.chain]
+  input.grip ||= held[PAD_MAP.use]; input.use ||= pressed[PAD_MAP.use]
+  input.dis ||= pressed[PAD_MAP.disguise]; input.pipe ||= pressed[PAD_MAP.pipe]
+  if (pressed[PAD_MAP.car]) { input.car = true; mcPress() }
+}
+function padGlyph(action) {
+  const ps = /playstation|dualsense|dualshock|sony|054c/i.test(padFrame?.id || '')
+  const labels = ps ? ['×', '○', '□', '△', 'L1', 'R1', 'L2', 'R2', 'Share', 'Options', 'L3', 'R3', '↑', '↓', '←', '→']
+    : ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Start', 'LS click', 'RS click', '↑', '↓', '←', '→']
+  return '<b class="pad-glyph">' + labels[PAD_MAP[action]] + '</b>'
+}
+function padRows() {
+  const rows = [['jump', 'tap: jump / vault; hold and release: leap; let go of chain'], ['chain', 'hold and release: chain; hold while attached: reel in'],
+    ['fire', 'punch / punt'], ['alt', 'haymaker / throw; falling: smash'], ['use', 'grab, use, enter / leave car; hold: lift / tear; carrying: drop'],
+    ['sprint', 'toggle sprint'], ['car', 'whistle for car / ejector seat'], ['pipe', 'pipe'], ['map', 'map'], ['disguise', 'disguise'],
+    ['radio', 'next radio station'], ['view', 'first / third person'], ['sound', 'sound on / off'], ['chat', 'chat'], ['controls', 'hold: controls and scores; RS / ↑ ↓ scroll'], ['menu', 'menu']]
+  return '<div>Browser standard-mapped controllers</div><div><b class="pad-glyph">LS</b> move / drive / throttle and roll</div><div><b class="pad-glyph">RS</b> look / aim biplane</div>' +
+    rows.map(([action, text]) => '<div>' + padGlyph(action) + ' ' + text + '</div>').join('') +
+    '<div><b>D-pad / LS</b> menus · ' + padGlyph('jump') + ' choose · ' + padGlyph('chain') + ' back</div>' +
+    '<div><b>Map</b> RS pan · ' + padGlyph('alt') + ' / ' + padGlyph('fire') + ' zoom</div>'
+}
 
 const keys = {}
 const INPUT_SCHEMA = {
@@ -25625,12 +25969,12 @@ const INPUT_SCHEMA = {
     keys[e.code] = false
   },
   pointerDown(e) {
-    if (e.button === 0) input.fire = true
-    if (e.button === 2) input.alt = true
+    if (e.button === 0) input.fire = manualInput.fire = true
+    if (e.button === 2) input.alt = manualInput.alt = true
   },
   pointerUp(e) {
-    if (e.button === 0) input.fire = false
-    if (e.button === 2) input.alt = false
+    if (e.button === 0) input.fire = manualInput.fire = false
+    if (e.button === 2) input.alt = manualInput.alt = false
   },
   wheel() {
     wheelSwap = true
@@ -25642,20 +25986,20 @@ const INPUT_SCHEMA = {
                         -PITCH_MAX, PITCH_MAX)
   },
   stick(dx, dy, R) {
-    input.r = clamp(dx / R, -1, 1)
-    input.f = clamp(-dy / R, -1, 1)
+    input.r = manualInput.r = clamp(dx / R, -1, 1)
+    input.f = manualInput.f = clamp(-dy / R, -1, 1)
   },
   touchLook(dx, dy) {
     const k = 0.005 * settings.sens
     input.yaw -= dx * k
     input.pitch = clamp(input.pitch - dy * k, -PITCH_MAX, PITCH_MAX)
   },
-  stopStick() { input.f = 0; input.r = 0 },
+  stopStick() { input.f = manualInput.f = 0; input.r = manualInput.r = 0 },
   touchHolds(hold) {
-    hold('btn-fire', () => { input.fire = true }, () => { input.fire = false }, true)
+    hold('btn-fire', () => { input.fire = manualInput.fire = true }, () => { input.fire = manualInput.fire = false }, true)
     hold('btn-jump', () => { keys[INPUT_SCHEMA.key.jump] = true; jumpTapped = true }, () => { keys[INPUT_SCHEMA.key.jump] = false })
     hold('btn-descend', () => { descendHeld = true }, () => { descendHeld = false })
-    hold('btn-alt', () => { input.alt = true }, () => { input.alt = false })
+    hold('btn-alt', () => { input.alt = manualInput.alt = true }, () => { input.alt = manualInput.alt = false })
     hold('btn-use', () => { useDown = true }, () => { useDown = false })
   },
   touchTaps(tap) {
@@ -25678,7 +26022,11 @@ const INPUT_SCHEMA = {
   },
   lookTouch: t => !!(t && t.closest && t.closest('#btn-fire')),
   sample() {
+    const pad = padPoll()
+    input.fire = manualInput.fire; input.alt = manualInput.alt
+    if (IS_TOUCH) { input.f = manualInput.f; input.r = manualInput.r }
     if (chatOpen || menuUp()) {
+      manualInput.f = manualInput.r = 0; manualInput.fire = manualInput.alt = false
       input.f = 0; input.r = 0; input.j = false; input.fire = false; input.alt = false; input.descend = false; jumpTapped = false; return
     }
     if (keys[INPUT_SCHEMA.key.sprint] && !sprintHeld) sprintToggle()
@@ -25695,6 +26043,7 @@ const INPUT_SCHEMA = {
       if (tapCar) { input.car = true; mcPress() }
       tapCar = false
       input.grip = useDown
+      padApply(pad)
       return
     }
     input.f = (keys[INPUT_SCHEMA.key.forward] ? 1 : 0) - (keys[INPUT_SCHEMA.key.back] ? 1 : 0)
@@ -25715,13 +26064,14 @@ const INPUT_SCHEMA = {
     if (keys[INPUT_SCHEMA.key.car] && !carHeld) { input.car = true; mcPress() }
     carHeld = !!keys[INPUT_SCHEMA.key.car]
     input.grip = useHeld
+    padApply(pad)
   }
 }
 const input = INPUT_SCHEMA.empty()
 let locked = false, chatOpen = false, tabOpen = false, modalOpen = false
 let firstPerson = true
 let pauseOpen = false
-const menuUp = () => modalOpen || pauseOpen || settingsOpen || mapOpen
+const menuUp = () => modalOpen || pauseOpen || settingsOpen || mapOpen || !!padText
 
 const IS_TOUCH = (matchMedia && matchMedia('(pointer: coarse)').matches) ||
                  ('ontouchstart' in window && navigator.maxTouchPoints > 0)
@@ -25729,7 +26079,7 @@ const IS_TOUCH = (matchMedia && matchMedia('(pointer: coarse)').matches) ||
 let lockRetried = false
 function lockPointer() { lockRetried = false; askLock() }
 function askLock() {
-  if (IS_TOUCH || !renderer || serving) return
+  if (IS_TOUCH || padActive || !renderer || serving) return
   try { renderer.domElement.requestPointerLock() } catch (e) {}
 }
 
@@ -25740,6 +26090,7 @@ function releasePointer() {
 }
 let resetTouch = () => {}
 function resetInput() {
+  padReset()
   for (const k in keys) keys[k] = false
   const { yaw, pitch } = input
   Object.assign(input, INPUT_SCHEMA.empty(), { yaw, pitch, alt: false, view: null, aimed: null, aimAt: 0 })
@@ -25751,6 +26102,7 @@ function resetInput() {
 function letGo() { resetInput(); releasePointer() }
 
 function initInput() {
+  initGamepad()
   addEventListener('blur', resetInput)
   addEventListener('pagehide', resetInput)
   addEventListener('pageshow', resetInput)
@@ -25758,6 +26110,7 @@ function initInput() {
   document.addEventListener('resume', resetInput)
   document.addEventListener('visibilitychange', () => { if (document.hidden) resetInput() })
   addEventListener('keydown', e => {
+    if (padText) { if (e.key === 'Escape') padTextClose(false); return }
     if (dbgOpen && e.code === 'KeyC' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); faustCopySeed(); return }
     if (e.code === 'F3') { e.preventDefault(); toggleDebug(); return }
     if (modalOpen) { if (e.key === 'Escape') closeCodeModal(); return }
@@ -25789,8 +26142,8 @@ function initInput() {
   document.addEventListener('pointerlockchange', () => {
     locked = document.pointerLockElement === renderer.domElement
     if (locked) { expectUnlock = false; return }
-    input.fire = false
-    input.alt = false
+    input.fire = manualInput.fire = false
+    input.alt = manualInput.alt = false
     if (expectUnlock) { expectUnlock = false; return }
     if (phase === 'playing' && !chatOpen && !menuUp()) openPause()
   })
@@ -26170,7 +26523,8 @@ function detectQuality() {
 }
 
 const settings = { look: LOOK_DEFAULT, sens: 1, fov: 72, shadows: true, quality: 'high', sound: true, volume: 0.8,
-                   qualityChosen: false, viewChosen: false, rate: 0, station: RADIO_START, view: 'third', distance: 'normal' }
+                   qualityChosen: false, viewChosen: false, rate: 0, station: RADIO_START, view: 'third', distance: 'normal',
+                   padSens: 1, padDeadzone: 0.18, padCurve: 1.5, padAccel: 0.5, padInvert: false, padRumble: true }
 let qualityAuto = ''
 
 function loadSettings() {
@@ -26180,6 +26534,10 @@ function loadSettings() {
   } catch (e) {}
   if (!Object.hasOwn(LOOKS, settings.look)) settings.look = LOOK_DEFAULT
   settings.sens = clamp(+settings.sens || 1, 0.2, 3)
+  for (const [key, value, lo, hi] of [['padSens', 1, 0.2, 3], ['padDeadzone', 0.18, 0, 0.5], ['padCurve', 1.5, 0.5, 3], ['padAccel', 0.5, 0, 2]])
+    settings[key] = clamp(Number.isFinite(+settings[key]) ? +settings[key] : value, lo, hi)
+  settings.padInvert = settings.padInvert === true
+  settings.padRumble = settings.padRumble !== false
   settings.fov = clamp(+settings.fov || 72, 60, FOV_MAX)
   settings.shadows = !!settings.shadows
   settings.shake = settings.shake !== false
@@ -26241,6 +26599,8 @@ function applySettings() {
 }
 const onOff = v => v ? 'on' : 'off', nextOf = (list, v) => list[(list.indexOf(v) + 1) % list.length]
 const SET_BUTTONS = {
+  'set-pad-invert': [() => 'Controller invert Y: ' + onOff(settings.padInvert), () => { settings.padInvert = !settings.padInvert }],
+  'set-pad-rumble': [() => 'Controller rumble: ' + onOff(settings.padRumble), () => { settings.padRumble = !settings.padRumble; if (!settings.padRumble) gamepadInput.stopRumble() }],
   'set-look': [() => 'Look: ' + LOOKS[settings.look].label + (activeLook && activeLook !== settings.look ? ' (preparing…)' : ''), () => { settings.look = nextOf(Object.keys(LOOKS), settings.look) }],
   'set-view': [() => 'View: ' + (firstPerson ? 'first' : 'third'), () => setView(!firstPerson)],
   'set-quality': [() => 'Quality: ' + settings.quality,
@@ -26267,6 +26627,10 @@ function openSettings() {
     }
   }
   bind('set-sens', 'sens', v => v.toFixed(2) + '×')
+  bind('set-pad-sens', 'padSens', v => v.toFixed(2) + '×')
+  bind('set-pad-deadzone', 'padDeadzone', v => Math.round(v * 100) + '%')
+  bind('set-pad-curve', 'padCurve', v => v.toFixed(2))
+  bind('set-pad-accel', 'padAccel', v => v.toFixed(2) + '×')
   bind('set-fov', 'fov', v => v + '°')
   bind('set-vol', 'volume', v => Math.round(v * 100) + '%')
   bind('set-bvol', 'bvol', v => Math.round(v * 100) + '%')
@@ -27066,7 +27430,7 @@ function keyHelp(c) {
     'H whistle for your car, at its wheel the ejector seat · T chat · Tab controls and scores · V view · M map · N sound · B radio · F3 debug · Esc menu'
 }
 
-const keyRows = c => keyHelp(c).split(/<br>| · /).map(t => '<div>' + t.replace(/^(WASD|Shift|Space|Q|E|R|F|G|P|W|S|A\/D|H|T|Tab|V|M|N|B|F3|Esc|click|right-click)(?= )/, '<b>$1</b>') + '</div>').join('')
+const keyRows = c => padActive ? padRows() : keyHelp(c).split(/<br>| · /).map(t => '<div>' + t.replace(/^(WASD|Shift|Space|Q|E|R|F|G|P|W|S|A\/D|H|T|Tab|V|M|N|B|F3|Esc|click|right-click)(?= )/, '<b>$1</b>') + '</div>').join('')
 
 function closePause() {
   if (!pauseOpen) return
@@ -40536,9 +40900,9 @@ function scoreRows(rows) {
 
 function drawTab(others) {
   const tab = el('#tab')
-  tab.style.display = tabOpen ? 'grid' : 'none'
-  if (!tabOpen) { lastTabSig = null; return }
-  hud('tabKeys', el('#tabkeys'), 'innerHTML', IS_TOUCH ? '' : keyRows(selfChar()))
+  tab.style.display = tabOpen || padTab ? 'grid' : 'none'
+  if (!tabOpen && !padTab) { lastTabSig = null; return }
+  hud('tabKeys', el('#tabkeys'), 'innerHTML', IS_TOUCH && !padActive ? '' : keyRows(selfChar()))
   hud('tabHead', el('#tabhead'), 'textContent', 'STANDINGS · ' + (fragLimit ? 'first to ' + fragLimit : 'no limit'))
   const rows = standings(others)
   const sig = rows.map(r => r.id + ':' + r.kills).join(',')
