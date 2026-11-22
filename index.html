@@ -20357,7 +20357,9 @@ function realBoxes(g) {
 }
 function realRigMaterial(orig) {
   const m = orig.clone(), key = orig.customProgramCacheKey()
+  m.userData.nearFade = { value: false }
   m.onBeforeCompile = shader => {
+    ghostShader(shader, m.userData.nearFade)
     faustLampHook(shader, 'pbr')
     faustHeroHook(shader)
     shader.fragmentShader = shader.fragmentShader.replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
@@ -20366,7 +20368,7 @@ function realRigMaterial(orig) {
       metalnessFactor = 0.22 * realPlate;`)
     capeShadeShader(shader, 0.5)
   }
-  m.customProgramCacheKey = () => key + '|real-rig-1'
+  m.customProgramCacheKey = () => key + '|real-rig-2'
   return m
 }
 
@@ -20529,6 +20531,11 @@ function realSwap(R, s, tier, undo) {
     if (r === undefined) R.swaps.set(m, r = R.ready ? realSwapFor(R, m, o) : null)
     if (!r) return
     if (r === 'beam') return
+    if (r.userData?.nearFade && m.name === 'maniak') {
+      r.opacity = m.opacity; r.depthWrite = m.depthWrite
+      r.userData.nearFade.value = !!m.userData.nearFade?.value
+      if (r.transparent !== m.transparent) { r.transparent = m.transparent; r.needsUpdate = true }
+    }
     if (r === R.mats.pool && lit.some(e => Math.abs(e[1] - o.position.x) < 1 && Math.abs(e[2] - o.position.z) < 1)) { put(o, 'visible', false); return }
     if (r === R.mats.facade || r === R.mats.ornament) realBoxes(o.geometry)
     put(o, 'material', r)
@@ -21439,23 +21446,26 @@ function* drawSteps(list, city, clip = []) {
   return group
 }
 
+function ghostShader(shader, nearFade) {
+  shader.uniforms.nearFade = nearFade
+  shader.fragmentShader = 'uniform bool nearFade;\n' + shader.fragmentShader
+  shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
+    if (opacity < 1.0 && !nearFade) {
+      float gx = floor(gl_FragCoord.x), gy = floor(gl_FragCoord.y), level = 0.0;
+      for (int i = 0; i < 3; i++) {
+        level = 4.0 * level + mod(2.0 * mod(gx, 2.0) + 3.0 * mod(gy, 2.0), 4.0);
+        gx = floor(gx * 0.5); gy = floor(gy * 0.5);
+      }
+      if (opacity <= (level + 0.5) / 64.0) discard;
+    }`)
+}
 function ghostMaterial(material) {
   const before = material.onBeforeCompile, key = material.customProgramCacheKey()
   material.userData.ghostDither = true
   const nearFade = material.userData.nearFade ||= { value: false }
   material.onBeforeCompile = function(shader, renderer) {
     before.call(this, shader, renderer)
-    shader.uniforms.nearFade = nearFade
-    shader.fragmentShader = 'uniform bool nearFade;\n' + shader.fragmentShader
-    shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
-      if (opacity < 1.0 && !nearFade) {
-        float gx = floor(gl_FragCoord.x), gy = floor(gl_FragCoord.y), level = 0.0;
-        for (int i = 0; i < 3; i++) {
-          level = 4.0 * level + mod(2.0 * mod(gx, 2.0) + 3.0 * mod(gy, 2.0), 4.0);
-          gx = floor(gx * 0.5); gy = floor(gy * 0.5);
-        }
-        if (opacity <= (level + 0.5) / 64.0) discard;
-      }`)
+    ghostShader(shader, nearFade)
   }
   material.customProgramCacheKey = () => key + '|ghost-dither-or-alpha-2'
   material.needsUpdate = true
