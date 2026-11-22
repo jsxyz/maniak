@@ -1311,7 +1311,7 @@ const VEHICLE_CABINS = {
 }
 const MANIAK_CAR = { row: 'Maniak car', file: 'maniak_car.5ef6eadc.glb', lods: [16, 45],
   whistle: { clip: 'whistle', s: 1.8, sound: 'Whistle', cd: 1.2 },
-  come: { speed: 14, far: 260, ring: [90, 230], wait: 4, lead: 22, pull: 0.7, pullSpeed: 7, pullMax: 14, stuck: 100 },
+  come: { speed: 14, far: 260, ring: [90, 230], wait: 4, lead: 22, pull: 0.7, pullSpeed: 7, rush: 15, brake: 7, pullMax: 14, stuck: 100 },
   eject: { speed: 24, keep: 0.4, side: 2.5, rearm: 4, sound: 'Eject' },
   wreck: { roll: 3.6, lift: 4, burn: 25 } }
 const ASSETS =
@@ -42153,6 +42153,24 @@ function mcSpawn(c, st, T) {
   if (!mcRoom(people)) return mcFail(c, st, "Your car can't come while the roads are this crowded. Try again in a moment.")
   const anchor = Math.hypot(P.pose.x - c.x, P.pose.z - c.z) > 60 ? P.pose : c
   mcNearRoads(anchor.x, anchor.z, hi)
+  if (!objs.some(o => Math.hypot(o.x - P.lead.x, o.z - P.lead.z) < 7)) {
+    const o = mcAdd(c, st, P.lead.x, P.lead.z, P.hx, P.hz)
+    if (o) {
+      const fw = rotq(o.q, [0, 0, -1]), sp = MCAR.come.rush * 0.8
+      velVec.setValue(fw[0] * sp, 0, fw[2] * sp); o.body.setLinearVelocity(velVec); o.body.activate(); setParked(o, false)
+      st.spawned = T
+      const since = st.since
+      mcSend(o, c, st, T, true, P)
+      if (st.mode === 'come' || st.mode === 'pull' || st.mode === 'here') {
+        if (anchor === P.pose) {
+          tell(c.id, '§7Your car is coming to the nearest street, ' + Math.round(Math.hypot(P.pose.x - c.x, P.pose.z - c.z)) + ' m away.', 'a')
+          tell(c.id, 'Car pickup at x ' + Math.round(P.pose.x) + ', z ' + Math.round(P.pose.z) + '.', 'b')
+        }
+        return
+      }
+      mcRemove(o); st.car = undefined; st.mode = 'spawn'; st.since = since
+    }
+  }
   const spots = []
   for (const e of trafficState.edges) {
     const len = e.length || 96
@@ -42281,7 +42299,8 @@ function mcPull(o, c, st, T) {
     o.V.wheels.at.forEach((w, k) => { o.car.applyEngineForce(0, k); o.car.setBrake(1, k) })
     return
   }
-  let desired = merge ? MCAR.come.pullSpeed : Math.min(MCAR.come.pullSpeed, Math.sqrt(2 * 2.4 * Math.max(0, togo - 0.2)), Math.sqrt(3.5 * bend))
+  const cruise = st.turn || merge ? MCAR.come.pullSpeed : MCAR.come.rush, decel = st.turn || merge ? 2.4 : MCAR.come.brake
+  let desired = merge ? MCAR.come.pullSpeed : Math.min(cruise, Math.sqrt(2 * decel * Math.max(0, togo - 0.2)), Math.sqrt(3.5 * bend))
   let stop = Infinity
   const obstacle = (x, y, z, r, lane = o.V.w / 2 + r + 0.3) => {
     if (Math.abs(y - o.y) > 3.5) return
@@ -42292,9 +42311,10 @@ function mcPull(o, c, st, T) {
   for (const p of players.values()) if (!(p.dead > 0) && !seatOf(p)) obstacle(p.x, p.y, p.z, p.r || 0.5, p === c ? o.V.w / 2 + 0.15 : undefined)
   for (const p of objs) if (p !== o && p.heldBy === undefined) obstacle(p.x, p.y, p.z, p.V ? Math.min(p.V.w / 2, p.R) : p.R)
   for (const p of GAME.streetLife?.obstacles?.(o.x + fw[0] * 8, o.z + fw[2] * 8, 14, true) || []) obstacle(p.x, p.y || 1, p.z, p.radius || 0.6)
-  const ray = castRay(o.x + fw[0] * (o.V.l / 2 + 0.3), o.y + 0.2, o.z + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], 8, RAY_GROUP | G_OBJ) * 8
-  stop = Math.min(stop, Math.max(0, ray - 1.5))
-  if (stop < Infinity) desired = Math.min(desired, Math.sqrt(stop * 4))
+  const reach = merge || st.turn ? 8 : 20
+  const ray = castRay(o.x + fw[0] * (o.V.l / 2 + 0.3), o.y + 0.2, o.z + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], reach, RAY_GROUP | G_OBJ) * reach
+  if (ray < reach - 0.05) stop = Math.min(stop, Math.max(0, ray - 1.5))
+  if (stop < Infinity) desired = Math.min(desired, Math.sqrt(stop * 2 * decel * 0.85))
   if (Math.abs(err) > 0.5) desired = Math.min(desired, 3)
   const v = o.body.getLinearVelocity(), go = v.x() * fw[0] + v.z() * fw[2]
   const f = go < -0.5 ? 1 : desired < 0.3 ? go > 0.5 ? -1 : 0 : go > desired + 0.2 ? -1 : clamp((desired - go) * 0.5, 0, 0.8)
