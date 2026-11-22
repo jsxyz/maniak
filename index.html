@@ -8247,7 +8247,7 @@ function faustDecoMarquee(g, lot) {
 const faustTenementKit = lot => (lot.seed >>> 11) % 4
 const faustTenementEscapes = lot => [[1], [-1], [], [1, -1]][faustTenementKit(lot)].filter(sg => !(lot.alley && lot.alley.side < 0 && sg < 0))
 const FAUST_TENEMENT_WALLS = [null, [0x6a4236, 0x5e3a30, 0x744838, 0x663f33], [0xb5ae98, 0xc2baa4, 0xaaa38d, 0xbab49e], [0x4a3328, 0x41302a, 0x54382b, 0x46322a]]
-const faustWall = lot => { const k = lot?.district === 'tenement' ? faustTenementKit(lot) : 0, j = lot?.district === 'industrial' ? faustShedKit(lot) : 0, c = lot?.district === 'civic' && !lot.landmark ? faustCivicKit(lot) : 0; return k ? FAUST_TENEMENT_WALLS[k][lot.tint & 3] : j ? FAUST_SHED_WALLS[j][lot.tint & 3] : c ? FAUST_CIVIC_WALLS[c][lot.tint & 3] : FAUST_COLORS[lot?.tint || 0] }
+const faustWall = lot => { if (faustGothic(lot)) return FAUST_COLORS[lot.tint & 3]; const k = lot?.district === 'tenement' ? faustTenementKit(lot) : 0, j = lot?.district === 'industrial' ? faustShedKit(lot) : 0, c = lot?.district === 'civic' && !lot.landmark ? faustCivicKit(lot) : 0; return k ? FAUST_TENEMENT_WALLS[k][lot.tint & 3] : j ? FAUST_SHED_WALLS[j][lot.tint & 3] : c ? FAUST_CIVIC_WALLS[c][lot.tint & 3] : FAUST_COLORS[lot?.tint || 0] }
 function faustTenementColumns(g, lot, kit) {
   if (kit < 2) return
   const { x, z, w, d, height: H } = lot, y0 = 4.6, y1 = H - 0.6, ym = (y0 + y1) / 2, hy = (y1 - y0) / 2, wall = faustWall(lot)
@@ -8740,11 +8740,106 @@ function faustDecoClub(g, lot) {
   g.box(faustBox(dx, 0.012, f + 2.2, 0.9, 0.012, 2.2), 0x8a1c2a)
   g.box(faustBox(dx, 0.045, f + 1.8, 2.6, 0.004, 1.9), col, 0.2)
 }
+const faustGothic = lot => !!lot?.gothic && !lot.landmark && !lot.stop && (lot.district === 'civic' || lot.district === 'core')
+const faustGothicTier = () => { const s = Math.min(GAME.perfScale?.() ?? 1, IS_TOUCH ? 0.65 : 1); return s <= 0.35 ? 0 : s <= 0.7 ? 1 : 2 }
+const FAUST_GOTHIC = { budget: [4096, 8192, 16384], stone: 0x596574, edge: 0x8d949c, soot: 0x515963,
+  beast: [
+    [[-0.3, 0.65, -0.18], [0.3, 0.65, -0.18], [0.42, 0, -0.35], [-0.42, 0, -0.35]],
+    [[-0.25, 0, 0.75], [-0.24, 0.4, 0.6], [-0.3, 0.65, -0.18], [-0.42, 0, -0.35]],
+    [[0.3, 0.65, -0.18], [0.24, 0.4, 0.6], [0.25, 0, 0.75], [0.42, 0, -0.35]],
+    [[-0.24, 0.4, 0.6], [0.24, 0.4, 0.6], [0.3, 0.65, -0.18], [-0.3, 0.65, -0.18]],
+    [[0.25, 0, 0.75], [0.24, 0.4, 0.6], [-0.24, 0.4, 0.6], [-0.25, 0, 0.75]],
+    [[-0.24, 0.4, 0.6], [-0.23, 0.88, 0.67], [0.23, 0.88, 0.67], [0.24, 0.4, 0.6]],
+    [[-0.23, 0.88, 0.67], [-0.22, 0.73, 1.18], [0.22, 0.73, 1.18], [0.23, 0.88, 0.67]],
+    [[-0.22, 0.73, 1.18], [-0.2, 0.48, 1.27], [0.2, 0.48, 1.27], [0.22, 0.73, 1.18]],
+    [[-0.24, 0.4, 0.6], [-0.2, 0.48, 1.27], [-0.22, 0.73, 1.18], [-0.23, 0.88, 0.67]],
+    [[0.24, 0.4, 0.6], [0.23, 0.88, 0.67], [0.22, 0.73, 1.18], [0.2, 0.48, 1.27]],
+    [[-0.18, 0.83, 0.72], [-0.36, 1.25, 0.57], [-0.06, 0.86, 0.9]],
+    [[0.18, 0.83, 0.72], [0.06, 0.86, 0.9], [0.36, 1.25, 0.57]],
+    [[-0.24, 0.5, 0.13], [-1.12, 1.4, -0.4], [-0.92, 0.43, -0.08]],
+    [[-0.24, 0.5, 0.13], [-0.92, 0.43, -0.08], [-0.78, 0.65, 0.16]],
+    [[0.24, 0.5, 0.13], [0.92, 0.43, -0.08], [1.12, 1.4, -0.4]],
+    [[0.24, 0.5, 0.13], [0.78, 0.65, 0.16], [0.92, 0.43, -0.08]]
+  ] }
+function faustGothicSpires(lot, tier = 2) {
+  const m = lot.mass[2], K = FAUST_IN, hx = (2 * K.stair.width + K.stair.well + (lot.height >= 48 ? K.lift + K.part : 0) + 2 * K.part) / 2, hz = (2 * K.stair.landing + K.stair.run + 2 * K.part) / 2
+  const r = Math.min(2.4, m.ex * 0.22, m.ez * 0.22, Math.max(0.2, (Math.max(m.ex - hx, m.ez - hz) - 0.45) / 2)), h = Math.min(48, 18 + lot.height * 0.16 + (lot.seed >>> 10 & 3) * 2)
+  return (tier ? [-1, 1] : [1]).map(s => faustBox(m.cx + s * (m.ex - r - 0.15), lot.height + h / 2, m.cz + (m.ez - r - 0.15), r, h / 2, r, { spire: true }))
+}
+function faustGothicArch(g, face, plane, a0, a1, y0, y1, mask, tint) {
+  const K = FAUST_GOTHIC, hw = (a1 - a0) / 2, c = (a0 + a1) / 2, rise = Math.min((y1 - y0) * 0.48, hw * 1.55), spring = y1 - rise, t = mask ? 0.1 : 0.24, dep = mask ? 0.16 : 0.38
+  const axis = face < 2 ? 0 : 1, sg = face % 2 ? -1 : 1
+  const p = (u, y, v = 0) => axis ? [plane + sg * v, y, u] : [u, y, plane + sg * v]
+  const tri = (a, b, c, color) => { if (axis ? sg < 0 : sg > 0) g.tri(a, b, c, color); else g.tri(c, b, a, color) }
+  const quad = (a, b, c, d, color) => { tri(a, b, c, color); tri(a, c, d, color) }
+  for (const side of [-1, 1]) {
+    const u = c + side * hw, v = u + side * t, lo = Math.min(u, v), hi = Math.max(u, v)
+    quad(p(lo, y0, dep), p(hi, y0, dep), p(hi, spring, dep), p(lo, spring, dep), K.edge)
+    for (let j = 0; j < 3; j++) {
+      const curve = k => { const a = k / 3 * Math.PI / 3; return [c + side * hw * (2 * Math.cos(a) - 1), spring + rise * Math.sin(a) / Math.sin(Math.PI / 3)] }
+      let a = curve(j), b = curve(j + 1); if (a[0] > b[0]) [a, b] = [b, a]
+      if (mask) quad(p(a[0], a[1], 0.025), p(b[0], b[1], 0.025), p(b[0], y1 + 0.015, 0.025), p(a[0], y1 + 0.015, 0.025), tint)
+      quad(p(a[0], a[1], dep), p(b[0], b[1], dep), p(b[0] + side * t, b[1] + t, dep), p(a[0] + side * t, a[1] + t, dep), K.edge)
+      quad(p(a[0], a[1], 0.025), p(b[0], b[1], 0.025), p(b[0], b[1], dep), p(a[0], a[1], dep), K.soot)
+    }
+  }
+}
+function faustGothicDraw(g, lot, B, tier, budget) {
+  const K = FAUST_GOTHIC, start = g.count * 3, room = n => g.count * 3 - start + n <= budget && g.room >= n
+  const { x, z, w, d, mass, height: H } = lot, top = mass[0].cy + mass[0].ey
+  const box = (a, b, c, e, f, h, tint = K.stone) => g.box(faustBox(a, b, c, e, f, h), tint)
+  for (const a of [-1, 1]) for (const b of [-1, 1]) if (room(36)) box(x + a * (w - 0.4), H * 0.24, z + b * (d - 0.4), 1.2, H * 0.24, 1.2)
+  if (room(120)) faustGothicArch(g, 0, z + d + 1.15, x - 1.65, x + 1.65, 0, 5.5, false, K.stone)
+  for (const s of faustGothicSpires(lot, tier)) if (room(48)) {
+    box(s.cx, H + 0.3, s.cz, s.ex + 0.15, 0.3, s.ez + 0.15, K.edge)
+    faustPyramid(g, s.cx, H + 0.6, s.cz, s.ex, s.ez, s.ey * 2 - 0.6, K.soot)
+  }
+  for (let face = 0; face < 4; face++) {
+    const axis = face < 2 ? 0 : 1, sg = face % 2 ? -1 : 1, half = axis ? d : w, plane = (axis ? x : z) + sg * (axis ? w : d)
+    const p = (u, y, v) => axis ? [plane + sg * v, y, z + u] : [x + u, y, plane + sg * v]
+    const tri = (a, b, c, tint) => { const q = [p(...a), p(...b), p(...c)]; if (axis ? sg < 0 : sg > 0) g.tri(...q, tint); else g.tri(q[2], q[1], q[0], tint) }
+    for (const side of tier ? [-1, 1] : [face % 2 ? -1 : 1]) if (room(102)) {
+      const u = side * half * 0.86, profile = [[0, 0], [1.12, 0], [1.12, top * 0.45], [0.74, top * 0.55], [0.74, top * 0.85], [0.28, top + 1.5], [0, top + 1.5]]
+      for (let j = 0; j < profile.length; j++) {
+        const a = profile[j], b = profile[(j + 1) % profile.length], lo = u - 0.61, hi = u + 0.61
+        tri([lo, a[1], a[0]], [hi, a[1], a[0]], [hi, b[1], b[0]], K.stone); tri([lo, a[1], a[0]], [hi, b[1], b[0]], [lo, b[1], b[0]], K.stone)
+        if (j > 0 && j + 1 < profile.length) for (const e of [-1, 1]) { const a0 = [u + e * 0.61, profile[0][1], profile[0][0]], b0 = [u + e * 0.61, a[1], a[0]], c0 = [u + e * 0.61, b[1], b[0]]; if (e > 0) tri(a0, b0, c0, K.edge); else tri(c0, b0, a0, K.edge) }
+      }
+      const q = p(u, top + 1.5, 0.3)
+      faustPyramid(g, q[0], q[1], q[2], 0.67, 0.67, 4.8 + (lot.seed & 3), K.edge)
+    }
+    if (face < (tier === 2 ? 2 : 1)) for (const side of tier ? [-1, 1] : [1]) if (room(204)) {
+      const u = side * half * 0.86, q = p(u, top + 0.8, 1.08), scale = 1.35
+      box(q[0], q[1] - 0.3, q[2], axis ? 0.85 : 0.9, 0.3, axis ? 0.9 : 0.85, K.edge)
+      for (const f of K.beast) {
+        const v = f.map(a => p(u + a[0] * scale, top + 0.8 + a[1] * scale, 1.08 + a[2] * scale))
+        for (let i = 1; i + 1 < v.length; i++) { if (axis ? sg > 0 : sg < 0) g.tri(v[i + 1], v[i], v[0], K.edge); else g.tri(v[0], v[i], v[i + 1], K.edge); if (f.length === 3) { if (axis ? sg > 0 : sg < 0) g.tri(v[0], v[i], v[i + 1], K.edge); else g.tri(v[i + 1], v[i], v[0], K.edge) } }
+      }
+    }
+  }
+  const rows = tier === 2 ? [1, 2, 3, 5] : tier === 1 ? [1, 2] : [1], wall = faustWall(lot)
+  for (const k of rows) {
+    if (!B.storeys[k]) continue
+    const windows = inWindows(B, k).sort((a, b) => a.bay - b.bay || a.face - b.face)
+    for (const v of windows) {
+      if (!room(126)) return
+      const center = (v.a0 + v.a1) / 2, base = v.face < 2 ? x : z
+      if (Math.abs(center - base) < 1.9 && v.face === 0 && v.y0 < 6) continue
+      faustGothicArch(g, v.face, v.plane + (v.face % 2 ? -0.06 : 0.06), v.a0, v.a1, v.y0, v.y1, true, wall)
+    }
+  }
+}
+function faustSpireShader(shader) {
+  shader.vertexShader = 'attribute float faustSpire;\n' + shader.vertexShader
+  shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n transformed.xz *= 1.0 - faustSpire * step(0.0, position.y);')
+    .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n objectNormal.y += faustSpire * 0.5 * (abs(objectNormal.x) + abs(objectNormal.z));')
+}
+
 function* faustVisualSteps(c) {
   const cones = { p: [], c: [] }
   for (let w = 0, t0 = performance.now(); FAUST_FACES.promise && !FAUST_FACES.settled && w < 600 && performance.now() - t0 < 1500; w++) yield 'frame'
   c.signFace = !!FAUST_FACES.set
-  const glassLots = [], facade = faustBatch(3072), ornament = faustBatch(65536), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
+  const glassLots = [], gothicLots = [], facade = faustBatch(3072), ornament = faustBatch(65536), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
   if (P.chan) faustChanCellLook(ornament, P.chan.axis, X, Z, P.diagonal)
   else ornament.box(faustBox(X + 48, -0.08, Z + 48, 48, 0.08, 48), 0x242a33)
   if (P.chan) {} else if (P.plaza) {
@@ -8771,6 +8866,7 @@ function* faustVisualSteps(c) {
   yield
   for (const lot of P.lots) {
     const { x, z, w, d, height: H, gothic, mass, district, stop } = lot
+    const neo = faustGothic(lot)
     const B = faustInterior(P, P.lots.indexOf(lot)), house = district === 'tenement' ? mass[1] : district === 'industrial' ? mass[2] : null
     const roof = B.roof.exit ? (district === 'core' || district === 'civic' ? mass[2] : mass[0]) : null
     for (const b of mass) if (b === house) faustHouse(facade, b, faustWall(lot), B)
@@ -8781,6 +8877,7 @@ function* faustVisualSteps(c) {
     faustRing(ornament, faustBox(x, 2, z, w + 0.25, 2, d + 0.25), 0x343d4b, 0.95, B.door, false, lot.backDoors)
     faustShopfronts(ornament, lot)
     glassLots.push(lot, B)
+    if (neo) gothicLots.push([lot, B])
     if (ornament.room === undefined || ornament.room > 1200) faustShopTypes(ornament, lot)
     if (district === 'industrial') {
       for (const y of [H + 9, H + 24, H + 35]) ornament.box(faustBox(x - w * 0.6, y, z - d * 0.6, 1.75, 0.5, 1.75), 0x969b9e)
@@ -8806,17 +8903,17 @@ function* faustVisualSteps(c) {
       yield; continue
     }
     for (const side of [-1, 1]) for (const k of [-0.86, 0, 0.86]) {
-      ornament.box(side > 0 && k === 0 ? faustBox(x, (4.6 + H * 0.64) / 2, z + d + 0.18, 0.6, (H * 0.64 - 4.6) / 2, 0.95) : faustBox(x + w * k, H * 0.32, z + side * (d + 0.18), 0.6, H * 0.32, 0.95), 0xb3bac0)
-      ornament.box(faustBox(x + side * (w + 0.18), H * 0.32, z + d * k, 0.95, H * 0.32, 0.6), 0xb3bac0)
+      ornament.box(side > 0 && k === 0 ? faustBox(x, (4.6 + H * 0.64) / 2, z + d + 0.18, 0.6, (H * 0.64 - 4.6) / 2, 0.95) : faustBox(x + w * k, H * 0.32, z + side * (d + 0.18), 0.6, H * 0.32, 0.95), neo ? FAUST_GOTHIC.stone : 0xb3bac0)
+      ornament.box(faustBox(x + side * (w + 0.18), H * 0.32, z + d * k, 0.95, H * 0.32, 0.6), neo ? FAUST_GOTHIC.stone : 0xb3bac0)
     }
     for (const b of mass.slice(1)) for (const side of [-1, 1]) for (const k of [-0.7, 0.7]) {
-      ornament.box(faustBox(b.cx + b.ex * k, b.cy, b.cz + side * (b.ez + 0.4), 0.55, b.ey, 0.8), 0xb3bac0)
-      ornament.box(faustBox(b.cx + side * (b.ex + 0.4), b.cy, b.cz + b.ez * k, 0.8, b.ey, 0.55), 0xb3bac0)
+      ornament.box(faustBox(b.cx + b.ex * k, b.cy, b.cz + side * (b.ez + 0.4), 0.55, b.ey, 0.8), neo ? FAUST_GOTHIC.stone : 0xb3bac0)
+      ornament.box(faustBox(b.cx + side * (b.ex + 0.4), b.cy, b.cz + b.ez * k, 0.8, b.ey, 0.55), neo ? FAUST_GOTHIC.stone : 0xb3bac0)
     }
     for (const b of mass) for (const y of [b.cy + b.ey, b.cy - b.ey + 4.6]) faustRing(ornament, faustBox(b.cx, y, b.cz, b.ex + 1.1, 0.45, b.ez + 1.1), 0xadb0b1, 1.8, b === mass[0] && y < 3 ? B.door : null)
     for (const side of [-1, 1]) {
       ornament.box(faustBox(x + side * w * 0.86, 3, z + d + 0.35, 0.7, 3, 0.85), 0x515963)
-      if (gothic) for (const q of [-1, 1]) {
+      if (gothic && !neo) for (const q of [-1, 1]) {
         const bx = x + side * w * 0.72, bz = z + q * d * 0.72, y = mass[0].ey * 2
         ornament.box(faustBox(bx, y + 3, bz, 0.65, 3, 0.65), 0xa4a9ac)
         ornament.tri([bx - 1.4, y + 6, bz], [bx + 1.4, y + 6, bz], [bx, y + 14, bz], 0x8d949c)
@@ -8828,7 +8925,7 @@ function* faustVisualSteps(c) {
     faustDecoMarquee(ornament, lot)
     faustDecoTheatre(ornament, lot)
     faustDecoClub(ornament, lot)
-    if (gothic) {
+    if (gothic && !neo) {
       const front = z + d + 0.3
       for (const [a, b, c, e] of [[x - 2.5, x - 0.85, 0, 6], [x + 0.85, x + 2.5, 0, 6], [x - 0.85, x + 0.85, 3, 6]]) {
         ornament.tri([a, c, front], [b, c, front], [b, e, front], 0x080e18); ornament.tri([a, c, front], [b, e, front], [a, e, front], 0x080e18)
@@ -8857,10 +8954,12 @@ function* faustVisualSteps(c) {
         ornament.box(faustBox(X1 - 0.165, y0 + 1.35, r.cz, 0.015, 1.05, r.ez - 0.4), 0xffd9a0, 0.8) }
       yield; continue
     }
-    faustDecoTower(ornament, lot)
-    faustDecoRelief(ornament, lot)
-    faustDecoCathedral(ornament, lot)
-    faustDecoCivic(ornament, lot, cones)
+    if (!neo) {
+      faustDecoTower(ornament, lot)
+      faustDecoRelief(ornament, lot)
+      faustDecoCathedral(ornament, lot)
+      faustDecoCivic(ornament, lot, cones)
+    }
     yield
   }
   for (const q of faustLampOffsets(c.plan.diagonal)) {
@@ -8876,6 +8975,10 @@ function* faustVisualSteps(c) {
     for (let i = 0; i < glassLots.length; i += 2) { const B = glassLots[i + 1], n = inWindows(B, 0).length
       if (ornament.room < n * 150 + 64) skipped.push(P.lots.indexOf(glassLots[i])); else faustShopGlass(ornament, B, V) }
     if (FAUST_GLASS_STATS.length < 400) FAUST_GLASS_STATS.push({ ci: c.ci, cj: c.cj, lots: glassLots.length / 2, vertsBefore: before, vertsAfter: Math.round(ornament.count * 3), skipped }) }
+  if (gothicLots.length) {
+    const tier = faustGothicTier(), budget = Math.floor(Math.min(FAUST_GOTHIC.budget[tier], ornament.room) / gothicLots.length)
+    for (const [lot, B] of gothicLots) faustGothicDraw(ornament, lot, B, tier, budget)
+  }
   const root = new THREE.Group()
   for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
     const mesh = new THREE.Mesh(data.geometry(), mat); mesh.castShadow = data === facade; mesh.receiveShadow = true; root.add(mesh)
@@ -8928,6 +9031,7 @@ function faustSkyBoxes(lot) {
   const { x, z, height: H, mass, seed, stop } = lot
   if (mass.length < 3 || lot.district === 'industrial' || lot.district === 'tenement') return lot.skyMass
   if (stop) return mass
+  if (faustGothic(lot)) return [...mass, ...faustGothicSpires(lot, faustGothicTier())]
   const [m0, m1, m2] = mass, kind = (seed >>> 7) % 3, tiers = kind === 2 ? 2 : kind === 1 ? 3 : 4, th = Math.min(5, Math.max(2.5, H * 0.012))
   const top = H + 6.7 + tiers * th, spire = kind === 0 ? Math.max(6, H * 0.04) + Math.max(6, H * 0.025) * 2 : kind === 1 ? th * 2.6 + th : Math.max(14, H * 0.07)
   return [m0, m1, m2, faustBox(x, (H + top) / 2, z, m2.ex * 0.6, (top - H) / 2, m2.ez * 0.6), faustBox(x, top + spire / 2, z, 0.6, spire / 2, 0.6)]
@@ -8942,7 +9046,9 @@ function faustSkyCell(c, visible) {
     if (visible && b) { pose.position.set(b.cx, b.cy, b.cz); pose.scale.set(b.ex * 2, b.ey * 2, b.ez * 2) }
     else { pose.position.set(0, -100, 0); pose.scale.set(0, 0, 0) }
     pose.updateMatrix(); mesh.setMatrixAt(offset + i, pose.matrix)
+    mesh.geometry.attributes.faustSpire.setX(offset + i, b?.spire ? 1 : 0)
   }
+  mesh.geometry.attributes.faustSpire.addUpdateRange(offset, FAUST_SKY * 4); mesh.geometry.attributes.faustSpire.needsUpdate = true
   mesh.instanceMatrix.addUpdateRange(offset * 16, FAUST_SKY * 4 * 16); mesh.instanceMatrix.needsUpdate = true
 }
 function faustSkyline() { return drain(faustSkylineSteps()) }
@@ -8955,7 +9061,9 @@ function* faustSkylineSteps() {
     const plan = faustPlan(F.seed, x, z, F.S), key = (x / T | 0) + ' ' + (z / T | 0)
     let mesh = tiles.get(key)
     if (!mesh) {
-      mesh = new THREE.InstancedMesh(geometry, F.materials.far, T * T * FAUST_SKY * 4)
+      const geo = geometry.clone()
+      geo.setAttribute('faustSpire', new THREE.InstancedBufferAttribute(new Float32Array(T * T * FAUST_SKY * 4), 1).setUsage(THREE.DynamicDrawUsage))
+      mesh = new THREE.InstancedMesh(geo, F.materials.far, T * T * FAUST_SKY * 4)
       mesh.count = 0; mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
       mesh.boundingBox = new THREE.Box3(); mesh.boundingSphere = new THREE.Sphere()
       mesh.userData.farBox = mesh.boundingBox; mesh.name = 'far-buildings ' + key
@@ -8966,12 +9074,14 @@ function* faustSkylineSteps() {
     faustSkyCell({ ci: x, cj: z, plan }, true)
     for (let i = 0; i < FAUST_SKY * 4; i++) {
       const lot = plan.lots[i / FAUST_SKY | 0], boxes = lot && faustSkyBoxes(lot), b = boxes?.[i % FAUST_SKY]
-      col.setHex(lot && boxes.length === FAUST_SKY && i % FAUST_SKY > 2 ? i % FAUST_SKY === 3 ? FAUST_DECO.crown : FAUST_DECO.steel : faustWall(lot))
+      col.setHex(faustGothic(lot) && i % FAUST_SKY > 2 ? FAUST_GOTHIC.soot : lot && boxes.length === FAUST_SKY && i % FAUST_SKY > 2 ? i % FAUST_SKY === 3 ? FAUST_DECO.crown : FAUST_DECO.steel : faustWall(lot))
       mesh.setColorAt(offset + i, col)
       if (b) mesh.boundingBox.expandByPoint(point.set(b.cx - b.ex, b.cy - b.ey, b.cz - b.ez)).expandByPoint(point.set(b.cx + b.ex, b.cy + b.ey, b.cz + b.ez))
     }
   }
+  geometry.dispose()
   for (const mesh of tiles.values()) {
+    mesh.geometry.attributes.faustSpire.clearUpdateRanges()
     mesh.instanceMatrix.clearUpdateRanges(); mesh.instanceMatrix.needsUpdate = true
     if (mesh.boundingBox.isEmpty()) mesh.count = 0
     else mesh.boundingBox.expandByScalar(1).getBoundingSphere(mesh.boundingSphere)
@@ -19785,8 +19895,10 @@ RealSurf realSurface() {
     fs = swap(fs, '#include <aomap_fragment>', '#include <aomap_fragment>\n reflectedLight.indirectDiffuse *= realS.ao; reflectedLight.indirectSpecular *= realS.ao; reflectedLight.directDiffuse *= mix(1.0, realS.ao, 0.5);')
     fs = swap(fs, '#include <opaque_fragment>', '#include <opaque_fragment>\n gl_FragColor.a = 1.0 - realS.reflect;')
     shader.vertexShader = vs; shader.fragmentShader = fs
+    if (kind === 'far') faustSpireShader(shader)
   }
-  m.customProgramCacheKey = () => 'real-city-' + kind + '-1'
+  if (kind === 'far') m.defaultAttributeValues = { ...m.defaultAttributeValues, faustSpire: [0] }
+  m.customProgramCacheKey = () => 'real-city-' + kind + '-2'
   return m
 }
 function realBoxes(g) {
@@ -35812,8 +35924,9 @@ function dsFacadeMaterial() {
 function dsFarMaterial() {
   dsTableTexture()
   const m = new THREE.MeshLambertMaterial({ emissive: 0xffffff, emissiveIntensity: 0.8 })
-  m.onBeforeCompile = function (shader, r) { THREE.Material.prototype.onBeforeCompile.call(this, shader, r); dsFacadePatch(shader) }
-  m.customProgramCacheKey = () => 'ds-far-1'
+  m.onBeforeCompile = function (shader, r) { THREE.Material.prototype.onBeforeCompile.call(this, shader, r); dsFacadePatch(shader); faustSpireShader(shader) }
+  m.defaultAttributeValues = { ...m.defaultAttributeValues, faustSpire: [0] }
+  m.customProgramCacheKey = () => 'ds-far-2'
   return m
 }
 
