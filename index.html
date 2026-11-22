@@ -13561,7 +13561,9 @@ function botThink(b, all, dt) {
     if (m > 1.0) [mf, mr] = toLocal(yaw, sx / m, sz / m)
     if (round) ai.noFire = true
   }
-  if (spec.cover) coverThink(b, spec, tgt, dist, dt, !!(car || climbing || held || air || follow))
+  if (spec.haunt && ai.noCovT > 0) ai.noCovT -= dt
+  if (spec.cover) coverThink(b, spec, tgt, dist, dt, !!(car || climbing || held || air || follow) || !!spec.haunt && (dist > (spec.range ?? 10) + 3 || ai.noCovT > 0))
+  if (spec.haunt) { ai.peekBad = ai.cov?.phase === 'peek' && !los ? (ai.peekBad || 0) + dt : ai.cov ? ai.peekBad || 0 : 0; if (ai.peekBad > 1.5) { ai.cov = null; ai.peekBad = 0; ai.noCovT = 5 } }
   if (ai.cov && !(car || climbing)) {
     const c = ai.cov, px = c.phase === 'peek' ? c.px : c.x, pz = c.phase === 'peek' ? c.pz : c.z, dx = px - b.x, dz = pz - b.z, m = Math.hypot(dx, dz)
     ;[mf, mr] = m > 0.35 ? toLocal(yaw, dx / m, dz / m) : [0, 0]
@@ -13655,7 +13657,7 @@ function botThink(b, all, dt) {
   return ai.lurk ? { ...res, f: res.f * HAUNT.stroll, r: 0, j: false, fire: false, alt: false, use: false, sprint: false } : res
 }
 
-const ROLE = { rush: { acc: 60, wind: 0.8, lock: 0.25, speed: 14, go: 1.0, miss: 1.4, rec: 0.7, cd: [3, 5.5], at: [2.8, 10] },
+const ROLE = { rush: { acc: 90, wind: 0.8, lock: 0.25, speed: 14, go: 1.0, miss: 1.4, rec: 0.7, cd: [3, 5.5], at: [4.5, 10] },
   flank: { r: 3.4, behind: 1.9, wait: 4.5, near: 10 } }
 const RUSH_GUN = gunNamed('Rush')
 function windCue(b, gun) {
