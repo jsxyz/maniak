@@ -2030,6 +2030,7 @@ const PROP_MODELS = {
 const RADIO_START = -1
 const RADIO = [
   { name: 'Faustland FM', art: RIG_BASE + 'm.7b7d39a4.bin', tracks: [RIG_BASE + 'm.6d02df71.bin'] },
+  { name: 'Earwig FM', art: RIG_BASE + 'm.2ceea68f.bin', tracks: [RIG_BASE + 'm.c26beda1.bin', RIG_BASE + 'm.9f665de7.bin', RIG_BASE + 'm.9f0e19da.bin', RIG_BASE + 'm.c8227c60.bin', RIG_BASE + 'm.d4facdfe.bin', RIG_BASE + 'm.bf6f7080.bin', RIG_BASE + 'm.64940047.bin', RIG_BASE + 'm.33f07c68.bin', RIG_BASE + 'm.4450d368.bin', RIG_BASE + 'm.3844e9cb.bin', RIG_BASE + 'm.46452e77.bin', RIG_BASE + 'm.e022c0ae.bin', RIG_BASE + 'm.a497286e.bin'] },
 ]
 
 const TICK = 1 / 60
@@ -28085,7 +28086,8 @@ function radioTick() {
   const s = settings.radio && radioSeat(), want = s && sfxWanted() ? s[2] : -1
   hud('invehicle', document.body, '.invehicle', !!s && phase === 'playing')
   hud('radio', el('#radio'), 'textContent', !s || !RADIO.length ? '' : RADIO[s[2]] ? RADIO[s[2]].name + (radio.fail && radio.on === s[2] ? ' — unavailable' : '') : 'Radio off')
-  const art = s && RADIO[s[2]]?.art && !(radio.fail && radio.on === s[2]) ? RADIO[s[2]].art : ''
+  const st = s && RADIO[s[2]], tk = st && st.tracks[s[2] === radio.on ? radio.k : radioAt.get(s[2]) ?? 0]
+  const art = st && !(radio.fail && radio.on === s[2]) ? tk?.art ?? st.art ?? '' : ''
   if (art && !radioArt.has(art)) { radioArt.set(art, ''); radioBlob(art, 'image/webp').then(u => radioArt.set(art, u), () => {}) }
   const artUrl = art && radioArt.get(art)
   hud('radioart', el('#radioart'), 'backgroundImage', artUrl ? `url("${artUrl}")` : 'none')
@@ -28118,6 +28120,8 @@ function radioPlay(fail) {
   }
   if (a.error) return radioNext(1)
   radio.a = a; radio.end = tr.end ?? Infinity
+  const nx = st.tracks[(radio.k + 1) % st.tracks.length], nu = nx?.url ?? nx
+  if (nu && nu !== url) radioBlob(nu, 'audio/mpeg').catch(() => {})
   if (a.ended) a.currentTime = 0
   a.play().catch(() => {})
 }
