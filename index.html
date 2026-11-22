@@ -1026,6 +1026,12 @@ const GUNS = [
   { name:'Revolver',     rate:1.00, dmg: 4, spread:0.05, range:50, knock: 1.5, color:0xd8cfb8, scar:'hole' },
   { name:'Truncheon',    rate:1.10, dmg: 5, spread:0.30, pellets:2, range: 2.8, knock: 7.0, color:0x2a2a30, melee:true, punch:'slash', grip:'knife', model:'Baton', heldScale:1.5 },
   { name:'Riot gun',     rate:1.40, dmg: 3, spread:0.09, pellets:7, range:14, knock: 1.4, color:0xd8cfb8, scar:'hole' },
+  { name:'Rush',         rate:1.20, dmg:22, spread:0.50, pellets:3, range: 2.7, knock:18.0, color:0x9a948a, melee:true, held:false, punch:'rush',
+    wind:['haymaker', 0, 0.42], windS:0.8, strike:['haymaker', 0.42, 1] },
+  { name:'Bottle',       rate:2.20, dmg:10, spread:0.04, range:20, knock: 4.0, color:0x6f8f5a, held:false, punch:'throw', windup:0.65,
+    wind:['block_throw', 0, 0.45], strike:['block_throw', 0.45, 1] },
+  { name:'Lunge',        rate:1.10, dmg:14, spread:0.30, pellets:2, range: 2.5, knock: 6.0, color:0xc9c5bb, melee:true, punch:'slash', grip:'knife', model:'Knife',
+    windup:0.4, wind:['knife_lunge', 0, 0.3], strike:['knife_lunge', 0.3, 1] },
 ].map(G => ({ ...GUN_ROW, ...G }))
 const POWERS = [
   { name:'Shield',    color:0x58a6ff, dur: 9.0, take: 0.5 },
@@ -1052,6 +1058,18 @@ const ENFORCER = { char: 'Enforcer', cid: 'Enforcer', enforcer: true, range: 1.6
 const ENFORCER_ARMED = { ...ENFORCER, swarm: false, far: 'Revolver', farAt: 6, range: 11, fireRange: 28, aimErr: 0.06, jumpy: 0.3 }
 const ENFORCER_HEAVY = { char: 'Enforcer heavy', cid: 'Enforcer heavy', enforcer: true, heavy: true, far: 'Riot gun', farAt: 5, range: 8, fireRange: 14, aimErr: 0.07, jumpy: 0.1, turn: 4, copies: 3 }
 const ENFORCER_ELITE = { ...PACIFIER, enforcer: true, elite: true, crew: 'hunters', copies: 4 }
+const HAUNT_KINDS = {
+  freak: { char: 'Freak', cid: 'Freak', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 0.6 },
+  blue: { char: 'Blue freak', cid: 'Blue freak', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 0.6 },
+  freak_throw: { char: 'Freak', cid: 'Freak', role: 'throw', far: 'Bottle', farAt: 4, range: 11, fireRange: 18, aimErr: 0.06, jumpy: 0.2, cover: { hold: 1.6, peek: 1.8 } },
+  brute_rush: { char: 'Brute', cid: 'Brute', role: 'rush', range: 2.4, fireRange: 5, aimErr: 0.05, jumpy: 0.2, turn: 5 },
+  thug: { ...THUG, crew: undefined, atk: 'Pipe' },
+  thug_rush: { ...THUG, crew: undefined, role: 'rush', turn: 5 },
+  thug_throw: { ...THUG, crew: undefined, role: 'throw', far: 'Bottle', farAt: 4, range: 11, fireRange: 18, aimErr: 0.06, jumpy: 0.2, cover: { hold: 1.6, peek: 1.8 } },
+  shooter: { ...SHOOTER, crew: undefined },
+  tear_flank: { ...TEARDROP, crew: undefined, swarm: false, role: 'flank', atk: 'Lunge', hitRun: [0.65, 1.1], copies: 4 },
+}
+const HAUNT_BOTS = Object.entries(HAUNT_KINDS).map(([k, B]) => ({ copies: 3, ...B, haunt: k }))
 const BOTS = [
   TEARDROP, TEARDROP,
   { char: 'Blue freak', cid: 'Blue freak', crew: 'street', range: 1.8, fireRange: 4, aimErr: 0.07, jumpy: 1.1 },
@@ -1070,6 +1088,7 @@ const BOTS = [
   { ...PERFORMER, rare: true, visits: 4 },
   ENFORCER, ENFORCER_ARMED, ENFORCER_HEAVY, ENFORCER_ELITE,
   DEALER, DEALER_ARMED, LOOKOUT,
+  ...HAUNT_BOTS,
 ]
 const TOR_TOP = 25
 const CITY_SIZES = { small: 16, medium: 20, large: 32 }
@@ -11559,6 +11578,8 @@ const ENFORCER_KIND = B => B.elite ? 'pacifier' : B.heavy ? 'heavy' : B.far ? 'a
 BOTS.forEach((B, i) => { if (B.enforcer) ENFORCER_ROWS[ENFORCER_KIND(B)].push(i) })
 const DEAL_ROWS = { dealer: [], armed: [], lookout: [] }
 BOTS.forEach((B, i) => { if (B.deal) DEAL_ROWS[B.deal.lookout ? 'lookout' : B.far ? 'armed' : 'dealer'].push(i) })
+const HAUNT_ROWS = {}
+BOTS.forEach((B, i) => { if (B.haunt) (HAUNT_ROWS[B.haunt] ||= []).push(i) })
 const START = ref('The Maniak')
 let eventOn = null
 const offEvent = R => !!R.event && R.event !== eventOn?.name
@@ -11567,7 +11588,7 @@ const visitors = () => BOTS.flatMap((B, i) => B.visits && !B.squad && !offEvent(
 const botPairs = list => list.flatMap(i => [[BOT_ID0 + i, BOTS[i].cid], ...BOTS[i].altRow ? [[BOT_ID0 + i, BOTS[i].altRow.cid]] : []])
 
 const RARE_ONE_IN = 20
-const regulars = () => BOTS.filter(b => !b.rare && !b.enforcer && !b.deal && !offEvent(b)).length
+const regulars = () => BOTS.filter(b => !b.rare && !b.enforcer && !b.deal && !b.haunt && !offEvent(b)).length
 const ENTITY_MAX = MAX_PLAYERS + BOTS.length + CHARS.filter(C => C.team).length - Object.keys(TEAMS).length
 let BOT_COUNT = 3
 
@@ -12830,7 +12851,7 @@ function applyIntent(c, inp, dt) {
   if (c.dove) { const V = GUNS[c.dove].dive; vy = Math.min(vy, -V.speed) - (V.pull || 0) * dt }
 
   if (c.knUp) { vy = Math.max(vy, 0) + c.knUp; c.knUp = 0 }
-  const spd = c.dashing ? stat(c, 'move', GUNS[c.dashing].speed) : stat(c, 'move', J && !c.grounded ? (inp.sprint ? J.sprint ?? c.speed : c.speed) : (inp.sprint && !whirling(c, inp) ? GAME.participantOf(c).sprintSpd ?? c.speed : GAME.participantOf(c).run ?? c.speed * RUN))
+  const spd = (c.rushK || 1) * (c.dashing ? stat(c, 'move', GUNS[c.dashing].speed) : stat(c, 'move', J && !c.grounded ? (inp.sprint ? J.sprint ?? c.speed : c.speed) : (inp.sprint && !whirling(c, inp) ? GAME.participantOf(c).sprintSpd ?? c.speed : GAME.participantOf(c).run ?? c.speed * RUN)))
   const S = GAME.participantOf(c)?.shove, ram = S && (!S.sprint || inp.sprint), M = ram ? S.mass : 1
   if (c.ramM !== M) { c.ramM = M; c.body.setMassProps(M, zeroVec) }
   if (ram) c.vehT = 0
@@ -13023,7 +13044,7 @@ function spawnY(c, s) {
   return d < 12 ? top - d + c.h + c.r + 0.02 : s[1]
 }
 function respawn(c) {
-  const s = (c.bot?.enforcer || c.bot?.deal) && ENFORCER_AT || crewSpawn(c) || pickSpawn(c)
+  const s = (c.bot?.enforcer || c.bot?.deal || c.bot?.haunt) && ENFORCER_AT || crewSpawn(c) || pickSpawn(c)
   if (LV.grow) growNear([[s[0], s[2]]], true)
   c.prot = SPAWN_PROT
   setCharPos(c, s[0], spawnY(c, s), s[2])
@@ -13038,7 +13059,7 @@ function respawn(c) {
   c.smk = 0; c.smkHp = 0; c.chgT = 0; c.disguised = false; c.gm = 0; c.bleedT = 0; c.upperDone = false
   c.knT = 0; c.knx = 0; c.knz = 0; c.knUp = 0
   c.mark = 0; c.markT = 0
-  c.bag = 0
+  c.bag = 0; c.rushK = 0
   c.spLeft = {}
   c.cap = (Math.random() * CAP_TEXT.length) | 0
   restoreSpecial(c)
@@ -13385,6 +13406,7 @@ function botThink(b, all, dt) {
   ai.tgt = tgt ? tgt.id : -1
 
   const sd = tgt ? Math.hypot(b.x - tgt.x, b.z - tgt.z) : 0
+  if (ai.lurk && (b.hp < ai.lurk || tgt && tgt.id >= 0 && sees && sd < HAUNT.reveal)) hauntReveal(b)
   circle(b, tgt)
 
   if (ai.t > ai.strafeFor && !(spec.spins && b.wind.id >= 0)) {
@@ -13547,6 +13569,9 @@ function botThink(b, all, dt) {
   }
   if (spec.hitRun) { if (ai.awayT > 0) ai.awayT -= dt; else if ((ai.swT = los && dist < reach ? (ai.swT || 0) + dt : 0) > spec.hitRun[0]) ai.awayT = spec.hitRun[1], ai.swT = 0 }
   const fire = !prey && !car?.to && seatShot(b, G) && los && (held ? dist < 0.7 * H.speed && off < Math.atan2(tgt.r, dist) + 0.02 : (air ? Math.hypot(dist, b.y - tgt.y) : dist) < reach) && onTarget && !(ai.awayT > 0) && !ai.noFire
+  const RO = spec.role && !ai.lurk && tgt.id >= 0 && !car && !climbing && !held && !follow && !seat && !air && roleThink(b, spec, tgt, dist, los, trueYaw, dt)
+  if (RO) return { j: false, descend: false, alt: false, use: false, sprint: true, pitch, ...RO }
+  if (ai.rush?.ph) { ai.rush.ph = 0; b.rushK = 0; b.gun = gunNamed([spec.atk].flat()[0]) }
   ai.sinceSlide = (ai.sinceSlide ?? 9) + dt
   if (!(Math.hypot(mf, mr) > 0.5) || charging || climbing || car || held || seat) ai.pinAt = null
   else if (!ai.pinAt) ai.pinAt = { x: b.x, z: b.z, t: 0 }
@@ -13609,7 +13634,7 @@ function botThink(b, all, dt) {
   if (_chargeJ !== null) sj = _chargeJ
   ai.doCharge = _chargeJ !== null
   if (_wrForward) { mf = 1; mr = 0; sj = false; sy = (_wrYaw ?? yaw) - yaw }
-  return {
+  const res = {
     f: ai.awayT > 0 && !_wrForward && !orbit && !(ai.slideT > 0) ? -1 : out ? mf : mf * pace * (ai.wait ? 0.3 : 1), r: out ? mr : mr * pace,
     j: sj ?? (air ? ai.hop || (flier ? !b.flying || b.y < wantY - 0.5 : b.y + rise(b.vy, jetOf(b).grav || 1) < wantY)
        : ai.hop && !(b.wall > 0) || (charging || pace < 1 || b.wall > 0 || POWERS[tgt.mark - 1]?.move === 0 ? false : (ai.tgt < 0 || sd > HOP_CLEAR) && !all.some(o => o !== b && !(o.dead > 0) && Math.hypot(o.x - b.x, o.z - b.z) < HOP_ROOM) && Math.random() < spec.jumpy * dt)),
@@ -13617,6 +13642,63 @@ function botThink(b, all, dt) {
     fire: fire && !sig && !_wrForward, alt: fire && sig && !_wrForward || dashWant(b, tgt, dist, los, onTarget, dt, all), use: !!prey && objGap(b, prey) <= (H.reach ?? 1.5) || !!car?.use || !!plan?.use, sprint: !((jetOf(b)?.sprint && b.flying) || prey || ai.walk),
     yaw: yaw + sy, pitch: sp ?? pitch,
   }
+  return ai.lurk ? { ...res, f: res.f * HAUNT.stroll, r: 0, j: false, fire: false, alt: false, use: false, sprint: false } : res
+}
+
+const ROLE = { rush: { wind: 0.8, lock: 0.25, speed: 14, go: 1.0, miss: 1.4, rec: 0.7, cd: [3, 5.5], at: [2.8, 10] },
+  flank: { r: 3.4, behind: 1.9, wait: 4.5, near: 10 } }
+const RUSH_GUN = gunNamed('Rush')
+function windCue(b, gun) {
+  const e = eyeOf(b), cm = [r2(b.x), r2(e), r2(b.z), r2(b.x), r2(e), r2(b.z), gun, 0, b.id, 1, 0]
+  tracers.push(cm); GAME.audio.fx([cm])
+}
+function roleFace(b, yaw, dt, k = 1) {
+  const ai = b.ai, turn = (b.bot.turn || 6) * k * dt
+  return ai.yaw += clamp(wrapPi(yaw - ai.yaw), -turn, turn)
+}
+function roleThink(b, spec, tgt, dist, los, toYaw, dt) {
+  return spec.role === 'rush' ? rushThink(b, spec, tgt, dist, los, toYaw, dt) : spec.role === 'flank' ? flankThink(b, tgt, dist, los, toYaw, dt) : null
+}
+function rushThink(b, spec, tgt, dist, los, toYaw, dt) {
+  const ai = b.ai, P = ROLE.rush, R = ai.rush ||= { ph: 0, t: 0, cd: 0.2 + Math.random() * 0.4, yaw: 0 }
+  if (b.knT > 0 && (R.ph === 1 || R.ph === 2)) { R.ph = 3; R.t = P.miss; b.rushK = 0 }
+  if (!R.ph) {
+    R.cd -= dt
+    if (R.cd > 0 || !los || dist < P.at[0] || dist > P.at[1] || ai.waitTurn || !b.grounded || Math.abs(tgt.y - b.y) > 1.5) return null
+    R.ph = 1; R.t = P.wind; R.yaw = toYaw
+    windCue(b, RUSH_GUN)
+  }
+  if (R.ph === 1) {
+    if (R.t > P.lock) R.yaw = toYaw
+    const yaw = roleFace(b, R.yaw, dt, 1.5)
+    if ((R.t -= dt) <= 0) { R.ph = 2; R.t = P.go; b.rushK = P.speed / Math.max(1, bestPace(b)) }
+    return { f: 0, r: 0, fire: false, yaw, sprint: false }
+  }
+  if (R.ph === 2) {
+    const yaw = roleFace(b, R.yaw, dt, 0.5)
+    if (los && dist < GUNS[RUSH_GUN].range * 0.9 && Math.abs(wrapPi(toYaw - yaw)) < 0.7) {
+      b.gun = RUSH_GUN; b.cool = 0; b.charge = 0; R.ph = 3; R.t = P.rec; b.rushK = 0
+      return { f: 0, r: 0, fire: true, yaw }
+    }
+    if ((R.t -= dt) <= 0 || R.t < P.go - 0.25 && Math.hypot(b.vx || 0, b.vz || 0) < 3) { R.ph = 3; R.t = P.miss; b.rushK = 0 }
+    return { f: 1, r: 0, fire: false, yaw, sprint: true }
+  }
+  if ((R.t -= dt) <= 0) { R.ph = 0; R.cd = P.cd[0] + Math.random() * (P.cd[1] - P.cd[0]); b.gun = gunNamed([spec.atk].flat()[0]) }
+  return { f: 0, r: 0, fire: false, yaw: ai.yaw, sprint: false }
+}
+function flankThink(b, tgt, dist, los, toYaw, dt) {
+  const ai = b.ai, P = ROLE.flank
+  if (ai.awayT > 0 || !los || dist > P.near) { ai.flankT = 0; return null }
+  const fy = tgt.yaw ?? 0, fx = -Math.sin(fy), fz = -Math.cos(fy), ux = (b.x - tgt.x) / (dist || 1), uz = (b.z - tgt.z) / (dist || 1)
+  const behind = Math.acos(clamp(fx * ux + fz * uz, -1, 1))
+  ai.flankT = (ai.flankT || 0) + dt
+  if ((behind > P.behind || ai.flankT > P.wait) && !ai.waitTurn) return null
+  ai.fside ||= Math.random() < 0.5 ? -1 : 1
+  const cur = Math.atan2(ux, uz), back = Math.atan2(-fx, -fz), da = wrapPi(back - cur)
+  const to = cur + (Math.abs(da) > 2.8 ? ai.fside * 0.8 : clamp(da, -0.8, 0.8)), R = Math.max(P.r, Math.min(dist, 6))
+  const sx = tgt.x + Math.sin(to) * R - b.x, sz = tgt.z + Math.cos(to) * R - b.z, m = Math.hypot(sx, sz) || 1
+  const yaw = roleFace(b, toYaw, dt), [f, r] = m > 0.3 ? toLocal(yaw, sx / m, sz / m) : [0, 0]
+  return { f, r, fire: false, yaw, sprint: true }
 }
 
 const MELEE_TURNS = 2, TURN_S = 2.5, TURN_REST = 1.5, TURN_RING = 3.6, TURN_NEAR = 7
@@ -21433,7 +21515,7 @@ let govLevel = 0, govAt = 0
 const govWin = [], govLog = []
 GAME.perfScale = () => GOV_LEVELS[govLevel].s
 const GOV_THINK = [1, 1, 1, 1, 2, 3, 3], GOV_THINK_R = 40
-const botKind = c => !c.bot ? 'guest' : c.bot.enforcer ? 'enforcer' : c.bot.squad ? 'squad' : c.bot.deal ? 'deal' : 'bot'
+const botKind = c => !c.bot ? 'guest' : c.bot.enforcer ? 'enforcer' : c.bot.squad ? 'squad' : c.bot.deal ? 'deal' : c.bot.haunt ? 'haunt' : 'bot'
 const simWho = () => { const k = {}; for (const c of players.values()) { const n = c.id === 0 ? 'me' : botKind(c); k[n] = (k[n] || 0) + 1 }
   return 'players ' + Object.entries(k).map(e => e.join(' ')).join(', ') + '  objects ' + objs.length + '  bodies ' + objs.filter(o => o.body).length }
 function botDue(c, dt) {
@@ -22837,7 +22919,12 @@ function rigAnimate(a, want, dt, t) {
     R.windSeen = a.chargeAt; try { sfxPlay('Haymaker charge', a === avatars.get(myId) ? null : a.mesh.position, a === avatars.get(myId) ? 'mine' : 'world', 0.9) } catch (e) {}
     const clip = rigStrikeClip(M, a, HAY.clip); if (clip) R.over = { clip, t0: 0, at: a.chargeAt, speed: HAY.rate, from: rigFrom(M, R.over, t) }
   }
-  const G = GUNS[a.shotGun], list = G && (M.punches[G.punch] || G.melee && M.punches.melee)
+  if (wind?.wind && a.chargeAt !== R.windSeen && t - a.chargeAt < 1000) {
+    R.windSeen = a.chargeAt
+    const [n, w0, w1] = wind.wind, clip = rigClip(M, n), s = wind.windS ?? wind.windup
+    if (clip) R.over = { clip, t0: w0, at: a.chargeAt, speed: (w1 - w0) / s, stop: w1, until: a.chargeAt + s * 1000 + 700, from: rigFrom(M, R.over, t) }
+  }
+  const G = GUNS[a.shotGun], list = G && (G.strike && rigClip(M, G.strike[0]) ? [G.strike] : M.punches[G.punch] || G.melee && M.punches.melee)
   if (list && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 400) {
     R.shotSeen = a.shotAt
     if (t - (R.comboAt ?? -Infinity) > 900) R.combo = -1
@@ -22873,9 +22960,9 @@ function rigAnimate(a, want, dt, t) {
   partsRig(a, R, M, t)
   R.stand = (R.stand ?? 0) + ((R.name === K.idle ? 1 : 0) - (R.stand ?? 0)) * Math.min(1, dt * 12)
   if (R.over && a.dying < 0) {
-    const o = R.over, ct = o.clock ?? o.t0 + (t - o.at) / 1000 * (o.speed || 1), d = o.clip.duration, body = !o.full && rigStrike(M, o.clip.name)
+    const o = R.over, ct = Math.min(o.clock ?? o.t0 + (t - o.at) / 1000 * (o.speed || 1), o.stop ?? Infinity), d = o.clip.duration, body = !o.full && rigStrike(M, o.clip.name)
     const draw = (clip, time, w, legs) => { rigPose(R, clip, time, w, o.full ? null : RIG_UPPER); if (body && legs > 0 && R.stand > 0.01) rigPose(R, clip, time, legs * R.stand, RIG_LOWER) }
-    if (ct >= d) R.over = null
+    if (ct >= d || o.until < t) R.over = null
     else {
       const w = o.w ?? 1, out = Math.min(1, (d - ct) / 0.15)
       if (o.from && t - o.at < 90) draw(o.from.clip, o.from.ct, 1, 0)
@@ -25085,7 +25172,7 @@ function addTracers(list, t) {
     if (!a || f[7] === 4 || f[7] === 5 || f[7] === 6 || f[7] === 9) continue
     a.fightAt = f.firedAt ?? t
     if (f[9] === 1) {
-      if (G && (G.charge === 'palms' || G.hayWind)) { a.chargeAt = f.firedAt ?? t; a.chargeGun = f[6]; a.strikeLow = f[10] === 1 }
+      if (G && (G.charge === 'palms' || G.hayWind || G.wind)) { a.chargeAt = f.firedAt ?? t; a.chargeGun = f[6]; a.strikeLow = f[10] === 1 }
       continue
     }
     a.shotAt = f.firedAt ?? t; a.shotGun = f[6]
@@ -31082,7 +31169,7 @@ document.addEventListener('visibilitychange', () => {
 GAME.participant = rowFor
 GAME.participantOf = rowOf
 function spawnList(rows) {
-  for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && !c.bot.enforcer && !c.bot.deal && c.owner === undefined) dropBot(c)
+  for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && !c.bot.enforcer && !c.bot.deal && !c.bot.haunt && c.owner === undefined) dropBot(c)
   rows.forEach(addBot)
   if (conns.size) pushRoster()
 }
@@ -31125,12 +31212,13 @@ function botsSlider() {
 
 function foesWanted() {
   const on = fieldedTeams()
-  return BOTS.flatMap((B, i) => !B.squad && !B.enforcer && !B.deal && !on.has(B.team) && !offEvent(B) ? [i] : []).sort((a, b) => !!BOTS[a].rare - !!BOTS[b].rare || !BOTS[a].event - !BOTS[b].event).slice(0, BOT_COUNT)
+  if (LV.faust) return []
+  return BOTS.flatMap((B, i) => !B.squad && !B.enforcer && !B.deal && !B.haunt && !on.has(B.team) && !offEvent(B) ? [i] : []).sort((a, b) => !!BOTS[a].rare - !!BOTS[b].rare || !BOTS[a].event - !BOTS[b].event).slice(0, BOT_COUNT)
 }
 
 function teamsChanged() {
   const want = foesWanted()
-  for (const c of [...players.values()]) if (c.id >= BOT_ID0 && !c.bot.squad && !c.bot.enforcer && !c.bot.deal && !want.includes(c.id - BOT_ID0)) dropBot(c)
+  for (const c of [...players.values()]) if (c.id >= BOT_ID0 && !c.bot.squad && !c.bot.enforcer && !c.bot.deal && !c.bot.haunt && !want.includes(c.id - BOT_ID0)) dropBot(c)
   want.forEach(addBot)
   if (conns.size) pushRoster()
 }
@@ -32900,6 +32988,128 @@ function dealerDown(c) {
   if (ds) dealGone.set(ds.key, (tickAt || now()) + DEAL.goneS * 1000)
   dealerDrop(c); if (conns.size) pushRoster()
 }
+const HAUNT = { every: 0.5, keep: 110, first: 6, gap: [20, 38], retry: 3, ring: [14, 30], close: [4, 10], reveal: 7, stroll: 0.4, cap: 10 }
+const HAUNT_CREWS = {
+  alley: [['freak', 'freak_throw', 'brute_rush'], ['blue', 'freak', 'freak_throw']],
+  yards: [['thug_rush', 'thug_throw', 'shooter'], ['thug', 'thug_rush', 'thug_throw', 'thug']],
+  water: [['thug_rush', 'thug_throw', 'thug'], ['shooter', 'thug', 'thug_rush']],
+  deco: [['tear_flank', 'tear_flank', 'thug_throw'], ['shooter', 'tear_flank', 'thug_rush']],
+  gothic: [['tear_flank', 'tear_flank', 'tear_flank'], ['tear_flank', 'tear_flank', 'freak_throw']],
+  club: [['thug_rush', 'tear_flank', 'tear_flank'], ['thug_rush', 'thug']],
+  store: [['freak_throw', 'blue'], ['freak', 'freak_throw']],
+  interior: [['freak', 'blue'], ['brute_rush', 'freak']],
+  roof: [['tear_flank', 'tear_flank', 'freak_throw'], ['tear_flank', 'freak_throw']],
+  highway: [['thug_rush', 'shooter', 'thug_throw'], ['shooter', 'thug', 'thug_rush']],
+  urban: [['freak', 'brute_rush', 'freak_throw'], ['thug', 'thug_throw', 'freak']],
+  suburb: [['blue', 'freak_throw'], ['freak', 'brute_rush']],
+  shanty: [['freak', 'freak', 'freak_throw', 'brute_rush'], ['blue', 'freak', 'freak_throw', 'freak']],
+  fields: [['brute_rush', 'freak_throw', 'freak'], ['freak', 'freak', 'brute_rush']],
+}
+const hauntCrews = new Map(), hauntNext = new Map(), hauntLog = []
+let hauntAcc = 0, hauntSerial = 0, hauntHw = null
+function hauntHighway(x, y, z) {
+  const F = faustState
+  if (!F) return false
+  if (hauntHw?.F !== F) {
+    const g = GAME.faustland.highwayGraph?.(), cells = new Map()
+    for (const e of g?.edges || []) for (let k = 1; k < e.points.length; k++) {
+      const a = e.points[k - 1], b = e.points[k], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[2] - a[2]) / 16))
+      for (let q = 0; q <= n; q++) { const u = q / n, key = Math.floor((a[0] + (b[0] - a[0]) * u) / 32) + ' ' + Math.floor((a[2] + (b[2] - a[2]) * u) / 32); if (!cells.has(key)) cells.set(key, a[1] + (b[1] - a[1]) * u) }
+    }
+    hauntHw = { F, cells }
+  }
+  const i = Math.floor(x / 32), j = Math.floor(z / 32)
+  for (let p = i - 1; p <= i + 1; p++) for (let q = j - 1; q <= j + 1; q++) { const h = hauntHw.cells.get(p + ' ' + q); if (h !== undefined && Math.abs(h - y) < 6) return true }
+  return false
+}
+function hauntWater(x, z) {
+  for (const B of GAME.faustland.water?.bodies || []) for (const d of B.docks || []) if (Math.hypot(d.x - x, d.z - z) < 40) return true
+  for (const [dx, dz] of [[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12]]) { const W = waterOf(x + dx, z + dz); if (W && W.y - W.floor > 1) return true }
+  return false
+}
+function hauntEnv(p) {
+  const F = faustState, foot = p.y - p.h - p.r, at = inAt(p.x, foot, p.z)
+  if (at) { if (at.k === -1) return 'roof'; if (at.inside) return at.B.venue === 'club' ? 'club' : at.B.venue ? 'store' : 'interior' }
+  if (hauntWater(p.x, p.z)) return 'water'
+  if (hauntHighway(p.x, foot, p.z)) return 'highway'
+  if (Math.abs(p.x) <= ARENA && Math.abs(p.z) <= ARENA) {
+    const plan = F.chunks.get(faustKey(Math.floor((p.x + ARENA) / 96), Math.floor((p.z + ARENA) / 96)))?.plan, d = plan?.district
+    if (d === 'civic') return 'gothic'
+    if (d === 'core') { const l = plan.lots.reduce((a, l) => !a || Math.hypot(l.x - p.x, l.z - p.z) < Math.hypot(a.x - p.x, a.z - p.z) ? l : a, null); return l?.gothic ? 'gothic' : 'deco' }
+    return d === 'industrial' ? 'yards' : 'alley'
+  }
+  const band = faustRingBand(F.seed, F.S, Math.floor(p.x / FAUST_RINGS.cell), Math.floor(p.z / FAUST_RINGS.cell))
+  return band === 'city' ? 'urban' : band === 'urban' || band === 'suburb' || band === 'shanty' ? band : 'fields'
+}
+function hauntSpot(p, env) {
+  const foot = p.y - p.h - p.r, inside = env === 'interior' || env === 'club' || env === 'store', near = inside || env === 'roof'
+  const [r0, r1] = near ? HAUNT.close : HAUNT.ring, A0 = near && inAt(p.x, foot, p.z), eye = eyeOf(p), cands = []
+  if (!near && Math.abs(p.x) <= ARENA && Math.abs(p.z) <= ARENA) {
+    const ci = Math.floor((p.x + ARENA) / 96), cj = Math.floor((p.z + ARENA) / 96)
+    for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) for (const l of faustState.chunks.get(faustKey(i, j))?.plan.lots || [])
+      cands.push({ x: l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, z: l.z + l.d + 0.9, door: true, yaw: Math.PI })
+  }
+  for (let k = 0; k < 20; k++) { const a = k / 20 * 2 * Math.PI, r = r0 + Math.random() * (r1 - r0); cands.push({ x: p.x + Math.sin(a) * r, z: p.z + Math.cos(a) * r }) }
+  let best = null, bs = -Infinity
+  for (const q of cands) {
+    const d = Math.hypot(q.x - p.x, q.z - p.z)
+    if (d < r0 || d > r1 + 4) continue
+    const top = foot + (near ? 1.2 : 4), len = near ? 2.5 : 10, t = staticRay(q.x, top, q.z, 0, -1, 0, len)
+    if (!(t < len)) continue
+    const gy = top - t
+    if (Math.abs(gy - foot) > (near ? 0.6 : 3) || staticRay(q.x, gy + 0.3, q.z, 0, 1, 0, 2) < 2) continue
+    const A = inAt(q.x, gy, q.z)
+    if (near ? !A || A.B !== A0.B || A.k !== A0.k || inside && !A.inside : A?.inside) continue
+    const W = waterOf(q.x, q.z)
+    if (W && W.y - W.floor > 0.5) continue
+    const hx = q.x - p.x, hy = gy + 1.2 - eye, hz = q.z - p.z, hd = Math.hypot(hx, hy, hz) || 1, hidden = staticRay(p.x, eye, p.z, hx / hd, hy / hd, hz / hd, hd) < hd - 0.3
+    const sc = (hidden ? 8 : 0) + (q.door ? 5 : 0) - Math.abs(d - (r0 + r1) / 2) * 0.3 + Math.random()
+    if (sc > bs) { bs = sc; best = { x: q.x, y: gy, z: q.z, door: !!q.door, hidden } }
+  }
+  return best
+}
+function hauntTick(dt, all) {
+  if (!isHost || !LV.faust || !faustState || (hauntAcc += dt) < HAUNT.every) return
+  hauntAcc = 0
+  const T = tickAt || now(), humans = all.filter(c => !c.bot && c.id < BOT_ID0 && !(c.dead > 0))
+  let moved = false
+  for (const [key, K] of hauntCrews) {
+    for (const id of K.ids) { const c = players.get(id); if (c && !humans.some(p => Math.hypot(p.x - c.x, p.z - c.z) < HAUNT.keep)) { dropBot(c); moved = true } }
+    K.ids = K.ids.filter(id => players.get(id)?.ai?.crew === key)
+    if (!K.ids.length) { hauntCrews.delete(key); hauntNext.set(K.owner, T + (HAUNT.gap[0] + Math.random() * (HAUNT.gap[1] - HAUNT.gap[0])) * 1000) }
+  }
+  let room = Math.min(HAUNT.cap, BOT_COUNT * 2) - [...hauntCrews.values()].reduce((n, K) => n + K.ids.length, 0)
+  for (const p of humans) {
+    if (room < 2 || [...hauntCrews.values()].some(K => K.owner === p.id)) continue
+    if (!hauntNext.has(p.id)) hauntNext.set(p.id, T + HAUNT.first * 1000)
+    const seat = seatOf(p)
+    if (hauntNext.get(p.id) > T || seat && speedOf(seat[0]) > 6) continue
+    const env = hauntEnv(p), list = HAUNT_CREWS[env], kinds = list[Math.random() * list.length | 0].slice(0, room), at = hauntSpot(p, env)
+    if (!at) { hauntNext.set(p.id, T + HAUNT.retry * 1000); continue }
+    const key = 'h' + ++hauntSerial, K = { key, owner: p.id, env, ids: [], at: T }, yaw = Math.atan2(-(p.x - at.x), -(p.z - at.z)), sx = Math.cos(yaw), sz = -Math.sin(yaw)
+    kinds.forEach((kind, n) => {
+      const i = HAUNT_ROWS[kind]?.find(r => !players.has(BOT_ID0 + r))
+      if (i === undefined) return
+      const o = (n - (kinds.length - 1) / 2) * 1.1
+      ENFORCER_AT = [at.x + sx * o, at.y + 0.6, at.z + sz * o, yaw]
+      const ok = addBot(i)
+      ENFORCER_AT = null
+      if (!ok) return
+      const c = players.get(BOT_ID0 + i)
+      c.prot = 0; c.ai.yaw = yaw; c.ai.lurk = c.hp; c.ai.crew = key
+      K.ids.push(c.id)
+    })
+    if (!K.ids.length) continue
+    hauntCrews.set(key, K); room -= K.ids.length; moved = true
+    hauntLog.push({ t: Math.round(T), env, kinds: K.ids.map(id => players.get(id).bot.haunt), x: r2(at.x), y: r2(at.y), z: r2(at.z), door: at.door, hidden: at.hidden, from: [r2(p.x), r2(p.z)] })
+    if (hauntLog.length > 40) hauntLog.shift()
+  }
+  if (moved && conns.size) pushRoster()
+}
+function hauntReveal(b) { for (const c of players.values()) if (c.ai?.crew === b.ai.crew) c.ai.lurk = 0 }
+function hauntDown(c) { dropBot(c); if (conns.size) pushRoster() }
+function hauntPurge() { for (const c of [...players.values()]) if (c.bot?.haunt) dropBot(c); hauntCrews.clear(); hauntNext.clear() }
+GAME.haunts = { env: hauntEnv, spot: hauntSpot, crews: hauntCrews, log: hauntLog, next: hauntNext }
 function dealerPurge() { for (const c of [...players.values()]) if (c.bot?.deal) dealerDrop(c); dealGone.clear() }
 function dealerWatch(all, humans, T) {
   for (const e of all) {
@@ -37841,9 +38051,9 @@ function enforcerDown(c) { enforcerDrop(c); if (conns.size) pushRoster() }
     const m = Array.isArray(d.he) && d.he.length <= 32 && d.he.find(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] === myId)
     heatMine = m ? { stars: clamp(m[1] | 0, 0, 5), state: clamp(m[2] | 0, 0, 2), left: clamp(m[3], 0, 99) } : { stars: 0, state: 0, left: 0 }
   }
-  L.matchStart = function () { ms.call(this); if (isHost) { heat.clear(); for (const e of enforcerList()) dropBot(e); dealerPurge(); if (conns.size) pushRoster() } }
+  L.matchStart = function () { ms.call(this); if (isHost) { heat.clear(); for (const e of enforcerList()) dropBot(e); dealerPurge(); hauntPurge(); if (conns.size) pushRoster() } }
   L.left = function (id) { heat.delete(id); return left.call(this, id) }
-  HOST_PHASES.afterPhysics = t => { ap(t); heatTick(t.dt, t.all); dealerTick(t.dt, t.all) }
+  HOST_PHASES.afterPhysics = t => { ap(t); heatTick(t.dt, t.all); dealerTick(t.dt, t.all); hauntTick(t.dt, t.all) }
 }
 function heatHud() {
   const off = isHost && !enforcersEnabled()
@@ -38108,6 +38318,7 @@ function teamDown(c, dt) {
 function teamUp(c, team) {
   if (c.bot?.enforcer) enforcerDown(c)
   else if (c.bot?.deal) dealerDown(c)
+  else if (c.bot?.haunt) hauntDown(c)
   else if (c.bot && c.owner === undefined && !c.bot.squad && c.bot.rare) leaveRare(c)
   else {
     for (const m of team.length ? team.filter(m => m.dead > 0 || m === c).sort((a, b) => !a.bot - !b.bot) : [c]) { m.downT = 0; if (isHost && !m.bot) rebalance(m); respawn(m); if (hooked.spawn) hookEmit('spawn', { who: hookWho(m) }) }
@@ -38704,7 +38915,7 @@ GAME.rows = {
   joined(c, cid) { if (CHARS[cid].team) fieldTeam(c), teamsChanged() },
   switch: switchChar,
   refuse: noSwap,
-  menuBots: () => [...foesWanted(), ...SQUAD, ...visitors()],
+  menuBots: () => [...foesWanted(), ...SQUAD, ...visitors(), ...Object.values(HAUNT_ROWS).map(r => r[0])],
   cid: v => clamp(v | 0, 0, CHARS.length - 1),
   of: cid => CHARS[cid],
 }
