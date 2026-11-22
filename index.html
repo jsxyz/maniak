@@ -12883,7 +12883,7 @@ function applyIntent(c, inp, dt) {
     mx = c.vx - CX + dx * k; mz = c.vz - CZ + dz * k
   }
   else if (c.bot && !c.dashing && !c.tie) {
-    const vx = (c.vx || 0) - CX, vz = (c.vz || 0) - CZ, dx = mx - vx, dz = mz - vz, d = Math.hypot(dx, dz), acc = (rowOf(c).accel ?? BOT_ACC) * dt, k = d > acc ? acc / d : 1
+    const vx = (c.vx || 0) - CX, vz = (c.vz || 0) - CZ, dx = mx - vx, dz = mz - vz, d = Math.hypot(dx, dz), acc = (c.rushK > 0 ? ROLE.rush.acc : rowOf(c).accel ?? BOT_ACC) * dt, k = d > acc ? acc / d : 1
     mx = vx + dx * k; mz = vz + dz * k
   }
   if (c.leap) {
@@ -13642,18 +13642,20 @@ function botThink(b, all, dt) {
   if (_chargeJ !== null) sj = _chargeJ
   ai.doCharge = _chargeJ !== null
   if (_wrForward) { mf = 1; mr = 0; sj = false; sy = (_wrYaw ?? yaw) - yaw }
+  const fired = fire || !!G.windup && b.charge > 0 && los && !held && dist < reach * 1.15
+  if (spec.haunt) ai.dbg = { sees, los, d: r2(dist), reach: r2(reach), onT: onTarget, fire: fired, climbing, along, car: !!car, prey: !!prey, held: !!held, noFire: !!ai.noFire, gun: G.name, charge: r2(b.charge || 0), water: !!b.water, grounded: !!b.grounded }
   const res = {
     f: ai.awayT > 0 && !_wrForward && !orbit && !(ai.slideT > 0) ? -1 : out ? mf : mf * pace * (ai.wait ? 0.3 : 1), r: out ? mr : mr * pace,
     j: sj ?? (air ? ai.hop || (flier ? !b.flying || b.y < wantY - 0.5 : b.y + rise(b.vy, jetOf(b).grav || 1) < wantY)
        : ai.hop && !(b.wall > 0) || (charging || pace < 1 || b.wall > 0 || POWERS[tgt.mark - 1]?.move === 0 ? false : (ai.tgt < 0 || sd > HOP_CLEAR) && !all.some(o => o !== b && !(o.dead > 0) && Math.hypot(o.x - b.x, o.z - b.z) < HOP_ROOM) && Math.random() < spec.jumpy * dt)),
     descend: flier && b.flying && !ai.hop && b.y > wantY + 0.5 || _doZip,
-    fire: fire && !sig && !_wrForward, alt: fire && sig && !_wrForward || dashWant(b, tgt, dist, los, onTarget, dt, all), use: !!prey && objGap(b, prey) <= (H.reach ?? 1.5) || !!car?.use || !!plan?.use, sprint: !((jetOf(b)?.sprint && b.flying) || prey || ai.walk),
+    fire: fired && !sig && !_wrForward, alt: fired && sig && !_wrForward || dashWant(b, tgt, dist, los, onTarget, dt, all), use: !!prey && objGap(b, prey) <= (H.reach ?? 1.5) || !!car?.use || !!plan?.use, sprint: !((jetOf(b)?.sprint && b.flying) || prey || ai.walk),
     yaw: yaw + sy, pitch: sp ?? pitch,
   }
   return ai.lurk ? { ...res, f: res.f * HAUNT.stroll, r: 0, j: false, fire: false, alt: false, use: false, sprint: false } : res
 }
 
-const ROLE = { rush: { wind: 0.8, lock: 0.25, speed: 14, go: 1.0, miss: 1.4, rec: 0.7, cd: [3, 5.5], at: [2.8, 10] },
+const ROLE = { rush: { acc: 60, wind: 0.8, lock: 0.25, speed: 14, go: 1.0, miss: 1.4, rec: 0.7, cd: [3, 5.5], at: [2.8, 10] },
   flank: { r: 3.4, behind: 1.9, wait: 4.5, near: 10 } }
 const RUSH_GUN = gunNamed('Rush')
 function windCue(b, gun) {
@@ -16916,7 +16918,7 @@ function strike(c, h, G, ux, uy, uz, rode) {
   const was = hookHitOn && [h.hp, h.mark, h.markT]
   if (G.apply) { h.mark = powerNamed(G.apply); h.markT = POWERS[h.mark - 1]?.dur ?? 0 }
   if (G.lethal) h.hp = 0
-  else h.hp -= stat(h, 'take', stat(c, 'give', G.dmg * profDmg(c, G.name)))
+  else h.hp -= stat(h, 'take', stat(c, 'give', G.dmg * profDmg(c, G.name) * (c.bot?.haunt ? HAUNT.dmg[G.name] ?? 1 : 1)))
   if (was && !hookHit(c, h, G.name, was)) return
   flinch(h, c, G, ux, uy, uz, G.knock * (1 + profExtra(c, G.name, 'knock')))
 }
@@ -29720,7 +29722,9 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   shaderCheck,
   glassStats: () => FAUST_GLASS_STATS.map(q => ({ ...q })),
   capture: captureFrames,
-  haunts: () => ({ log: JSON.parse(JSON.stringify(hauntLog)), crews: [...hauntCrews.values()].map(K => ({ key: K.key, owner: K.owner, env: K.env, ids: [...K.ids], help: K.help })),
+  haunts: () => ({ log: JSON.parse(JSON.stringify(hauntLog)), crews: [...hauntCrews.values()].map(K => ({ key: K.key, owner: K.owner, env: K.env, ids: [...K.ids], help: K.help,
+      bots: K.ids.map(id => players.get(id)).filter(Boolean).map(c => ({ id: c.id, kind: c.bot.haunt, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100), hp: Math.round(c.hp), dead: c.dead > 0,
+        lurk: !!c.ai.lurk, tgt: c.ai.tgt, flee: c.ai.fleeT > 0, rush: c.ai.rush?.ph ?? null, guard: !!c.ai.gd?.up, think: c.ai.dbg ? { ...c.ai.dbg } : null })) })),
     env: LV.faust && faustState && selfChar() ? hauntEnv(selfChar()) : null }),
   dropCar(x, z, h = 3, kind = 'Car') {
     if (!isHost || ![x, z, h].every(Number.isFinite) || objs.length >= OBJ_MAX - 8) return false
@@ -33081,11 +33085,11 @@ function dealerDown(c) {
   if (ds) dealGone.set(ds.key, (tickAt || now()) + DEAL.goneS * 1000)
   dealerDrop(c); if (conns.size) pushRoster()
 }
-const HAUNT = { touch: 3.5, lurkS: 25, flee: 5, every: 0.5, keep: 110, first: 6, gap: [20, 38], retry: 3, ring: [14, 30], close: [4, 10], reveal: 7, stroll: 0.4, cap: 10 }
+const HAUNT = { dmg: { Bat: 0.4, Pipe: 0.4, Sledge: 0.35, Pistol: 0.6, Rush: 0.6, Shiv: 1, Knife: 1, Lunge: 1, Bottle: 1 }, touch: 3.5, lurkS: 25, flee: 5, every: 0.5, keep: 110, first: 6, gap: [20, 38], retry: 3, ring: [14, 30], close: [4, 10], reveal: 7, stroll: 0.4, cap: 10 }
 const HAUNT_CREWS = {
   alley: [['freak', 'freak_throw', 'brute_rush'], ['blue', 'freak', 'freak_throw']],
   yards: [['thug_guard', 'thug_throw', 'shooter'], ['thug_rush', 'thug_throw', 'shooter'], ['thug', 'thug_rush', 'thug_throw', 'thug']],
-  water: [['thug_rush', 'thug_throw', 'thug'], ['shooter', 'thug', 'thug_rush']],
+  water: [['thug_throw', 'shooter', 'thug_guard'], ['shooter', 'thug_throw', 'thug_rush']],
   deco: [['tear_flank', 'tear_flank', 'thug_throw'], ['shooter', 'tear_flank', 'thug_rush'], ['thug_guard', 'tear_flank', 'shooter']],
   gothic: [['tear_flank', 'tear_flank', 'tear_flank'], ['tear_flank', 'tear_flank', 'freak_throw'], ['brute_guard', 'tear_flank', 'tear_flank']],
   club: [['thug_guard', 'tear_flank', 'tear_flank'], ['thug_guard', 'thug_rush']],
@@ -33163,7 +33167,7 @@ function hauntSpot(p, env) {
     const A = inAt(q.x, gy, q.z)
     if (near ? !A || A.B !== A0.B || A.k !== A0.k || inside && !A.inside : A?.inside) continue
     const W = waterOf(q.x, q.z)
-    if (W && W.y - W.floor > 0.5) continue
+    if (W && W.y > gy + 0.05 || env === 'water' && Math.abs(gy - foot) > 0.8) continue
     const hx = q.x - p.x, hy = gy + 1.2 - eye, hz = q.z - p.z, hd = Math.hypot(hx, hy, hz) || 1, hidden = staticRay(p.x, eye, p.z, hx / hd, hy / hd, hz / hd, hd) < hd - 0.3
     const sc = (hidden ? 8 : 0) + (q.door ? 5 : 0) - Math.abs(d - (r0 + r1) / 2) * 0.3 + Math.random()
     if (sc > bs) { bs = sc; best = { x: q.x, y: gy, z: q.z, door: !!q.door, hidden } }
