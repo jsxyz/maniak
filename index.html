@@ -2382,10 +2382,12 @@ function railProject(path, x, z) {
   }
   return [at, Math.sqrt(best)]
 }
-function railLeg(path, s0, s1, stops, slow, R = RAIL.run) {
+function railLeg(path, s0, s1, stops, slow, R = RAIL.run) { return drain(railLegSteps(path, s0, s1, stops, slow, R)) }
+function* railLegSteps(path, s0, s1, stops, slow, R = RAIL.run) {
   const dir = s1 >= s0 ? 1 : -1, n = Math.max(2, Math.round(Math.abs(s1 - s0) / R.ds) + 1), ds = Math.abs(s1 - s0) / (n - 1)
   const s = new Float64Array(n), v = new Float64Array(n), ta = new Float64Array(n), td = new Float64Array(n), stop = new Uint8Array(n)
   for (let i = 0; i < n; i++) {
+    if (i % 256 === 0) yield
     s[i] = s0 + dir * ds * i
     let lim = R.vmax
     for (const [a, b] of slow) if (s[i] >= a - 6 && s[i] <= b + 6) lim = Math.min(lim, R.vcurve)
@@ -2394,10 +2396,10 @@ function railLeg(path, s0, s1, stops, slow, R = RAIL.run) {
   stop[0] = stop[n - 1] = 1
   for (const d of stops) { const i = Math.round(Math.abs(d - s0) / ds); if (i > 0 && i < n - 1) stop[i] = 1 }
   for (let i = 0; i < n; i++) if (stop[i]) v[i] = 0
-  for (let i = 1; i < n; i++) v[i] = Math.min(v[i], Math.sqrt(v[i - 1] * v[i - 1] + 2 * R.acc * ds))
-  for (let i = n - 2; i >= 0; i--) v[i] = Math.min(v[i], Math.sqrt(v[i + 1] * v[i + 1] + 2 * R.dec * ds))
+  for (let i = 1; i < n; i++) { v[i] = Math.min(v[i], Math.sqrt(v[i - 1] * v[i - 1] + 2 * R.acc * ds)); if (i % 512 === 0) yield }
+  for (let i = n - 2; i >= 0; i--) { v[i] = Math.min(v[i], Math.sqrt(v[i + 1] * v[i + 1] + 2 * R.dec * ds)); if (i % 512 === 0) yield }
   ta[0] = 0; td[0] = R.dwell
-  for (let i = 1; i < n; i++) { ta[i] = td[i - 1] + 2 * ds / (v[i - 1] + v[i]); td[i] = ta[i] + (stop[i] && i < n - 1 ? R.dwell : 0) }
+  for (let i = 1; i < n; i++) { ta[i] = td[i - 1] + 2 * ds / (v[i - 1] + v[i]); td[i] = ta[i] + (stop[i] && i < n - 1 ? R.dwell : 0); if (i % 512 === 0) yield }
   return { s, v, ta, td, stop, ds, dir, time: ta[n - 1] }
 }
 function railLegAt(leg, tau) {
@@ -2412,7 +2414,8 @@ function railLegAt(leg, tau) {
 }
 
 let faustRailMemo = null
-function faustRail(seed, S) {
+function faustRail(seed, S) { return drain(faustRailSteps(seed, S)) }
+function* faustRailSteps(seed, S) {
   seed >>>= 0; S = Math.max(16, Math.min(32, S & ~1))
   if (faustRailMemo?.seed === seed && faustRailMemo.S === S) return faustRailMemo.rail
   const A = S * 48, r0 = A - 96, H = S / 2, K = RAIL, g = K.gauge, rng = genRng(faustMix(seed ^ 0x5241494c, 60, 22))
@@ -2480,7 +2483,7 @@ function faustRail(seed, S) {
       if (!place(line, dir, c, around(mid, 6))) return
     }
   }
-  for (const [dir, c] of lines.L.runs) fill('L', dir, c, -r0, r0, 760)
+  for (const [dir, c] of lines.L.runs) { fill('L', dir, c, -r0, r0, 760); yield }
   fill('B', 'z', xB, -r0, r0, 640); fill('C', 'x', zC, -r0, r0, 640)
   const deck = K.names.slice()
   for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]] }
@@ -2550,6 +2553,7 @@ function faustRail(seed, S) {
   }
   const C = K.plat, V = K.pav, deckOf = t => t.level + K.car.floor
   for (const t of stations) {
+    yield
     const { dir, c, p } = t, d = deckOf(t)
     for (const side of [-1, 1]) {
       const s = side, R2 = (a0, a1, b0, b1, y0, y1, part) => rbox(dir, c, a0, a1, s * b0, s * b1, y0, y1, part)
@@ -2595,21 +2599,24 @@ function faustRail(seed, S) {
     if (way < 0) path.s = railLengths(path.p)
     const stops = stopsOn(path), slow = slowOn(path), L = path.s[path.s.length - 1]
     if (!stops.length) continue
-    const s0 = stops[0].s, legs = [railLeg(path, s0, s0 + L, stops.slice(1).map(q => q.s), slow.flatMap(([a, c]) => [[a, c], [a + L, c + L]]))]
+    const s0 = stops[0].s, legs = [yield* railLegSteps(path, s0, s0 + L, stops.slice(1).map(q => q.s), slow.flatMap(([a, c]) => [[a, c], [a + L, c + L]]))]
     const cycle = legs[0].time, n = Math.max(3, Math.round(L / 1500))
     routes.push({ id: routes.length, line: 'L', beam: beams.indexOf(b), path, closed: true, stops, legs, cycle, trains: Array.from({ length: n }, (_, k) => k * cycle / n) })
   }
-  for (const [list, line] of [[Bb, 'B'], [Cb, 'C']]) list.forEach((b, j) => {
+  for (const [list, line] of [[Bb, 'B'], [Cb, 'C']]) for (const [j, b] of list.entries()) {
     const stops = stopsOn(b)
-    if (stops.length < 2) return
+    if (stops.length < 2) continue
     const s0 = stops[0].s, s1 = stops.at(-1).s, mid = stops.slice(1, -1).map(q => q.s)
-    const legs = [railLeg(b, s0, s1, mid, []), railLeg(b, s1, s0, mid.slice().reverse(), [])], cycle = legs[0].time + legs[1].time
+    const legs = [yield* railLegSteps(b, s0, s1, mid, []), yield* railLegSteps(b, s1, s0, mid.slice().reverse(), [])], cycle = legs[0].time + legs[1].time
     routes.push({ id: routes.length, line, beam: beams.indexOf(b), path: b, closed: false, stops, legs, cycle, trains: [j * cycle / 2] })
-  })
+  }
   const rail = { version: 1, seed, S, A, r0, xB, zC, stations, beams, turnouts, ends, switches, pylons, routes, boxes, byCell, lights, lightsByCell, lots }
   let hash = 2166136261
   const feed = v => { const t = String(Math.round(v * 1000)); for (let i = 0; i < t.length; i++) hash = Math.imul(hash ^ t.charCodeAt(i), 16777619); hash = Math.imul(hash ^ 44, 16777619) }
-  for (const b of boxes) [b.cx, b.cy, b.cz, b.ex, b.ey, b.ez].forEach(feed)
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i]; [b.cx, b.cy, b.cz, b.ex, b.ey, b.ez].forEach(feed)
+    if (i % 128 === 127) yield
+  }
   for (const r of routes) { feed(r.cycle); for (const leg of r.legs) for (let i = 0; i < leg.ta.length; i += 97) { feed(leg.ta[i]); feed(leg.s[i]) } }
   rail.hash = (hash >>> 0).toString(16).padStart(8, '0')
   faustRailMemo = { seed, S, rail }
@@ -3308,7 +3315,8 @@ function faustPlan(seed, ci, cj, S = 20) {
 }
 const FAUST_SPAWN = { plaza: 8, near: 16, reach: 225, grid: 2, lane: 2.5, crossing: 2.5, lot: 2, box: 1, run: 48 }
 let faustSpawnMemo = null
-function faustSpawns(seed, S, avoid = []) {
+function faustSpawns(seed, S, avoid = []) { return drain(faustSpawnsSteps(seed, S, avoid)) }
+function* faustSpawnsSteps(seed, S, avoid = []) {
   const key = seed + ' ' + S + ' ' + JSON.stringify(avoid)
   if (faustSpawnMemo?.key === key) return faustSpawnMemo.rows
   const H = S / 2, K = FAUST_SPAWN, plans = new Map(), sq = v => v * v
@@ -3324,9 +3332,10 @@ function faustSpawns(seed, S, avoid = []) {
     const ex = x - ax - dx * t, ez = z - az - dz * t
     return Math.sqrt(ex * ex + ez * ez)
   }
-  const around = (gx, gz) => {
+  const around = function* (gx, gz) {
     const lanes = [], lots = [], boxes = []
     for (let i = gx - 1; i <= gx + 1; i++) for (let j = gz - 1; j <= gz + 1; j++) {
+      yield
       const p = plan(i, j); if (!p) continue
       lanes.push(...p.lanes); lots.push(...p.lots)
       for (const b of p.boxes) if (b.cy - b.ey < 2.6 && b.cy + b.ey > 0.05) boxes.push(b)
@@ -3351,7 +3360,7 @@ function faustSpawns(seed, S, avoid = []) {
   for (let gx = -H; gx < H; gx++) for (let gz = -H; gz < H; gz++) {
     const X = gx * 96, Z = gz * 96, cx = X + 48, cz = Z + 48, nx = Math.max(0, X, -X - 96), nz = Math.max(0, Z, -Z - 96)
     if (nx * nx + nz * nz > K.reach * K.reach) continue
-    const p = plan(gx, gz), near = around(gx, gz)
+    const p = plan(gx, gz), near = yield* around(gx, gz)
     const tiles = p.chan ? [] : p.plaza ? [[cx, cz, 37.5]] : [[X + 24, Z + 24], [X + 72, Z + 24], [X + 24, Z + 72], [X + 72, Z + 72]]
       .filter(([x, z]) => !(p.diagonal && Math.abs(z - x - 384) < 42)).map(([x, z]) => [x, z, 14.3])
     let n = 0
@@ -3362,7 +3371,9 @@ function faustSpawns(seed, S, avoid = []) {
       const lots = flat(near.lots.map(L => [L.x - L.w, L.z - L.d, L.x + L.w, L.z + L.d]).filter(q => by(...q)))
       const boxes = flat(near.boxes.map(b => [b.cx - b.ex, b.cz - b.ez, b.cx + b.ex, b.cz + b.ez]).filter(q => by(...q)))
       const m = Math.floor(r / K.grid)
-      for (let i = -m; i <= m; i++) for (let j = -m; j <= m; j++) {
+      for (let i = -m; i <= m; i++) {
+        if ((i + m) % 4 === 0) yield
+        for (let j = -m; j <= m; j++) {
         const x = tx + i * K.grid, z = tz + j * K.grid
         if (x * x + z * z > K.reach * K.reach) continue
         let lane = 99, lot = 99, box = 99
@@ -3375,6 +3386,7 @@ function faustSpawns(seed, S, avoid = []) {
         const room = Math.min(lane - K.lane, lot - K.lot, box - K.box, 4) + Math.min(Math.abs(lot - 1.9), 1.5) * 0.5
         if (n * 4 >= pts.length) { const grown = new Float64Array(pts.length * 2); grown.set(pts); pts = grown }
         pts[n * 4] = x; pts[n * 4 + 1] = z; pts[n * 4 + 2] = room; pts[n * 4 + 3] = sq(x - cx) + sq(z - cz); n++
+        }
       }
     }
     const better = (a, b) => pts[a + 2] - pts[b + 2] || pts[b + 3] - pts[a + 3] || pts[b] - pts[a] || pts[b + 1] - pts[a + 1]
@@ -4235,8 +4247,11 @@ function faustStorey(B, k) {
   S.hash = inHash(S)
   return S
 }
-function faustLevel(gen, theme) {
+function faustLevel(gen, theme) { return drain(faustLevelSteps(gen, theme)) }
+function* faustLevelSteps(gen, theme) {
   const S = Math.max(16, Math.min(32, (gen.size || 20) & ~1)), A = S * 48, seed = gen.seed >>> 0
+  yield* faustRailSteps(seed, S)
+  yield
   const boxes = []
   const chans = faustChannels(seed, S), E = A + 2
   if (!chans.list.length) boxes.push(faustBox(0, -1, 0, E, 1, E, { vis: false }))
@@ -4250,7 +4265,8 @@ function faustLevel(gen, theme) {
   const car = VEHICLES.find(v => v.name === 'Car') || VEHICLES[0]
   const objects = car ? [[[6, 0, 144], car.name, 0, faustMix(seed, 1, 1)], [[-6, 0, -144], car.name, Math.PI, faustMix(seed, 2, 2)]] : []
   objects.push(...faustAirfield(seed, S).planes)
-  const spawns = faustSpawns(seed, S, [...pads, ...objects.map(o => o[0])].map(p => [p[0], p[2], 5]))
+  yield
+  const spawns = yield* faustSpawnsSteps(seed, S, [...pads, ...objects.map(o => o[0])].map(p => [p[0], p[2], 5]))
   return { faust: true, A, W: FAUST.world, theme: { ...THEME, ...theme, size: A, height: FAUST.lid, lid: FAUST.lid, navTop: FAUST.navTop,
     fog: [0x243044, 360 / A, 2300 / A], ramp: [0, 340], pad: 0xd6c5a0 },
     boxes, pads, spawns, objects, scenery: [{ kind: 'faustland' }], screens: [], screenRule: null,
@@ -4328,6 +4344,7 @@ function faustSolids() {
       out.push(...(d < 0 ? [t[0], t[2], t[1]] : t).flat()) } }
     for (const [x0, z0, x1, z1] of [[-W, -W, W, -a], [-W, a, W, W], [-W, -a, -a, a], [a, -a, W, a]])
       for (let x = x0; x < x1; x += T) for (let z = z0; z < z1; z += T) {
+        yield
         const X = Math.min(x + T, x1), Z = Math.min(z + T, z1)
         for (const q of subtractRects({ a0: x, a1: X, b0: z, b1: Z }, [...cuts, ...faustWaterRectsIn(LV.grow.seed, LV.grow.S, x, z, X, Z)])) quad(ground, [0, 1, 0], [q.a0, 0, q.b0], [q.a0, 0, q.b1], [q.a1, 0, q.b1], [q.a1, 0, q.b0])
       }
@@ -4985,8 +5002,10 @@ function faustRoadsFrame() {
     V.set(k, v)
     background.run('roadlook:' + k, function* () {
       const g = yield* faustRoadCellLook(plan, k)
+      try {
       { const bytes = geometryBytes({ traverse: fn => fn({ geometry: g }) }); while (!background.uploadSlot(bytes)) yield 'frame' }
       v.mesh = new THREE.Mesh(g, F.materials.stone); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
+      } finally { if (!v.mesh) g.dispose() }
     }, { valid: () => faustState === F && F.roadLooks === V && V.get(k) === v }).catch(e => frameFailed('roads', e))
   }
 }
@@ -6047,7 +6066,8 @@ const FAUST_SUB_STREET = {
   hydrant: [0x8a2e24, 0xb08a2a, 0x7a2a22], mail: [0x2a3f5e, 0x3a3f46, 0x6a2c28, 0x2f4a3a], bin: [0x2e4a36, 0x2a3f5e, 0x4a4d52, 0x3b3e44],
   car: [0x6b2a2a, 0x2a3a52, 0x3f4a3a, 0x8a8678, 0x2b2b2e, 0x7b6a3a, 0x5a5f66, 0x4a3a52], glass: 0x141a22, tyre: 0x15171a, shelter: 0x5a6a76, post: 0x8b939b, sign: 0x24508c
 }
-function faustSubStreetside(seed, i, j, ctx) {
+function faustSubStreetside(seed, i, j, ctx) { return drain(faustSubStreetsideSteps(seed, i, j, ctx)) }
+function* faustSubStreetsideSteps(seed, i, j, ctx) {
   const F = FAUST_SUB_STREET, P = FAUST_RINGS.sub.pitch, C = FAUST_RINGS.cell, x0 = i * C, z0 = j * C
   const out = { part: [], near: [], solid: [], light: [], parked: [], posts: [] }
   const H = (k, a, b = 0) => faustMix(seed ^ k, a, b)
@@ -6061,6 +6081,7 @@ function faustSubStreetside(seed, i, j, ctx) {
   const noTree = (x, z, r) => !ctx.lots.some(l => (l.trees || []).some(([tx, tz, tr]) => (tx - x) ** 2 + (tz - z) ** 2 < (tr + r) ** 2))
   const offTrunk = (x, z, r) => !ctx.lots.some(l => (l.trees || []).some(([tx, tz, tr]) => (tx - x) ** 2 + (tz - z) ** 2 < (tr * 0.5 + r) ** 2))
   for (const st of ctx.streets) {
+    yield
     const alongZ = st.a[0] === st.b[0], c = alongZ ? st.a[0] : st.a[1], lo = alongZ ? z0 : x0, hi = lo + C, L = Math.round(c / P)
     const at = (t, off) => alongZ ? [c + off, t] : [t, c + off]
     const yaw = alongZ ? -Math.PI / 2 : 0
@@ -6071,6 +6092,7 @@ function faustSubStreetside(seed, i, j, ctx) {
     const across = (sx, sz) => alongZ ? [sz, sx] : [sx, sz]
     const box = (alongHalf, sy, acrossHalf, t, y, off, tint, yw = 0, roll = 0) => { const [x, z] = at(t, off), [ex, ez] = across(alongHalf, acrossHalf); near('body', ex, sy, ez, x, y, z, yw, roll, tint) }
     if (poles) for (let n = Math.floor((lo - F.poleAt) / F.lampStep); n <= Math.floor((hi - F.poleAt) / F.lampStep); n++) {
+      yield
       const t = n * F.lampStep + F.poleAt, po = F.poleOff, [px, pz] = at(t, poleSide * po)
       if (!here(t) || H(0x5b02, key(n), dir) % 100 >= 94 || !clear(px, pz, 1) || !offDrives(t, 0.4, poleSide, po) || !offTrunk(px, pz, 0.4)) continue
       box(0.12, 4.3, 0.12, t, 4.3, poleSide * po, F.wood)
@@ -6081,6 +6103,7 @@ function faustSubStreetside(seed, i, j, ctx) {
         box(q / Math.cos(ang), 0.015, 0.015, tm, 7.9 - sag / 2, poleSide * po + w, F.wire, yaw, sgn * ang)
     }
     for (let n = Math.floor((lo - F.lampAt) / F.lampStep); n <= Math.floor((hi - F.lampAt) / F.lampStep); n++) {
+      yield
       const t = n * F.lampStep + F.lampAt, side = poles ? -poleSide : n & 1 ? 1 : -1, [px, pz] = at(t, side * F.off)
       if (!here(t) || H(0x5b03, key(n), dir) % 100 < 6 || !clear(px, pz, 1) || !offDrives(t, 0.4, side) || !offTrunk(px, pz, 0.4)) continue
       const [hx, hz] = at(t, side * (F.off - 1.5))
@@ -6091,6 +6114,7 @@ function faustSubStreetside(seed, i, j, ctx) {
       solid(px, 3.2, pz, 0.09, 3.2, 0.09); post(px, pz, 0.09, 0.09)
     }
     for (let n = Math.floor((lo - F.hydrantAt) / F.hydrantStep); n <= Math.floor((hi - F.hydrantAt) / F.hydrantStep); n++) {
+      yield
       const t = n * F.hydrantStep + F.hydrantAt, h = H(0x5b04, key(n), dir), side = h >>> 12 & 1 ? 1 : -1, [px, pz] = at(t, side * (F.off + 0.2))
       if (!here(t) || h % 100 >= 60 || !clear(px, pz, 1) || !offDrives(t, 0.5, side) || !noTree(px, pz, 0.5)) continue
       const tint = F.hydrant[(h >>> 4) % 3], o = side * (F.off + 0.2)
@@ -6098,6 +6122,7 @@ function faustSubStreetside(seed, i, j, ctx) {
       solid(px, 0.45, pz, 0.2, 0.45, 0.2); post(px, pz, 0.2, 0.2)
     }
     for (let n = Math.floor((lo - F.shelterAt) / F.shelterStep); n <= Math.floor((hi - F.shelterAt) / F.shelterStep); n++) {
+      yield
       const t = n * F.shelterStep + F.shelterAt, h = H(0x5b05, key(n), dir), side = h >>> 12 & 1 ? 1 : -1, mid = 6.925, [px, pz] = at(t, side * mid)
       if (!here(t) || h % 100 >= 20 || !clear(px, pz, 2) || !offDrives(t, 2.4, side, mid, 0.6) || !noTree(px, pz, 2.4)) continue
       if (fences.some(q => Math.abs(q[1] - (c + side * 7.4)) < 1.2 && q[2] > t - 2.6 && q[0] < t + 2.6)) continue
@@ -6111,6 +6136,7 @@ function faustSubStreetside(seed, i, j, ctx) {
         const [sx, sz] = at(t + 2.1, side * 6.6); solid(sx, 1.2, sz, 0.06, 1.2, 0.06); post(sx, sz, 0.06, 0.06) }
     }
     if (!alongZ) for (const l of ctx.lots) {
+      yield
       if (Math.abs(l.front - c) > 5.5) continue
       const sg = Math.sign(c - l.front), h = H(0x5b06, Math.round(l.x0), Math.round(c)), zm = l.front - sg * 1.7, zb = l.front - sg * 1.78, own = [l.drive, l.path].filter(Boolean)
       const spots = [l.x0 + 2.0, l.x1 - 2.0].filter(x => !own.some(r => x + 0.5 > r[0] - 0.6 && x - 0.5 < r[2] + 0.6))
@@ -6123,6 +6149,7 @@ function faustSubStreetside(seed, i, j, ctx) {
           solid(bx, 0.6, zb, 0.3, 0.6, 0.25); post(bx, zb, 0.3, 0.25) } }
     }
     for (let n = Math.floor(lo / F.carStep); n <= Math.floor(hi / F.carStep); n++) {
+      yield
       const t = (n + 0.5) * F.carStep, h = H(0x5b07, key(n), dir), side = h >>> 12 & 1 ? 1 : -1, [px, pz] = at(t, side * F.carOff)
       if (!here(t) || h % 100 >= 11 || !clear(px, pz, 2.6) || !offDrives(t, 3.2, side, F.carOff, 1.1) || Math.abs(((t % P) + P) % P - P / 2) > P / 2 - 12) continue
       const tint = F.car[h >>> 16 & 7], o = side * F.carOff
@@ -6134,7 +6161,8 @@ function faustSubStreetside(seed, i, j, ctx) {
   }
   return out
 }
-function faustRingCell(seed, S, plan, i, j) {
+function faustRingCell(seed, S, plan, i, j) { return drain(faustRingCellSteps(seed, S, plan, i, j)) }
+function* faustRingCellSteps(seed, S, plan, i, j) {
   const R = FAUST_RINGS, C = R.cell, T = R.tints, band = faustRingBand(seed, S, i, j)
   const out = { band, far: [], body: [], roof: [], flat: [], light: [], solid: [], buildings: [], part: [], near: [], lots: [], pavements: [], fences: [], trees: [] }
   out.close = []; out.mid = []
@@ -6167,6 +6195,7 @@ function faustRingCell(seed, S, plan, i, j) {
     const B = R.block, d = Math.max(0, Math.min(1, 1 - (Math.max(Math.abs(x0 + C / 2), Math.abs(z0 + C / 2)) - A) / (R.urban - A)))
     flat(x0, z0, x1, z1, 0.03, T.street)
     for (let bi = Math.floor(x0 / B); bi < x1 / B; bi++) for (let bj = Math.floor(z0 / B); bj < z1 / B; bj++) {
+      yield
       const cx = (bi + 0.5) * B, cz = (bj + 0.5) * B, e = B / 2 - R.street, h = H(0xb10c, bi, bj)
       if (inCity(cx, cz, e) || !faustRingClear(segs, cx, cz, e, e)) continue
       flat(cx - e, cz - e, cx + e, cz + e, 0.1, T.walk)
@@ -6208,9 +6237,11 @@ function faustRingCell(seed, S, plan, i, j) {
       }
     }
     for (let bi = Math.floor(x0 / P); bi < x1 / P; bi++) for (let bj = Math.floor(z0 / P); bj < z1 / P; bj++) {
+      yield
       const cx = (bi + 0.5) * P, cz = (bj + 0.5) * P, e = P / 2 - U.street
       if (cx < x0 || cx >= x1 || cz < z0 || cz >= z1) continue
       for (const sg of [-1, 1]) for (let n = 0; n * U.front < 2 * e - U.front / 2; n++) {
+        yield
         const hh = H(0x5b0b, bi * 64 + n * 2 + (sg > 0), bj)
         if (faustFrac(hh) < thin) continue
         const hk = H(0x5b0d, bi * 64 + n * 2 + (sg > 0), bj), kit = hk % 10 < 4 ? 'classic' : hk % 10 < 7 ? 'bungalow' : hk % 10 < 9 ? 'frame' : 'duplex'
@@ -6321,7 +6352,7 @@ function faustRingCell(seed, S, plan, i, j) {
       }
     }
     if (typeof faustSubStreetside === 'function') {
-      const add = faustSubStreetside(seed, i, j, { streets, pavements: out.pavements, lots: out.lots, segs })
+      const add = yield* faustSubStreetsideSteps(seed, i, j, { streets, pavements: out.pavements, lots: out.lots, segs })
       if (add) { out.part.push(...(add.part || [])); out.near.push(...(add.near || [])); out.solid.push(...(add.solid || [])); out.light.push(...(add.light || [])); out.parked = add.parked || []; out.posts = add.posts || [] }
     }
     return out
@@ -6340,6 +6371,7 @@ function faustRingCell(seed, S, plan, i, j) {
     flat(px - w, pz - w * 0.8, px + w, pz + w * 0.8, 0.06 + k * 0.005, T.dirt) }
   const want = Sh.count[0] + h0 % (Sh.count[1] - Sh.count[0]), placed = []
   for (let k = 0; k < want * 4 && placed.length < want; k++) {
+    yield
     const hh = H(0x5a4b, i * 4096 + k, j), hq = H(0x5a4d, i * 4096 + k, j)
     const x = ox + (faustFrac(hh) * 2 - 1) * rad, z = oz + (faustFrac(hq) * 2 - 1) * rad
     if ((x - ox) * (x - ox) + (z - oz) * (z - oz) > rad * rad) continue
@@ -6373,11 +6405,14 @@ function faustRingCell(seed, S, plan, i, j) {
   }
   return out
 }
-function faustRingPlan(F, plan, i, j) {
+function faustRingPlan(F, plan, i, j) { return drain(faustRingPlanSteps(F, plan, i, j)) }
+function* faustRingPlanSteps(F, plan, i, j) {
   const M = F.ringPlans ||= new Map(), k = i + ' ' + j
   let c = M.get(k)
   if (c) { M.delete(k); M.set(k, c); return c }
-  c = faustRingCell(F.seed, F.S, plan, i, j); M.set(k, c)
+  c = yield* faustRingCellSteps(F.seed, F.S, plan, i, j)
+  if (M.has(k)) return M.get(k)
+  M.set(k, c)
   if (M.size > 1600) M.delete(M.keys().next().value)
   return c
 }
@@ -6492,6 +6527,7 @@ function faustRingsFrame() {
   const R = FAUST_RINGS, C = R.cell, p = camera.position, reach = viewEnd() + 300
   const stamp = Math.floor(p.x / R.step) + ' ' + Math.floor(p.z / R.step) + ' ' + Math.round(reach / 100)
   if (F.ringStamp === stamp) return
+  background.cancel('rings')
   F.ringStamp = stamp
   const cx = p.x, cz = p.z
   background.run('rings', function* () {
@@ -6517,7 +6553,7 @@ function faustRingsFrame() {
       col.setHex(tint); P.c[P.n * 3] = col.r; P.c[P.n * 3 + 1] = col.g; P.c[P.n * 3 + 2] = col.b; P.n++
     }
     for (let n = 0; n < cells.length; n++) {
-      const c = faustRingPlan(F, plan, cells[n][1], cells[n][2])
+      const c = yield* faustRingPlanSteps(F, plan, cells[n][1], cells[n][2])
       const um = new Map(); for (const q of c.buildings) if (q.kind === 'urban') um.set(q.box, q.id)
       for (const [b, tint] of c.far) { const id = um.get(b); if (id !== undefined && pools.far.n < caps.far) idx.set(id + '/far', pools.far.n); put('far', 2 * b.ex, 2 * b.ey, 2 * b.ez, b.cx, b.cy, b.cz, tint) }
       const bm = new Map(); for (const q of c.buildings) if (q.kind === 'house') bm.set(q.box, q.id)
@@ -6599,7 +6635,7 @@ function faustRingsTick(points) {
     const cell = { chunks: [] }
     Rg.cells.set(k, cell)
     background.run('ring:' + k, function* () {
-      const c = faustRingPlan(F, plan, i, j)
+      const c = yield* faustRingPlanSteps(F, plan, i, j)
       yield
       for (let n = 0; n < c.solid.length; n += 160) { cell.chunks.push(addChunk(c.solid.slice(n, n + 160), 'ring boxes ' + k + ' ' + n, [], null, false)); yield }
     }, { priority: 2, valid: () => faustState === F && F.rings === Rg && Rg.cells.get(k) === cell && world === w }).catch(e => frameFailed('rings', e))
@@ -7356,10 +7392,12 @@ function faustReset() {
   faustSewReset()
   faustRingInReset()
   faustDisposeSky()
+  for (const g of Object.values(faustState?.ringShapes || {})) g.dispose()
   inReset()
   faustState = { seed: LV.grow.seed, S: LV.grow.S, chunks: new Map(), skyline: null, materials: null,
     stats: { plans: 0, dropped: 0, maxPlanMs: 0, maxPhysicsMs: 0, maxVisualMs: 0, maxStreamMs: 0, maxTickMs: 0, maxFrameMs: 0 },
-    last: '', revision: 0 }
+    last: '', revision: 0, ringStamp: '' }
+  dsReset(); slReset()
 }
 function faustGet(ci, cj) {
   const F = faustState, key = faustKey(ci, cj)
@@ -9297,6 +9335,8 @@ function* faustVisualSteps(c) {
   }
   c.street = faustStreetDraw(ornament, P)
   const root = new THREE.Group()
+  let placed = false
+  try {
   for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
     const mesh = new THREE.Mesh(data.geometry(), mat); mesh.castShadow = data === facade; mesh.receiveShadow = true; root.add(mesh)
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }
@@ -9311,9 +9351,10 @@ function* faustVisualSteps(c) {
   { const bytes = geometryBytes(root); while (!background.uploadSlot(bytes)) yield 'frame' }
   background.gpu('cell')
   if (teles.length) { root.userData.screens = teles; root.add(screenMeshes(teles)) }
-  root.userData.cell = [c.ci, c.cj]; c.visual = root; worldGroup.add(root); still(root)
+  root.userData.cell = [c.ci, c.cj]; c.visual = root; worldGroup.add(root); placed = true; still(root)
   faustSkyCell(c, false)
   craterRegrow({ a0: X, a1: X + 96, b0: Z, b1: Z + 96 })
+  } finally { if (!placed) root.traverse(n => n.geometry?.dispose()) }
 }
 function faustRing(g, b, tint, t, door, inside = false, backs = null) {
   const x0 = b.cx - b.ex, x1 = b.cx + b.ex, z0 = b.cz - b.ez, z1 = b.cz + b.ez, k = inside ? 0 : 1
@@ -9375,7 +9416,7 @@ function* faustSkylineSteps() {
   sky.name = 'far-buildings'; sky.userData.cells = []; F.farDraws = []
   const col = new THREE.Color(), point = new THREE.Vector3(), T = FAUST_FAR_TILE
   for (let x = 0; x < F.S; x++) for (let z = 0; z < F.S; z++) {
-    if ((x * F.S + z) % 8 === 0) yield
+    yield
     const plan = faustPlan(F.seed, x, z, F.S), key = (x / T | 0) + ' ' + (z / T | 0)
     let mesh = tiles.get(key)
     if (!mesh) {
@@ -9578,7 +9619,11 @@ function faustHeadLoad() {
       lod.addLevel(mesh, distance)
     })
     lod.position.fromArray(M.position); lod.rotation.x = M.pitch; lod.updateMatrixWorld(true)
-    await background.run('head', function* () { inkPrepare(lod); yield* uploadTextures(lod); yield* warmSceneSteps(activeLook || 'plain', [lod]); faustHeadModel = lod; faustHeadInstall() }, { gpu: true })
+    await background.run('head', function* () {
+      while (!faustState?.skyScene) yield 'frame'
+      inkPrepare(lod); yield* uploadTextures(lod); yield* warmSceneSteps(activeLook || 'plain', [lod])
+      faustHeadModel = lod; faustHeadInstall()
+    }, { gpu: true, valid: () => !faustHeadModel || faustHeadModel === lod })
   }).catch(e => console.warn('Faust head: keeping the placeholder,', e?.message || e))
 }
 function faustHeadInstall() {
@@ -9739,7 +9784,7 @@ function* faustFarLightsSteps() {
   material.customProgramCacheKey = () => 'faust-road-light-1'
   const mm = x => Math.round(x * 1000) / 1000
   for (let ci = 0; ci < F.S; ci++) for (let cj = 0; cj < F.S; cj++) {
-    if ((ci * F.S + cj) % 8 === 0) yield
+    yield
     const plan = faustPlan(F.seed, ci, cj, F.S), key = (ci / T | 0) + ' ' + (cj / T | 0)
     let tile = tiles.get(key)
     if (!tile) tiles.set(key, tile = { lights: faustBatch(T * T * 48), warnings: [] })
@@ -9787,8 +9832,9 @@ function* faustFieldsSteps(cx, cz, seed) {
     const [q, tint] = pieces[k], e = Math.min(E, (q.a1 - q.a0) / 2, (q.b1 - q.b0) / 2)
     quad(q.a0 + e, q.b0 + e, q.a1, q.b1, tint)
     quad(q.a0, q.b0, q.a0 + e, q.b1, hedgeTint); quad(q.a0 + e, q.b0, q.a1, q.b0 + e, hedgeTint)
-    if (k % 256 === 255) yield
+    if (k % 64 === 63) yield
   }
+  yield
   return batch.geometry()
 }
 function faustFieldsFrame() {
@@ -9798,16 +9844,20 @@ function faustFieldsFrame() {
   if (f.at === cx + ' ' + cz) return
   f.job = background.run('faust fields', function* () {
     const g = yield* faustFieldsSteps(cx, cz, F.seed)
+    let placed = false
+    try {
     yield
     { const bytes = geometryBytes({ traverse: fn => fn({ geometry: g }) }); for (let t = 0; t < 30 && !background.uploadSlot(bytes); t++) yield 'frame' }
-    f.mesh.geometry.dispose(); f.mesh.geometry = g; f.at = cx + ' ' + cz
+    f.mesh.geometry.dispose(); f.mesh.geometry = g; f.at = cx + ' ' + cz; placed = true
     yield 'frame'
+    } finally { if (!placed) g.dispose() }
   }, { valid: () => faustState === F && F.fields === f }).catch(e => frameFailed('fields', e)).finally(() => { f.job = null })
 }
-function faustOutskirts() {
+function faustOutskirts() { return drain(faustOutskirtsSteps()) }
+function* faustOutskirtsSteps() {
   const W = FAUST.world, F = faustState
-  const first = faustFieldsSteps(0, 144, F.seed); let r; do r = first.next(); while (!r.done)
-  const fields = new THREE.Mesh(r.value, F.materials.stone); fields.position.y = -0.02; fields.receiveShadow = true; worldGroup.add(fields)
+  const geometry = yield* faustFieldsSteps(0, 144, F.seed)
+  const fields = new THREE.Mesh(geometry, F.materials.stone); fields.position.y = -0.02; fields.receiveShadow = true; worldGroup.add(fields)
   F.fields = { mesh: fields, at: '0 144', job: null }
   F.roadLooks = new Map(); F.roadStamp = ''; faustRoadsMapLayer(); F.ringStamp = ''; F.ringMeshes = []; faustRingsMapLayer(); F.chanLooks = new Map(); F.chanStamp = ''; faustChanMapLayer(); F.waterLooks = new Map(); F.waterStamp = ''; faustWaterMapLayer()
   const H = 36, pylons = Math.ceil((2 * W - 200) / 400), wall = faustBatch(4 * 36 * (2 + 2 * pylons))
@@ -9835,12 +9885,16 @@ function* faustBuildWorldSteps() {
   const ground = new THREE.Mesh(cuts.length ? faustGroundCut(ARENA, cuts) : new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), new THREE.MeshStandardMaterial({ color: 0x303741, roughness: 1 }))
   if (!cuts.length) ground.rotation.x = -Math.PI / 2
   ground.position.y = -0.025; ground.receiveShadow = true; worldGroup.add(ground)
-  faustOutskirts()
+  yield
+  yield* faustOutskirtsSteps()
+  yield
   for (const c of faustState.chunks.values()) c.visual = null
   const me = isHost ? players.get(0) : predicted, p = me ? [me.x, me.z] : [0, 144]
   for (const key of faustRange([p], 1)) { yield* faustVisualSteps(faustGet(...key.split(' ').map(Number))); yield }
   still(worldGroup)
+  yield
   airViewBuild()
+  yield
   railBuild()
 }
 const FAUSTLAND_API = { interior: faustInterior, storey: faustStorey, plan: faustPlan, roadRoute: faustNav, budget: FAUST,
@@ -9872,6 +9926,11 @@ const faustIn = { open: new Map(), drawn: new Map(), plans: new Map(), ramps: []
 function inReset() {
   for (const O of [...faustIn.open.values()]) inClose(O, true)
   for (const D of [...faustIn.drawn.values()]) inUndraw(D)
+  for (const g of [...faustIn.root?.children || []]) if (![faustIn.doors, faustIn.plugs, faustIn.ground].includes(g)) { g.removeFromParent(); g.traverse(n => { n.geometry?.dispose(); if (n.isInstancedMesh) n.dispose() }) }
+  if (faustIn.doors) faustIn.doors.count = 0
+  if (faustIn.plugs) faustIn.plugs.count = 0
+  if (faustIn.ground) { faustIn.ground.visible = false; faustIn.ground.scale.set(4 * ARENA, 4 * ARENA, 1) }
+  faustIn.frame = -1; faustIn.lampKey = null
   faustIn.plans.clear(); faustIn.ramps = []; faustIn.queue = []; faustIn.rays.clear(); faustIn.broken.clear(); faustIn.brokenWins.clear(); faustIn.mode = 0; faustIn.camera = null; faustIn.job = null; faustIn.doorsDirty = true
 }
 function inBuilding(id) {
@@ -11313,11 +11372,11 @@ function faustParseSeed(value, fresh = false) {
 }
 function faustSetSeed(value) {
   const seed = faustParseSeed(value, true)
-  if (phase !== 'menu' && !isHost) return false
+  if (phase !== 'menu' && (!isHost || startingGame)) return false
   faustRequestedSeed = seed
   if (el('#host-seed')) el('#host-seed').value = String(seed)
-  if (isHost && phase !== 'menu') setLevel(levelId, { seed })
-  else landingSeedChanged()
+  if (isHost && phase !== 'menu') return setLevel(levelId, { seed }).then(ok => ok ? seed : false)
+  landingSeedChanged()
   return seed
 }
 function faustSeedReadout() {
@@ -11562,7 +11621,7 @@ const background = (() => {
   function slice(deadline) {
     const rush = typeof startingGame !== 'undefined' && startingGame
     const hidden = typeof document !== 'undefined' && document.hidden, slow = (frameLog.at(-1)?.ms || 0) >= 40 && [...jobs.keys()].some(k => k.startsWith('rig:') || k === 'street-kit')
-    const start = realNow(), cap = rush ? 30 : hidden ? 50 : slow ? 10 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
+    const start = realNow(), cap = hostLoading ? 4 : rush ? 30 : hidden ? 50 : slow ? 10 : Math.min(4, Math.max(1, deadline?.timeRemaining() || 4)), deferred = new Set()
     let steps = 0
     const soft = paceOff()
     if (!rush && !soft && (gpuLast.links || gpuLast.upKB > UPLOAD_KB)) { stats.rests = (stats.rests || 0) + 1; gpuLast = gpuNone; return }
@@ -14277,9 +14336,17 @@ function initPhysics(Ammo) {
 }
 
 let statics = [], awaySig = ''
-function loadStatics() {
-  for (const c of [...statics]) dropChunk(c)
-  if (LV.faust) { faustReset(); addChunk(BOXES.slice(), ['base']); faustSolids(); airInstall(); railInstall(); return }
+function loadStatics() { return drain(loadStaticsSteps()) }
+function* loadStaticsSteps() {
+  for (const c of [...statics]) { dropChunk(c); yield }
+  if (LV.faust) {
+    faustReset(); yield
+    addChunk(BOXES.slice(), ['base']); faustSolids(); yield
+    yield* airLinesSteps(LV.grow.seed, LV.grow.S)
+    airInstall(); yield
+    railInstall(); yield
+    return
+  }
   awaySig = ''; airInstall(); railInstall()
   const cells = new Map()
   for (const b of BOXES) { const k = Math.floor((b.cx + ARENA) / 96) + ' ' + Math.floor((b.cz + ARENA) / 96)
@@ -14447,17 +14514,20 @@ const levelSeed = () => ({ ...levelGen && { ls: [levelGen.seed, levelGen.size], 
 const levelWire = () => (levelGen || craters.length || lsLeft) && (lsLeft > 0 ? lsLeft-- : now() - lsAt > 2000) ? (lsAt = now(), levelSeed()) : craterV ? { cv: craterV } : {}
 function loadLevel(id, gen) { background.cancel('world'); worldPreparing = false; background.cancel('guest-level'); landingReady = ''; return drain(loadLevelSteps(id, gen)) }
 function* loadLevelSteps(id, gen) {
+  for (const key of background.pending) if (/^(look$|warm-rest:|faust solids$|faust fields$|faust-globe\/|roads plan$|rings$|city drops$|traffic highway graph$|map plan$|outskirts drop |(?:road|roadlook|chanlook|waterlook|ring|ringin|ringin-d|city|sewer):)/.test(key)) background.cancel(key)
+  lookPending = null; lookPreparedKey = ''; warmedPrograms.clear()
+  clearTimeout(dsPersist.timer); dsPersist = { ...dsPersist, key: '', timer: 0 }
   levelId = clamp(id | 0, 0, LEVELS.length - 1)
   const L = LEVELS[levelId], g = L.gen && { ...L.gen, ...['city', 'faustland'].includes(L.gen.kind) && CITY_SIZES[settings.city] && { size: CITY_SIZES[settings.city] }, ...gen }
   levelGen = g && { seed: g.seed >>> 0, size: clamp(g.size | 0, 1, 32) }
   background.mark('level compile')
-  LV = compileLevel(g ? { ...L, gen: { ...g, ...levelGen } } : L); ARENA = LV.A; WORLD = LV.W || LV.A; lsLeft = 8
+  LV = g?.kind === 'faustland' ? yield* faustLevelSteps({ ...g, ...levelGen }, L.theme) : compileLevel(g ? { ...L, gen: { ...g, ...levelGen } } : L); ARENA = LV.A; WORLD = LV.W || LV.A; lsLeft = 8
   LV.hash = LV.boxes.reduce((h, b) => [b.cx, b.cy, b.cz, b.ex, b.ey, b.ez].reduce((h, v) => Math.imul(h ^ Math.round(v * 1000), 16777619), h), (2166136261 ^ (LV.faust ? levelGen.seed : 0))) >>> 0
   BOXES = LV.boxes; SPAWNS = LV.spawns
   JUMPS = jumpsFrom(BOXES)
   craterClear()
   yield
-  background.mark('level statics'); if (world) loadStatics()
+  background.mark('level statics'); if (world) yield* loadStaticsSteps(); else if (LV.faust) faustReset()
   yield
   background.mark('level objects')
   grown = new Set(LV.grow ? LV.grow.ring.map(c => c.join(' ')) : []); parked.clear()
@@ -14626,7 +14696,7 @@ function* spawnObjectsSteps() {
     o.riders[i] = undefined
     if (c?.seat?.[0] === o) c.seat = null
   })
-  objs.forEach(dropObject)
+  for (const o of objs) { dropObject(o); yield }
   objs = []
   for (const sh of carHull.values()) A.destroy(sh)
   carHull.clear()
@@ -16938,12 +17008,13 @@ function endMatch(why) {
   hookMatchEnd(why === 'Time.' ? 'time' : 'frags', best)
 }
 
-function resetMatch() {
+function resetMatch() { return drain(resetMatchSteps()) }
+function* resetMatchSteps(objects = true) {
   hookMatchStart(matchInfo)
   resultsLeft = 0
   matchLeft = timeLimit
-  spawnObjects()
-  for (const c of players.values()) { c.kills = 0; respawn(c) }
+  if (objects) yield* spawnObjectsSteps()
+  for (const c of players.values()) { c.kills = 0; respawn(c); yield }
   for (const p of pickups) p.respawn = 0
   clearTornado()
   announce(TEXT.newRound, 'a')
@@ -17292,7 +17363,7 @@ function jointBoxes(g) {
 
 let builtGeo = new Map()
 const shareGeo = (key, g, cache = builtGeo) => (g.userData.shared = true, cache.set(key, g), g)
-const drain = s => { let r; while (!(r = s.next()).done); return r.value }
+function drain(s) { let r; while (!(r = s.next()).done); return r.value }
 const farGeo = new Map()
 let meshDetail = 0
 function buildGeometry(src, skin, shape, key, skeleton) {
@@ -21415,7 +21486,17 @@ function* rebuildWorldSteps() {
   })
   screenMat = screenRim = null
   worldGroup.clear()
-  for (const g of geometries) g.dispose()
+  const faustTextures = new Set()
+  for (const m of materials) for (const key of ['map', 'emissiveMap']) if (m[key]?.userData.faustOwned) faustTextures.add(m[key])
+  try {
+    for (const g of geometries) { g.dispose(); geometries.delete(g); yield }
+    for (const m of materials) { m.dispose(); materials.delete(m); yield }
+    for (const texture of faustTextures) { texture.dispose(); faustTextures.delete(texture); yield }
+  } finally {
+    for (const g of geometries) g.dispose()
+    for (const m of materials) m.dispose()
+    for (const texture of faustTextures) texture.dispose()
+  }
   const [sky] = LV.theme.fog, s = Math.min(46, ARENA * 0.85)
   scene.background = new THREE.Color(sky)
   scene.fog = new THREE.Fog(sky); applyView()
@@ -21455,9 +21536,7 @@ function* rebuildWorldSteps() {
   worldGroup.traverse(n => { if (n.isMesh && !n.isInstancedMesh) scarSurfaces.push(n) })
   prepareScars()
   screensDraw()
-  const faustTextures = new Set()
-  for (const m of materials) { for (const key of ['map', 'emissiveMap']) if (m[key]?.userData.faustOwned) faustTextures.add(m[key]); m.dispose() }
-  for (const texture of faustTextures) texture.dispose()
+
 }
 function drawBoxes(list, city, clip = []) { return drain(drawSteps(list, city, clip)) }
 function* drawSteps(list, city, clip = []) {
@@ -27282,7 +27361,7 @@ function openHost() {
   if (!cs.children.length) for (const k in CITY_SIZES) {
     const d = cs.appendChild(document.createElement('div'))
     d.className = 'card'; d.textContent = k + ' · ' + (CITY_SIZES[k] * 0.096).toFixed(1) + ' km'
-    d.onclick = () => { settings.city = k; saveSettings(); pickCard(cs, d); setLevel(0, { seed: levelGen.seed }) }
+    d.onclick = () => { if (startingGame) return; settings.city = k; saveSettings(); pickCard(cs, d); setLevel(0, { seed: levelGen.seed }) }
   }
   markCitySize(cs, Object.keys(CITY_SIZES).indexOf(settings.city))
   const ek = settings.event || 'auto'
@@ -28682,10 +28761,29 @@ function closeChat(relock) {
   if (relock !== false && connected) lockPointer()
 }
 
+let hostLoading = null
 function setLevel(i, gen) {
-  loadLevel(i, gen)
-  GAME.match.restart()
-  announce('§e' + LEVELS[levelId].name + '§7 it is.', 'b')
+  if (startingGame) return Promise.resolve(false)
+  background.cancel('world'); worldPreparing = false; landingReady = ''
+  startingGame = true; document.body.classList.add('starting'); loadingText('Building Faustland…')
+  const job = hostLoading = background.run('host-level', function* () {
+    if (isHost && dsPersist.key) { yield dsPersist.saving; yield dsPersistNow() }
+    yield* loadLevelSteps(i, gen)
+    background.mark('match'); hostEvent(); yield* resetMatchSteps(false)
+    background.mark('floors'); yield* floorsSteps()
+    loadingText('Preparing the view…')
+    warmEffects()
+    yield* warmWithin(3000, 'plain')
+    if (activeLook === settings.look) yield* warmWithin(2000, activeLook)
+    else requestLook(settings.look).catch(e => frameFailed('look preparation', e))
+    lsLeft = 8
+    announce('§e' + LEVELS[levelId].name + '§7 it is.', 'b')
+    yield 'frame'
+  }, { priority: 3, valid: () => isHost && phase !== 'menu' })
+  return job.catch(e => { frameFailed('seed switch', e); return false }).finally(() => {
+    if (hostLoading !== job) return
+    hostLoading = null; startingGame = false; document.body.classList.remove('starting')
+  })
 }
 
 const COMMANDS = {
@@ -28707,7 +28805,7 @@ const COMMANDS = {
               const n = String(a || '').trim()
               if (!n) return commandReply('§7City seed §f' + levelGen.seed + ' §7(copy it from Pause or F3)')
               if (!isHost) return commandReply('§cOnly the host picks the seed.')
-              try { faustSetSeed(n === 'random' ? '' : n); commandReply('§7City seed §f' + levelGen.seed) }
+              try { Promise.resolve(faustSetSeed(n === 'random' ? '' : n)).then(seed => { if (seed !== false) commandReply('§7City seed §f' + seed) }) }
               catch (e) { commandReply('§c' + e.message) } } },
   frags:  { args: '<0-200>', help: 'host only, kills to win (0 = no limit)', run: a => {
               if (!isHost) return commandReply('§cOnly the host sets the limits.')
@@ -35809,7 +35907,7 @@ function dsPostsNear(x, z, r) {
 const dsIsPostBox = (b, foot) => b.slim && Math.abs(b.cx - foot[0]) < 1e-6 && Math.abs(b.cz - foot[1]) < 1e-6 && Math.abs(b.cy - 4.5) < 1e-6
 function dsPostBox(P, s) { return s.own ? P.boxes.find(b => dsIsPostBox(b, [s.x + 2.8, s.z])) || null : null }
 function dsStanding(P) {
-  if (!dsState || !dsHasLamps()) return P.boxes
+  if (!dsCheck() || !dsHasLamps()) return P.boxes
   const F = faustState, feet = [], props = []
   for (const r of dsState.chunks.get(P.ci * F.S + P.cj)?.recs.values() || []) {
     if (r.kind === DS_KIND.post && r.p.box) feet.push(r.p.foot)
@@ -38923,13 +39021,17 @@ function airAlong(P, s) {
 }
 const airDock = (m, yaw) => [m.x + Math.sin(yaw) * AIR.nose, m.y - AIR.deck, m.z + Math.cos(yaw) * AIR.nose]
 let airLinesMemo = null
-function airLines(seed, S, planOf = (i, j) => faustPlan(seed, i, j, S)) {
+function airLines(seed, S, planOf) { return drain(airLinesSteps(seed, S, planOf)) }
+function* airLinesSteps(seed, S, planOf = (i, j) => faustPlan(seed, i, j, S)) {
   const key = (seed >>> 0) + ' ' + S
   if (airLinesMemo?.key === key) return airLinesMemo.lines
   const stops = []
-  for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) if (((i - S / 2 + 2) % 4 + 4) % 4 === 0 && ((j - S / 2 + 2) % 4 + 4) % 4 === 0) for (const m of planOf(i, j).masts) {
+  for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) if (((i - S / 2 + 2) % 4 + 4) % 4 === 0 && ((j - S / 2 + 2) % 4 + 4) % 4 === 0) {
+    yield
+    for (const m of planOf(i, j).masts) {
     const [gx, gz] = m.id.split(':').map(Number)
     stops.push({ ...m, a: (gx + 2) / 4, b: (gz + 2) / 4 })
+    }
   }
   const lines = []
   const north = Math.min(...stops.map(s => s.b)), row = stops.filter(s => s.b === north).sort((p, q) => p.a - q.a)
@@ -38965,7 +39067,9 @@ function airLines(seed, S, planOf = (i, j) => faustPlan(seed, i, j, S)) {
       legs.push({ from: p, to: q, via, skip, yawIn: [0, Math.PI / 2, Math.PI, -Math.PI / 2].reduce((a, b) => side(b) < side(a) - 1e-9 ? b : a) })
     }
     let T = 0
-    line.calls = legs.map((leg, i) => {
+    line.calls = []
+    for (const [i, leg] of legs.entries()) {
+      yield
       const before = legs[(i + N - 1) % N], yaw0 = before.yawIn, dock = airDock(leg.from, yaw0)
       const P0 = [dock[0] + Math.sin(yaw0) * AIR.back, dock[1] + AIR.lift, dock[2] + Math.cos(yaw0) * AIR.back]
       const end = airDock(leg.to, leg.yawIn), fx = -Math.sin(leg.yawIn), fz = -Math.cos(leg.yawIn)
@@ -38988,8 +39092,8 @@ function airLines(seed, S, planOf = (i, j) => faustPlan(seed, i, j, S)) {
       const run = airRun(path.at(-1)[3]), turn = Math.max(Math.abs(airWrap(yawOut - yaw0)) / AIR.turn, 1.5 * AIR.lift / AIR.rise)
       const call = { stop: leg.from, next: leg.to, dock, yaw0, P0, yawOut, turnT: turn, path, run, t0: T }
       T += AIR.dwell + AIR.backT + turn + run.T
-      return call
-    })
+      line.calls.push(call)
+    }
     line.T = T
     line.fleet = N < 3 && !line.via ? 1 : Math.max(1, Math.min(AIR.perLine, Math.floor(T / AIR.headway)))
     line.phase = (faustMix(seed, 977 + n, 31) % 100000) / 100000 * T
@@ -39292,7 +39396,12 @@ function airShip(kind, name) {
 }
 function airViewBuild() {
   const F = faustState
-  if (airView) { for (const s of airView.ships) s.root.removeFromParent(); airView.near.removeFromParent(); airView.far.removeFromParent(); airView.field?.removeFromParent() }
+  if (airView) {
+    for (const s of airView.ships) s.root.removeFromParent()
+    airView.near.removeFromParent(); airView.far.removeFromParent()
+    if (airView.field?.parent) airView.field.traverse(n => { n.geometry?.dispose(); n.material?.dispose() })
+    airView.field?.removeFromParent()
+  }
   airView = null
   if (!LV.faust || !worldGroup || renderHeadless || !LV.grow) return
   airKitLoad('zep'); airKitLoad('plane')
