@@ -13504,6 +13504,7 @@ function botThink(b, all, dt) {
   if (plan && !los) along = true
   const want2 = climbing || (along && !los) ? Math.atan2(-dx, -dz) : trueYaw
   const turn = (spec.turn || (3.0 + (0.07 - spec.aimErr) * 30)) * dt
+  ai.yaw0 = ai.yaw
   const dYaw = wrapPi(want2 - ai.yaw)
   ai.yaw += clamp(dYaw, -turn, turn)
   ai.pitch += clamp(truePitch - ai.pitch, -turn, turn)
@@ -13664,9 +13665,9 @@ function windCue(b, gun) {
   const e = eyeOf(b), cm = [r2(b.x), r2(e), r2(b.z), r2(b.x), r2(e), r2(b.z), gun, 0, b.id, 1, 0]
   tracers.push(cm); GAME.audio.fx([cm])
 }
-function roleFace(b, yaw, dt, k = 1) {
-  const ai = b.ai, turn = (b.bot.turn || 6) * k * dt
-  return ai.yaw += clamp(wrapPi(yaw - ai.yaw), -turn, turn)
+function roleFace(b, yaw, dt, k = 1, rate = (b.bot.turn || 6) * k) {
+  const ai = b.ai, from = ai.yaw0 ?? ai.yaw, turn = rate * dt
+  return ai.yaw = from + clamp(wrapPi(yaw - from), -turn, turn)
 }
 function roleThink(b, spec, tgt, dist, los, toYaw, dt) {
   return spec.role === 'rush' ? rushThink(b, spec, tgt, dist, los, toYaw, dt) : spec.role === 'flank' ? flankThink(b, tgt, dist, los, toYaw, dt)
@@ -13678,14 +13679,14 @@ function throwThink(b, tgt, dist, toYaw, dt) {
   const yaw = roleFace(b, toYaw, dt)
   return { f: dist < 8 ? -1 : dist > 11 ? 0.6 : 0, r: ai.strafe * 0.5, fire: false, yaw, sprint: false }
 }
-const GUARD = { turn: 0.45, near: 4.5, stand: 2.1, cue: 2.4, swing: [2.2, 3.4], counter: 0.35, broken: 1.8, front: 0.25, take: 0.1, breaks: ['Haymaker', 'Leap-smash', 'Cinderblock', 'Punt', 'Flung'] }
+const GUARD = { rate: 2, near: 4.5, stand: 2.1, cue: 2.4, swing: [2.2, 3.4], counter: 0.35, broken: 1.8, front: 0.25, take: 0.1, breaks: ['Haymaker', 'Leap-smash', 'Cinderblock', 'Punt', 'Flung'] }
 const GUARD_GUN = gunNamed('Guard'), REEL_GUN = gunNamed('Reel'), HEAVE_GUN = gunNamed('Heave')
 function guardThink(b, spec, tgt, dist, los, toYaw, dt) {
   const ai = b.ai, P = GUARD, g = ai.gd ||= { up: false, cue: 0, broken: 0, counter: 0, swing: P.swing[0] }
   g.up = false
   if (g.broken > 0) { g.broken -= dt; return null }
   if (!los || dist > P.near && !ai.pin) return null
-  const yaw = roleFace(b, toYaw, dt, GUARD.turn), G = GUNS[gunNamed([spec.atk].flat()[0])]
+  const yaw = roleFace(b, toYaw, dt, 1, GUARD.rate), G = GUNS[gunNamed([spec.atk].flat()[0])]
   if (g.counter > 0 && (g.counter -= dt) <= 0) g.swing = 0
   if ((g.swing -= dt) <= 0 && dist < G.range * 0.9 && !(b.cool > 0) && !ai.waitTurn && !ai.passive) {
     g.swing = P.swing[0] + Math.random() * (P.swing[1] - P.swing[0]); g.cue = 0.5
