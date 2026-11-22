@@ -992,7 +992,7 @@ const PARTICLES = {
 const GUN_ROW = { ammo: Infinity, drop: false, pellets: 1, spread: 0 }
 const GUNS = [
   { name:'Fists', rate:0.34, dmg:11, spread:0.20, pellets:2, range: 2.6, knock: 5.0, color:0xe8e2d4,
-    melee:true, held:false, punch:'jab', punchMs:220 },
+    melee:true, held:false, punch:'jab', punchMs:220, lead:0.08 },
   { name:'Pistol', drop:true, scar:'hole',  rate:0.34, dmg:18, spread:0.010, range:60, knock:3.0, color:0xffd479 },
   { name:'Scatter', drop:true, scar:'hole', rate:0.80, dmg: 7, spread:0.075, pellets:8, range:16, knock:1.4, ammo:28,       color:0xff9e64 },
   { name:'Needler', drop:true, scar:'hole', rate:0.09, dmg: 5, spread:0.026, range:45, knock:0.6, ammo:110,      color:0x7ee787 },
@@ -1002,7 +1002,7 @@ const GUNS = [
   { name:'Haymaker', rate:1.30, dmg:45, range: 2.9, knock:24.0, color:0xf2ece0,
     special:true, melee:true, held:false, kind:'arc', hayWind:0.42, punch:'rise', punchMs:760 },
   { name:'Shiv',     rate:0.60, dmg: 8, spread:0.25, pellets:2, range: 2.3, knock: 2.0, color:0xb9b2a0,
-    melee:true, held:false, punch:'jab', punchMs:200 },
+    melee:true, held:false, punch:'jab', punchMs:200, lead:0.08 },
   { name:'Sledge',   rate:1.60, dmg:26, spread:0.45, pellets:3, range: 3.2, knock:14.0, color:0x9a948a, melee:true, punch:'swing', grip:'bat', model:'Sledge',
     offGrip:-0.3, lean:[-1.4, 0.6] },
   { name:'Leap-smash', rate:0.8, dmg:24, range:4.2, knock:14, color:0xe8e2d4,
@@ -17018,13 +17018,36 @@ function blast(c, aimed, P, r, gunId, onKill) {
 }
 const dived = (R, v) => { const s = v ? clamp(v / R.dive.ref, 1, R.dive.cap) : 1; return s > 1 ? { ...R, dmg: R.dmg * s, knock: R.knock * s, range: R.range * Math.sqrt(s) } : R }
 
+const ASSIST_ARC = 0.8
+function assistAim(c, list, G) {
+  const [yaw, pitch] = aimAngles(c)
+  if (!G.lead || c.bot) return [yaw, pitch, false]
+  const [ox, oy, oz] = eyeAt(c), reach = reachOf(c, G)
+  let best = null, score = Infinity
+  for (const v of list) {
+    if (v === c || v.bird || v.dead > 0 || v.prot > 0) continue
+    const dx = v.x - ox, dy = v.y - oy, dz = v.z - oz, d = Math.hypot(dx, dy, dz)
+    if (d - v.r > reach) continue
+    const a = Math.hypot(dx, dz) < v.r + 0.3 ? 0 : Math.abs(wrapPi(Math.atan2(-dx, -dz) - yaw))
+    if (a > ASSIST_ARC || a * 2 + d >= score) continue
+    score = a * 2 + d; best = [Math.atan2(-dx, -dz), Math.asin(clamp(dy / (d || 1), -1, 1)), true]
+  }
+  return best || [yaw, pitch, false]
+}
+function swingMark(c, G, gunId, aimed) {
+  const [ox, oy, oz] = eyeAt(c), [yaw, , on] = assistAim(c, aimed, G), f = [r2(ox), r2(oy), r2(oz), r2(ox), r2(oy), r2(oz), gunId, 0]
+  if (on) { f[3] = r2(ox - Math.sin(yaw)); f[5] = r2(oz - Math.cos(yaw)) }
+  f.swing = true
+  return f
+}
+
 function resolveShot(shooter, targets, onKill, viewT, G, gunId) {
   const aimed = slAim(shooter, viewT === undefined ? targets : rewindTargets(targets, shooter, viewT), viewT, G)
   if (G.kind) return deliver(shooter, G, gunId, aimed, onKill)
   const fx = []
   let hits = 0
   const shots = profPellets(shooter, G.name, G.pellets)
-  const [aimYaw, aimPitch] = aimAngles(shooter)
+  const [aimYaw, aimPitch] = assistAim(shooter, aimed, G)
   for (let i = 0; i < shots; i++) {
     const off = G.melee && shots > 1
       ? ((shots % 2 ? i / (shots - 1) : (i + 0.5) / shots) - 0.5) * 2 * G.spread
@@ -17055,21 +17078,31 @@ function resolveShot(shooter, targets, onKill, viewT, G, gunId) {
   return fx.map(f => [f[0], f[1], f[2], f[3], f[4], f[5], gunId, hits > 0 ? 1 : 0])
 }
 
-function fireHitscan(shooter, targets, onKill, viewT) {
-  if (shooter.dead > 0 || shooter.cool > 0 || shooter.hayT > 0 || shooter.springT > SPRING_TAP || shooter.leap || smashDiving(shooter) || shooter.mantle || shooter.chain?.phase === 1 || holdsFire(shooter)) return []
+function fireHitscan(shooter, targets, onKill, viewT, late) {
+  if (shooter.dead > 0 || !late && shooter.cool > 0 || shooter.hayT > 0 || shooter.springT > SPRING_TAP || shooter.leap || smashDiving(shooter) || shooter.mantle || shooter.chain?.phase === 1 || holdsFire(shooter)) return []
   const G = GUNS[shooter.gun]
   const gunId = shooter.gun
-  if (shooter.ammo <= 0) { shooter.gun = 0; shooter.ammo = Infinity; return [] }
-  if (G.windup && (shooter.charge || 0) < G.windup || G.gate && !(stat(shooter, G.gate) > 0)) return []
-  shooter.charge = 0
-  shooter.cool = stat(shooter, 'rate', (G.rate + (G.burst > 1 ? (G.burst - 1) * G.burstGap : 0)) *
-                 profRate(shooter, G.name) * (shooter.water ? SWIM.slow : 1))
-  if (shooter.ammo !== Infinity) shooter.ammo--
-  if (G.burst > 1) { shooter.burstLeft = G.burst - 1; shooter.burstT = G.burstGap }
+  if (!late && shooter.ammo <= 0) { shooter.gun = 0; shooter.ammo = Infinity; return [] }
+  if (!late && (G.windup && (shooter.charge || 0) < G.windup || G.gate && !(stat(shooter, G.gate) > 0))) return []
+  if (!late) {
+    shooter.charge = 0
+    shooter.cool = stat(shooter, 'rate', (G.rate + (G.burst > 1 ? (G.burst - 1) * G.burstGap : 0)) *
+                   profRate(shooter, G.name) * (shooter.water ? SWIM.slow : 1))
+    if (shooter.ammo !== Infinity) shooter.ammo--
+    if (G.burst > 1) { shooter.burstLeft = G.burst - 1; shooter.burstT = G.burstGap }
+    if (G.lead && !shooter.bot) {
+      shooter.lead = { t: G.lead, gun: gunId, viewT }
+      carVolleyLow = false
+      const m = swingMark(shooter, G, gunId, viewT === undefined ? targets : rewindTargets(targets, shooter, viewT))
+      if (carHayLow(shooter, m)) m.low = true
+      return [m]
+    }
+  }
 
   carVolleyLow = false
   const fx = resolveShot(shooter, targets, onKill, viewT, G, gunId)
   if (carVolleyLow) for (const f of fx) f.low = true
+  if (late) for (const f of fx) f.late = true
   if (shooter.ammo <= 0) {
     shooter.bag &= ~(1 << gunId)
     if (shooter.mag) delete shooter.mag[gunId]
@@ -17196,7 +17229,7 @@ function deliver(c, P, gunId, aimed, onKill) {
     for (const v of aimed) {
       if (shut(v)) continue
       const bx = v.x - c.x, by = v.y - c.y, bz = v.z - c.z, n = Math.hypot(bx, by, bz) || 1
-      if (n > pRange || Math.abs(by) > c.h + c.r + v.r || (bx * dx + bz * dz) / (Math.hypot(bx, bz) || 1) < 0.35) continue
+      if (n > pRange || Math.abs(by) > c.h + c.r + v.r || (bx * dx + bz * dz) / ((Math.hypot(bx, bz) || 1) * (Math.hypot(dx, dz) || 1)) < 0.35) continue
       if (wallAt(ox, oy, oz, bx / n, by / n, bz / n, n) < n - v.r) continue
       down(v, bx / n, 0.35, bz / n); hits++
     }
@@ -25215,8 +25248,14 @@ function addTracers(list, t) {
     a.fightAt = f.firedAt ?? t
     if (f[9] === 1) {
       if (G && (G.charge === 'palms' || G.hayWind || G.wind)) { a.chargeAt = f.firedAt ?? t; a.chargeGun = f[6]; a.strikeLow = f[10] === 1 }
+      else if (G?.lead) {
+        a.shotAt = f.firedAt ?? t; a.shotGun = f[6]; a.strikeLow = f[10] === 1
+        const dx = f[3] - f[0], dz = f[5] - f[2]
+        a.assistYaw = Math.hypot(dx, dz) > 0.01 ? Math.atan2(-dx, -dz) : undefined; a.assistAt = a.shotAt
+      }
       continue
     }
+    if (f[11] === 1) continue
     a.shotAt = f.firedAt ?? t; a.shotGun = f[6]
     if (G?.melee) a.strikeLow = f[10] === 1
     const length = Math.hypot(f[3] - f[0], f[4] - f[1], f[5] - f[2])
@@ -26387,7 +26426,7 @@ function drawTracers(t, me, others, viewId) {
     const x = palms ? palms.x : f[0], y = palms ? palms.y : f[1], z = palms ? palms.z : f[2]
 
     if (f[9] === 1) {
-      if (G?.hayWind) continue
+      if (G?.hayWind || G?.lead) continue
       fxGlow(x, y, z, 4 * (0.06 + 0.26 * age), hex, 0.35 + 0.5 * age)
       continue
     }
@@ -28006,12 +28045,13 @@ function sfxFx(list, only) {
         const at = mine ? null : sfxSpot, cat = mine ? 'mine' : 'gun'
         if (f[9] === 1) {
           if (G.windup > 0 && sfxPlay(G.name + ' charge', at, mine ? 'mine' : 'world', 1, 0, G.windup)) started++
+          if (G.lead && sfxPlay(G.name, at, cat, mine ? 0.8 : 1)) started++
         } else {
           const one = G.pellets === 1 && !G.melee && !G.kind
           const shots = one ? Math.min(j - i, 3) : 1
           const gap = G.burst > 1 ? G.burstGap : G.rate
           for (let n = 0; n < shots; n++)
-            if (sfxPlay(G.name, at, cat, mine ? 0.8 : 1, n * gap)) started++
+            if (!(G.lead && f[11] === 1) && sfxPlay(G.name, at, cat, mine ? 0.8 : 1, n * gap)) started++
           if (!G.melee && sfxPlay(G.name + ' rack', at, cat, mine ? 0.8 : 1, Math.min(0.45, G.rate * 0.6))) started++
           if (G.melee) for (let n = i; n < j; n++) if (marksHit(list[n])) {
             const h = list[n]
@@ -31450,7 +31490,7 @@ const HOST_PHASES = {
     announce(gameText('kill', { killer: kn, victim: vn, weapon: G.name }), 'b')
   }
   const emit = (id, fx) => {
-    for (const f of fx) { f.push(id); if (f.low) f.push(0, 1); tracers.push(f) }
+    for (const f of fx) { f.push(id); if (f.swing) f.push(1, f.low ? 1 : 0); else if (f.low || f.late) f.push(0, f.low ? 1 : 0, f.late ? 1 : 0); tracers.push(f) }
     GAME.audio.fx(fx)
     if (id === 0 && fx.some(marksHit)) sawHit()
   }
@@ -31466,6 +31506,15 @@ const HOST_PHASES = {
     for (let i = 0; i < all.length; i++)
       if (all[i].id !== id && all[i].hp < hp[i]) hotUntil.set(pairKey(id, all[i].id), until)
     return fx
+  }
+  for (const [id, c] of players) {
+    const L = c.lead
+    if (!L) continue
+    if (c.dead > 0 || c.gun !== L.gun || seatOf(c) && !seatShot(c, GUNS[c.gun])) { c.lead = null; continue }
+    if ((L.t -= dt) > 0) continue
+    c.lead = null
+    const viewT = L.viewT === undefined ? undefined : L.viewT + GUNS[L.gun].lead * 1000
+    emit(id, volley(id, () => seatedShot(c, viewT, () => fireHitscan(c, all, credit(id, c), viewT, true))))
   }
   for (const [id, c] of players) {
     const inp = cur.get(id) || IDLE_INPUT
@@ -42157,7 +42206,7 @@ function faceYaw(id, c, anim, own, t, dt, firing, ticks) {
     const attack = a.chainState?.[0] === 1 || (s === c ? firing : s.fire) || at - a.shotAt < Math.max(FACE_MS, G?.punchMs ?? G?.rate * 1000) || at - a.chargeAt < (C?.windup ?? 0) * 1000
     const flyWant = an === 5 && Math.hypot(s.vx, s.vz) > FLY_V * 0.6 ? Math.atan2(-s.vx, -s.vz) : null
     const rv = an === 1 ? carrierRelV(s) : null
-    const want = tied ? Math.atan2(s.x - a.chainState[4], s.z - a.chainState[6]) : attack ? s.yaw : mine && flyWant === null ? s.yaw : flyWant ?? (an === 0 ? s.yaw : an === 1 && Math.hypot(rv[0], rv[1]) > 0.8 ? Math.atan2(-rv[0], -rv[1]) : y), k = (ticks ? TICK : dt) * FACE_RATE * (mine ? 4 : attack ? 2 : 1)
+    const want = tied ? Math.atan2(s.x - a.chainState[4], s.z - a.chainState[6]) : attack ? (a.assistYaw !== undefined && at - a.assistAt < 260 ? a.assistYaw : s.yaw) : mine && flyWant === null ? s.yaw : flyWant ?? (an === 0 ? s.yaw : an === 1 && Math.hypot(rv[0], rv[1]) > 0.8 ? Math.atan2(-rv[0], -rv[1]) : y), k = (ticks ? TICK : dt) * FACE_RATE * (mine ? 4 : attack ? 2 : 1)
     const err = Math.atan2(Math.sin(want - y), Math.cos(want - y))
     const kk = attack && !mine ? (ticks ? TICK : dt) * FACE_RATE * FACE_TURN.attack * Math.max(FACE_TURN.floor, Math.min(1, Math.abs(err) / FACE_TURN.ease)) : k
     a.face = y + clamp(err, -kk, kk)
