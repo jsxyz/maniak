@@ -13678,14 +13678,14 @@ function throwThink(b, tgt, dist, toYaw, dt) {
   const yaw = roleFace(b, toYaw, dt)
   return { f: dist < 8 ? -1 : dist > 11 ? 0.6 : 0, r: ai.strafe * 0.5, fire: false, yaw, sprint: false }
 }
-const GUARD = { near: 4.5, stand: 2.1, cue: 2.4, swing: [2.2, 3.4], counter: 0.35, broken: 1.8, front: 0.25, take: 0.1, breaks: ['Haymaker', 'Leap-smash', 'Cinderblock', 'Punt', 'Flung'] }
+const GUARD = { turn: 0.45, near: 4.5, stand: 2.1, cue: 2.4, swing: [2.2, 3.4], counter: 0.35, broken: 1.8, front: 0.25, take: 0.1, breaks: ['Haymaker', 'Leap-smash', 'Cinderblock', 'Punt', 'Flung'] }
 const GUARD_GUN = gunNamed('Guard'), REEL_GUN = gunNamed('Reel'), HEAVE_GUN = gunNamed('Heave')
 function guardThink(b, spec, tgt, dist, los, toYaw, dt) {
   const ai = b.ai, P = GUARD, g = ai.gd ||= { up: false, cue: 0, broken: 0, counter: 0, swing: P.swing[0] }
   g.up = false
   if (g.broken > 0) { g.broken -= dt; return null }
   if (!los || dist > P.near || ai.waitTurn) return null
-  const yaw = roleFace(b, toYaw, dt, 1.5), G = GUNS[gunNamed([spec.atk].flat()[0])]
+  const yaw = roleFace(b, toYaw, dt, GUARD.turn), G = GUNS[gunNamed([spec.atk].flat()[0])]
   if (g.counter > 0 && (g.counter -= dt) <= 0) g.swing = 0
   if ((g.swing -= dt) <= 0 && dist < G.range * 0.9 && !(b.cool > 0)) {
     g.swing = P.swing[0] + Math.random() * (P.swing[1] - P.swing[0]); g.cue = 0.5
@@ -29740,6 +29740,17 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
         lurk: !!c.ai.lurk, tgt: c.ai.tgt, flee: c.ai.fleeT > 0, rush: c.ai.rush?.ph ?? null, rushV: c.ai.rush?.v ?? null, rushTop: c.ai.rush?.top ?? null, rushK: c.rushK || 0,
         speed: Math.round(Math.hypot(c.vx || 0, c.vz || 0) * 100) / 100, shots: [...c.ai.shots || []], guard: !!c.ai.gd?.up, think: c.ai.dbg ? { ...c.ai.dbg } : null })) })),
     env: LV.faust && faustState && selfChar() ? hauntEnv(selfChar()) : null }),
+  clubs: () => {
+    const F = faustState, me = selfChar()
+    if (!LV.faust || !F || !me) return []
+    const S = LV.grow.S, out = []
+    for (let ci = 0; ci < S; ci++) for (let cj = 0; cj < S; cj++) if ([0, 1, 2, 3].some(i => faustClubAt(F.seed, ci - S / 2, cj - S / 2, i)))
+      out.push({ ci, cj, x: (ci + 0.5) * 96 - ARENA, z: (cj + 0.5) * 96 - ARENA })
+    return out.map(c => ({ ...c, d: Math.round(Math.hypot(c.x - me.x, c.z - me.z)) })).sort((a, b) => a.d - b.d).slice(0, 5).map(c => {
+      const l = F.chunks.get(faustKey(c.ci, c.cj))?.plan.lots.find(l => l.club)
+      return { ...c, door: l ? [Math.round(l.x * 10) / 10, Math.round((l.z + l.d) * 10) / 10] : null }
+    })
+  },
   dropCar(x, z, h = 3, kind = 'Car') {
     if (!isHost || ![x, z, h].every(Number.isFinite) || objs.length >= OBJ_MAX - 8) return false
     const k = OBJECTS.findIndex(K => K.drive && K.name.toLowerCase() === String(kind).toLowerCase())
