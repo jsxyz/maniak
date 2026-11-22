@@ -34450,7 +34450,7 @@ function slHurt(ag, p, ux, uz, power, by, T, fling, dmg, gun, cause) {
   if (by && !by.bot && ag.kind !== SL_K.stray) heatCrime(by, ag.client && HEAT.crime.dealerKill !== undefined ? 'dealerKill' : 'kill', x, z, 1, true, ag)
   return true
 }
-function slKnock(ag, p, ux, uz, power, by, T, fling, step, hold, dmg, gun, cause) {
+function slKnock(ag, p, ux, uz, power, by, T, fling, step, hold, dmg, gun, cause, bump) {
   if (ag.kind === SL_K.pram) slPramHit(ag, p, by, T)
   if (slDeathOf(ag.id, Math.round(T))) return
   if (dmg > 0 && slHurt(ag, p, ux, uz, power, by, T, fling, dmg, gun, cause)) return
@@ -34469,7 +34469,7 @@ function slKnock(ag, p, ux, uz, power, by, T, fling, step, hold, dmg, gun, cause
   if (ag.kind === SL_K.cyclist) { const [bx, bz] = slRunTo(p.x, p.z, ux / n, uz / n, d * 0.6); a.push(slR2(bx), slR2(bz), slR2(p.yaw + (slRnd(ag.id) - 0.5))) }
   if (!slAddRec(a)) return
   slPanic(p.x, p.z, T)
-  if (by && !by.bot && ag.kind !== SL_K.stray) heatCrime(by, seatOf(by) ? 'ram' : 'civilian', p.x, p.z, 1, false, ag)
+  if (by && !by.bot && !bump && ag.kind !== SL_K.stray) heatCrime(by, seatOf(by) ? 'ram' : 'civilian', p.x, p.z, 1, false, ag)
   if (by && hooked['street.knock']) hookEmit('street.knock', { by: hookWho(by), kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: slR2(p.x), z: slR2(p.z) })
 }
 const slKnockable = (ag, p) => !(p.rec && (p.rec.kind === 1 && (p.down || p.rec.t > slNow() - 300)))
@@ -34592,7 +34592,7 @@ function slHostTick() {
       const vx = mx / dt - Math.sin(p.yaw) * (p.v || 0), vz = mz / dt - Math.cos(p.yaw) * (p.v || 0), rel = Math.hypot(vx, vz)
       if (rel < 3.0) return
       const sgn = sp >= (p.v || 0) ? 1 : -1, fx = sgn * vx / rel, fz = sgn * vz / rel, side = (p.x - c.x) * -fz + (p.z - c.z) * fx >= 0 ? 1 : -1
-      slKnock(ag, p, fx * 0.4 + -fz * side, fz * 0.4 + fx * side, rel * 0.3, c, T, Math.max(1.3, slFling(rel)), undefined, undefined, Math.min(15, 2 * (rel - 2)), -1, 1)
+      slKnock(ag, p, fx * 0.4 + -fz * side, fz * 0.4 + fx * side, rel * 0.3, c, T, Math.max(1.3, slFling(rel)), undefined, undefined, Math.min(15, 2 * (rel - 2)), -1, 1, true)
     })
   }
   st.stats.hostMs = st.stats.hostMs * 0.9 + (performance.now() - t0) * 0.1
