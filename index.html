@@ -27818,6 +27818,7 @@ const HEARS = {
   'City ambience': ['cand_cityambience1.9c14dd33.mp3'],
 }
 
+const hearSay = t => pushMsg(mcHtml(t))
 const hearKey = w => String(w || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 const hearPicks = {}
 try { Object.assign(hearPicks, JSON.parse(localStorage.getItem('maniak.sfxpicks') || '{}')) } catch (e) {}
@@ -27837,15 +27838,15 @@ function hearPlayList(list) {
   const go = () => {
     if (run !== hearRun) return
     const bad = list.find(([, f]) => soundBad.has(f))
-    if (bad) return sysMsg('§cCould not load §f' + bad[1])
+    if (bad) return hearSay('§cCould not load §f' + bad[1])
     if (list.some(([, f]) => !soundBuf.has(f))) {
-      if (now() - t0 > 8000) return sysMsg('§cStill loading, try again in a moment.')
+      if (now() - t0 > 8000) return hearSay('§cStill loading, try again in a moment.')
       list.forEach(([, f]) => soundReady(f))
       return void setTimeout(go, 150)
     }
     let at = 0
     for (const [label, f] of list) {
-      setTimeout(() => { if (run === hearRun) { sysMsg('§7Playing §f' + label); soundPlay('hear', { file: f }, { cat: 'you' }, []) } }, at * 1000)
+      setTimeout(() => { if (run === hearRun) { hearSay('§7Playing §f' + label); soundPlay('hear', { file: f }, { cat: 'you' }, []) } }, at * 1000)
       at += Math.min(soundBuf.get(f).duration, 6) + 0.8
     }
   }
@@ -27854,41 +27855,41 @@ function hearPlayList(list) {
 function hearCmd(a) {
   const w = String(a || '').trim(), all = Object.keys(HEARS)
   if (!w) {
-    sysMsg('§7/hear <event> plays its 3 takes, §f/hear <event> <n>§7 one, §f/hear <event> live§7 the current sound, §f/pick <event> <n>§7 keeps one, §f/picks§7 lists yours. Click in the game first.')
-    for (let i = 0; i < all.length; i += 9) sysMsg('§f' + all.slice(i, i + 9).join('§8, §f'))
+    hearSay('§7/hear <event> plays its 3 takes, §f/hear <event> <n>§7 one, §f/hear <event> live§7 the current sound, §f/pick <event> <n>§7 keeps one, §f/picks§7 lists yours. Click in the game first.')
+    for (let i = 0; i < all.length; i += 17) hearSay('§f' + all.slice(i, i + 17).join('§8, §f'))
     return
   }
   const m = w.match(/^(.*?)(?:\s+(\d+|live))?$/), ev = hearFind(m[1]), pick = m[2]
-  if (!ev) return sysMsg('§cNo event §f' + m[1] + '§c. §7/hear lists them.')
-  if (!settings.sound) return sysMsg('§cSound is off (N).')
-  if (!sfxLive()) return sysMsg('§cSound is not running yet: click in the game, then try again.')
+  if (!ev) return hearSay('§cNo event §f' + m[1] + '§c. §7/hear lists them.')
+  if (!settings.sound) return hearSay('§cSound is off (N).')
+  if (!sfxLive()) return hearSay('§cSound is not running yet: click in the game, then try again.')
   const T = HEARS[ev]
   if (pick === 'live') {
     const names = [].concat(soundSwap.get(ev) ?? SOUNDS[ev]?.file ?? []).filter(Boolean)
     names.forEach(f => soundReady(f))
-    const say = v => sysMsg(v ? '§7Playing §f' + ev + ' live' : '§7Nothing plays for §f' + ev + '§7 right now.')
-    if (!Object.hasOwn(SOUNDS, ev)) return sysMsg('§f' + ev + '§7 has no game sound yet.')
+    const say = v => hearSay(v ? '§7Playing §f' + ev + ' live' : '§7Nothing plays for §f' + ev + '§7 right now.')
+    if (!Object.hasOwn(SOUNDS, ev)) return hearSay('§f' + ev + '§7 has no game sound yet.')
     if (names.length && names.some(f => !soundBuf.has(f) && !soundBad.has(f))) return void setTimeout(() => say(playSound(ev, { cat: 'you' })), 600)
     return say(playSound(ev, { cat: 'you' }))
   }
   const n = pick ? +pick : 0
-  if (pick && !(n >= 1 && n <= T.length)) return sysMsg('§c' + ev + ' has takes 1 to ' + T.length + '.')
+  if (pick && !(n >= 1 && n <= T.length)) return hearSay('§c' + ev + ' has takes 1 to ' + T.length + '.')
   hearPlayList((pick ? [n] : T.map((f, i) => i + 1)).map(i => [ev + ' ' + i + '/' + T.length + (hearPicks[ev] === i ? ' (yours)' : ''), T[i - 1]]))
 }
 function hearList() {
   const k = Object.keys(hearPicks)
-  sysMsg(k.length ? '§7Your picks: §f' + k.map(e => e + ' ' + hearPicks[e]).join('§8, §f') : '§7No picks yet: /pick <event> <n>.')
+  hearSay(k.length ? '§7Your picks: §f' + k.map(e => e + ' ' + hearPicks[e]).join('§8, §f') : '§7No picks yet: /pick <event> <n>.')
 }
 function pickCmd(a) {
   const m = String(a || '').trim().match(/^(.*?)\s+(\d+)$/)
-  if (!m) return sysMsg('§7/pick <event> <n> keeps take n of an event (0 clears it); /picks lists yours.')
+  if (!m) return hearSay('§7/pick <event> <n> keeps take n of an event (0 clears it); /picks lists yours.')
   const ev = hearFind(m[1]), n = +m[2]
-  if (!ev) return sysMsg('§cNo event §f' + m[1] + '§c. §7/hear lists them.')
-  if (n && !HEARS[ev][n - 1]) return sysMsg('§c' + ev + ' has takes 1 to ' + HEARS[ev].length + '.')
+  if (!ev) return hearSay('§cNo event §f' + m[1] + '§c. §7/hear lists them.')
+  if (n && !HEARS[ev][n - 1]) return hearSay('§c' + ev + ' has takes 1 to ' + HEARS[ev].length + '.')
   if (n) hearPicks[ev] = n; else delete hearPicks[ev]
   try { localStorage.setItem('maniak.sfxpicks', JSON.stringify(hearPicks)) } catch (e) {}
   if (Object.hasOwn(SOUNDS, ev)) { if (n) { soundSwap.set(ev, HEARS[ev][n - 1]); soundReady(HEARS[ev][n - 1]) } else soundSwap.delete(ev) }
-  sysMsg('§7' + (n ? 'Kept §f' + ev + ' ' + n : 'Cleared §f' + ev) + (Object.hasOwn(SOUNDS, ev) ? '' : '§7 (no game sound for it yet)') + '§7. Picks: §f' + (Object.keys(hearPicks).map(e => e + ' ' + hearPicks[e]).join('§8, §f') || 'none'))
+  hearSay('§7' + (n ? 'Kept §f' + ev + ' ' + n : 'Cleared §f' + ev) + (Object.hasOwn(SOUNDS, ev) ? '' : '§7 (no game sound for it yet)') + '§7. Picks: §f' + (Object.keys(hearPicks).map(e => e + ' ' + hearPicks[e]).join('§8, §f') || 'none'))
 }
 
 function sfxRoom(cat, gain, t) {
