@@ -1469,11 +1469,11 @@ const MODELS = {
   teardrop: { ...RIG_FREAK, file: RIG_FILES.teardrop, aims: { knife: 'knife_idle' }, punches: { slash: [['knife_a', 0.02], ['knife_b', 0.02]] } },
   misery_master: { ...RIG_FREAK, file: RIG_FILES.misery_master, clips: { ...RIG_FREAK.clips, walk: 'walk_formal' }, aims: { knife: 'knife_idle' },
     punches: { slash: [['knife_a', 0.02], ['knife_lunge', 0.3], ['knife_b', 0.02]], throw: [['block_throw', 0.2]] } },
-  tony: { ...RIG_FREAK, clips: { ...RIG_FREAK.clips, idle: 'arms_folded' }, file: RIG_FILES.tony, aims: { bat: 'bat_idle', Scatter: 'rifle_idle' }, shoots: { Scatter: 'rifle_shoot' }, punches: { swing: [['bat_swing', 0.05]] } },
+  tony: { ...RIG_FREAK, clips: { ...RIG_FREAK.clips, idle: 'arms_folded', walk: 'walk_formal' }, file: RIG_FILES.tony, aims: { bat: 'bat_idle', Scatter: 'rifle_idle' }, shoots: { Scatter: 'rifle_shoot' }, punches: { swing: [['bat_swing', 0.05]] } },
   thug: { ...RIG_FREAK, file: RIG_FILES.thug, aims: { bat: 'bat_idle' }, punches: { swing: [['bat_swing', 0.05]] } },
-  pacifier: { ...RIG_FREAK, clips: { ...RIG_FREAK.clips, idle: 'rifle_idle' }, file: RIG_FILES.pacifier, aims: { rifle: 'rifle_idle' }, shoots: { rifle: 'rifle_shoot' } },
-  enforcer: { ...RIG_FREAK, clips: { ...RIG_FREAK.clips, idle: 'guard' }, file: RIG_FILES.enforcer, aims: { knife: 'knife_idle' }, punches: { slash: [['knife_a', 0.02], ['knife_b', 0.02]] } },
-  enforcer_heavy: { ...RIG_FREAK, file: RIG_FILES.enforcer_heavy, aims: { knife: 'knife_idle', 'Riot gun': 'rifle_idle' }, shoots: { 'Riot gun': 'rifle_shoot' }, punches: { slash: [['knife_a', 0.02], ['knife_b', 0.02]] } },
+  pacifier: { ...RIG_FREAK, clips: { ...RIG_FREAK.clips, idle: 'rifle_idle', walk: 'crouch_walk' }, pace: { ...RIG_FREAK.pace, walk: 0.41 }, file: RIG_FILES.pacifier, aims: { rifle: 'rifle_idle' }, shoots: { rifle: 'rifle_shoot' } },
+  enforcer: { ...RIG_FREAK, clips: { ...RIG_FREAK.clips, idle: 'guard', walk: 'walk_formal' }, file: RIG_FILES.enforcer, aims: { knife: 'knife_idle' }, punches: { slash: [['knife_a', 0.02], ['knife_b', 0.02]] } },
+  enforcer_heavy: { ...RIG_FREAK, clips: { ...RIG_FREAK.clips, walk: 'freak_walk' }, pace: { ...RIG_FREAK.pace, walk: 0.57 }, file: RIG_FILES.enforcer_heavy, aims: { knife: 'knife_idle', 'Riot gun': 'rifle_idle' }, shoots: { 'Riot gun': 'rifle_shoot' }, punches: { slash: [['knife_a', 0.02], ['knife_b', 0.02]] } },
   street_performer: { ...RIG_FREAK, file: RIG_FILES.street_performer, anims: [RIG_FILES.anims, RIG_FILES.freak_anims, RIG_FILES.performer_anims],
     clips: { ...RIG_FREAK.clips, walk: 'dance_walk' }, pace: { ...RIG_FREAK.pace, walk: 0.605 },
     dances: ['dance_charleston', 'dance_lindy', 'dance_bear', 'dance_chicken', 'dance_charleston_fancy'], demand: 'perf_demand', cup: 'Tin cup',
@@ -23178,6 +23178,32 @@ function setAnim(id, want, dt, t, hold, still, ticks, shift) {
 }
 const RIG_UPPER = /^(spine_0[123]|neck_01|Head|clavicle|upperarm|lowerarm|hand|index|middle|ring|pinky|thumb)/
 const RIG_LOWER = /^(pelvis|thigh|calf|foot|ball)/
+const swRamp = (t, a, b) => { const x = Math.min(1, Math.max(0, (t - a) / (b - a))); return x * x * (3 - 2 * x) }
+const swBump = (t, a, b) => Math.sin(Math.PI * Math.min(1, Math.max(0, (t - a) / (b - a))))
+const SWING_FX = {
+  bat_swing: { planted: true, at: t => {
+    const y = -0.349 * swRamp(t, 0.02, 0.27) + 0.698 * swRamp(t, 0.27, 0.42) - 0.349 * swRamp(t, 0.5, 0.78)
+    const s = -0.1396 * swRamp(t, 0.04, 0.22) * (1 - swRamp(t, 0.45, 0.78)), k = 0.314 * swBump(t, 0.03, 0.22) + 0.244 * swBump(t, 0.5, 0.78)
+    return [['pelvis', 1, y], ['thigh_l', 1, -y], ['thigh_r', 1, -y], ['thigh_l', 0, s], ['calf_l', 0, k], ['foot_l', 0, -(s + k * 0.6)]] } },
+  rifle_shoot: { at: t => {
+    const a = t < 0.03 ? t / 0.03 : Math.exp(-(t - 0.03) / 0.07)
+    return [['spine_02', 0, -0.09 * a], ['spine_03', 0, -0.09 * a], ['Head', 0, 0.12 * a], ['upperarm_l', 0, -0.07 * a], ['upperarm_r', 0, -0.07 * a]] } },
+}
+const swAxes = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0)], swD = new THREE.Quaternion(), swP = new THREE.Quaternion()
+function rigSwingFx(R, name, ct, w) {
+  const list = w > 0.001 && SWING_FX[name].at(ct)
+  if (!list) return
+  for (const [bone, axis, ang] of list) {
+    const b = R.bones.get(bone)
+    if (!b) continue
+    swP.identity()
+    const chain = []
+    for (let n = b.parent; n && n !== R.inst; n = n.parent) chain.push(n)
+    for (let i = chain.length - 1; i >= 0; i--) swP.multiply(chain[i].quaternion)
+    swD.setFromAxisAngle(swAxes[axis], ang * w)
+    b.quaternion.premultiply(swD.multiply(swP)).premultiply(swP.invert())
+  }
+}
 const rigQ = new THREE.Quaternion(), rigV = new THREE.Vector3(), rigW = new THREE.Quaternion(), rigU = new THREE.Vector3(), rigF = new THREE.Vector3()
 const rigAcc = { geo: {}, mat: new Map() }
 function rigAccGeo(kind) {
@@ -23458,7 +23484,7 @@ function rigAnimate(a, want, dt, t) {
   } else if (G && !G.melee && a.held?.visible && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 200) {
     R.shotSeen = a.shotAt
     const clip = rigClip(M, M.shoots?.[G.grip] ?? M.shoots?.[G.name] ?? K.shoot)
-    if (clip) R.over = { clip, t0: 0, at: t, speed: 1.6 }
+    if (clip) R.over = { clip, t0: 0, at: t, speed: clip.name === 'rifle_shoot' ? 1 : 1.6 }
   }
   if (M.demand && a.sayAt !== undefined && a.sayAt !== R.saySeen) {
     R.saySeen = a.sayAt; const clip = rigClip(M, M.demand)
@@ -23491,6 +23517,13 @@ function rigAnimate(a, want, dt, t) {
       draw(o.clip, ct, w * Math.min(1, (t - o.at) / (o.from ? 90 : 60), out), w * out)
     }
   } else if (a.dying >= 0) R.over = null
+  if (R.over && a.dying < 0) {
+    const o = R.over, fx = SWING_FX[o.clip.name]
+    if (fx) {
+      const ct = Math.min(o.clock ?? o.t0 + (t - o.at) / 1000 * (o.speed || 1), o.stop ?? Infinity), out = Math.min(1, (o.clip.duration - ct) / 0.15)
+      rigSwingFx(R, o.clip.name, ct, (o.w ?? 1) * out * (fx.planted ? Math.max(0, 1 - (a.v || 0) / 0.6) : 1))
+    }
+  }
   if (hold === 'sit' && R.bones.get('pelvis')) {
     a.mesh.updateMatrixWorld(true); R.bones.get('pelvis').getWorldPosition(rigV)
     R.inst.position.y += a.mesh.position.y - SIT_HIP * (a.spec.h + a.spec.r) + 0.06 * H - rigV.y
