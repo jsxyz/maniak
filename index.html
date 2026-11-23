@@ -265,8 +265,17 @@
   .ovl{position:fixed;inset:0;display:none;place-items:center;z-index:30;background:rgba(8,8,9,.78);overflow:auto}
   .ovl.open{display:grid}
   #pause{z-index:29;background:rgba(8,8,9,.7)}
-  #ach-toast{position:fixed;top:64px;left:50%;transform:translate(-50%,-12px);z-index:40;padding:10px 18px;border:1px solid #8a7a3a;border-radius:8px;background:rgba(14,13,10,.92);color:#f0e6b8;font-size:14px;font-weight:700;letter-spacing:.04em;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;max-width:90vw;text-align:center}
-  #ach-toast.open{opacity:1;transform:translate(-50%,0)}
+  #ach-toast{--achw:min(320px,calc(100vw - 44px - env(safe-area-inset-right)));position:fixed;right:calc(22px + env(safe-area-inset-right));bottom:calc(22px + env(safe-area-inset-bottom));z-index:90;display:flex;flex-direction:row-reverse;align-items:center;width:56px;min-height:56px;box-sizing:border-box;border-radius:28px;overflow:hidden;background:transparent;border:1px solid transparent;opacity:0;pointer-events:none;transition:width .45s cubic-bezier(.2,.8,.2,1),background .3s,border-color .3s,opacity .25s}
+  #ach-toast.pop{opacity:1}
+  #ach-toast.open{width:var(--achw);background:rgba(14,13,10,.95);border-color:#8a7a3a}
+  #ach-ico{flex:none;width:48px;height:48px;margin:3px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 35% 30%,#d6b84e,#6b5a22);border:2px solid #f0e6b8;transform:scale(0);transition:transform .35s cubic-bezier(.3,1.7,.5,1)}
+  #ach-toast.pop #ach-ico{transform:scale(1)}
+  #ach-text{flex:none;box-sizing:border-box;width:calc(var(--achw) - 56px);padding:6px 6px 6px 16px;display:flex;flex-direction:column;gap:1px}
+  #ach-kick{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#b89a3c}
+  #ach-name{font-size:14px;color:#f0e6b8}
+  #ach-info{font-size:12px;line-height:1.3;color:#bdb49a}
+  body.touch #ach-toast{bottom:calc(250px + env(safe-area-inset-bottom))}
+  @media (max-width:430px){ #ach-toast{--achw:min(280px,calc(100vw - 24px));right:calc(12px + env(safe-area-inset-right))} }
   #ach-list{display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow:auto;margin-bottom:14px}
   #ach-list .ach{padding:8px 10px;border:1px solid #323236;border-radius:6px}
   #ach-list .ach b{display:block;font-size:13px}
@@ -591,7 +600,7 @@
   <div id="ach-list"></div>
   <div class="mrow"><button id="ach-back"></button></div>
 </div></div>
-<div id="ach-toast"></div>
+<div id="ach-toast"><div id="ach-ico"><svg viewBox="0 0 24 24" width="26" height="26" fill="#1a1608" aria-hidden="true"><path d="M7 3h10v2h3v3a4 4 0 0 1-4 4h-.3A5 5 0 0 1 13 14.9V17h3v2H8v-2h3v-2.1A5 5 0 0 1 8.3 12H8a4 4 0 0 1-4-4V5h3V3zm-1 4v1a2 2 0 0 0 2 2V7H6zm12 0h-2v3a2 2 0 0 0 2-2V7z"/></svg></div><div id="ach-text"><div id="ach-kick"></div><b id="ach-name"></b><span id="ach-info"></span></div></div>
 
 <div id="hostset" class="ovl"><div class="mbox">
   <h2 id="host-title">Host</h2>
@@ -773,6 +782,7 @@ const TEXT = {
   achEarned: '{n} of {total} earned',
   achHidden: '???',
   achBack: 'Back',
+  achUnlocked: 'Achievement unlocked',
   enforcersAfter: "§cFaust's enforcers are after you",
   enforcersOn: "§7Faust's enforcers are §fon§7: crimes in public bring heat again.",
   enforcersOff: "§7Faust's enforcers are §foff§7: no heat builds and none are out.",
@@ -28562,6 +28572,18 @@ function achLoad() {
   return achHave
 }
 function achInfo(k, v) { const e = achTable?.get(k); return k === ACH_SECRET.key ? [v[1], v[2]] : e ? [e.t, e.d] : ['', ''] }
+const achQueue = []
+let achBusy = false
+function achPop(title, desc) { achQueue.push([title, desc]); if (!achBusy) achNext() }
+function achNext() {
+  const q = achQueue.shift(), t = el('#ach-toast')
+  if (!q) { achBusy = false; return }
+  achBusy = true
+  el('#ach-kick').textContent = TEXT.achUnlocked; el('#ach-name').textContent = q[0]; el('#ach-info').textContent = q[1]
+  t.classList.add('pop')
+  const step = (ms, f) => { achToastT = setTimeout(f, ms) }
+  step(350, () => { t.classList.add('open'); step(5450, () => { t.classList.remove('open'); step(450, () => { t.classList.remove('pop'); step(300, achNext) }) }) })
+}
 function achReceive(key, title, desc) {
   if (!achTable) return achDone ? undefined : achReady.then(() => achReceive(key, title, desc))
   const secret = key === ACH_SECRET.key
@@ -28570,10 +28592,7 @@ function achReceive(key, title, desc) {
   if (have[key]) return
   have[key] = secret ? [Date.now(), title, desc] : Date.now()
   try { localStorage.setItem(ACH_KEY, JSON.stringify(have)) } catch (e) {}
-  const t = el('#ach-toast')
-  t.textContent = achInfo(key, have[key])[0]
-  t.classList.add('open')
-  clearTimeout(achToastT); achToastT = setTimeout(() => t.classList.remove('open'), 4200)
+  achPop(...achInfo(key, have[key]))
   if (settingsOpen && el('#ach').classList.contains('open')) achRender()
 }
 function achRender() {
