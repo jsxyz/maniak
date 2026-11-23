@@ -3066,7 +3066,7 @@ function faustFeatMesh(P) {
   const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true
   return mesh
 }
-const FAUST_LANDMARKS = { theatre: 2, cathedral: 1 }
+const FAUST_LANDMARKS = { theatre: 2, cathedral: 1, hotel: 2 }
 let faustLandmarkMemo = null
 function faustLandmarks(seed, S) {
   seed >>>= 0
@@ -3083,7 +3083,10 @@ function faustLandmarks(seed, S) {
   list.sort((a, b) => a.h - b.h || (a.k < b.k ? -1 : 1))
   const map = new Map()
   const left = { ...FAUST_LANDMARKS }
-  for (const e of list) if (left[e.kind]-- > 0) map.set(e.k, e.kind)
+  for (const e of list) {
+    if (e.kind === 'theatre' && left.theatre <= 0 && left.hotel-- > 0) { map.set(e.k, 'hotel'); continue }
+    if (left[e.kind]-- > 0) map.set(e.k, e.kind)
+  }
   faustLandmarkMemo = { seed, S, map }
   return map
 }
@@ -3298,11 +3301,12 @@ function faustPlan(seed, ci, cj, S = 20) {
     const row = layout === 4 ? i >> 1 : 0, d = al && i & 1 ? alD[row] : d0
     if (al && !(i & 1)) alD[row] = d
     let gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
-    if (landmark === 'theatre') gothic = false
+    if (landmark === 'theatre' || landmark === 'hotel') gothic = false
     const isClub = faustClubAt(seed, gx, gz, i)
     if (isClub) gothic = false
     const cath = landmark === 'cathedral' && !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0)
     if (cath) H = 46
+    if (landmark === 'hotel' && !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0)) H = 72 + faustMix(seed ^ 0x686f7465, gx, gz) % 5 * 8
     const site = faustSiteFor(seed, gx, gz, i, district, layout, plaza, diagonal, x, z)
     if (site && !(Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z)))) { sites.push(site); continue }
     if (diagonal && Math.abs(z - x - 384) < w + d + 18 || Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z))) continue
@@ -3375,7 +3379,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 21, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
+  const content = { version: 22, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
   let hash = 2166136261
   const json = JSON.stringify(content)
   for (let i = 0; i < json.length; i++) hash = Math.imul(hash ^ json.charCodeAt(i), 16777619)
@@ -8590,7 +8594,7 @@ function faustDecoCivic(g, lot, cones) {
 }
 function faustDecoRelief(g, lot) {
   const { x, z, d, height: H, mass } = lot, D = FAUST_DECO
-  if (mass.length < 3 || lot.landmark === 'cathedral') return
+  if (mass.length < 3 || lot.landmark === 'cathedral' || lot.landmark === 'hotel') return
   for (const m of [mass[0], mass[1]]) {
     const top = m.cy + m.ey, y = top + 0.45
     const ex = m.ex - 0.9, ez = m.ez - 0.9
@@ -8614,6 +8618,41 @@ function faustDecoRelief(g, lot) {
   for (let y = 5.4; y + 0.62 < top; y += 0.8) {
     const L = [[x - 0.55, y], [x, y + 0.4], [x, y + 0.62], [x - 0.55, y + 0.22]], R = [[x, y + 0.4], [x + 0.55, y], [x + 0.55, y + 0.22], [x, y + 0.62]]
     for (const q of [L, R]) { g.tri([q[0][0], q[0][1], f], [q[1][0], q[1][1], f], [q[2][0], q[2][1], f], D.brass); g.tri([q[0][0], q[0][1], f], [q[2][0], q[2][1], f], [q[3][0], q[3][1], f], D.brass) }
+  }
+}
+const FAUST_HOTEL = ['RIVIERA', 'ALCOVE', 'DELTA', 'TIARA']
+function faustDecoHotel(g, lot) {
+  if (lot.landmark !== 'hotel' || lot.mass.length < 3) return
+  const { x, z, d } = lot, D = FAUST_DECO, f = z + d + 0.25, m0 = lot.mass[0], I = 0x6a7480, E = 0x8b939b, K = 0x0b0f16
+  const amber = FAUST_SIGN_TINT.get(0xffb347) ?? 0xffb347
+  g.box(faustBox(x, 4.5, f + 3, 4.8, 0.1, 3), I)
+  g.box(faustBox(x, 4.64, f + 3, 4.9, 0.04, 3.1), E)
+  g.box(faustBox(x, 4.38, f + 3, 4.4, 0.015, 2.7), 0xffc27a, 0.6)
+  for (let i = 0; i <= 12; i++) g.box(faustBox(x - 4.6 + i * 0.77, 4.3, f + 5.9, 0.07, 0.07, 0.07), 0xd6d0b2, 1)
+  for (let i = 0; i < 11; i++) {
+    const cx = x - 4.4 + i * 0.88
+    g.tri([cx - 0.4, 4.4, f + 6.02], [cx + 0.4, 4.4, f + 6.02], [cx, 3.95, f + 6.02], D.brass)
+    g.tri([cx + 0.4, 4.4, f + 6.02], [cx - 0.4, 4.4, f + 6.02], [cx, 3.95, f + 6.02], D.brass)
+  }
+  g.box(faustBox(x, 4.9, f + 6.04, 4.9, 0.45, 0.05), K)
+  if (!faustLetters(g, 'deco', 'HOTEL', [x, 4.9, f + 6.1], [1, 0, 0], [0, 1, 0], 4, 0.6, amber, 3.0)) {
+    const cell = 0.12, x0 = x - (5 * 6 * cell - cell) / 2, y0 = 4.9 + 3.5 * cell
+    for (const [c, r, n, q] of faustClubWord('HOTEL')) g.box(faustBox(x0 + (c + n / 2) * cell, y0 - (r + q / 2) * cell, f + 6.1, n * cell / 2, q * cell / 2, 0.02), amber, 3.0)
+  }
+  for (const sd of [-1, 1]) {
+    g.box(faustBox(x + sd * 2.6, 3.3, f + 0.12, 0.05, 0.3, 0.08), K)
+    g.box(faustBox(x + sd * 2.6, 3.7, f + 0.14, 0.15, 0.15, 0.12), 0xffd49a, 1.4)
+  }
+  const top = m0.cy + m0.ey, hw = Math.min(m0.ex - 1.2, 8.5), zc = m0.cz + m0.ez + 0.8, yc = top + 2.8, name = FAUST_HOTEL[lot.seed >>> 9 & 3]
+  g.box(faustBox(x, yc, zc, hw, 1.8, 0.15), K)
+  for (const sd of [-1, 1]) for (const k of [0.3, 0.8]) g.box(faustBox(x + sd * (hw - 0.4) * k * 1.0, top + 0.72, zc, 0.15, 0.28, 0.12), I)
+  g.box(faustBox(x, yc + 1.7, zc + 0.17, hw - 0.1, 0.04, 0.02), amber, 3.2)
+  g.box(faustBox(x, yc - 1.7, zc + 0.17, hw - 0.1, 0.04, 0.02), amber, 3.2)
+  for (const sd of [-1, 1]) g.box(faustBox(x + sd * (hw - 0.12), yc, zc + 0.17, 0.04, 1.7, 0.02), amber, 3.2)
+  const wMax = 2 * hw - 1.6
+  if (!faustLetters(g, 'deco', name, [x, yc, zc + 0.2], [1, 0, 0], [0, 1, 0], wMax, 2.4, amber, 3.0)) {
+    const cell = Math.min(0.34, wMax / (name.length * 6)), x0 = x - (name.length * 6 * cell - cell) / 2, y0 = yc + 3.5 * cell
+    for (const [c, r, n, q] of faustClubWord(name)) g.box(faustBox(x0 + (c + n / 2) * cell, y0 - (r + q / 2) * cell, zc + 0.18, n * cell / 2, q * cell / 2, 0.02), amber, 3.0)
   }
 }
 function faustDecoTheatre(g, lot) {
@@ -9348,6 +9387,7 @@ function* faustVisualSteps(c) {
     ornament.box(faustBox(x, 3.06, z + d + 0.34, 0.85, 0.06, 0.02), 0x8a6a38)
     if (!art) faustDecoMarquee(ornament, lot)
     faustDecoTheatre(ornament, lot)
+    faustDecoHotel(ornament, lot)
     faustDecoClub(ornament, lot)
     if (gothic && !neo) {
       const front = z + d + 0.3
