@@ -1438,7 +1438,7 @@ const MODELS = {
     pace: { walk: 0.62, run: 2.265, sprint: 5.867, crouch: 0.41 },
     gaits: { runAt: 1.35, sprintAt: 3.016, band: 0.06, rates: { walk: [0.55, 2.2], run: [0.55, 1.45], sprint: [0.48, 1.6] } }, plants: [0, 0.5],
     gaitSets: MANIAK_GAITS, gaitSet: MANIAK_GAITS.first, gaitPick: 'first',
-    gaitFeel: { lean: 0.012, fwd: 0.21, back: -0.16, sit: 0.035, bank: 0.45, bankMax: 0.26, ease: 0.12, accT: 0.1, turnT: 0.08, head: 0.5, free: 0.08, reach: 0.6, settle: 0.26, lift: 0.06 },
+    gaitFeel: { lean: 0.012, fwd: 0.21, back: -0.16, sit: 0.035, bank: 0.45, bankMax: 0.26, ease: 0.12, accT: 0.1, turnT: 0.08, head: 0.5, free: 0.08, reach: 0.6, settle: 0.26, lift: 0.06, land: 0.6 },
     punches: { jab: [['maniak_jab', 0, 1], ['maniak_cross', 0, 1], ['maniak_hook', 0, 1]], rise: [['maniak_haymaker', 0.434, 1]], slam: [['smash_land', 0]] },
     strikes: /^maniak_(jab|cross|hook|haymaker)$/, hay: { clip: 'maniak_haymaker', rate: 1, free: 0.76 },
     strikeAt: { maniak_jab: 0.075, maniak_cross: 0.09, maniak_hook: 0.1, maniak_haymaker: 0.434 },
@@ -23264,7 +23264,7 @@ function rigGait(a, R, M, dt, air) {
   S.roll += (feel * clamp(Math.atan(v * S.om / 9.81) * F.bank, -F.bankMax, F.bankMax) - S.roll) * ease
   S.sit += (feel * clamp(-S.acc / 24, 0, 1) * F.sit - S.sit) * ease
   const L = S.feet
-  if (!(on > 0) && !(L.l.k > 0) && !(L.r.k > 0) && !L.l.stand && !L.r.stand && Math.abs(S.pitch) + Math.abs(S.roll) + S.sit < 1e-3) return
+  if (!(on > 0) && !(L.l.k > 0) && !(L.r.k > 0) && !L.l.stand && !L.r.stand && Math.abs(S.pitch) + Math.abs(S.roll) + S.sit < 1e-3 && !(R.name === M.clips.idle && !air && !a.hold)) return
   for (const [b, q] of S.bones) q.copy(b.quaternion)
   S.pos.copy(R.inst.position); S.rot.copy(R.inst.quaternion); S.active = true
   const [pel, piv, axis, ball, ankle, hip, knee, end, dir, bend] = S.V, [q0, q1, q2] = S.Q
@@ -23295,8 +23295,11 @@ function rigGait(a, R, M, dt, air) {
     if (!stand) f.stand = false
     if (f.stand) {
       if (f.u < 0 && !(R.gw > 0) && !stepping && !L[s === 'l' ? 'r' : 'l'].stepping && Math.hypot(f.p.x - ball.x, f.p.z - ball.z) > 0.04) { f.u = 0; f.from = (f.from || new THREE.Vector3()).copy(f.p) }
-      if (f.u >= 0) { f.u += dt / F.settle; const e = THREE.MathUtils.smoothstep(Math.min(1, f.u), 0, 1); f.p.lerpVectors(f.from, ball, e); f.lift = Math.sin(Math.PI * Math.min(1, f.u)) * F.lift; f.stepping = f.u < 1
-        if (f.u >= 1) { f.stand = false; f.k = 0; f.on = false; f.stepping = false; f.lift = 0 } }
+      if (f.u >= 0) { f.u += dt / F.settle; const e = THREE.MathUtils.smoothstep(Math.min(1, f.u), 0, 1)
+        if (f.u < F.land || !f.to) { const o = a.mesh.position, turn = clamp(S.om * Math.max(0, 1 - f.u) * F.settle, -1.2, 1.2), cs = Math.cos(turn), sn = Math.sin(turn), dx = ball.x - o.x, dz = ball.z - o.z
+          f.to = (f.to || new THREE.Vector3()).set(o.x + dx * cs + dz * sn, ball.y, o.z - dx * sn + dz * cs) }
+        f.p.lerpVectors(f.from, f.to, e); f.lift = Math.sin(Math.PI * Math.min(1, f.u)) * F.lift; f.stepping = f.u < 1
+        if (f.u >= 1) { f.u = -1; f.stepping = false; f.lift = 0; f.to = null } }
       if (f.stand) { f.on = true; f.k = 1 }
       stepping ||= !!f.stepping
     } else {
@@ -31617,6 +31620,7 @@ function reconcile(a) {
     if (e.seq === ack) predAt = e
   }
   carrierLearn(carrierSnapT, predAt)
+  if (predAt && Number.isFinite(a[F.face]) && Number.isFinite(predAt.face)) predicted.faceFix = wrapPi(a[F.face] - predAt.face)
 
   let objErr = 0
   const auth = objs.map(o => {
@@ -31833,8 +31837,9 @@ function remoteAt(t) {
     tr.offT = t
     tr.ox = (tr.ox || 0) * fade; tr.oy = (tr.oy || 0) * fade; tr.oz = (tr.oz || 0) * fade
     const dy = Math.atan2(Math.sin(p[F.yaw] - q[F.yaw]), Math.cos(p[F.yaw] - q[F.yaw])) || 0
+    const pf = Number.isFinite(p[F.face]) ? p[F.face] : p[F.yaw], qf = Number.isFinite(q[F.face]) ? q[F.face] : q[F.yaw]
     out.push({ id, x: s.x + tr.ox, y: s.y + tr.oy, z: s.z + tr.oz,
-               yaw: q[F.yaw] + dy * k, vx: p[F.vx], vz: p[F.vz], hp: p[F.hp], dead: p[F.dead], cid: looksCidOf(p[F.cid], p[F.disg]), disg: p[F.disg] || 0, smk: p[F.smk] >= q[F.smk] ? lerp(q[F.smk] || 0, p[F.smk] || 0, k) : p[F.smk] || 0, kills: p[F.kills] | 0,
+               yaw: q[F.yaw] + dy * k, face: qf + (wrapPi(pf - qf) || 0) * k, vx: p[F.vx], vz: p[F.vz], hp: p[F.hp], dead: p[F.dead], cid: looksCidOf(p[F.cid], p[F.disg]), disg: p[F.disg] || 0, smk: p[F.smk] >= q[F.smk] ? lerp(q[F.smk] || 0, p[F.smk] || 0, k) : p[F.smk] || 0, kills: p[F.kills] | 0,
                prot: p[F.prot] || 0, anim: p[F.anim] >= 0 && p[F.anim] < 7 ? p[F.anim] | 0 : 0, pow: p[F.pow] || 0, markT: p[F.markT] || 0, web: p[F.web] || 0, jl: p[F.jLock] || 0, swim: p[F.swim] | 0,
                cap: p[F.cap] || 0, gun: p[F.gun] | 0, move: p[F.move] || 0, springT: p[F.leapCharge] || 0, hayAge: p[F.hay] >= q[F.hay] ? lerp(q[F.hay] || 0, p[F.hay] || 0, k) : p[F.hay] || 0, chainNet: chainBetween(q[F.chain], p[F.chain], k),
                prof: p[F.prof] | 0, sprof: p[F.sprof] | 0, vy: p[F.vy], mark: effId(p[F.mark]), grab: p[F.grab] | 0, act: p[F.act] || 0, gm: p[F.gm] | 0 })
@@ -32282,8 +32287,10 @@ const HOST_PHASES = {
   }
   for (const [id, c] of players) {
     const inp = cur.get(id) || IDLE_INPUT
-    if (!inp.fire || c.threw || !seatShot(c, GUNS[c.gun]) || GUNS[c.gun].dive && (c.air || c.slam)) continue
-    const viewT = id === 0 || c.bot ? undefined : inp.rt
+    if (!inp.fire && !c.punchHold || c.threw || !seatShot(c, GUNS[c.gun]) || GUNS[c.gun].dive && (c.air || c.slam)) { c.punchHold = null; continue }
+    const rt = inp.fire ? inp.rt : c.punchHold?.rt, H = punchTurning(c, all)
+    if (H) { H.rt = rt; continue }
+    const viewT = id === 0 || c.bot ? undefined : rt
     emit(id, volley(id, () => seatedShot(c, viewT, () => fireHitscan(c, all, credit(id, c), viewT))))
   }
   for (const [id, c] of players) {
@@ -32371,6 +32378,7 @@ const PLAYER_STATE = stateSchema([
   ['smk', c => r2(c.smk || 0), (c, v) => { c.smk = Number.isFinite(v) ? clamp(v, 0, SMK_S) : 0 }],
   ['swim', c => c.water | 0],
   ['gm', c => c.gm | 0, (c, v) => { c.gm = v | 0 }],
+  ['face', c => r2(c.face ?? c.yaw)],
 ])
 GAME.schema = PLAYER_STATE
 
@@ -41599,7 +41607,7 @@ function sampleTick(id, c, fresh, fire) {
   let list = tickSamples.get(id)
   if (!list) tickSamples.set(id, list = [])
   const anim = animOf(c)
-  list.push({ x: c.x, y: c.y, z: c.z, yaw: c.yaw, wy: c.wy, vx: c.vx, vy: c.vy, vz: c.vz, cv: c.carryOn ? c.carryV : null, anim, turned: anim === 4 && !!GAME.participant(id, c.cid).wallRun, ceil: !!c.ceil, fresh, fire })
+  list.push({ x: c.x, y: c.y, z: c.z, yaw: c.yaw, face: c.face ?? c.yaw, wy: c.wy, vx: c.vx, vy: c.vy, vz: c.vz, cv: c.carryOn ? c.carryV : null, anim, turned: anim === 4 && !!GAME.participant(id, c.cid).wallRun, ceil: !!c.ceil, fresh, fire })
 }
 let ticksRun = 0, tickRate = 0, snapsOut = 0, snapOutRate = 0, bytesUpAll = 0, bytesDownAll = 0
 
@@ -41633,6 +41641,7 @@ function hostTick(dt) {
   if (me) me.pitch = aimed(input).pitch
   const all = [...players.values()]
   spawnAvoid = all
+  const fx0 = tracers.length
   let s0 = realNow(); meleeTurns(all, dt); s0 = simLap('melee', s0)
 
   const cur = new Map()
@@ -41650,6 +41659,8 @@ function hostTick(dt) {
   t.all = all; t.cur = cur
   carrierT = tickAt
   const physMs = tickChars(all, c => cur.get(c.id) || IDLE_INPUT, dt, GAME.host, t)
+  for (let i = fx0; i < tracers.length; i++) faceFire(tracers[i], tickAt)
+  for (const [id, c] of players) faceTick(id, c, cur.get(id) || IDLE_INPUT, dt, tickAt)
   msPhys = msPhys * 0.9 + physMs * 0.1
   background.simAdd('physics', physMs)
   s0 = realNow(); recordHistory(tickAt, all); simLap('history', s0)
@@ -41675,7 +41686,7 @@ const OWN_PREDICTION = (F => {
   const S = GAME.schema.step, fuelEps = S.fuel + S.fuel / 10
   if (REWIND_EPS < Math.hypot(S.x, S.y, S.z)) throw Error('REWIND_EPS is under the wire step')
   return {
-    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.wt = c.water | 0; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ml = c.mantle ? [...c.mantle] : null; e.mf = !!c.mantleFall; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
+    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.face ??= c.face; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.wt = c.water | 0; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ml = c.mantle ? [...c.mantle] : null; e.mf = !!c.mantleFall; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
       const bh = c.body?.getBroadphaseHandle(); e.dsh = [!!c.dashOn, c.dashRun || 0, c.dashHit && [...c.dashHit], bh && A.getPointer(bh) ? bh.get_m_collisionFilterMask() : null]; e.cv = c.carryV ? [...c.carryV] : null; e.cvId = c.carryId; return e },
     err: (e, a) => Math.hypot(e.x - a[F.x], e.y - a[F.y], e.z - a[F.z]),
     agrees: (e, a, web) => (e.web || 0) === web && Math.abs(e.fuel - a[F.fuel]) <= fuelEps && e.jl === !!a[F.jLock],
@@ -41816,6 +41827,8 @@ function stepSim(t) {
       easeOffsets()
       tickChars(predicted.ride || predicted.grabBy !== undefined ? [] : [predicted], c => lockInput(c, inp), TICK)
       lookStep(predicted, input)
+      faceTick(myId, predicted, inp, TICK, tickAt)
+      if (predicted.faceFix) { const d = predicted.faceFix * Math.min(1, TICK / FACE_FIX_S); predicted.face = wrapPi(predicted.face + d); predicted.faceFix -= d; for (const e of pending) if (Number.isFinite(e.face)) e.face += d }
       sampleTick(myId, predicted, predJump, input.fire || input.alt); predJump = false
       msPhys = msPhys * 0.9 + (now() - _p1) * 0.1
       const seq = ++outSeq
@@ -42665,7 +42678,7 @@ function draw(dt, t) {
   avatars.get(myId).moveState = me.mantle || me.mantleFall ? 4 : smashDiving(me) ? 3 : me.leap ? 2 : me.springT > SPRING_TAP ? 1 : 0; avatars.get(myId).moveCharge = clamp(((me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1)
   avatars.get(myId).chainState = isHost ? chainPack(me) : me.chainNet; avatars.get(myId).hayAge = me.hayAge || 0
   const myTicks = tickSamples.get(myId) || []
-  meMesh.rotation.y = GAME.view.faceYaw(myId, me, animOf(me), myHold || firstPerson || carries.has(myId), t, dt, input.fire || input.alt, myTicks)
+  meMesh.rotation.y = GAME.view.faceYaw(myId, me, animOf(me), firstPerson, t, dt, input.fire || input.alt, myTicks)
   if (!drawSeat(meMesh, me, sits.get(myId), obl) && !drawCeiling(meMesh, meD, myHold === 'ceiling', dt, myTicks)) drawTurned(meMesh, meD, animOf(me) === 4 && GAME.participantOf(me)?.wallRun, dt, myTicks)
   setAnim(myId, me.water && !myHold ? swimWant(me.water, me) : crouchOf(myId, me.cid, animOf(me), me.springT > SPRING_TAP, myHold), dt, t, myHold, false, myTicks, [me.x - meD.x, me.y - meD.y, me.z - meD.z])
   background.sec('me pose')
@@ -42693,7 +42706,7 @@ function draw(dt, t) {
     const hold = holdOf(o.id, o) || o.ceil && 'ceiling'
     avatars.get(o.id).moveState = o.move; avatars.get(o.id).moveCharge = clamp(((o.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1); avatars.get(o.id).chainState = o.chainNet; avatars.get(o.id).hayAge = o.hayAge || 0
     const ticks = isHost ? tickSamples.get(o.id) || [] : undefined
-    m.rotation.y = GAME.view.faceYaw(o.id, o, o.anim || 0, hold || carries.has(o.id), t, dt, false, ticks)
+    m.rotation.y = GAME.view.faceYaw(o.id, o, o.anim || 0, false, t, dt, false, ticks)
     background.acc('faceYaw')
     if (o.anim === 4 && C.wallRun && o.wy === undefined) o.wy = wallYawAt(o.x, o.y, o.z, C.h + C.r + 0.4)
     if (!drawSeat(m, o, sits.get(o.id), obl) && !drawCeiling(m, o, hold === 'ceiling', dt, ticks)) drawTurned(m, o, o.anim === 4 && C.wallRun, dt, ticks)
@@ -43032,25 +43045,54 @@ function drawHud(me, others, t) {
 
 const mmss = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0')
 
-const FACE_MS = 400, FACE_RATE = 14
+const FACE_MS = 400, FACE_RATE = 14, FACE_MOVE = 0.5, FACE_FIX_S = 0.15, FACE_TIE = 0.1
+const FACE_PUNCH = { rate: 32, ok: 0.17, max: 0.15 }
 const FACE_TURN = { attack: 0.7, ease: 0.52, floor: 0.12 }
+function faceFire(f, at) {
+  if (f[7] === 4 || f[7] === 5 || f[7] === 6 || f[7] === 9 || f[7] === 10) return
+  const c = players.get(f[8]), G = GUNS[f[6]]
+  if (!c) return
+  if (f[9] === 1) {
+    if (G && (G.charge === 'palms' || G.hayWind || G.wind)) { c.faceChgAt = at; c.faceChgGun = f[6] }
+    else if (G?.lead) { c.faceShotAt = at; c.faceShotGun = f[6]; const dx = f[3] - f[0], dz = f[5] - f[2]; c.faceAssist = Math.hypot(dx, dz) > 0.01 ? Math.atan2(-dx, -dz) : undefined; c.faceAssistAt = at }
+    return
+  }
+  if (f[11] !== 1) { c.faceShotAt = at; c.faceShotGun = f[6] }
+}
+function faceHeld(id, c) {
+  return (c.grab | 0) > 0 || !!seatOf(c) || c.web > 0 || diving(c) || !!flightOf(c) || objs.some(o => o.heldBy === id)
+}
+function punchTurning(c, all) {
+  const G = GUNS[c.gun]
+  if (!G?.lead || c.bot || c.cool > 0 || c.dead > 0 || c.face === undefined) return c.punchHold = null
+  const H = c.punchHold ||= { t: 0 }, [yaw] = assistAim(c, all, G)
+  c.faceAssist = yaw; c.faceAssistAt = tickAt
+  if (Math.abs(wrapPi(yaw - c.face)) > FACE_PUNCH.ok && (H.t += TICK) < FACE_PUNCH.max) return H
+  return c.punchHold = null
+}
+function faceTick(id, c, inp, dt, at) {
+  const y = c.face ?? c.yaw, an = animOf(c), fire = !!(inp?.fire || inp?.alt)
+  if (fire) { c.faceShotAt = at; c.faceShotGun = c.gun; if (!(at - c.faceQuickAt < FACE_PUNCH.max * 1000)) c.faceQuickAt = at }
+  const g = c.chain ? [c.chain.phase, c.chain.p[0], c.chain.p[2]] : c.chainNet ? [c.chainNet[0], c.chainNet[4], c.chainNet[6]] : null
+  const G = GUNS[c.faceShotGun], C = GUNS[c.faceChgGun], mine = an > 3 || faceHeld(id, c)
+  const tied = g?.[0] === 3 && Math.hypot(g[1] - c.x, g[2] - c.z) > 0.5
+  const attack = g?.[0] === 1 || fire || at - c.faceShotAt < Math.max(FACE_MS, G?.punchMs ?? G?.rate * 1000) || at - c.faceChgAt < (C?.windup ?? 0) * 1000
+  const flyWant = an === 5 && Math.hypot(c.vx, c.vz) > FLY_V * 0.6 ? Math.atan2(-c.vx, -c.vz) : null
+  const rv = carrierRelV(c), moving = (an === 0 || an === 1) && Math.hypot(rv[0], rv[1]) > FACE_MOVE
+  const want = tied ? Math.atan2(c.x - g[1], c.z - g[2]) : attack ? (c.faceAssist !== undefined && at - c.faceAssistAt < 260 ? c.faceAssist : c.yaw)
+    : mine && flyWant === null ? c.yaw : flyWant ?? (moving ? Math.atan2(-rv[0], -rv[1]) : y)
+  const e0 = wrapPi(want - y), err = Math.abs(e0) > Math.PI - FACE_TIE ? Math.abs(e0) : e0, k = dt * FACE_RATE * (mine ? 4 : attack ? 2 : 1)
+  const kk = attack && !mine && at - c.faceQuickAt < FACE_PUNCH.max * 1000 ? dt * FACE_PUNCH.rate : attack && !mine ? dt * FACE_RATE * FACE_TURN.attack * Math.max(FACE_TURN.floor, Math.min(1, Math.abs(err) / FACE_TURN.ease)) : k
+  c.face = wrapPi(y + clamp(err, -kk, kk))
+}
 function faceYaw(id, c, anim, own, t, dt, firing, ticks) {
   const a = avatars.get(id)
-  if (!a) return c.yaw
-  const G = GUNS[a.shotGun], C = GUNS[a.chargeGun], n = ticks ? ticks.length : 1
-  for (let i = 0; i < n; i++) {
-    if (ticks && i === n - 1) a.face0 = a.face ?? c.yaw
-    const s = i < n - 1 ? ticks[i] : c, an = s === c ? anim : s.anim, at = ticks ? tickAt - (n - 1 - i) * TICK * 1000 : t, y = a.face ?? s.yaw, mine = own || an > 3
-    const tied = a.chainState?.[0] === 3 && Math.hypot(a.chainState[4] - s.x, a.chainState[6] - s.z) > 0.5
-    const attack = a.chainState?.[0] === 1 || (s === c ? firing : s.fire) || at - a.shotAt < Math.max(FACE_MS, G?.punchMs ?? G?.rate * 1000) || at - a.chargeAt < (C?.windup ?? 0) * 1000
-    const flyWant = an === 5 && Math.hypot(s.vx, s.vz) > FLY_V * 0.6 ? Math.atan2(-s.vx, -s.vz) : null
-    const rv = an === 1 ? carrierRelV(s) : null
-    const want = tied ? Math.atan2(s.x - a.chainState[4], s.z - a.chainState[6]) : attack ? (a.assistYaw !== undefined && at - a.assistAt < 260 ? a.assistYaw : s.yaw) : mine && flyWant === null ? s.yaw : flyWant ?? (an === 0 ? s.yaw : an === 1 && Math.hypot(rv[0], rv[1]) > 0.8 ? Math.atan2(-rv[0], -rv[1]) : y), k = (ticks ? TICK : dt) * FACE_RATE * (mine ? 4 : attack ? 2 : 1)
-    const err = Math.atan2(Math.sin(want - y), Math.cos(want - y))
-    const kk = attack && !mine ? (ticks ? TICK : dt) * FACE_RATE * FACE_TURN.attack * Math.max(FACE_TURN.floor, Math.min(1, Math.abs(err) / FACE_TURN.ease)) : k
-    a.face = y + clamp(err, -kk, kk)
-  }
-  return ticks && a.face0 !== undefined && a.face !== undefined ? a.face0 + wrapPi(a.face - a.face0) * drawAlpha : a.face ?? c.yaw
+  if (own) { if (a) a.face0 = a.face = c.yaw; return c.yaw }
+  if (!a) return c.face ?? c.yaw
+  if (!ticks) return a.face = c.face ?? c.yaw
+  const n = ticks.length
+  if (n) { a.face0 = n > 1 ? ticks[n - 2].face : a.face ?? ticks[0].face; a.face = ticks[n - 1].face }
+  return a.face0 !== undefined && a.face !== undefined ? a.face0 + wrapPi(a.face - a.face0) * drawAlpha : c.face ?? c.yaw
 }
 const RADAR_M = 70, RADAR_PX = 2, RADAR_MS = 1000 / 30
 const radarBake = new WeakMap()
