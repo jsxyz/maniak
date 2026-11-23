@@ -13074,6 +13074,7 @@ function rescue(c) {
     : ci + ' ' + cj + (faustState?.chunks.get(faustKey(ci, cj))?.physics ? ' built' : ' unbuilt')
   const cause = [c.x, c.y, c.z].every(Number.isFinite) ? 'fell' : 'NaN'
   rescues.n++; rescues.last = { who: c.bot ? c.bot.name : 'player ' + c.id, x: c.x, y: c.y, z: c.z, vy: v ? v.y() : NaN, cell, cause }
+  if (c.bot?.haunt) c.ai.gone = 'void'
   if (c === selfChar()) sysMsg('§7rescued from ' + [c.x, c.z, c.y].map(Math.round).join(' ') + ' (' + cause + ')', 'b')
   const s = pickSpawn(c)
   setCharPos(c, s[0], spawnY(c, s), s[2])
@@ -13488,7 +13489,7 @@ function botThink(b, all, dt) {
   ai.wait = false
   const follow = !car?.to && !seat && !(spec.drill && tgt && sd < 36) && crewThink(b, all, tgt, sd)
   if (!tgt && follow) return { f: 1, r: 0, j: false, descend: false, fire: false, yaw: Math.atan2(-(follow.x - b.x), -(follow.z - b.z)), pitch: 0 }
-  if (!tgt && !car?.to) return { f: ai.wait ? 0 : 0.92, r: 0, j: false, descend: false, fire: false, yaw: ai.wander, pitch: 0, use: car?.use }
+  if (!tgt && !car?.to) return { f: ai.wait || ai.pin ? 0 : 0.92, r: 0, j: false, descend: false, fire: false, yaw: ai.wander, pitch: 0, use: car?.use }
 
   const H = spec.hurl, held = H && objs.find(o => o.heldBy === b.id)
   let prey = null
@@ -13702,11 +13703,11 @@ function botThink(b, all, dt) {
     fire: fired && !sig && !_wrForward, alt: fired && sig && !_wrForward || dashWant(b, tgt, dist, los, onTarget, dt, all), use: !!prey && objGap(b, prey) <= (H.reach ?? 1.5) || !!car?.use || !!plan?.use, sprint: !((jetOf(b)?.sprint && b.flying) || prey || ai.walk),
     yaw: yaw + sy, pitch: sp ?? pitch,
   }
-  return ai.lurk ? { ...res, f: res.f * HAUNT.stroll, r: 0, j: false, fire: false, alt: false, use: false, sprint: false } : res
+  return ai.lurk ? { ...res, f: res.f * HAUNT.stroll, r: 0, j: false, fire: false, alt: false, use: false, sprint: false } : ai.pin ? { ...res, f: 0, r: 0, j: false } : res
 }
 
 const ROLE = { rush: { acc: 90, wind: 0.8, lock: 0.25, speed: 14, go: 1.0, miss: 1.4, rec: 0.7, cd: [3, 5.5], at: [4.5, 10] },
-  flank: { r: 3.4, behind: 1.9, wait: 4.5, near: 10 } }
+  flank: { r: 3.4, behind: 2.5, wait: 4.5, near: 10, back: 5 } }
 const RUSH_GUN = gunNamed('Rush')
 function windCue(b, gun) {
   const e = eyeOf(b), cm = [r2(b.x), r2(e), r2(b.z), r2(b.x), r2(e), r2(b.z), gun, 0, b.id, 1, 0]
@@ -13732,7 +13733,7 @@ function guardThink(b, spec, tgt, dist, los, toYaw, dt) {
   const ai = b.ai, P = GUARD, g = ai.gd ||= { up: false, cue: 0, broken: 0, counter: 0, swing: P.swing[0] }
   g.up = false
   if (g.broken > 0) { g.broken -= dt; return null }
-  if (!los || dist > P.near && !ai.pin) return null
+  if ((!los || dist > P.near) && !ai.pin) return null
   const yaw = roleFace(b, toYaw, dt, 1, GUARD.rate), G = GUNS[gunNamed([spec.atk].flat()[0])]
   if (g.counter > 0 && (g.counter -= dt) <= 0) g.swing = 0
   if (g.atk > 0) {
@@ -13798,14 +13799,14 @@ function rushThink(b, spec, tgt, dist, los, toYaw, dt) {
 }
 function flankThink(b, tgt, dist, los, toYaw, dt) {
   const ai = b.ai, P = ROLE.flank
-  if (ai.awayT > 0 || !los || dist > P.near) { ai.flankT = 0; return null }
+  if (!los || dist > P.near) { ai.flankT = 0; return null }
   const fy = tgt.yaw ?? 0, fx = -Math.sin(fy), fz = -Math.cos(fy), ux = (b.x - tgt.x) / (dist || 1), uz = (b.z - tgt.z) / (dist || 1)
-  const behind = Math.acos(clamp(fx * ux + fz * uz, -1, 1))
-  ai.flankT = (ai.flankT || 0) + dt
-  if ((behind > P.behind || ai.flankT > P.wait) && !ai.waitTurn) return null
+  const behind = Math.acos(clamp(fx * ux + fz * uz, -1, 1)), away = ai.awayT > 0
+  ai.flankT = away ? 0 : (ai.flankT || 0) + dt
+  if (!away && (behind > P.behind || ai.flankT > P.wait) && !ai.waitTurn) return null
   ai.fside ||= Math.random() < 0.5 ? -1 : 1
   const cur = Math.atan2(ux, uz), back = Math.atan2(-fx, -fz), da = wrapPi(back - cur)
-  const to = cur + (Math.abs(da) > 2.8 ? ai.fside * 0.8 : clamp(da, -0.8, 0.8)), R = Math.max(P.r, Math.min(dist, 6))
+  const to = cur + (Math.abs(da) > 2.8 ? ai.fside * 0.8 : clamp(da, -0.8, 0.8)), R = away ? P.back : Math.max(P.r, Math.min(dist, 6))
   const sx = tgt.x + Math.sin(to) * R - b.x, sz = tgt.z + Math.cos(to) * R - b.z, m = Math.hypot(sx, sz) || 1
   const yaw = roleFace(b, toYaw, dt), [f, r] = m > 0.3 ? toLocal(yaw, sx / m, sz / m) : [0, 0]
   return { f, r, fire: false, yaw, sprint: true }
@@ -33526,6 +33527,7 @@ function hauntSpot(p, env) {
     if (!(t < len)) continue
     const gy = top - t
     if (Math.abs(gy - foot) > (near ? 0.6 : 3) || staticRay(q.x, gy + 0.3, q.z, 0, 1, 0, 2) < 2) continue
+    if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([ox, oz]) => Math.abs(gy + 1 - staticRay(q.x + ox, gy + 1, q.z + oz, 0, -1, 0, 1.6) - gy) > 0.4)) continue
     const A = inAt(q.x, gy, q.z)
     if (near ? !A || A.B !== A0.B || A.k !== A0.k || inside && !A.inside : A?.inside) continue
     const W = waterOf(q.x, q.z)
@@ -33542,7 +33544,7 @@ function hauntTick(dt, all) {
   const T = tickAt || now(), humans = all.filter(c => !c.bot && c.id < BOT_ID0 && !(c.dead > 0))
   let moved = false
   for (const [key, K] of hauntCrews) {
-    for (const id of K.ids) { const c = players.get(id); if (c && !all.some(p => !p.bot && p.id < BOT_ID0 && Math.hypot(p.x - c.x, p.z - c.z) < HAUNT.keep)) { dropBot(c); moved = true } }
+    for (const id of K.ids) { const c = players.get(id); if (c && (c.ai.gone || !all.some(p => !p.bot && p.id < BOT_ID0 && Math.hypot(p.x - c.x, p.z - c.z) < HAUNT.keep))) { hauntGone(c, c.ai.gone || 'far'); dropBot(c); moved = true } }
     K.ids = K.ids.filter(id => players.get(id)?.ai?.crew === key)
     hauntHelp(K, T)
     if (!K.ids.length) { hauntCrews.delete(key); hauntNext.set(K.owner, T + (HAUNT.gap[0] + Math.random() * (HAUNT.gap[1] - HAUNT.gap[0])) * 1000) }
@@ -33601,7 +33603,11 @@ function hauntHelp(K, T) {
   if (conns.size) pushRoster()
 }
 function hauntReveal(b) { for (const c of players.values()) if (c.ai?.crew === b.ai.crew) c.ai.lurk = 0 }
-function hauntDown(c) { dropBot(c); if (conns.size) pushRoster() }
+function hauntGone(c, why) {
+  hauntLog.push({ t: Math.round(tickAt || now()), gone: c.id, kind: c.bot.haunt, crew: c.ai.crew, why, at: [r2(c.x), r2(c.y), r2(c.z)], hp: Math.round(c.hp), lurk: !!c.ai.lurk })
+  if (hauntLog.length > 40) hauntLog.shift()
+}
+function hauntDown(c, why = 'down') { hauntGone(c, why); dropBot(c); if (conns.size) pushRoster() }
 function hauntPurge() { for (const c of [...players.values()]) if (c.bot?.haunt) dropBot(c); hauntCrews.clear(); hauntNext.clear() }
 GAME.haunts = { env: hauntEnv, spot: hauntSpot, crews: hauntCrews, log: hauntLog, next: hauntNext }
 function dealerPurge() { for (const c of [...players.values()]) if (c.bot?.deal) dealerDrop(c); dealGone.clear() }
