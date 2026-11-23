@@ -839,6 +839,10 @@ const enemyName = id => NAMES[id] ?? id
 const gameText = (key, v) => TEXT[key].replace(/\{(\w+)\}/g, (m, k) => v?.[k] ?? m)
 
 const SOUND_LOOP = {
+  'sfx_biplane1.a4065bb7.mp3': [0.2, 9.050884],
+  'sfx_siren1.59a5265e.mp3': [0.2, 7.529955],
+  'sfx_wind2.93c6bb35.mp3': [0.2, 8.09907],
+  'sfx_zeppelin1.5f3940a0.mp3': [0.2, 8.453651],
   'sfx_burning1.d87965fc.mp3': [0.2, 8.360884],
   'sfx_enginehigh1.c9e97ede.mp3': [0.2, 4.250295],
   'sfx_engineidle1.c7ad4f04.mp3': [0.2, 7.095261],
@@ -927,10 +931,10 @@ const SOUNDS = {
   Thunder: { say: 'thunder: a crack and a long low rolling rumble, the nearer the louder and sharper', seed: 0, file: ['sfx_thunder1.d0d1fcba.mp3', 'sfx_thunder2.a1786806.mp3', 'sfx_thunder3.4e72b65a.mp3'], synth: null },
 
   Footstep: { say: 'a footfall on pavement', seed: 0, file: ['sfx_footstep1.1ac11d47.mp3', 'sfx_footstep2.96df2cf5.mp3', 'sfx_footstep3.50ab080b.mp3', 'sfx_footstep4.7de5c9a9.mp3'], synth: null, vary: 0.05 },
-  Siren: { say: 'a police siren, wailing up and down', seed: 0, file: null, synth: null },
+  Siren: { say: 'a police siren, wailing up and down', seed: 0, file: ['sfx_siren1.59a5265e.mp3'], synth: null, reach: 6 },
   'Car engine': { say: 'a car engine idling and revving', seed: 0, file: ['sfx_engineidle1.c7ad4f04.mp3'], synth: null },
-  Zeppelin: { say: 'a zeppelin\'s deep engine drone, passing overhead', seed: 0, file: null, synth: null },
-  Train: { say: 'a train rumbling past on its rail, with a bell', seed: 0, file: null, synth: null },
+  Zeppelin: { say: 'a zeppelin\'s deep engine drone, passing overhead', seed: 0, file: ['sfx_zeppelin1.5f3940a0.mp3'], synth: null, reach: 24 },
+  Train: { say: 'a train rumbling past on its rail, with a bell', seed: 0, file: ['sfx_train1.af962de4.mp3'], synth: null, reach: 8 },
   'Fists hit': { seed: 0, file: ['sfx_fisthit1.0967b4ab.mp3', 'sfx_fisthit2.18e1a2ea.mp3', 'sfx_fisthit3.4b2f6b88.mp3', 'sfx_fisthit4.a8aa0cc2.mp3'], synth: null, vary: 0.04 },
   'Haymaker hit': { seed: 0, file: ['sfx_haymakerhit1.37fc3ebd.mp3', 'sfx_haymakerhit2.e909358a.mp3'], synth: null, vary: 0.03, reach: 1.4 },
   'Scatter rack': { seed: 0, file: ['sfx_shotgunrack1.e26710a1.mp3'], synth: null, vary: 0.03 },
@@ -945,6 +949,8 @@ const SOUNDS = {
   'Car engine low': { seed: 0, file: ['sfx_enginelow1.a07171c0.mp3'], synth: null },
   'Car engine mid': { seed: 0, file: ['sfx_enginemid1.3757354b.mp3'], synth: null },
   'Car engine high': { seed: 0, file: ['sfx_enginehigh1.c9e97ede.mp3'], synth: null },
+  Wind: { seed: 0, file: ['sfx_wind2.93c6bb35.mp3'], synth: null },
+  Biplane: { seed: 0, file: ['sfx_biplane1.a4065bb7.mp3'], synth: null, reach: 10 },
 }
 const VOICES = {
   'Street performer': {
@@ -28054,6 +28060,86 @@ function carSounds(list, dt) {
     h.out.gain.setTargetAtTime(P.gain * (0.7 + 0.3 * u) * (mine ? 0.8 : 0.6), t, 0.05); h.pan.pan.setTargetAtTime(P.pan, t, 0.05)
   }
 }
+const HUM = { siren: { near: 300, max: 2, moving: 2 }, plane: { near: 500, top: 45 }, zep: { near: 1100, max: 3 }, wind: { lo: 12, hi: 110 }, train: { near: 75, ahead: 2500, gap: 15000, every: 250 } }
+const hums = new Map(), humSnd = new Map(), humTrain = new Map()
+let humFrame = 0, humTrainAt = 0
+function humOn(key, name, at, lvl, rate = 1) {
+  const R = SOUNDS[name], t = actx.currentTime, p = at ? sfxPlace(at.x, at.y, at.z, R?.reach) : { gain: 1, pan: 0, cut: 20000 }
+  const g = lvl * p.gain * (R?.vol ?? 1)
+  let h = hums.get(key)
+  if (!h) {
+    if (!(g >= SFX_FLOOR)) return
+    const file = R && soundPick(name, R.file), buf = file && soundReady(file)
+    if (!buf) return
+    const s = actx.createBufferSource(), out = actx.createGain(), lp = actx.createBiquadFilter(), pan = actx.createStereoPanner(), [a, b] = soundLoop(file, buf)
+    lp.type = 'lowpass'; lp.Q.value = 0.5; lp.frequency.value = p.cut
+    s.buffer = buf; s.loop = true; s.loopStart = a; s.loopEnd = b; s.playbackRate.value = rate; out.gain.value = 0
+    s.connect(out); out.connect(lp); lp.connect(pan); pan.connect(sfxOut); s.start(t, a + Math.random() * (b - a))
+    h = { s, out, lp, pan }; hums.set(key, h)
+  }
+  h.seen = humFrame
+  h.out.gain.setTargetAtTime(g, t, 0.1); h.pan.pan.setTargetAtTime(p.pan, t, 0.1); h.lp.frequency.setTargetAtTime(p.cut, t, 0.1); h.s.playbackRate.setTargetAtTime(rate, t, 0.15)
+}
+function humOff(key, h, t) { h.out.gain.setTargetAtTime(0, t, 0.08); try { h.s.stop(t + 0.5) } catch (e) {} hums.delete(key) }
+function worldHums(list, dt) {
+  if (!actx || !(dt > 0)) return
+  const t = actx.currentTime, live = sfxLive(), E = sfxEar, ms = now()
+  humFrame++
+  if (live) {
+    const sirens = [], seen = new Set()
+    for (const o of list) {
+      const V = vehicleOf(o.K || OBJECTS[o.k])
+      if (!V || o.held) continue
+      const d = Math.hypot(o.x - E.x, o.y - E.y, o.z - E.z)
+      if (squadIds.has(o.id) && V.engine > 0 && !V.fly && d < HUM.siren.near) {
+        const S = carSnd.get(o.id)
+        if (S && Math.hypot(S.vx, S.vz) > HUM.siren.moving) sirens.push([d, o])
+      }
+      if (!V.fly || d > HUM.plane.near) continue
+      seen.add(o.id)
+      let P = humSnd.get(o.id)
+      if (!P || dt > 0.25) { humSnd.set(o.id, { x: o.x, y: o.y, z: o.z, v: 0, moved: P?.moved || 0 }); continue }
+      const v = Math.hypot(o.x - P.x, o.y - P.y, o.z - P.z) / dt
+      if (v > 200) { P.x = o.x; P.y = o.y; P.z = o.z; continue }
+      P.v += (v - P.v) * Math.min(1, dt / 0.3); P.x = o.x; P.y = o.y; P.z = o.z
+      if (P.v > 0.5) P.moved = ms
+      const mine = d < 3
+      if (!mine && !(ms - P.moved < 4000)) continue
+      const u = clamp(P.v / HUM.plane.top, 0, 1)
+      humOn('fly' + o.id, 'Biplane', mine ? null : o, (0.55 + 0.45 * u) * (mine ? 0.7 : 1), 0.75 + 0.5 * u)
+    }
+    for (const id of humSnd.keys()) if (!seen.has(id)) humSnd.delete(id)
+    sirens.sort((a, b) => a[0] - b[0])
+    for (const [, o] of sirens.slice(0, HUM.siren.max)) humOn('siren' + o.id, 'Siren', o, 1)
+    if (airView) {
+      const at = isHost ? drawnT() : renderT, zeps = []
+      for (const s of airView.ships) {
+        const p = s.pose(at), d = Math.hypot(p.x - E.x, p.y - E.y, p.z - E.z)
+        if (s.kind === 'zep') { if (d < HUM.zep.near) zeps.push([d, s.id, p]) }
+        else if (d < HUM.plane.near) humOn('air' + s.id, 'Biplane', p, 1)
+      }
+      zeps.sort((a, b) => a[0] - b[0])
+      for (const [, id, p] of zeps.slice(0, HUM.zep.max)) humOn('zep' + id, 'Zeppelin', p, 1, p.stage === 'dwell' ? 0.8 : 1)
+    }
+    const W = HUM.wind, up = clamp((E.y - W.lo) / (W.hi - W.lo), 0, 1), R = rainState
+    if (up > 0) humOn('wind', 'Wind', null, up ** 0.7 * (0.6 + 0.4 * clamp(weather.wind || 0, 0, 1)) * (1 - 0.85 * (R?.indoor || 0)))
+    if (railState?.cars && ms - humTrainAt > HUM.train.every) {
+      humTrainAt = ms
+      const T = isHost ? drawnT() : renderT, p = {}, mid = (RAIL.car.n - 1) >> 1
+      for (const c of railState.cars) {
+        if (c.j !== mid) continue
+        railCar(c.route, c.k, c.j, T, p)
+        const key = c.route.line + ':' + c.k, d = Math.hypot(p.x - E.x, p.y - E.y, p.z - E.z), L = humTrain.get(key) || {}
+        if (d < HUM.train.near && L.d !== undefined && d < L.d && Math.abs(p.v) > 6 && !(ms - L.at < HUM.train.gap)) {
+          const q = railCar(c.route, c.k, c.j, T + HUM.train.ahead, {})
+          L.at = ms; sfxPlay('Train', { x: q.x, y: q.y, z: q.z }, 'world', 1)
+        }
+        L.d = d < HUM.train.near * 2 ? d : undefined; humTrain.set(key, L)
+      }
+    }
+  }
+  for (const [k, h] of hums) if (h.seen !== humFrame) humOff(k, h, t)
+}
 function carFx(dt) {
   for (const o of objs) {
     if (!o.V || o.V.sail || o.V.fly || !o.body) continue
@@ -42132,6 +42218,7 @@ function draw(dt, t) {
   background.sec('held')
   drawObjects(obl, d => wheelsOf(d, isHost ? now() : renderT, camera.position))
   try { carSounds(obl, dt) } catch (e) { sfxFaults++ }
+  try { worldHums(obl, dt) } catch (e) { sfxFaults++ }
   try { parkedStandFrame() } catch (e) { frameFailed('parked stand-ins', e) }
   background.sec('objects')
   spawnFace(me)
