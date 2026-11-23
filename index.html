@@ -13710,7 +13710,7 @@ function botThink(b, all, dt) {
 }
 
 const ROLE = { rush: { acc: 90, wind: 0.8, lock: 0.25, speed: 14, go: 1.0, miss: 1.4, rec: 0.7, cd: [3, 5.5], at: [4.5, 10] },
-  flank: { r: 3.4, behind: 2.5, wait: 4.5, near: 10, back: 5 } }
+  flank: { r: 3.5, behind: 2.5, wait: 4.5, near: 10, step: 0.6, in: 1.5, out: 0.5, rest: 0.8, flip: 0.3, pace: 0.6 } }
 const RUSH_GUN = gunNamed('Rush')
 function windCue(b, gun) {
   const e = eyeOf(b), cm = [r2(b.x), r2(e), r2(b.z), r2(b.x), r2(e), r2(b.z), gun, 0, b.id, 1, 0]
@@ -13721,7 +13721,7 @@ function roleFace(b, yaw, dt, k = 1, rate = (b.bot.turn || 6) * k) {
   return ai.yaw = from + clamp(wrapPi(yaw - from), -turn, turn)
 }
 function roleThink(b, spec, tgt, dist, los, toYaw, dt) {
-  return spec.role === 'rush' ? rushThink(b, spec, tgt, dist, los, toYaw, dt) : spec.role === 'flank' ? flankThink(b, tgt, dist, los, toYaw, dt)
+  return spec.role === 'rush' ? rushThink(b, spec, tgt, dist, los, toYaw, dt) : spec.role === 'flank' ? flankThink(b, spec, tgt, dist, los, toYaw, dt)
     : spec.role === 'guard' ? guardThink(b, spec, tgt, dist, los, toYaw, dt) : spec.role === 'throw' ? throwThink(b, tgt, dist, toYaw, dt) : null
 }
 function throwThink(b, tgt, dist, toYaw, dt) {
@@ -13800,19 +13800,28 @@ function rushThink(b, spec, tgt, dist, los, toYaw, dt) {
   if ((R.t -= dt) <= 0) { R.ph = 0; R.cd = P.cd[0] + Math.random() * (P.cd[1] - P.cd[0]); b.gun = gunNamed([spec.atk].flat()[0]) }
   return { f: 0, r: 0, fire: false, yaw: ai.yaw, sprint: false }
 }
-function flankThink(b, tgt, dist, los, toYaw, dt) {
-  const ai = b.ai, P = ROLE.flank
-  if (!los || dist > P.near) { ai.flankT = 0; return null }
+function flankThink(b, spec, tgt, dist, los, toYaw, dt) {
+  const ai = b.ai, P = ROLE.flank, G = GUNS[b.gun], reach = Math.min(spec.fireRange, G.range * 0.92)
+  const F = ai.fl ||= { ph: 0, t: 0, side: Math.random() < 0.5 ? -1 : 1 }
+  if (!los || dist > P.near || !G.melee) { F.ph = 0; F.t = 0; return null }
+  F.t += dt
   const fy = tgt.yaw ?? 0, fx = -Math.sin(fy), fz = -Math.cos(fy), ux = (b.x - tgt.x) / (dist || 1), uz = (b.z - tgt.z) / (dist || 1)
-  const behind = Math.acos(clamp(fx * ux + fz * uz, -1, 1)), away = ai.awayT > 0
-  ai.flankT = away ? 0 : (ai.flankT || 0) + dt
-  if (!away && (behind > P.behind || ai.flankT > P.wait) && !ai.waitTurn) return null
-  ai.fside ||= Math.random() < 0.5 ? -1 : 1
-  const cur = Math.atan2(ux, uz), back = Math.atan2(-fx, -fz), da = wrapPi(back - cur)
-  const to = cur + (Math.abs(da) > 2.8 ? ai.fside * 0.8 : clamp(da, -0.8, 0.8)), R = away ? P.back : Math.max(P.r, Math.min(dist, 6))
-  const sx = tgt.x + Math.sin(to) * R - b.x, sz = tgt.z + Math.cos(to) * R - b.z, m = Math.hypot(sx, sz) || 1
-  const yaw = roleFace(b, toYaw, dt), [f, r] = m > 0.3 ? toLocal(yaw, sx / m, sz / m) : [0, 0]
-  return { f, r, fire: false, yaw, sprint: true }
+  const behind = Math.acos(clamp(fx * ux + fz * uz, -1, 1)), cur = Math.atan2(ux, uz), yaw = roleFace(b, toYaw, dt)
+  const go = (to, R, k) => { R += R - dist; const sx = tgt.x + Math.sin(to) * R - b.x, sz = tgt.z + Math.cos(to) * R - b.z, m = Math.hypot(sx, sz) || 1, [f, r] = m > 0.3 ? toLocal(yaw, sx / m, sz / m) : [0, 0]; return { f: f * k, r: r * k, fire: false, yaw, sprint: k === 1 } }
+  if (F.ph === 1) {
+    if (dist <= reach * 0.85) { F.ph = 2; F.t = 0 } else if (F.t > P.in) { F.ph = 0; F.t = 0 } else return { f: 1, r: 0, fire: false, yaw, sprint: true }
+  }
+  if (F.ph === 2) {
+    if (b.cool > 0 || F.t > (G.windup || 0) + 0.6) { F.ph = 3; F.t = 0; if (Math.random() < P.flip) F.side = -F.side }
+    else if (dist > reach + 0.5) { F.ph = 0; F.t = 0 }
+    else return { f: dist > reach * 0.8 ? 0.4 : dist < 1.2 ? -0.6 : 0, r: 0, fire: true, yaw, sprint: false }
+  }
+  if (F.ph === 3) {
+    if (F.t < P.out) return go(cur + F.side * 0.9, P.r + 1, 1)
+    F.ph = 0; F.t = -P.rest
+  }
+  if (F.t > 0 && (behind > P.behind || F.t > P.wait) && !ai.waitTurn && !(b.cool > 0)) { F.ph = 1; F.t = 0; return { f: 1, r: 0, fire: false, yaw, sprint: true } }
+  return go(cur + F.side * P.step, P.r, P.pace)
 }
 
 const MELEE_TURNS = 2, TURN_S = 2.5, TURN_REST = 1.5, TURN_RING = 3.6, TURN_NEAR = 7
