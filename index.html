@@ -2097,9 +2097,9 @@ const PROP_MODELS = {
 }
 const RADIO_START = -1
 const RADIO = [
-  { name: 'Faustland FM', art: RIG_BASE + 'm.7b7d39a4.bin', tracks: [RIG_BASE + 'm.6d02df71.bin', { url: RIG_BASE + 'm.0541d123.bin', art: RIG_BASE + 'm.f6bf9616.bin' }, { url: RIG_BASE + 'm.d8b0c3e5.bin', art: RIG_BASE + 'm.88f290d2.bin' }] },
-  { name: 'Faust After Dark', art: RIG_BASE + 'm.e23fad74.bin', tracks: [RIG_BASE + 'm.7dc8d289.bin', { url: RIG_BASE + 'm.cc57f2a0.bin', art: RIG_BASE + 'm.c28fbdc6.bin' }, { url: RIG_BASE + 'm.47b2cffa.bin', art: RIG_BASE + 'm.31b56f52.bin' }] },
-  { name: 'Hell Block FM', art: RIG_BASE + 'm.61d9a6af.bin', tracks: [RIG_BASE + 'm.f58ed2ff.bin', { url: RIG_BASE + 'm.9b5e8aa7.bin', art: RIG_BASE + 'm.e0be2178.bin' }] },
+  { name: 'Faustland FM', art: RIG_BASE + 'm.f5445264.bin', tracks: [RIG_BASE + 'm.2a85ea20.bin', { url: RIG_BASE + 'm.5c3f5aab.bin', art: RIG_BASE + 'm.80a0b60a.bin' }, { url: RIG_BASE + 'm.5ba6ca8a.bin', art: RIG_BASE + 'm.57b6ad78.bin' }] },
+  { name: 'Faust After Dark', art: RIG_BASE + 'm.48acccb7.bin', tracks: [RIG_BASE + 'm.c284658c.bin', { url: RIG_BASE + 'm.1dc35ed1.bin', art: RIG_BASE + 'm.7bf84b72.bin' }, { url: RIG_BASE + 'm.4e26ea4f.bin', art: RIG_BASE + 'm.ce839632.bin' }] },
+  { name: 'Hell Block FM', art: RIG_BASE + 'm.d7e8c9d9.bin', tracks: [RIG_BASE + 'm.399a7900.bin', { url: RIG_BASE + 'm.07d9c8f2.bin', art: RIG_BASE + 'm.ffbbcbce.bin' }] },
 ]
 
 const TICK = 1 / 60
@@ -28373,9 +28373,20 @@ function sfxJet(on, who) {
 const radio = { on: -1, k: 0, tried: 0, fail: 0, a: null, end: Infinity, car: undefined }, radioEls = new Map(), radioAt = new Map()
 let radioOf = new Map()
 const radioBlobs = new Map(), radioArt = new Map()
+const RADIO_KEY = { a: 'RqzuqXw9WW3POoaLsGFmiG9p9vKwRBTNHskHJCO+dKQ=', b: 'UMWuZKDt+6yc44V5p7MeDpu2AnLaV3ow57+e6z0lLoY=' }
+const radioBytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0))
+let radioKey = null
+const radioKeyGet = () => radioKey || (radioKey = (async () => {
+  const p = radioBytes(RADIO_KEY.a), q = radioBytes(RADIO_KEY.b)
+  return globalThis.crypto.subtle.importKey('raw', p.map((v, i) => v ^ q[i]), 'AES-GCM', false, ['decrypt'])
+})())
+const radioOpen = async buf => {
+  const u = new Uint8Array(buf), plain = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv: u.slice(0, 12) }, await radioKeyGet(), u.subarray(12))
+  return new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'))).blob()
+}
 const radioBlob = (url, type) => {
   if (!url.endsWith('.bin')) return Promise.resolve(url)
-  if (!radioBlobs.has(url)) radioBlobs.set(url, fetch(url).then(r => r.ok ? new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).blob() : Promise.reject(new Error(r.status)))
+  if (!radioBlobs.has(url)) radioBlobs.set(url, fetch(url).then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))).then(radioOpen)
     .then(b => URL.createObjectURL(new Blob([b], { type }))))
   return radioBlobs.get(url)
 }
