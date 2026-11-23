@@ -7143,13 +7143,13 @@ function faustRingInRead(F, b) {
   for (const [role, kind] of faustRingInWalls(b)) {
     const i = F.ringIdx?.get(b.id + '/' + role), mesh = F.ringMeshes?.find(m => m.userData.faustRings === kind)
     if (i === undefined || !mesh) return null
-    out.push({ m: mesh.instanceMatrix.array.slice(i * 16, i * 16 + 16), c: mesh.instanceColor.array.slice(i * 3, i * 3 + 3) })
+    out.push({ m: mesh.instanceMatrix.array.slice(i * 16, i * 16 + 16), c: mesh.instanceColor.array.slice(i * 3, i * 3 + 3), l: mesh.geometry.attributes.faustLayer?.array[i] ?? faustSurfaceLayer(kind, 0) })
   }
   return out
 }
 function faustRingInShell(F, P, courses) {
   const S = F.ringShapes, sg = P.door.face[1], rows = []
-  for (const { m, c } of courses) {
+  for (const { m, c, l } of courses) {
     const len = (a, b, d) => Math.hypot(m[a], m[b], m[d]), lx = len(0, 1, 2), ly = len(4, 5, 6), lz = len(8, 9, 10), cy = m[13]
     for (const [u0, u1, y0, y1, v0, v1] of P.pieces) {
       const zr = [sg * (P.halfD - v0), sg * (P.halfD - v1)].sort((p, q) => p - q)
@@ -7159,11 +7159,11 @@ function faustRingInShell(F, P, courses) {
       const o = new Float32Array(16)
       for (let j = 0; j < 3; j++) { for (let r = 0; r < 3; r++) o[j * 4 + r] = m[j * 4 + r] * w[j]; o[j * 4 + 3] = 0 }
       for (let r = 0; r < 3; r++) o[12 + r] = m[12 + r] + m[r] * k[0] + m[4 + r] * k[1] + m[8 + r] * k[2]
-      o[15] = 1; rows.push([o, c])
+      o[15] = 1; rows.push([o, c, l])
     }
   }
-  const mesh = new THREE.InstancedMesh(S.body, F.materials.stone, rows.length), col = new Float32Array(rows.length * 3)
-  rows.forEach(([o, c], i) => { mesh.instanceMatrix.array.set(o, i * 16); col.set(c, i * 3) })
+  const mesh = new THREE.InstancedMesh(faustSurfaceGeometry(S.body, rows.length), faustSurfaceMaterial(F, 'body'), rows.length), col = new Float32Array(rows.length * 3), lay = mesh.geometry.attributes.faustLayer.array
+  rows.forEach(([o, c, l], i) => { mesh.instanceMatrix.array.set(o, i * 16); col.set(c, i * 3); lay[i] = l })
   mesh.instanceMatrix.needsUpdate = true; mesh.instanceColor = new THREE.InstancedBufferAttribute(col, 3)
   mesh.computeBoundingSphere(); mesh.castShadow = false; mesh.receiveShadow = false; mesh.userData.ringIn = P.id
   return mesh
@@ -7201,7 +7201,7 @@ function faustRingInHide(F, O, on) {
 function faustRingInRehide(F) { for (const O of F.ringIn?.open.values() || []) { O.hid = null; faustRingInHide(F, O, true) } }
 function faustRingInUndraw(O) {
   for (const g of O.groups || []) { faustIn.root?.remove(g); g.traverse(n => n.geometry?.dispose()) }
-  if (O.shell) { O.shell.parent?.remove(O.shell); O.shell.dispose() }
+  if (O.shell) { O.shell.parent?.remove(O.shell); O.shell.geometry.dispose(); O.shell.dispose() }
   O.groups = null; O.shell = null
 }
 function faustRingInBodies(P, yaw) {
