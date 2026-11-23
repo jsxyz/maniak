@@ -28050,10 +28050,10 @@ function carSounds(list, dt) {
     h.out.gain.setTargetAtTime(P.gain * (0.7 + 0.3 * u) * (mine ? 0.8 : 0.6), t, 0.05); h.pan.pan.setTargetAtTime(P.pan, t, 0.05)
   }
 }
-const HUM = { burn: { near: 250, max: 4, gone: 750 }, siren: { near: 300, max: 2, moving: 2 }, plane: { near: 500, top: 45 }, zep: { near: 1100, max: 3 }, wind: { lo: 12, hi: 110 }, train: { near: 75, ahead: 2500, gap: 15000, every: 250 } }
+const HUM = { burn: { near: 250, max: 4, gone: 750 }, siren: { near: 300, max: 2, moving: 2 }, plane: { near: 500, top: 45 }, zep: { near: 1100, max: 3 }, wind: { lo: 12, hi: 110 }, train: { near: 75, away: 110, ahead: 2500, every: 250, same: [4000, 40] } }
 const hums = new Map(), humSnd = new Map(), humTrain = new Map(), burns = new Map()
 function burnSound(id, x, y, z) { const b = burns.get(id) || {}; b.x = x; b.y = y; b.z = z; b.at = now(); burns.set(id, b) }
-let humFrame = 0, humTrainAt = 0
+let humFrame = 0, humTrainAt = 0, humTrainLast = null
 function humOn(key, name, at, lvl, rate = 1) {
   const R = SOUNDS[name], t = actx.currentTime, p = at ? sfxPlace(at.x, at.y, at.z, R?.reach ?? SFX_REACH[name]) : { gain: 1, pan: 0, cut: 20000 }
   const g = lvl * p.gain * (R?.vol ?? 1)
@@ -28124,12 +28124,14 @@ function worldHums(list, dt) {
       for (const c of railState.cars) {
         if (c.j !== mid) continue
         railCar(c.route, c.k, c.j, T, p)
-        const key = c.route.id + ':' + c.k, d = Math.hypot(p.x - E.x, p.y - E.y, p.z - E.z), L = humTrain.get(key) || {}
-        if (d < HUM.train.near && L.d !== undefined && d < L.d && Math.abs(p.v) > 6 && !(ms - L.at < HUM.train.gap)) {
-          const q = railCar(c.route, c.k, c.j, T + HUM.train.ahead, {})
-          L.at = ms; sfxPlay('Train', { x: q.x, y: q.y, z: q.z }, 'world', 1)
+        const key = c.route.id + ':' + c.k, d = Math.hypot(p.x - E.x, p.y - E.y, p.z - E.z), L = humTrain.get(key) || { armed: d > HUM.train.near }
+        if (d > HUM.train.away) L.armed = true
+        else if (L.armed && d < HUM.train.near && L.d !== undefined && d < L.d && Math.abs(p.v) > 6) {
+          L.armed = false
+          const q = railCar(c.route, c.k, c.j, T + HUM.train.ahead, {}), Q = humTrainLast, [gap, apart] = HUM.train.same
+          if (!(Q && ms - Q.at < gap && Math.hypot(q.x - Q.x, q.z - Q.z) < apart)) { humTrainLast = { at: ms, x: q.x, z: q.z }; sfxPlay('Train', { x: q.x, y: q.y, z: q.z }, 'world', 1) }
         }
-        L.d = d < HUM.train.near * 2 ? d : undefined; humTrain.set(key, L)
+        L.d = d; humTrain.set(key, L)
       }
     }
   }
