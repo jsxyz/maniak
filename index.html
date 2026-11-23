@@ -30593,6 +30593,7 @@ function shaderCheck() {
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   log: () => gameLog.map(line => ({ ...line })),
   shaderCheck,
+  clearTests: () => clearTestSpawns(),
   glassStats: () => FAUST_GLASS_STATS.map(q => ({ ...q })),
   capture: captureFrames,
   haunts: () => ({ log: JSON.parse(JSON.stringify(hauntLog)), crews: [...hauntCrews.values()].map(K => ({ key: K.key, owner: K.owner, env: K.env, ids: [...K.ids], help: K.help,
@@ -30603,8 +30604,9 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   hauntSpawn: (kind, dist = 2.5, o = {}) => {
     const me = selfChar(), i = isHost && me && HAUNT_ROWS[kind]?.find(r => !players.has(BOT_ID0 + r))
     if (i === undefined || i === false) return null
-    const yaw = input.yaw, key = 'test' + ++hauntSerial
-    ENFORCER_AT = [me.x - Math.sin(yaw) * dist, me.y - me.h - me.r + 0.6, me.z - Math.cos(yaw) * dist, yaw + Math.PI]
+    const yaw = input.yaw, key = 'test' + ++hauntSerial, spot = clearAhead(me, dist, me.r, me.h)
+    if (!spot) return null
+    ENFORCER_AT = [spot.x, spot.gy + 0.6, spot.z, yaw + Math.PI]
     const ok = addBot(i)
     ENFORCER_AT = null
     if (!ok) return null
@@ -34164,6 +34166,7 @@ function hauntSpot(p, env) {
     const gy = top - t
     if (Math.abs(gy - foot) > (near ? 0.6 : 3) || staticRay(q.x, gy + 0.3, q.z, 0, 1, 0, 2) < 2) continue
     if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([ox, oz]) => Math.abs(gy + 1 - staticRay(q.x + ox, gy + 1, q.z + oz, 0, -1, 0, 1.6) - gy) > 0.4)) continue
+    if (!near && clearGround(q.x, q.z, gy, 0.45, 0.9, 0.3, true) === null) continue
     const A = inAt(q.x, gy, q.z)
     if (near ? !A || A.B !== A0.B || A.k !== A0.k || inside && !A.inside : A?.inside) continue
     const W = waterOf(q.x, q.z)
@@ -34239,6 +34242,16 @@ function hauntHelp(K, T) {
   if (conns.size) pushRoster()
 }
 function hauntReveal(b) { for (const c of players.values()) if (c.ai?.crew === b.ai.crew) c.ai.lurk = 0 }
+function clearTestSpawns() {
+  let n = 0
+  for (const [key, K] of [...hauntCrews]) if (K.env === 'test') {
+    for (const id of K.ids) { const c = players.get(id); if (c) { dropBot(c); n++ } }
+    hauntCrews.delete(key)
+  }
+  if (n && conns.size) pushRoster()
+  GAME.streetLife?.clearTests?.()
+  return n
+}
 function hauntGone(c, why) {
   hauntLog.push({ t: Math.round(tickAt || now()), gone: c.id, kind: c.bot.haunt, crew: c.ai.crew, why, at: [r2(c.x), r2(c.y), r2(c.z)], hp: Math.round(c.hp), lurk: !!c.ai.lurk })
   if (hauntLog.length > 40) hauntLog.shift()
@@ -39481,6 +39494,27 @@ function setMatchMinutes(n) {
   settings.mins = n; saveSettings()
 }
 GAME.match = { frags: setFragLimit, minutes: setMatchMinutes, restart: () => { hostEvent(); resetMatch() }, event: k => pickEvent(k), get fragLimit() { return fragLimit }, get timeLimit() { return timeLimit }, bots: spawnBots, get resultsLeft() { return resultsLeft }, get fragSteps() { return FRAG_STEPS }, get minuteSteps() { return MINUTE_STEPS } }
+function clearGround(x, z, feet, r, h, tol = 0.6, open = false) {
+  const hit = [], top = []
+  staticRay(x, feet + 2, z, 0, -1, 0, 6, hit)
+  if (!(hit.length && hit[4] > 0.5) || Math.abs(hit[1] - feet) > tol) return null
+  const gy = hit[1], R = r + 0.05, up = h * 2 + r * 2 - 0.3
+  if (open) { staticRay(x, gy + 14, z, 0, -1, 0, 20, top); if (!(top.length && top[1] < gy + tol)) return null }
+  for (let k = 0; k < 8; k++) for (const t of [0.35, 0.9, h * 2]) if (staticRay(x, gy + t, z, Math.cos(k * Math.PI / 4), 0, Math.sin(k * Math.PI / 4), R) < r) return null
+  return staticRay(x, gy + 0.3, z, 0, 1, 0, up) >= up ? gy : null
+}
+function clearAhead(me, d, r, h) {
+  const yaw = input.yaw, feet = me.y - me.h - me.r, fx = -Math.sin(yaw), fz = -Math.cos(yaw), sx = Math.cos(yaw), sz = -Math.sin(yaw), top = []
+  staticRay(me.x, feet + 14, me.z, 0, -1, 0, 20, top)
+  const open = top.length > 0 && top[1] < feet + 0.6
+  for (const f of [1, 0.8, 0.6, 0.4, 1.2, 1.5]) for (const s of [0, 1.5, -1.5, 3, -3]) {
+    const dd = d * f
+    if (dd < r + me.r + 0.4) continue
+    const x = me.x + fx * dd + sx * s, z = me.z + fz * dd + sz * s, gy = clearGround(x, z, feet, r, h, 0.6, open)
+    if (gy !== null) return { x, z, gy }
+  }
+  return null
+}
 function spawnStill(name, mode) {
   const want = name.trim().toLowerCase(), me = selfChar()
   if (!me || me.dead > 0) return sysMsg(gameText('stillDown'), 'c')
@@ -39490,9 +39524,9 @@ function spawnStill(name, mode) {
   if (!players.has(id)) { if (!addBot(i)) return sysMsg(gameText('stillOff', { name: shown }), 'c'); if (conns.size) pushRoster() }
   const c = players.get(id)
   if (c.dead > 0) respawn(c)
-  const yaw = input.yaw, x = me.x - Math.sin(yaw) * 5, z = me.z - Math.cos(yaw) * 5, hit = []
-  staticRay(x, me.y + 1, z, 0, -1, 0, 8, hit)
-  const gy = hit.length && hit[4] > 0.5 ? hit[1] : me.y - me.h - me.r
+  const yaw = input.yaw, spot = clearAhead(me, 5, c.r, c.h)
+  if (!spot) return sysMsg('§cNo clear ground ahead.', 'c')
+  const { x, z, gy } = spot
   setCharPos(c, x, gy + c.h + c.r + 0.05, z)
   c.prot = 0; c.knT = 0; c.knUp = 0
   c.yaw = c.ai.yaw = yaw + Math.PI
@@ -39556,7 +39590,7 @@ GAME.commands = {
               if (!isHost) return sysMsg('§cOnly the host controls the enemies.', 'c')
               BOT_COUNT = 0; botsSlider(); stepSquad()
               spawnList([])
-              GAME.streetLife?.clearTests?.()
+              clearTestSpawns()
               heatReset()
               sysMsg('§7Cleared.', 'c') } },
   bots:   { args: '<0-6>', help: 'host only, set how many enemies', run: a => {
@@ -39869,9 +39903,9 @@ const GIVE = { squad: 'Car', block: 'Cinderblock', sports: 'Sports car', wreck: 
 function giveSquad(me) {
   const k = squadK(), id = squadId(trafficState || { departures: [] })
   if (k < 0 || id < 0 || objs.length >= OBJ_MAX - 8) return sysMsg(gameText('giveSquadNo'), 'c')
-  const yaw = input.yaw, x = me.x - Math.sin(yaw) * 5, z = me.z - Math.cos(yaw) * 5, hit = []
-  staticRay(x, me.y + 1, z, 0, -1, 0, 8, hit)
-  const gy = hit.length && hit[4] > 0.5 ? hit[1] : me.y - me.h - me.r
+  const yaw = input.yaw, spot = clearAhead(me, 5, 1.6, 0.3)
+  if (!spot) return sysMsg('§cNo clear ground ahead.', 'c')
+  const { x, z, gy } = spot
   squadIds.add(id)
   const o = addObject(k, [x, gy + 1, z], id, yaw)
   if (!o) { squadIds.delete(id); return sysMsg(gameText('giveSquadNo'), 'c') }
@@ -39888,12 +39922,12 @@ function testGive(a) {
   const k = OBJECTS.findIndex(K => K.name.toLowerCase() === name.toLowerCase())
   if (k < 0 || OBJECTS[k].plane) return sysMsg('§cUsage: §f/give [kind] §7(' + [...Object.keys(GIVE), ...OBJECTS.filter(K => !K.model && !K.plane).map(K => K.name.toLowerCase())].join(', ') + ')', 'c')
   if (objs.length >= OBJ_MAX - 8) return sysMsg('§cToo many objects here.', 'c')
-  const K = OBJECTS[k], yaw = input.yaw, d = K.shape === 'hull' ? 5 : 3, x = me.x - Math.sin(yaw) * d, z = me.z - Math.cos(yaw) * d, hit = []
-  staticRay(x, me.y + 1, z, 0, -1, 0, 8, hit)
-  const gy = hit.length && hit[4] > 0.5 ? hit[1] : me.y - me.h - me.r
+  const K = OBJECTS[k], yaw = input.yaw, d = K.shape === 'hull' ? 5 : 3, spot = clearAhead(me, d, K.shape === 'hull' ? 1.6 : K.half ? Math.max(K.half[0], K.half[2]) : K.r || 0.5, 0.3)
+  if (!spot) return sysMsg('§cNo clear ground ahead.', 'c')
+  const { x, z, gy } = spot
   objSeeds[objs.length] = (Math.random() * 1e9) | 0
   placeObject(k, [x, K.shape === 'hull' ? gy : gy + (K.half ? K.half[1] : K.r || 0.5) + 0.05, z], yaw)
-  sysMsg('§7A §f' + K.name.toLowerCase() + ' §7' + d + ' m ahead', 'c')
+  sysMsg('§7A §f' + K.name.toLowerCase() + ' §7' + Math.round(Math.hypot(x - me.x, z - me.z)) + ' m ahead', 'c')
 }
 Object.assign(GAME.commands, { give: { args: '[kind]', help: 'host only, test: a loose object ahead (crate, block, ball, van, truck, bus, door, car, squad)', run: testGive } })
 const motionCommand = a => {
