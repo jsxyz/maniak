@@ -12368,6 +12368,7 @@ function runUpWall(c, inp, spd, wx, wz, dt) {
   turnBody(c, false, inp.yaw, c.x, c.y - c.h, c.z); knockChar(c, ax, 0, az, RUN_OFF)
   return [0, Math.min(c.vy, RUN_OFF), 0]
 }
+const REEL_POSE = { heave: 180, fly: 2.5, brace: 1.8, lean: 0.85 }
 const MANTLE = { auto: true, tap: 0.6, low: 0.4, high: 1.3, clear: 2.05, drop: 3, lift: 0.08, slow: 3.5, rise: [0.08, 0.09], aim: 0.8, slip: 0.3 }
 const MANTLE_POSE = { hip: 0.33, lean: [0.48, 0.38, 0.24, 0.85], lead: [0.4, 0.5, 0.22], trail: [0.2, 0.45, 0.26], shrug: 0.55, roll: 0.35, let: 0.15, letArms: 180, letLegs: 240,
   armsIn: 120, tuckIn: [60, 200], mount: { hip: 0.7, lean: 0.5, lead: [0.28, 0.6, 0.08], let: 120 } }
@@ -12513,6 +12514,52 @@ function chainCarAt(c) {
   p.v = carrierPointV(P, p[0], p[2])
   return p
 }
+const CHAIN_HOME = { cone: 0.13, reach: 1.6, wide: 0.3, faster: 18, square: 0.35, near: 0.004 }
+function chainHome(c, g) {
+  g.home = null
+  if (!railState) return
+  const e = eyeAt(c), [yaw, pitch] = aimAngles(c), d = aimDir(yaw, pitch), G = RAIL_GLASS, W = RAIL.car.width - 0.05
+  let best = null
+  for (const car of railState.cars) {
+    const k = car.carrier
+    if (!k.chunks) continue
+    const P = carrierPose(k)
+    if (Math.hypot(P.x - c.x, P.z - c.z) > g.range + 12) continue
+    for (const i of railPanes(car)) {
+      const s = i < 3 ? -1 : 1, [x0, x1] = G.panes[i % 3], q = winWorld(P, [(x0 + x1) / 2, (G.y[0] + G.y[1]) / 2, s * W]), v = q.map((u, j) => u - e[j]), n = Math.hypot(...v)
+      if (n > g.range + 4 || n < 1.2) continue
+      const out = carrierTurn(P, s, 0, 0)
+      if (out[0] * v[0] + out[2] * v[2] > -CHAIN_HOME.square * Math.hypot(v[0], v[2])) continue
+      const ang = Math.acos(clamp((v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / n, -1, 1)), miss = n * Math.sin(ang)
+      const score = ang + n * CHAIN_HOME.near
+      if (!(ang < CHAIN_HOME.cone || miss < CHAIN_HOME.reach && ang < CHAIN_HOME.wide) || best && score >= best.score) continue
+      if (staticRay(...e, v[0] / n, v[1] / n, v[2] / n, n - 0.15, null, chainMask()) < n - 0.3 && chainRayCar() !== k.id) continue
+      best = { id: k.id, i, ang, score, local: carrierLocal(P, ...q) }
+    }
+  }
+  if (!best) return
+  g.home = best
+  if (railGlassOut(carriers.get(best.id).rail, best.i)) g.through = best.i
+}
+function chainInward(g, ptr, i) {
+  const B = carrierBodies.get(ptr)
+  if (!B) return
+  const P = carrierPose(B.c), b = winBox(P, ...g.p), s = i < 3 ? -1 : 1, [x0, x1] = RAIL_GLASS.panes[i % 3], cv = carrierPointV(P, g.p[0], g.p[2])
+  const q = winWorld(P, [clamp(b[0], x0 + 0.25, x1 - 0.25), 1.6, -s * (RAIL.car.width - 0.15)]), d = q.map((v, j) => v - g.p[j]), n = Math.hypot(...d) || 1, sp = Math.max(12, Math.hypot(...g.v.map((v, j) => v - cv[j])) * 0.85)
+  g.v = d.map((v, j) => v / n * sp + cv[j]); g.home = null
+}
+function chainHomeStep(g) {
+  const h = g.home, k = h && carriers.get(h.id)
+  if (!h) return
+  if (!k) { g.home = null; return }
+  const P = carrierPose(k), b = winBox(P, ...g.p), s = h.i < 3 ? -1 : 1
+  if (s * b[2] < RAIL.car.width - 0.3) { g.home = null; return }
+  const speed = Math.max(Math.hypot(...g.v), Math.hypot(P.vx, P.vz) + CHAIN_HOME.faster)
+  let q = carrierWorld(P, ...h.local)
+  for (let j = 0; j < 3; j++) q = carrierWorld(k.pose(carrierT + chainGap(g.p, q) / speed * 1000), ...h.local)
+  const d = q.map((v, i) => v - g.p[i]), n = Math.hypot(...d) || 1
+  g.v = d.map(v => v / n * speed)
+}
 function chainBegin(c) {
   const p = chainHand(c), g = makeBody(new A.btSphereShape(CHAIN_RADIUS), 0, ...p)
   world.addRigidBody(g.body, ...COLLIDE.hub)
@@ -12532,7 +12579,7 @@ function chainSweep(g, from, to) {
 }
 function chainSolve(c, g, dt) {
   const a = chainHand(c), b = g.p, dist = chainGap(a, b), len = dist + (g.phase === 3 ? 0.035 : Math.min(0.45, dist * 0.04))
-  if (chainLine(a, b) && !(g.carrier && chainRayCar() === g.carrier.id)) return false
+  if (!g.carrier && chainLine(a, b)) return false
   if (g.nodes.length !== CHAIN_N || chainGap(g.nodes[0], a) > 2) {
     g.nodes = Array.from({ length: CHAIN_N }, (_, j) => a.map((v, i) => v + (b[i] - v) * j / (CHAIN_N - 1)))
     g.prev = g.nodes.map(p => p.slice())
@@ -12588,14 +12635,15 @@ function chainIntent(c, inp, dt) {
       g.phase = 2; g.age = 0; g.start = g.p.slice(); g.range = S.range + S.extra * g.charge
       const target=chainAimPoint(c,g.range),d=target.map((v,i)=>v-g.p[i]),length=Math.hypot(...d)||1
       const speed=(hurlOf(c)?.speed ?? S.speed)+S.boost*g.charge
-      g.v=d.map(v=>v/length*speed);g.v[1]-=GRAV*0.12*length/speed*0.5;g.travel=0;g.nodes=[]
+      g.v=d.map(v=>v/length*speed);g.v[1]-=GRAV*0.12*length/speed*0.5;g.travel=0;g.nodes=[];chainHome(c,g)
     }
   } else if (g.phase === 2) {
+    chainHomeStep(g)
     const from = g.p, to = from.map((v, i) => v + g.v[i] * dt)
     g.v[1] += GRAV * 0.12 * dt
     let hit = chainSweep(g, from, to)
     const pane = hit && g.through === undefined && railPaneHit(hit, g.v)
-    if (pane) { g.through = pane - 1; g.v = g.v.map(v => v * 0.85); hit = chainSweep(g, from, to) }
+    if (pane) { g.through = pane - 1; chainInward(g, hit.ptr, pane - 1); const q = hit.p, n = Math.hypot(...g.v) || 1; to.splice(0, 3, ...q.map((v, i) => v + g.v[i] / n * 0.25)); hit = null }
     g.travel += chainGap(from, hit ? hit.p : to)
     const person=chainCharacterHit(c,g,from,to,hit)
     if(person) chainStrike(c,g,person)
@@ -14517,8 +14565,32 @@ function leapCamEase(me, tf = frameT || now()) {
   return C
 }
 const CAM_ROOM = { radius: 0.32, margin: 0.04, recover: 0.5, pull: 0.045, settle: 0.14, shoulder: 0.48, side: 1.2, fade: [0.8, 2.8], ahead: [0.1, 0.2, 0.3, 0.45], aheadTurn: 0.6, aheadMax: 1.6, probe: 0.3, roofAhead: [0.25, 0.5], roofRise: 0.8, moveMin: 0.5, speed: 24, moving: 0.5 }
+const CAM_RIDE = [0.45, 0.85]
 const followCam = { at: NaN, id: null, warp: null, x: 0, y: 0, z: 0, distance: 0, pivot: 0, side: 0, sign: 1, active: false, yaw: 0, rate: 0, cy: NaN, foe: 0, foeSign: 0, foeAt: NaN }
+const TRAIN_CAM = { back: 2.1, chest: 0.35, up: 0.25, wall: 0.25, roof: 0.18, fov: 12, out: 0.4, entry: 3.4, entryUp: 0.8, near: [3.5, 3, 2], ease: 0.35 }
+const trainCamEase = { on: 0, at: NaN, blend: 0, p: null }
+function trainCar(me) {
+  const k = me.winIn ? carrierNumbered(me.winIn[0]) : me.carryOn && carriers.get(me.carryId)?.rail ? carriers.get(me.carryId)
+    : me.chain?.phase === 3 && me.chain.carrier ? carriers.get(me.chain.carrier.id) : me.chainCarNet && me.web ? carrierNumbered(me.chainCarNet[0]) : null
+  return k?.rail ? k : null
+}
+function trainRay(me, yaw, pitch, k) {
+  const C = TRAIN_CAM, K = RAIL.car, W = K.width - 0.05, P = carrierPose(k, isHost ? drawnT() : renderT), p = [me.x, me.y + C.chest, me.z], mb = winBox(P, ...p)
+  const inside = (!me.winIn || me.winIn[1] > 0.8) && Math.abs(mb[2]) < W && mb[1] > K.floor - 0.3 && mb[1] < K.ceiling + 0.3 && Math.abs(mb[0]) < K.half
+  if (!inside && !(Math.abs(mb[2]) < W + C.near[0] && Math.abs(mb[0]) < K.half + C.near[1] && mb[1] > -1.1 - C.near[2] && mb[1] < K.roof + C.near[2])) return null
+  const [dx, dy, dz] = aimDir(yaw, clamp(pitch, -0.6, 0.5)), b = winBox(P, p[0] - dx * C.back, p[1] - dy * C.back + C.up, p[2] - dz * C.back)
+  if (me.winIn && me.winIn[1] <= 0.8) { const o = Math.sign(me.winIn[4]) || 1; b[0] = mb[0]; b[1] = Math.max(mb[1], (RAIL_GLASS.y[0] + RAIL_GLASS.y[1]) / 2) + C.entryUp; b[2] = o * (W + C.entry) }
+  else if (inside) { const z = clamp(b[2], -(W - C.wall), W - C.wall), dz = z - mb[2], dx = b[0] - mb[0], flat = Math.hypot(dx, b[2] - mb[2])
+    if (z !== b[2] && flat > Math.abs(dz)) b[0] = mb[0] + (Math.sign(dx) || 1) * Math.sqrt(flat * flat - dz * dz)
+    b[2] = z; b[1] = clamp(b[1], K.floor + 0.6, K.ceiling - C.roof); b[0] = clamp(b[0], -(K.half - 0.35), K.half - 0.35) }
+  else if (Math.abs(b[2]) < W + C.out && Math.abs(b[0]) < K.half + 0.5 && b[1] > -1.4 && b[1] < K.roof + 0.4) b[2] = (Math.sign(mb[2]) || 1) * (W + C.out)
+  const c = winWorld(P, b), t = Math.hypot(c[0] - p[0], c[1] - p[1], c[2] - p[2]) || 0.01, [ex, ey, ez] = aimDir(yaw, pitch), eyeY = eyeOf(me)
+  const target = [me.x + ex * CAM.aim, eyeY + ey * CAM.aim, me.z + ez * CAM.aim], a = target.map((v, i) => v - c[i]), n = Math.hypot(...a) || 1, f = a.map(v => v / n)
+  return { x: c[0], y: c[1], z: c[2], dx: f[0], dy: f[1], dz: f[2], t, aim: target, confined: true, blocked: false, ceiling: Infinity, pivot: p, side: 0, limit: t, train: inside ? 2 : 1,
+    near: Math.max(0, (me.x - c[0]) * f[0] + (eyeY - c[1]) * f[1] + (me.z - c[2]) * f[2]) }
+}
 function camRay(me, yaw, pitch, R = heldR(me), eased = null, follow = null, shoulder = 0, camLift = 0) {
+  { const k = trainCar(me), tr = k && trainRay(me, yaw, pitch, k); if (tr) return tr }
   const [dx, dy, dz] = aimDir(yaw, pitch)
   const raw = eased ? null : leapCamTerms(me), move = eased ? eased.m : raw[0], landing = eased ? eased.l : raw[1]
   const back = CAM.back + 3.2 * move + 3.5 * landing, up = CAM.up + 2.1 * move + 2.4 * landing, aim = CAM.aim - 22 * move - 14 * landing
@@ -14786,9 +14858,15 @@ function updateCamera(me, inp, cam, firstPerson, foes) {
   e.r = e.from + (e.to - e.from) * Math.min(1, (now() - e.at) / 150)
   const slide = foeShoulder(me, inp.yaw, foes), part = Math.abs(slide) / CAM_FOE.side
   const r = camRay(me, inp.yaw, inp.pitch, e.r, leapCamEase(me), followCam, slide, CAM_FOE.lift * part)
-  cam.position.set(r.x, r.y, r.z)
+  const tf = frameT || now(), E = trainCamEase, dt = Number.isFinite(E.at) ? clamp((tf - E.at) / 1000, 0, 0.1) : 0
+  if ((r.train || 0) !== E.on && Number.isFinite(E.at)) E.blend = 1
+  E.on = r.train || 0; E.at = tf; E.blend = Math.max(0, E.blend - dt / TRAIN_CAM.ease)
+  const k = E.blend > 0 && E.p ? 1 - Math.exp(-dt / 0.06) : 1, p = E.p ||= [r.x, r.y, r.z]
+  p[0] += (r.x - p[0]) * k; p[1] += (r.y - p[1]) * k; p[2] += (r.z - p[2]) * k
+  if (r.train) { const f = Math.min(FOV_MAX, wantFov + TRAIN_CAM.fov); if (cam.fov !== f) { cam.fov = f; cam.updateProjectionMatrix?.() } }
+  cam.position.set(...p)
   cam.lookAt(...r.aim)
-  const fade = THREE.MathUtils.smoothstep(r.t, ...(r.confined ? CAM_ROOM.fade : CAM.bodyFade))
+  const fade = THREE.MathUtils.smoothstep(r.t, ...(r.train || me.carryOn || me.winIn ? CAM_RIDE : r.confined ? CAM_ROOM.fade : CAM.bodyFade))
   return { dist: r.t, hideSelf: false, fade, ray: r }
 }
 
@@ -23439,6 +23517,8 @@ function rigAnimate(a, want, dt, t) {
     if (clip) R.over = { clip, t0: 0.04, at: t, full: true, speed: going ? 2.2 : 1.5, w: going ? 0.65 : 1 }
     rigHopLand(a, R, t - (R.airAt ?? t))
   }
+  if (R.wasWin && a.moveState !== 5) a.landAt = t
+  R.wasWin = a.moveState === 5
   if (a.landAt !== undefined && a.landAt !== R.landSeen && t - a.landAt < 150) { R.landSeen = a.landAt; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
   R.wasAir = airborne
   const next = name === RIG_GAIT ? null : rigAction(R, name)
@@ -23873,7 +23953,7 @@ function rigMovePose(a, R, want, t) {
     at.set(g[29], g[30], g[31])
     if (at.distanceToSquared(from) < 0.36) at.set(g[4], g[5], g[6])
     dir.subVectors(at, from); if (dir.lengthSq() < 1e-6) dir.set(-Math.sin(yaw), 0, -Math.cos(yaw)); dir.normalize()
-    const ph = (t / 1000 * 1.7 + a.cid * 0.37) % 1, stroke = reel ? (ph < 0.62 ? THREE.MathUtils.smoothstep(ph / 0.62, 0, 1) : 1 - THREE.MathUtils.smoothstep((ph - 0.62) / 0.38, 0, 1)) : 0.35
+    const ph = (t / 1000 * (reel > 0 ? 3.2 : 1.7) + a.cid * 0.37) % 1, stroke = reel ? (ph < 0.62 ? THREE.MathUtils.smoothstep(ph / 0.62, 0, 1) : 1 - THREE.MathUtils.smoothstep((ph - 0.62) / 0.38, 0, 1)) : 0.35
     const ground = !(want === 2 || want === 3 || want === 4 || want === 6 || R.name === R.M.clips.climb)
     lean.copy(dir).applyQuaternion(parentQ.copy(rootQ).invert())
     const bearing = Math.atan2(lean.x, lean.z), up = Math.atan2(lean.y, Math.hypot(lean.x, lean.z)), k = ground ? 1 : 0.35
@@ -23891,24 +23971,29 @@ function rigMovePose(a, R, want, t) {
     } else {
       turn('spine_01', [0, 1, 0], clamp(bearing, -1, 1) * 0.12 + 0.1); turn('spine_02', [0, 1, 0], clamp(bearing, -1, 1) * 0.18 + 0.24)
       turn('spine_02', [1, 0, 0], -0.10 * stroke * k); turn('spine_03', [1, 0, 0], -0.06 * stroke * k + 0.1 * Math.max(0, -up))
-      turn('Head', [0, 1, 0], -clamp(bearing, -1, 1) * 0.25 - 0.1); turn('Head', [1, 0, 0], -0.25 * up)
+      turn('Head', [0, 1, 0], -clamp(bearing, -1, 1) * 0.25 - 0.1); turn('Head', [1, 0, 0], -0.25 * up); if (reel > 0) turn('spine_02', [0, 1, 0], 0.22 * Math.sin(ph * 6.283))
       if (ground && !moving) for (const [side, s] of [['l', 1], ['r', -1]]) {
         turn('thigh_' + side, [1, 0, 0], s > 0 ? -0.38 : 0.22); turn('calf_' + side, [1, 0, 0], s > 0 ? 0.42 : 0.18); turn('foot_' + side, [1, 0, 0], s > 0 ? -0.10 : -0.28)
       }
       lean.set(-Math.cos(bearing), 0, Math.sin(bearing)); R.inst.rotateOnAxis(lean.normalize(), (0.16 + 0.14 * stroke) * k * Math.max(0, Math.cos(up)))
       const pivot = ang => { const hp = R.bones.get('pelvis'); if (!hp || !R.inst.parent) return; R.inst.updateMatrixWorld(true); hp.getWorldPosition(rigV); R.inst.rotateOnAxis(lean, ang); R.inst.updateMatrixWorld(true); hp.getWorldPosition(rigU)
         R.inst.parent.worldToLocal(rigV); R.inst.parent.worldToLocal(rigU); R.inst.position.add(rigV.sub(rigU)) }
-      if (reel && !ground && a.moveState !== 5) { pivot(clamp(Math.acos(clamp(dir.y, -1, 1)), 0, 1.2) * 0.45)
-        for (const [side, s] of [['l', 1], ['r', -1]]) { turn('thigh_' + side, [1, 0, 0], 0.18 + 0.1 * s * Math.sin(ph * 6.283)); turn('calf_' + side, [1, 0, 0], 0.35 + 0.15 * s) } }
+      if (reel > 0) a.reelAt ??= t; else a.reelAt = undefined
+      const heave = reel > 0 ? clamp((t - a.reelAt) / REEL_POSE.heave, 0, 1) : 1, fly = reel > 0 && a.moveState !== 5 && (!ground || (a.v || 0) > REEL_POSE.fly)
+      const brace = fly ? THREE.MathUtils.smoothstep(REEL_POSE.brace - (g[3] || 9), 0, 0.8) : 0
+      if (fly) { pivot(clamp(Math.acos(clamp(dir.y, -1, 1)), 0, 1.5) * REEL_POSE.lean * (1 - 0.65 * brace) * THREE.MathUtils.smoothstep(heave, 0.4, 1))
+        for (const side of ['l', 'r']) { turn('thigh_' + side, [1, 0, 0], 0.3 - 1.0 * brace); turn('calf_' + side, [1, 0, 0], 0.5 - 0.1 * brace) } }
       if (a.moveState === 5) {
-        const u = clamp((t - (a.winAt ??= t)) / (WIN_IN.T * 1000), 0, 1), d = Math.sin(Math.PI * Math.min(1, u * 1.15))
-        pivot(0.55 * d)
-        for (const side of ['l', 'r']) { turn('thigh_' + side, [1, 0, 0], -0.9 * d); turn('calf_' + side, [1, 0, 0], 1.3 * d) }
+        const u = clamp((t - (a.winAt ??= t)) / (WIN_IN.T * 1000), 0, 1), S = THREE.MathUtils.smoothstep
+        const dive = S(u, 0.08, 0.3) * (1 - S(u, 0.68, 0.92)), tuck = S(u, 0.55, 0.75) * (1 - 0.45 * S(u, 0.9, 1))
+        pivot(1.5 * dive)
+        for (const side of ['l', 'r']) { turn('thigh_' + side, [1, 0, 0], -1.25 * tuck); turn('calf_' + side, [1, 0, 0], 1.7 * tuck) }
       } else a.winAt = undefined
       R.inst.updateMatrixWorld(true); R.inst.getWorldQuaternion(rootQ)
       R.bones.get('upperarm_l').getWorldPosition(at); R.bones.get('upperarm_r').getWorldPosition(grip)
       from.copy(at).lerp(grip, 0.5).addScaledVector(dir, 0.22); from.y -= 0.24
-      if (reel) { const hand = q => { const u = (ph + q) % 1, pull = u < 0.55 ? u / 0.55 : 1 - (u - 0.55) / 0.45; return 0.62 - 0.58 * THREE.MathUtils.smoothstep(pull, 0, 1) }
+      if (reel && fly) { const h = 0.85 - 0.65 * THREE.MathUtils.smoothstep(heave, 0, 1); grab('r', heave < 1 ? h : 0.2, [-1.0, 0.6, -0.8]); grab('l', heave < 1 ? h + 0.05 : 0.32, [1.0, 0.5, -0.3]) }
+      else if (reel) { const hand = q => { const u = (ph + q) % 1, pull = u < 0.55 ? u / 0.55 : 1 - (u - 0.55) / 0.45; return 0.9 - 0.82 * THREE.MathUtils.smoothstep(pull, 0, 1) }
         grab('r', hand(0), [-1.0, 0.6, -0.8]); grab('l', hand(0.5), [1.0, 0.5, -0.3]) }
       else { const rear = 0.26 - 0.3 * stroke; grab('r', rear, [-1.0, 0.6, -0.8]); grab('l', rear + 0.2, [1.0, 0.5, -0.3]) }
       a.reelGrip = R.frame
@@ -26882,6 +26967,8 @@ function chainView(id) {
   return v
 }
 const chainFist = new THREE.Vector3()
+const chainOnCar = p => { for (const k of carriers.values()) { if (!k.rail || !k.chunks) continue; const P = carrierPose(k, isHost ? drawnT() : renderT), b = winBox(P, ...p); if (Math.abs(b[2]) < RAIL.car.width + 0.6 && Math.abs(b[0]) < RAIL.car.nose + 0.6 && b[1] > -1.6 && b[1] < RAIL.car.roof + 0.6) return true } return false }
+const chainSeen = (a, b, skin) => chainLine(a, b, skin) && !carrierBodies.has(A.getPointer(rayCb.get_m_collisionObject()))
 function drawChains(me, others, t) {
   for (const v of chainViews.values()) v.root.visible = false
   const live = new Set()
@@ -26913,15 +27000,15 @@ function drawChains(me, others, t) {
     const a = avatars.get(id)
     if (a) { a.mesh.updateMatrixWorld(true); handAt(a, webHand)
       const hand = webHand.toArray()
-      if (!chainLine(hand, points[1])) points[0] = hand
+      if (!chainSeen(hand, points[1])) points[0] = hand
       if (a.rig && a.reelGrip === a.rig.frame && points[0] === hand) {
         const left = handAt(a, chainFist, 1).toArray(), d = left.map((v, i) => v - hand[i]), n = Math.hypot(...d) || 1
         let j = 1
         while (j < CHAIN_N - 2 && points[j].reduce((s, v, i) => s + (v - hand[i]) * d[i], 0) / n < n + 0.6) j++
-        if (!chainLine(left, points[j])) points.splice(1, j - 1, left)
+        if (!chainSeen(left, points[j])) points.splice(1, j - 1, left)
       }
     }
-    if (points.some((p, j) => j && chainLine(points[j - 1], p, 0.015))) { v.root.visible = false; continue }
+    if (!(g[62] && chainOnCar(g.slice(4, 7))) && points.some((p, j) => j && chainSeen(points[j - 1], p, 0.015))) { v.root.visible = false; continue }
     const lens = [0]
     for (let i = 1; i < points.length; i++) lens[i] = lens[i - 1] + chainGap(points[i - 1], points[i])
     const total = lens.at(-1), count = Math.min(CHAIN_LINK_MAX, Math.max(1, Math.floor(total / CHAIN_PITCH))), pitch = total / count
@@ -39980,6 +40067,17 @@ const testTools = (() => {
       const at = a => t.dir === 'z' ? [t.c + a, t.p] : [t.p, t.c + a], [px, pz] = at(0)
       const side = t.pavilions.reduce((b, q) => Math.hypot(q.x - c.x, q.z - c.z) < Math.hypot(b.x - c.x, b.z - c.z) ? q : b).side, [sx, sz] = at(side * 11)
       return { x: px, z: pz, y0: 0, what: 'station ' + (t.name || t.id) + ' (line ' + t.line + ', platform ' + t.level + ' m)', spot: { x: sx, z: sz, face: t.dir === 'z' ? [side, 0] : [0, side] } } }),
+    platform: () => { const S = railState; if (!S) return []
+      const t0 = tickAt || now(), K = RAIL.car, W = K.width - 0.05, best = []
+      for (const car of S.cars) { if (car.j !== 1) continue
+        let open = null
+        for (let s = 0; s < 90; s += 0.5) { const p = railCar(car.route, car.k, car.j, t0 + s * 1000)
+          if (open === null) { if (p.station >= 0 && p.open > 0.99) open = s; continue }
+          if (p.open === 0) { if (s >= 8) best.push({ car, open, depart: s }); break } } }
+      const b = best.sort((a, b) => a.open - b.open)[0]; if (!b) return []
+      const P = carrierPose(b.car.carrier, t0 + (b.open + 1) * 1000), side = railOpenSide(S, P.car) || 1
+      const [x, y, z] = winWorld(P, [-1.0, K.floor, side * (W + 3.4)]), [cx, , cz] = winWorld(P, [-1.0, K.floor, 0]), f = [cx - x, cz - z], L = Math.hypot(...f) || 1
+      return [{ x, z, y0: y, what: 'platform beside monorail car ' + b.car.key + ': it stops ' + (b.open ? 'in ' + Math.round(b.open) + ' s' : 'now') + ', leaves in ' + Math.round(b.depart) + ' s', spot: { x, z, face: [f[0] / L, f[1] / L], up: 0.6 } }] },
     train: () => (railState?.cars || []).map(car => { const p = carrierPose(car.carrier), K = RAIL.car, [x, y, z] = carrierWorld(p, 0, K.floor, 0)
       return { x, z, y0: y, what: 'monorail car ' + car.key + ' at ' + Math.round(Math.hypot(p.vx, p.vz)) + ' m/s', spot: { x, z, face: [-Math.sin(p.yaw), -Math.cos(p.yaw)], up: 1.2 } } }),
     zeppelin: () => (GAME.air?.fleet || []).map(id => { const p = GAME.air.pose(id); return p && { x: p.x, z: p.z, y0: 0, what: id.replace('air:', '') + ' at ' + Math.round(p.y) + ' m' + (p.at ? ', docked' : '') } }).filter(Boolean),
@@ -41645,7 +41743,7 @@ const RAIL_VIEW = { tiers: { beam: [300, 300, 2600], pylon: [140, 500, 2000], ki
   colors: { deck: 0x2c2a2a, edge: 0xb08d57, stone: 0x4a4744, chrome: 0xb9c0c6, enamel: 0x1d1215, livery: 0x8e1a16, concrete: 0x3a3d42, sign: 0x15100f } }
 
 const RAIL_CARRY = { radius: 9, dt: 20 }
-const RAIL_GLASS = { panes: [[-6.07, -3.85], [-2.35, 2.35], [3.85, 6.07]], y: [1.15, 2.25], heal: 240, near: 40, shards: 34 }
+const RAIL_GLASS = { panes: [[-6.07, -3.85], [-2.35, 2.35], [3.85, 6.07]], y: [1.15, 2.25], heal: 240, near: 40, shards: 80 }
 const railPanes = car => car.end ? [0, 1, 3, 4] : [0, 1, 2, 3, 4, 5]
 const railGlassOut = (car, i) => !!((railState?.glass.get(car.n) || 0) >> i & 1)
 function railPaneHit(hit, v) {
@@ -41679,7 +41777,7 @@ function railGlassFx(car, i, v) {
   const at = winWorld(P, [(x0 + x1) / 2, (G.y[0] + G.y[1]) / 2, s * (RAIL.car.width + 0.1)]), out = carrierTurn(P, 0, 0, s)
   const cv = carrierPointV(P, at[0], at[2]), u = v ? Math.hypot(...v) || 1 : 1, k = v ? Math.min(6, u * 0.25) : 2
   const fall = staticRay(at[0], at[1], at[2], 0, -1, 0, 60)
-  try { dsFxBurst({ at, v: cv.map((q, j) => q + (v ? v[j] / u * k : 0) - out[j] * 1.5), n: G.shards, size: [0.03, 0.15], spread: Math.min(1.2, (x1 - x0) / 4), floor: at[1] - fall + 0.03, seed: car.n * 8 + i + (tickAt | 0) }) } catch (e) {}
+  try { dsFxBurst({ at, v: cv.map((q, j) => q + (v ? v[j] / u * k : 0) - out[j] * 1.5), n: G.shards, size: [0.04, 0.24], spread: Math.min(1.6, (x1 - x0) / 3), floor: at[1] - fall + 0.03, seed: car.n * 8 + i + (tickAt | 0) }) } catch (e) {}
 }
 function railGlassWire() {
   const out = []
