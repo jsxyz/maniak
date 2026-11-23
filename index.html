@@ -1062,21 +1062,21 @@ const GUNS = [
   { name:'Haymaker', rate:1.30, dmg:45, range: 2.9, knock:24.0, color:0xf2ece0,
     special:true, melee:true, held:false, kind:'arc', hayWind:0.42, punch:'rise', punchMs:760 },
   { name:'Shiv',     rate:0.60, dmg: 8, spread:0.25, pellets:2, range: 2.3, knock: 2.0, color:0xb9b2a0,
-    melee:true, held:false, punch:'jab', punchMs:200, lead:0.08 },
+    melee:true, held:false, punch:'jab', punchMs:200, lead:0.08, windup:0.35, wind:['freak_attack', 0.25, 0.58], windS:0.35, windHold:0.15, strike:['freak_attack', 0.58, 1.2] },
   { name:'Sledge',   rate:1.60, dmg:26, spread:0.45, pellets:3, range: 3.2, knock:14.0, color:0x9a948a, melee:true, punch:'swing', grip:'bat', model:'Sledge',
-    offGrip:-0.3, lean:[-1.4, 0.6] },
+    offGrip:-0.3, lean:[-1.4, 0.6], windup:0.6, wind:['bat_swing', 0.02, 0.27], windS:0.6, windHold:0.15, strike:['bat_swing', 0.27, 0.9] },
   { name:'Leap-smash', rate:0.8, dmg:24, range:4.2, knock:14, color:0xe8e2d4,
     special:true, melee:true, held:false, kind:'radius', punch:'slam', punchMs:650,
     dive:{ speed:22, pull:16, ref:12, cap:2.6 } },
   { name:'Cinderblock', special:true, held:false, rate:0.8, dmg:45, knock:24, refSpeed:58, minScale:0.15, range:60, color:0xc9c0ae,
     scarLife:45, scarMax:32, scarArea:16, scarAreaMax:4 },
-  { name:'Knife',        rate:0.45, dmg: 9, spread:0.30, pellets:2, range: 2.3, knock: 2.5, color:0xc9c5bb, melee:true, punch:'slash', grip:'knife', model:'Knife' },
+  { name:'Knife',        rate:0.45, dmg: 9, spread:0.30, pellets:2, range: 2.3, knock: 2.5, color:0xc9c5bb, melee:true, punch:'slash', grip:'knife', model:'Knife', windup:0.3, wind:['knife_b', 0, 0.25], windS:0.3, windHold:0.15, strike:['knife_b', 0.25, 1] },
   { name:'Salted knife', rate:0.40, dmg:13, spread:0.34, pellets:2, range: 2.6, knock: 4.0, color:0xe8e2d6, melee:true, punch:'slash', grip:'knife', model:'Knife',
     heldScale:1.15, apply:'Salted' },
   { name:'Knife fan',    rate:2.60, dmg:11, spread:0.15, pellets:5, range:22,  knock: 3.0, color:0xe8e2d6, punch:'throw', grip:'knife', model:'Knife', heldScale:1.15,
     apply:'Salted' },
-  { name:'Bat',          rate:0.95, dmg:16, spread:0.40, pellets:3, range: 2.8, knock: 9.0, color:0x8a6442, melee:true, punch:'swing', grip:'bat', model:'Bat', thick:1.6, lean:[-1.15, 0.85] },
-  { name:'Pipe',         rate:1.05, dmg:18, spread:0.36, pellets:3, range: 2.9, knock:10.0, color:0x5f6266, melee:true, punch:'swing', grip:'bat', model:'Pipe', thick:1.6, lean:[-1.15, 0.85] },
+  { name:'Bat',          rate:0.95, dmg:16, spread:0.40, pellets:3, range: 2.8, knock: 9.0, color:0x8a6442, melee:true, punch:'swing', grip:'bat', model:'Bat', thick:1.6, lean:[-1.15, 0.85], windup:0.45, wind:['bat_swing', 0.02, 0.27], windS:0.45, windHold:0.15, strike:['bat_swing', 0.27, 1] },
+  { name:'Pipe',         rate:1.05, dmg:18, spread:0.36, pellets:3, range: 2.9, knock:10.0, color:0x5f6266, melee:true, punch:'swing', grip:'bat', model:'Pipe', thick:1.6, lean:[-1.15, 0.85], windup:0.45, wind:['bat_swing', 0.02, 0.27], windS:0.45, windHold:0.15, strike:['bat_swing', 0.27, 1] },
   { name:'Rifle',        rate:0.60, dmg: 6, spread:0.030, range:70, knock: 1.2, color:0x3a3d38, scar:'hole', burst:3, burstGap:0.1, grip:'rifle' },
   { name:'Punt', rate:0.6, dmg:34, range:2.2, knock:0, color:0xe8e2d4, special:true, melee:true, held:false },
   { name:'Flung', rate:0.6, dmg:26, range:1, knock:10, color:0xe8e2d4, special:true, melee:true, held:false },
@@ -13644,7 +13644,7 @@ function botThink(b, all, dt) {
   const orbit = spec.spins && tgt && !charging && dist < SPIN_R ? reach * 0.7 : 0
   const f = charging ? 0 : climbing || car ? 1
           : orbit ? (dist > orbit * 1.15 ? 1 : dist < orbit * 0.85 ? -1 : 0)
-          : dist > want ? 1 : dist < want * 0.55 ? -1 : 0
+          : dist > want ? (G.melee ? clamp((dist - want) / 2.2, 0.15, 1) : 1) : dist < want * 0.55 ? -1 : 0
   const cone = Math.atan2(tgt.r + 0.35, Math.max(best, 1)) + (G.spread || 0)
   const off = Math.abs(wrapPi(yaw - trueYaw))
   const onTarget = off < cone && Math.abs(pitch - truePitch) < cone + 0.05
@@ -13801,14 +13801,14 @@ function guardThink(b, spec, tgt, dist, los, toYaw, dt) {
   const yaw = roleFace(b, toYaw, dt, 1, GUARD.rate), G = GUNS[gunNamed([spec.atk].flat()[0])]
   if (g.counter > 0 && (g.counter -= dt) <= 0) g.swing = 0
   if (g.atk > 0) {
-    if ((g.atk -= dt) > 0) return { f: 0, r: 0, fire: false, yaw, sprint: false }
-    g.rec = P.rec
-    return { f: 0, r: 0, fire: dist < G.range * 0.95 && !(b.cool > 0), yaw, sprint: false }
+    g.atk -= dt
+    if (b.cool > 0 || g.atk < -(G.windup || 0) - 0.3 || dist > G.range * 1.1) { g.atk = 0; g.rec = P.rec; return { f: 0, r: 0, fire: false, yaw, sprint: false } }
+    return { f: 0, r: 0, fire: g.atk <= 0 || !!G.windup, yaw, sprint: false }
   }
   if (g.rec > 0) { g.rec -= dt; if (g.rec <= 0) g.cue = 0; return { f: 0, r: 0, fire: false, yaw, sprint: false } }
   if ((g.swing -= dt) <= 0 && dist < G.range * 0.9 && !(b.cool > 0) && !ai.waitTurn && !ai.passive) {
     g.swing = P.swing[0] + Math.random() * (P.swing[1] - P.swing[0]); g.atk = P.wind
-    windCue(b, BACKSWING_GUN)
+    if (!G.windup) windCue(b, BACKSWING_GUN)
     return { f: 0, r: 0, fire: false, yaw, sprint: false }
   }
   g.up = true
@@ -42654,6 +42654,7 @@ function underwaterFrame(dt) {
   if (scene.background?.isColor) scene.background.lerp(c, S.k)
   if (S.k > 0.3) underSilt(dt, S.k)
 }
+const hpSeen = new Map()
 function draw(dt, t) {
   let me, others, pkl
   shotSkip = null
@@ -42683,6 +42684,7 @@ function draw(dt, t) {
     pkl = snapPk
   }
 
+  for (const p of [me, ...others]) { const id = p === me ? myId : p.id, a = avatars.get(id), was = hpSeen.get(id); if (a && was !== undefined && p.hp < was - 2.5 && !(p.dead > 0)) a.struckAt = t; hpSeen.set(id, p.hp) }
   background.sec('others')
   const obl = easeHolds(objectsDrawn(others), t), holdOf = (id, p) => partsHoldOf(id, p) || (sits.has(id) ? 'sit' : lifts.has(id) ? 'lift' : p.web > 0 ? 'swing' : (diving(p) ? 'dive' : flightOf(p, avatars.get(id)?.hold)))
   lifts.clear(); sits.clear(); carries.clear()
