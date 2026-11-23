@@ -779,6 +779,7 @@ const TEXT = {
   enforcersUsage: '§cUsage: §f/enforcers off|on §7(now {state})',
   enforcersState: { on: 'on', off: 'off' },
   enforcersHost: '§cOnly the host controls the enforcers.',
+  chatSlow: '§7Slow down.',
   enforcersOffHud: 'Enforcers off',
   giveSquad: '§7A squad car §f5 m ahead',
   giveSquadNo: '§cNo room for a squad car here.',
@@ -30383,7 +30384,20 @@ let roomCodeStr = '', roomOpen = false
 const OPENING = 'opening…', codeText = () => isHost && !roomOpen ? OPENING : roomCodeStr
 let outSeq = 0, lastChatSeq = new Map()
 const lastChatAt = new Map()
-const CHAT_MIN_MS = 250
+const CHAT_MIN_MS = 250, CHAT_BURST = 5
+let chatTickAt = 0, chatSlack = 0, chatSlackAt = 0
+function chatAllow(id, tnow) {
+  const late = tnow - chatTickAt
+  if (late > 150) { chatSlack = Math.min(60, late / CHAT_MIN_MS); chatSlackAt = tnow }
+  chatTickAt = tnow
+  const cap = CHAT_BURST + (tnow - chatSlackAt < 1000 ? chatSlack : 0)
+  const b = lastChatAt.get(id) || { tok: CHAT_BURST, at: tnow, told: -1e9 }
+  b.tok = Math.min(cap, b.tok + (tnow - b.at) / CHAT_MIN_MS); b.at = tnow
+  lastChatAt.set(id, b)
+  if (b.tok >= 1) { b.tok--; return true }
+  if (tnow - b.told > 5000) { b.told = tnow; tell(id, TEXT.chatSlow, 'a') }
+  return false
+}
 const NICK_MIN_MS = 1000, nickAt = new Map(), nickWait = new Map()
 function nickLater(id, d) {
   const due = (nickAt.get(id) ?? -Infinity) + NICK_MIN_MS, pending = nickWait.get(id)
@@ -30983,8 +30997,7 @@ const HOST_MSGS = {
     if ((lastChatSeq.get(id) || -1) >= d.s) return
     lastChatSeq.set(id, d.s)
     const tnow = now()
-    if (tnow - (lastChatAt.get(id) || 0) < CHAT_MIN_MS) return
-    lastChatAt.set(id, tnow)
+    if (!chatAllow(id, tnow)) return
     let text = cleanText(d.m || '')
     if (!text) return
     if (hookFilters.has('chat') || hooked.chat) {
@@ -41237,6 +41250,7 @@ function takeInput(id) {
 
 function hostTick(dt) {
   pageLife.hostAttempts++
+  chatTickAt = now()
   if (!hostTick.timed) { hostTick.timed = true
     for (const [k, f] of Object.entries(GAME.host)) if (typeof f === 'function') GAME.host[k] = function (...a) { const t0 = realNow(); try { return f.apply(this, a) } finally { background.simAdd(k, realNow() - t0) } }
     const think = GAME.think; if (typeof think === 'function') GAME.think = function (...a) { const t0 = realNow(); try { return think.apply(this, a) } finally { background.simAdd('think ' + botKind(a[0]), realNow() - t0) } }
