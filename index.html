@@ -876,6 +876,7 @@ const SOUNDS = {
   'Street performer demand': { say: 'a hoarse, wheedling street voice demanding money, and coins rattled in a tin cup', seed: 0, file: null, synth: null },
 
   Punt: { say: 'a big boot punting something heavy: a deep leathery thump and a rush of air after it', seed: 0, file: ['sfx_punt1.723f6b95.mp3', 'sfx_punt2.923949ce.mp3'], synth: null, vary: 0.04 },
+  Slam: { say: 'a body driven into the ground: a sodden, heavy crunch with a thud under it', seed: 0, file: null, synth: null },
   Flung: { say: 'a body slamming into another at speed: a heavy, meaty collision', seed: 0, file: null, synth: null, vary: 0.04 },
   Cinderblock: { say: 'a heavy concrete block thuds into flesh or cracks masonry with a cascade of chips', seed: 0, file: ['sfx_blockhit1.d4eb0a66.mp3', 'sfx_blockhit3.8c9b3f69.mp3'], synth: null, vary: 0.03, reach: 1.5 },
   'Car punch': { say: 'a fist smashing into a car body: a hard bang, crumpling sheet steel and a tinkle of glass', seed: 0, file: ['sfx_carpunch1.9a89901b.mp3', 'sfx_carpunch2.8fd723a1.mp3', 'sfx_carpunch3.9fdaa27b.mp3'], synth: null, vary: 0.03 },
@@ -1039,6 +1040,9 @@ const PARTICLES = {
   puff: { round: true, n: 4, life: [0.35, 0.7], speed: [0.3, 1.2], size: [0.18, 0.3], cone: 1.4, fall: -0.6, grow: 3, cell: 0, color: 0x8a8378 },
   chip: { n: 16, life: [0.35,0.75], speed: [2,6], size: [0.04,0.09], cone: 1.2, fall: 14, grow: 0.8, cell: 0, color: 0x9a9488 },
   dust: { round: true, n: 6, life: [0.45, 0.85], speed: [0.6, 1.8], size: [0.22, 0.36], cone: 1.2, fall: -0.4, grow: 2.6, cell: 0, color: 0xc9c0ae },
+  blood: { n: 10, life: [0.4, 0.9], speed: [2.2, 7.5], size: [0.05, 0.11], cone: 0.6, fall: 16, grow: 0.5, cell: 0, stretch: 0.06 },
+  bloodfine: { n: 14, life: [0.25, 0.6], speed: [3, 9], size: [0.03, 0.06], cone: 0.9, fall: 14, grow: 0.4, cell: 0, stretch: 0.05 },
+  gib: { n: 10, life: [0.5, 1.1], speed: [3, 9], size: [0.07, 0.16], cone: 0.9, fall: 15, grow: 0.7, cell: 0 },
   claw: { n: 9, life: [0.12, 0.26], speed: [6, 11], size: [0.06, 0.1], cone: 0.35, fall: 6, grow: 0.3, add: true, cell: 0, stretch: 0.12, hot: 0.4 },
   pipeSmoke: { round: true, n: 3, life: [2.4, 3.8], speed: [0.2, 0.6], size: [0.22, 0.36], cone: 0.5, fall: -0.18, grow: 4.2, cell: 0, color: 0xcfd3d7 },
   splash: { n: 22, life: [0.45, 0.95], speed: [3, 7.5], size: [0.07, 0.13], cone: 0.55, fall: 15, grow: 0.5, cell: 0, color: 0xd5e6ee },
@@ -1092,6 +1096,7 @@ const GUNS = [
   { name:'Reel', rate:1, dmg:0, range:0, knock:0, color:0x8a877c, held:false, wind:['knockback', 0, 0.83], windS:0.83, windHold:0.3 },
   { name:'Heave', rate:1, dmg:0, range:0, knock:0, color:0x8a877c, held:false, wind:['block_throw', 0, 0.45], windS:0.5, windHold:0.4 },
   { name:'Backswing', rate:1, dmg:0, range:0, knock:0, color:0x8a877c, held:false, wind:['bat_swing', 0, 0.25], windS:0.35, windHold:0.1 },
+  { name:'Slam', rate:0.8, dmg:95, range:1, knock:4, color:0xe8e2d4, special:true, melee:true, held:false },
 ].map(G => ({ ...GUN_ROW, ...G }))
 const POWERS = [
   { name:'Shield',    color:0x58a6ff, dur: 9.0, take: 0.5 },
@@ -17131,12 +17136,13 @@ function castPellet(shooter, targets, yaw, pitch, G, fx) {
   if (!victim) return null
   const hit = victim.live || victim
   strike(shooter, hit, G, dx, dy, dz)
+  if (!G.bloodless && Number.isFinite(hit.x + hit.y + hit.z)) GAME.gore.emit(0, hit.x - dx * (hit.r || 0.4) * 0.6, hit.y + (hit.h || 0.5) * 0.2, hit.z - dz * (hit.r || 0.4) * 0.6, dx, 0.25, dz, clamp((G.dmg || 10) / 18, 0.4, 2), -1)
   return hit
 }
 
 const reachOf = (c, G) => G.range * profRange(c, G.name) * (G.melee ? 1 : eff(c, 'reach'))
 
-const downed = c => c.hp <= 0 && c.dead <= 0 && (c.dead = RESPAWN_S, true)
+const downed = c => c.hp <= 0 && c.dead <= 0 && (c.dead = RESPAWN_S, goreDeath(c), true)
 
 function blast(c, aimed, P, r, gunId, onKill) {
   const fx = [], rode = new Set()
@@ -17148,7 +17154,7 @@ function blast(c, aimed, P, r, gunId, onKill) {
     if (d > r) continue
     strike(c, h, P, bx / n, by / n, bz / n, rode)
     for (const seg of impactFx(h, gunId, h.hp <= 0 && h.dead <= 0 || P.lethal)) fx.push(seg)
-    if (downed(h) && onKill) onKill(h, P, profRoll(c, P))
+    if (downed(h)) { if (onKill) onKill(h, P, profRoll(c, P)); goreHeadHit(c, h, P, bx / n, by / n, bz / n) }
     hits++
   }
   for (const o of objs) {
@@ -17361,7 +17367,7 @@ function deliver(c, P, gunId, aimed, onKill) {
     strike(c, h, P, ux, uy, uz, rode)
     const killed = h.hp <= 0 && h.dead <= 0
     for (const seg of impactFx(h, gunId, killed || P.lethal)) fx.push(seg)
-    if (downed(h) && onKill) onKill(h, P, profRoll(c, P))
+    if (downed(h)) { if (onKill) onKill(h, P, profRoll(c, P)); goreHeadHit(c, h, P, ux, uy, uz) }
   }
   const [dx, dy, dz] = aimDir(...aimAngles(c))
   const [ox, oy, oz] = eyeAt(c)
@@ -25278,6 +25284,7 @@ let scarAtlas, scarMesh, scarBusy = true, scarsLater = false
 const scarQueue = [], scarSurfaces = []
 function clearScars() {
   clearChainCracks()
+  goreClear()
   geoLevelChanged()
   scarBusy = true
   scarQueue.length = scarSurfaces.length = 0; groundStale = false
@@ -25361,7 +25368,251 @@ function fxDecor(f) {
   return f[7] === 3 || f[7] === 4 || f[7] === 5
 }
 let fxStride = 1
+const GORE_CFG = {
+  splat: { cap: 80, life: 50, fade: 10 }, pool: { cap: 32, life: 120, fade: 16, grow: 2.6 }, crack: { cap: 24, life: 150, fade: 20, grow: 0.12 },
+  rays: 3, queue: 48, perHit: 4, dry: 0.4, delay: 0.55,
+  head: { Haymaker: 0.7, 'Leap-smash': 0.6, Slam: 0.85 }, bone: { plain: 0xded6c2, ink: 0xe8e2d4, realistic: 0xb4a98f },
+  color: { plain: 0xb3131b, ink: 0x781523, realistic: 0x520b0f },
+  stone: { plain: 0x2a2724, ink: 0x0b0a09, realistic: 0x1a1816 },
+}
+const GORE_KINDS = ['splat', 'pool', 'crack']
+let goreSt = null, goreFaults = 0, goreHeadReg = false
+const goreZ = new THREE.Vector3(0, 0, 1), goreQ = new THREE.Quaternion(), goreQ2 = new THREE.Quaternion(), goreM = new THREE.Matrix4()
+const goreP = new THREE.Vector3(), goreS = new THREE.Vector3(), goreN = new THREE.Vector3(), goreC = new THREE.Color(), goreRay = []
+const goreHex = () => GORE_CFG.color[activeLook] ?? GORE_CFG.color.plain, goreStone = () => GORE_CFG.stone[activeLook] ?? GORE_CFG.stone.plain
+function goreRng(seed) { let s = (seed | 0) ^ 0x9e3779b9; return () => { s = Math.imul(s ^ s >>> 15, 0x2c1b3c6d); s = Math.imul(s ^ s >>> 12, 0x297a2d39); return ((s ^ s >>> 15) >>> 0) / 4294967296 } }
+function goreTex(kind) {
+  const pool = kind === 'pool', crack = kind === 'crack'
+  const S = 64, d = new Uint8Array(S * S * 4), R = goreRng(pool ? 7 : crack ? 11 : 3), ph = [R() * 6, R() * 6, R() * 6]
+  const drops = pool ? [] : Array.from({ length: 9 }, () => { const a = R() * 6.283, r = 0.58 + R() * 0.3; return [Math.cos(a) * r, Math.sin(a) * r, 0.035 + R() * 0.07] })
+  const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+  const rays = !crack ? [] : Array.from({ length: 9 }, (_, i) => { const a0 = i / 9 * 6.283 + (R() - 0.5) * 0.5, len = 0.5 + R() * 0.45, kink = (R() - 0.5) * 0.9, fork = 0.35 + R() * 0.3, fa = (R() < 0.5 ? -1 : 1) * (0.5 + R() * 0.5)
+    return { a0, len, kink, fork, fa } })
+  const seg = (u, v, x0, y0, x1, y1) => { const dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy || 1e-9, t = Math.min(1, Math.max(0, ((u - x0) * dx + (v - y0) * dy) / l2)); return Math.hypot(u - x0 - dx * t, v - y0 - dy * t) }
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const u = (x + 0.5) / S * 2 - 1, v = (y + 0.5) / S * 2 - 1, r = Math.hypot(u, v), a = Math.atan2(v, u)
+    let e = pool ? 0.76 + 0.08 * Math.sin(2 * a + ph[0]) + 0.06 * Math.sin(5 * a + ph[1]) + 0.03 * Math.sin(9 * a + ph[2])
+      : 0.36 + 0.07 * Math.sin(3 * a + ph[0]) + 0.05 * Math.sin(7 * a + ph[1]) + 0.2 * Math.pow(Math.max(0, Math.cos(5 * a + ph[2])), 8)
+    let al = sm(e, e - 0.05, r)
+    if (crack) { al = sm(0.1, 0.06, r)
+      for (const q of rays) { const m = [Math.cos(q.a0) * q.len * 0.55, Math.sin(q.a0) * q.len * 0.55], a1 = q.a0 + q.kink, end = [m[0] + Math.cos(a1) * q.len * 0.45, m[1] + Math.sin(a1) * q.len * 0.45]
+        const d1 = seg(u, v, 0, 0, m[0], m[1]), d2 = seg(u, v, m[0], m[1], end[0], end[1]), a2 = a1 + q.fa, f = [m[0] + Math.cos(a2) * q.fork * 0.5, m[1] + Math.sin(a2) * q.fork * 0.5], d3 = seg(u, v, m[0], m[1], f[0], f[1])
+        al = Math.max(al, sm(0.034, 0.012, d1), sm(0.026, 0.008, d2), sm(0.02, 0.006, d3)) } }
+    if (!crack) for (const [dx, dy, dr] of drops) al = Math.max(al, sm(dr, dr - 0.03, Math.hypot(u - dx, v - dy)))
+    const i = (y * S + x) * 4; d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = Math.round(al * 255)
+  }
+  const t = new THREE.DataTexture(d, S, S); t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = true; t.needsUpdate = true
+  return t
+}
+function goreInit() {
+  if (goreSt || !renderer || !objGroup || !camera) return false
+  const st = goreSt = { splat: null, pool: null, crack: null, queue: [], bleeders: [], live: 0, n: { blood: 0, rays: 0, landed: 0, missed: 0, intake: 0 }, err: '' }
+  for (const k of GORE_KINDS) {
+    const C = GORE_CFG[k], mat = new THREE.MeshBasicMaterial({ map: goreTex(k), transparent: true, depthWrite: false, toneMapped: false,
+      alphaTest: 0.02, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
+    const mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, C.cap)
+    mesh.name = 'gore-' + k; mesh.frustumCulled = false; mesh.renderOrder = k === 'pool' ? 1 : k === 'splat' ? 2 : 3; mesh.castShadow = mesh.receiveShadow = false
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    goreS.set(0, 0, 0); goreM.compose(goreP.set(0, -999, 0), goreQ.identity(), goreS)
+    for (let i = 0; i < C.cap; i++) { mesh.setMatrixAt(i, goreM); mesh.setColorAt(i, goreC.setHex(0)) }
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage)
+    objGroup.add(mesh)
+    st[k] = { mesh, ent: new Array(C.cap).fill(null), head: 0 }
+  }
+  for (const k of GORE_KINDS) renderer.compileAsync?.(st[k].mesh, camera, scene).catch(() => {})
+  return true
+}
+function goreClear() {
+  if (!goreSt) return
+  goreSt.queue.length = 0; goreSt.bleeders.length = 0
+  for (const k of GORE_KINDS) {
+    const g = goreSt[k]; g.ent.fill(null); g.head = 0
+    goreS.set(0, 0, 0); goreM.compose(goreP.set(0, -999, 0), goreQ.identity(), goreS)
+    for (let i = 0; i < g.ent.length; i++) g.mesh.setMatrixAt(i, goreM)
+    g.mesh.instanceMatrix.needsUpdate = true
+  }
+}
+function goreAdd(kind, p, n, r, t, { sx = 1, sy = 1, rot = 0, grow = 0, delay = 0 } = {}) {
+  const g = goreSt?.[kind]; if (!g) return
+  const i = g.head; g.head = (i + 1) % g.ent.length
+  const full = r / (kind === 'pool' ? 0.78 : kind === 'crack' ? 0.9 : 0.45) * 2
+  g.ent[i] = { p: [p[0], p[1], p[2]], n: [n[0], n[1], n[2]], size: full, sx, sy, rot, grow, born: t + delay * 1000, k: -1, dl: -1 }
+  goreSt.live = 1
+}
+const goreEase = u => u < 0 ? 0 : u >= 1 ? 1 : 1 - (1 - u) * (1 - u)
+function goreFrame(t) {
+  if (!goreHeadReg && typeof GORE_LIMBS !== 'undefined') { goreHeadReg = true; GORE_LIMBS.push({ bit: 16, bone: 'Head', hide: true, cap: 0.11 }) }
+  if (!goreSt && !goreInit()) return
+  const st = goreSt; st.t = t
+  if (!st.deathHook && GAME.streetLife?.on) st.deathHook = GAME.streetLife.on('death', goreStreetDeath)
+  for (let n = 0; n < GORE_CFG.rays && st.queue.length; n++) {
+    const q = st.queue.shift(), down = q.dy < -0.9
+    st.n.rays++
+    if (!down) { const l = Math.hypot(q.dx, q.dy, q.dz) || 1; q.dx /= l; q.dy /= l; q.dz /= l }
+    staticRay(q.x, q.y + (down ? 0.4 : 0), q.z, q.dx, q.dy, q.dz, q.range, goreRay)
+    if (goreRay.length < 6) { st.n.missed++; continue }
+    let nx = goreRay[3], ny = goreRay[4], nz = goreRay[5]
+    if (nx * q.dx + ny * q.dy + nz * q.dz > 0) { nx = -nx; ny = -ny; nz = -nz }
+    if (down && ny < 0.6) continue
+    st.n.landed++
+    goreAdd(q.g, goreRay, [nx, ny, nz], q.r, t, q.o)
+  }
+  for (let i = st.bleeders.length - 1; i >= 0; i--) {
+    const b = st.bleeders[i]
+    if (t > b.until) { st.bleeders.splice(i, 1); continue }
+    if (t < b.next) continue
+    b.next = t + 350
+    const at = typeof b.who === 'function' ? b.who(goreP) : goreBleedAt(b.who, b.bit)
+    if (at) GORE.blood(at.x, at.y, at.z, 0, -0.4, 0, 0.35, 0)
+  }
+  if (!st.live) return
+  const hex = goreHex()
+  let live = 0
+  for (const kind of GORE_KINDS) {
+    const g = st[kind], C = GORE_CFG[kind]; let md = false, cd = false
+    for (let i = 0; i < g.ent.length; i++) {
+      const e = g.ent[i]; if (!e) continue
+      const age = (t - e.born) / 1000
+      if (age > C.life) { g.ent[i] = null; goreS.set(0, 0, 0); goreM.compose(goreP.set(0, -999, 0), goreQ.identity(), goreS); g.mesh.setMatrixAt(i, goreM); md = true; continue }
+      live++
+      const grown = C.grow && e.grow ? goreEase(age / e.grow) : age < 0 ? 0 : 1, fade = age > C.life - C.fade ? (C.life - age) / C.fade : 1
+      const k = Math.round(grown * fade * 48) / 48
+      if (k !== e.k) {
+        e.k = k
+        goreN.set(e.n[0], e.n[1], e.n[2])
+        goreQ.setFromUnitVectors(goreZ, goreN); goreQ2.setFromAxisAngle(goreZ, e.rot); goreQ.multiply(goreQ2)
+        goreS.set(e.size * e.sx * k, e.size * e.sy * k, 1)
+        goreM.compose(goreP.set(e.p[0] + e.n[0] * 0.012, e.p[1] + e.n[1] * 0.012, e.p[2] + e.n[2] * 0.012), goreQ, goreS)
+        g.mesh.setMatrixAt(i, goreM); md = true
+      }
+      const dl = kind === 'crack' ? 0 : Math.min(8, Math.max(0, Math.floor(age / C.life * 9)))
+      if (dl !== e.dl || hex !== e.hex) {
+        e.dl = dl; e.hex = hex
+        goreC.setHex(kind === 'crack' ? goreStone() : hex).multiplyScalar(kind === 'crack' ? 1 : 1 - (1 - GORE_CFG.dry) * dl / 8); g.mesh.setColorAt(i, goreC); cd = true
+      }
+    }
+    if (md) g.mesh.instanceMatrix.needsUpdate = true
+    if (cd) g.mesh.instanceColor.needsUpdate = true
+  }
+  st.live = live || st.queue.length ? 1 : 0
+}
+const goreBleedAt = (id, bit) => { const a = avatars.get(id); if (!a?.mesh) return null; const p = a.mesh.position, h = bit & 16 ? 1.7 : bit & 3 ? 1.3 : 0.7; return { x: p.x, y: p.y + h - 0.9, z: p.z } }
+function goreStreetDeath(r) {
+  if (!goreSt || ![3, 4, 5, 6].every(i => Number.isFinite(r[i]))) return
+  const L = Math.hypot(r[5] - r[3], r[6] - r[4])
+  GORE.pool(r[5], 2, r[6], 0.8, 1.3)
+  if (L > 0.6) GORE.smear(r[3], 2, r[4], r[5] - r[3], r[6] - r[4], Math.min(L, 4), 0.45)
+}
+function goreQueue(q) { if (goreSt && goreSt.queue.length < GORE_CFG.queue) goreSt.queue.push(q) }
+const GORE = {
+  blood(x, y, z, nx = 0, ny = 1, nz = 0, amount = 1, kind = 0, seed) {
+    if (!goreSt && !goreInit()) return
+    goreSt.n.blood++
+    const R = goreRng(seed ?? (x * 131 + y * 17 + z * 71) | 0), len = Math.hypot(nx, ny, nz) || 1, a = Math.min(amount, 2.5), hex = goreHex()
+    nx /= len; ny /= len; nz /= len
+    burst('blood', x, y, z, nx, ny + 0.15, nz, hex, 1)
+    if (a > 0.7) burst('bloodfine', x, y, z, nx, ny + 0.1, nz, hex, 1)
+    const k = Math.min(GORE_CFG.perHit, 1 + Math.round(a * 1.6)), reach = 1.5 + a * 1.2
+    for (let i = 0; i < k; i++) {
+      const r = (0.12 + 0.2 * R()) * Math.min(1.6, 0.6 + a * 0.6)
+      if (R() < 0.45) goreQueue({ g: 'splat', x, y, z, dx: nx + (R() - 0.5) * 0.9, dy: ny * 0.6 + (R() - 0.55) * 0.8, dz: nz + (R() - 0.5) * 0.9, range: reach, r, o: { rot: R() * 6.283 } })
+      else { const d = (0.3 + R() * reach) * 0.8
+        goreQueue({ g: 'splat', x: x + nx * d + (R() - 0.5) * 0.5, y, z: z + nz * d + (R() - 0.5) * 0.5, dx: 0, dy: -1, dz: 0, range: Math.max(4, y + 3), r, o: { rot: R() * 6.283 } }) }
+    }
+  },
+  pool(x, y, z, size = 1, delay = GORE_CFG.delay) {
+    if (!goreSt && !goreInit()) return
+    goreQueue({ g: 'pool', x, y, z, dx: 0, dy: -1, dz: 0, range: Math.max(6, y + 4), r: 0.55 * size, o: { rot: (x * 7 + z * 13) % 6.283, grow: GORE_CFG.pool.grow, delay } })
+  },
+  smear(x, y, z, dx, dz, len = 1.2, width = 0.5) {
+    if (!goreSt && !goreInit()) return
+    const l = Math.hypot(dx, dz) || 1
+    goreQueue({ g: 'pool', x: x + dx / l * len * 0.5, y, z: z + dz / l * len * 0.5, dx: 0, dy: -1, dz: 0, range: Math.max(6, y + 4), r: 0.5,
+      o: { rot: Math.atan2(-dz, dx), sx: len / 1.0, sy: width / 1.0, grow: GORE_CFG.pool.grow * 0.5, delay: GORE_CFG.delay * 0.6 } })
+  },
+  crack(x, y, z, nx = 0, ny = 1, nz = 0, r = 0.8) {
+    if (!goreSt && !goreInit()) return
+    goreQueue({ g: 'crack', x: x + nx * 0.5, y: y + ny * 0.5, z: z + nz * 0.5, dx: -nx, dy: -ny, dz: -nz, range: 1.2, r, o: { rot: (x * 5 + z * 11) % 6.283, grow: GORE_CFG.crack.grow } })
+  },
+  bleed(who, bit = 0, secs = 6) {
+    if (!goreSt && !goreInit()) return
+    const t = goreSt.t ?? 0; goreSt.bleeders.push({ who, bit, until: t + secs * 1000, next: t })
+    if (goreSt.bleeders.length > 12) goreSt.bleeders.shift()
+  },
+  emit(code, x, y, z, dx = 0, dy = 1, dz = 0, amount = 1, gun = -1, extra) {
+    if (!isHost) return
+    const f = [r2(x), r2(y), r2(z), r2(dx), r2(dy), r2(dz), gun, 11, -1, code, r2(amount), Math.random() * 2 ** 31 | 0]
+    if (Number.isInteger(extra)) f.push(extra)
+    tracers.push(f)
+  },
+  head(c, dir = [0, 1, 0], amount = 1, at) {
+    if (!isHost || !c || c.street) return false
+    if (typeof goreMaskSet === 'function') goreMaskSet(c, 16, true)
+    const p = at || [c.x, c.y + (c.h + c.r) * 0.82, c.z], n = Math.hypot(dir[0], dir[1], dir[2]) || 1
+    GORE.emit(4, p[0], p[1], p[2], dir[0] / n, dir[1] / n, dir[2] / n, amount, typeof SLAM_G === 'function' ? SLAM_G() : -1, c.id)
+    return true
+  },
+  stats: () => goreSt && { splat: goreSt.splat.ent.filter(Boolean).length, pool: goreSt.pool.ent.filter(Boolean).length, queued: goreSt.queue.length, bleeding: goreSt.bleeders.length, ...goreSt.n, faults: goreFaults, err: goreSt.err, fxq: typeof fxQ !== 'undefined' && !!fxQ },
+  codes: [],
+}
+GORE.codes[0] = f => GORE.blood(f[0], f[1], f[2], f[3], f[4], f[5], f[10], 0, f[11])
+GORE.codes[1] = f => GORE.pool(f[0], f[1], f[2], f[10])
+GORE.codes[2] = f => GORE.smear(f[0], f[1], f[2], f[3], f[5], f[10], 0.5)
+GORE.codes[3] = (f, t) => {
+  const n = Math.hypot(f[3], f[4], f[5]) || 1, nx = f[3] / n, ny = f[4] / n, nz = f[5] / n
+  GORE.blood(f[0], f[1], f[2], nx, ny + 0.2, nz, 1.8 * f[10], 0, f[11])
+  GORE.crack(f[0], f[1], f[2], nx, ny, nz, 0.45 + 0.4 * f[10])
+  kick(0.3, f[0], f[1], f[2], 22, 450, t, 'bounce')
+}
+GORE.codes[4] = (f, t) => {
+  const n = Math.hypot(f[3], f[4], f[5]) || 1, nx = f[3] / n, ny = f[4] / n + 0.5, nz = f[5] / n, hex = goreHex()
+  GORE.blood(f[0], f[1], f[2], nx, ny, nz, 3 * f[10], 0, f[11])
+  burst('gib', f[0], f[1], f[2], nx, ny, nz, hex, 1)
+  burst('gib', f[0], f[1], f[2], nx, ny + 0.3, nz, GORE_CFG.bone[activeLook] ?? GORE_CFG.bone.plain, 0.8)
+  burst('blood', f[0], f[1], f[2], 0, 1, 0, hex, 1.3)
+  kick(0.14, f[0], f[1], f[2], 10, 260, t, 'bounce')
+  if (Number.isInteger(f[12]) && f[12] >= 0) GORE.bleed(f[12], 16, 3)
+}
+function goreHeadHit(c, h, P, ux, uy, uz, at) {
+  const p = GORE_CFG.head[P?.name]
+  if (isHost && p && h && Math.random() < p) GORE.head(h, [ux, 0.3, uz], 1, at)
+}
+GAME.gore = GORE
+function goreIntake(list, t) {
+  if (!renderer || renderHeadless) return list
+  try { return goreIntakeIn(list, t) } catch (e) { goreFaults++; if (goreSt) goreSt.err = String(e && e.stack || e).slice(0, 300); return list.filter(f => f[7] !== 11) }
+}
+function goreIntakeIn(list, t) {
+  if (goreSt) goreSt.n.intake++
+  let take = null, seen = null, n = 0
+  for (const f of list) {
+    if (f[7] === 11) {
+      if ([0, 1, 2].every(i => Number.isFinite(f[i])) && [3, 4, 5, 10].every(i => Number.isFinite(f[i])) && Number.isInteger(f[9]) && n++ < 24) try { GORE.codes[f[9]]?.(f, t) } catch (e) { }
+      continue
+    }
+    if (f[7] === 3 || f[7] === 4) {
+      const G = GUNS[f[6]]
+      if (G?.look === 'blizzard' || G?.bloodless || ![0, 1, 2, 3, 4, 5].every(i => Number.isFinite(f[i]))) continue
+      const key = f[0] + ',' + f[1] + ',' + f[2] + ',' + f[8]
+      if ((seen ||= new Set()).has(key)) continue
+      if (seen.size >= 6) continue
+      seen.add(key)
+      const a = avatars.get(f[8]), q = a?.mesh?.position
+      let dx = q ? f[0] - q.x : f[3] - f[0], dz = q ? f[2] - q.z : f[5] - f[2]; const l = Math.hypot(dx, dz) || 1
+      GORE.blood(f[0], f[1], f[2], dx / l, 0.25, dz / l, clamp((G?.dmg ?? 12) / 18, 0.5, 2.2) * (f[7] === 4 ? 2 : 1), 0, key.length * 977 + f[0] * 31 + f[2] * 17)
+    }
+  }
+  return list.some(f => f[7] === 11) ? list.filter(f => f[7] !== 11) : list
+}
+function goreDeath(c) {
+  if (!isHost || !(c.hp <= 0)) return
+  const y = c.y - c.h - c.r + 0.1, kx = c.knx || 0, kz = c.knz || 0, sp = Math.hypot(kx, kz), sz = clamp((c.r || 0.4) / 0.4, 0.6, 2)
+  GORE.emit(1, c.x, y, c.z, 0, 1, 0, sz)
+  if (sp > 2) GORE.emit(2, c.x - kx / sp * 0.2, y, c.z - kz / sp * 0.2, kx / sp, 0, kz / sp, clamp(sp * 0.18, 0.8, 2.6))
+}
+
 function addTracers(list, t) {
+  list = goreIntake(list, t)
   if (list.some(f => f[7] === 6 || f[7] === 7)) list = boomTake(list, liveTracers)
   queueScars(list)
   for (const f of list) if (f[7] === 6 && [0, 2, 4].every(i => Number.isFinite(f[i]))) scarAt([f[0], f[4], f[2], 0, 1, 0], 'blast', f[11] | 0)
@@ -26515,6 +26766,7 @@ function drawTracers(t, me, others, viewId) {
   if (fxQ) { fxQ.R.update(fxQ.t === null ? 0 : Math.min(0.1, Math.max(0, t - fxQ.t) / 1000)); fxQ.t = t }
   else if (renderer && !renderHeadless && typeof self !== 'undefined') fxQLoad ||= (self.THREE = THREE, geoLoad(FX_LIBS)).then(env => { fxQ = particlesOf(env.Q); renderer.compileAsync(fxQ.R, camera, scene).catch(() => {}) }, () => {})
   drawScars()
+  try { goreFrame(t) } catch (e) { goreFaults++ }
   drawTornado(t)
   for (const pool of fxPools) for (const m of pool) { m.visible = false; m.fxActive = false }
   let kept = 0
@@ -28747,7 +28999,7 @@ function keyHelp(c) {
   const space = C.jet?.flier ? 'Space fly/rise · Q down' : C.chain ? 'Space tap: jump (by a low wall: vault), hold and release: leap · Q hold and release: chain · hold Q: reel in · Space: let go'
     : 'Space jump' + (C.swing ? ' · Q zip' : '')
   return 'WASD move · Shift sprint · ' + space + '<br>' +
-    'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker, falling: smash' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt · right-click throw · E drop' +
+    'click ' + (C.leapSmash ? 'punch' : 'fire') + ' · right-click ' + (C.leapSmash ? 'haymaker, falling: smash' : 'your attack') + ' · E grab, or get in a car · hold E: lift a car, tear a part off · holding: click punt, or slam a person (sprint: punt it) · right-click throw · E drop' +
     (C.manyGuns ? ' · R next weapon' : '') + (C.shift !== undefined ? ' · F shift form' : '') + (C.disguise !== undefined ? ' · G disguise' : '') + (C.pipe ? ' · P pipe' : '') + '<br>' +
     'In a biplane: the mouse aims it · W full throttle · S idle · A/D roll (on the ground, steer) · Space brakes · E get out<br>' +
     'H whistle for your car, at its wheel the ejector seat · T chat · Tab controls and scores · V view · M map · N sound · B radio · F3 debug · Esc menu'
@@ -32172,6 +32424,7 @@ const GRAB = {
   throw: { done: 0.4, speed: 24, mass: 2, spin: 5 },
   fly: { r: 0.45, min: 6, s: 5 },
   grabS: 0.28, rip: 0.45,
+  slam: { hit: 0.40, done: 0.85, peak: 0.20, reach: 1.75 },
 }
 const PARTS = {
   object: { of: 'object', grab: { grip: 'chest' }, throw: {}, punt: {} },
@@ -32189,7 +32442,7 @@ const PARTS = {
 const PART_ADAPTERS = {}, partsHeard = { grab: [], rip: [], throw: [], punt: [], land: [] }
 const partsUses = [c => LV.faust && typeof faustInLift === 'function' && faustInLift(c), c => LV.faust && typeof faustSewUse === 'function' && faustSewUse(c)]
 const partsEmit = (type, ...a) => { for (const fn of partsHeard[type] || []) try { fn(...a) } catch (e) { console.warn('parts listener', e) } }
-const PUNT_G = () => gunNamed('Punt'), FLUNG_G = () => gunNamed('Flung')
+const PUNT_G = () => gunNamed('Punt'), FLUNG_G = () => gunNamed('Flung'), SLAM_G = () => gunNamed('Slam')
 function partsObjectKind(c, o) {
   if (o.K.carry) return 'object'
   if (!(o.K.mass <= liftOf(c))) return null
@@ -32260,6 +32513,37 @@ function partsHoldAt(x, y, z, yaw, C, grip, R, out = [0, 0, 0]) {
   out[0] = x + fx * f; out[1] = y + up; out[2] = z + fz * f
   return out
 }
+const slamHit = []
+function partsSlamTarget(x, y, z, yaw, C, R) {
+  const S = GRAB.slam, fx = -Math.sin(yaw), fz = -Math.cos(yaw), k = C.r / 0.48, feet = y - C.h - C.r
+  const d = staticRay(x, y + 0.1, z, fx, 0, fz, S.reach * k + 0.5, slamHit)
+  if (slamHit.length >= 6 && Math.abs(slamHit[4]) < 0.5 && d < S.reach * k + 0.3)
+    return { p: [slamHit[0] + slamHit[3] * (R + 0.08), y + 0.1, slamHit[2] + slamHit[5] * (R + 0.08)], n: [slamHit[3], 0, slamHit[5]], wall: true, hit: [slamHit[0], y + 0.1, slamHit[2]] }
+  const tx = x + fx * S.reach * k, tz = z + fz * S.reach * k
+  const g = staticRay(tx, feet + 1.5, tz, 0, -1, 0, 4, slamHit), gy = slamHit.length >= 6 ? slamHit[1] : feet
+  return { p: [tx, gy + 0.3, tz], n: [0, 1, 0], wall: false, hit: [tx, gy, tz] }
+}
+const slamEase = u => u * u * (3 - 2 * u)
+const SLAM_FIST = [[0.384,0.77,0.134],[0.407,0.806,0.145],[0.417,0.875,0.185],[0.347,0.953,0.258],[0.231,1.049,0.35],[0.104,1.135,0.45],[0.034,1.172,0.498],[0.136,1.142,0.478],[0.367,1.013,0.432],[0.73,0.5,0.337],[0.858,0.096,0.268],[0.911,-0.18,0.239],[0.935,-0.348,0.228]]
+const SLAM_BODY = [0.21, -0.54]
+function partsSlamAt(x, y, z, yaw, C, R, age, out = [0, 0, 0], tgt) {
+  const S = GRAB.slam, fx = -Math.sin(yaw), fz = -Math.cos(yaw), k = C.r / 0.48, T = tgt || partsSlamTarget(x, y, z, yaw, C, R)
+  const u = Math.max(0, Math.min(age, S.hit)) * 30, i = Math.min(SLAM_FIST.length - 2, Math.floor(u)), w = u - i, A = SLAM_FIST[i], B = SLAM_FIST[i + 1]
+  const end = T.wall ? 0 : Math.PI / 2, up = 2.3
+  const r = age < S.peak ? up * slamEase(Math.max(0, age / S.peak)) : up + (end - up) * slamEase(Math.min(1, (age - S.peak) / (S.hit - S.peak)))
+  const cs = Math.cos(r), sn = Math.sin(r)
+  const f = ((A[0] + (B[0] - A[0]) * w) + (SLAM_BODY[0] * cs - SLAM_BODY[1] * sn)) * k, h = ((A[1] + (B[1] - A[1]) * w) + (SLAM_BODY[0] * sn + SLAM_BODY[1] * cs)) * k
+  const l = (A[2] + (B[2] - A[2]) * w) * k, bx = x + fx * f + Math.cos(yaw) * l, bz = z + fz * f - Math.sin(yaw) * l
+  const b = slamEase(Math.max(0, Math.min(1, (age - (S.hit - 0.10)) / 0.10)))
+  out[0] = bx + (T.p[0] - bx) * b; out[1] = y + h + (T.p[1] - (y + h)) * b; out[2] = bz + (T.p[2] - bz) * b
+  out.tilt = r
+  return out
+}
+function partsHeldTilt(id, x, y, z, yaw, C, R) {
+  const [k, age] = partsActOf(id)
+  return k === 7 ? partsSlamAt(x, y, z, yaw, C, R, age, partsTilt).tilt : 0
+}
+const partsTilt = [0, 0, 0]
 function partsKickAt(c, R, out = [0, 0, 0]) {
   const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw), f = 0.55 + R * 0.8
   out[0] = c.x + fx * f; out[1] = c.y - c.h - c.r + 0.42 + R * 0.5; out[2] = c.z + fz * f
@@ -32284,10 +32568,11 @@ function partsStep(c, inp, dt) {
     S.age += dt
     const A = S.act, P = A === 1 ? GRAB.punt : A === 2 ? GRAB.throw : null
     if (P && !S.done && S.age >= (A === 1 ? P.drop : 0.12)) { S.done = true; if (held) partsLetGo(c, held, A === 1 ? 'punt' : 'throw') }
+    if (A === 7 && !S.done && S.age >= GRAB.slam.hit) { S.done = true; if (held) partsLetGo(c, held, 'slam') }
     if (A === 3 && S.age >= GRAB.rip && !S.done) { S.done = true; partsPullDone(c, S) }
     if (A === 6 && !S.done && S.age >= HAMMER.T) { S.done = true; if (held) goreHammerLaunch(c, held) }
     c.threw = true
-    if (S.age >= (P ? P.done : A === 3 ? GRAB.rip + 0.2 : A === 5 ? CLUB.swing : A === 6 ? HAMMER.T + 0.25 : GRAB.grabS)) { S.act = 0; S.age = 0 }
+    if (S.age >= (P ? P.done : A === 3 ? GRAB.rip + 0.2 : A === 5 ? CLUB.swing : A === 6 ? HAMMER.T + 0.25 : A === 7 ? GRAB.slam.done : GRAB.grabS)) { S.act = 0; S.age = 0 }
     else if (A !== 4) return true
   }
   if (held) {
@@ -32299,7 +32584,7 @@ function partsStep(c, inp, dt) {
       return true
     }
     if (useEdge && c.useT <= 0) { if (person) { S.rip = 0; S.ripGrab = false } else { c.useT = USE_S; partsLetGo(c, held, 'drop') } }
-    else if (fire && c.useT <= 0) { Object.assign(S, cover && !inp.sprint ? { act: 6, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : limb && !inp.sprint ? { act: 5, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : { act: 1, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S; if (limb) held.ref.clubHit = null }
+    else if (fire && c.useT <= 0) { Object.assign(S, person && !inp.sprint ? { act: 7, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : cover && !inp.sprint ? { act: 6, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : limb && !inp.sprint ? { act: 5, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : { act: 1, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S; if (limb) held.ref.clubHit = null }
     else if (alt && c.useT <= 0) { Object.assign(S, { act: 2, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S }
     return true
   }
@@ -32413,6 +32698,18 @@ function partsLetGoHost(c, held, how, credit) {
   if (held.src === 'char') {
     const h = held.ref
     if (h.grabBy !== c.id) return
+    if (how === 'slam') {
+      const W = partsSlamTarget(c.x, c.y, c.z, c.yaw, c, h.r), G = GUNS[SLAM_G()], was = h.hp
+      partsFree(h, W.p, [0, -3, 0])
+      strike(c, h, G, -Math.sin(c.yaw), -0.4, -Math.cos(c.yaw))
+      h.knT = 0; h.knUp = 0; h.knx = h.knz = 0; h.punted = null
+      const killed = downed(h)
+      if (killed && credit) credit(c.id, c)(h, G)
+      if (killed) goreHeadHit(c, h, G, -Math.sin(c.yaw), 0, -Math.cos(c.yaw), [W.hit[0], W.hit[1] + 0.25, W.hit[2]])
+      GAME.gore.emit(3, W.hit[0], W.hit[1], W.hit[2], W.n[0], W.n[1], W.n[2], killed ? 1.5 : 1, SLAM_G())
+      partsEmit('slam', c, held, h, was - h.hp)
+      return
+    }
     const at = how === 'punt' ? partsKickAt(c, h.r) : partsHoldAt(c.x, c.y, c.z, c.yaw, c, 'scruff', h.r)
     const L = how === 'drop' ? { v: [-Math.sin(c.yaw) * 2, 1.5, -Math.cos(c.yaw) * 2], speed: 0 } : partsLaunch(c, how, PARTS.person.mass)
     partsFree(h, at, L.v)
@@ -32432,6 +32729,13 @@ function partsLetGoHost(c, held, how, credit) {
     const s = c.parts.st
     if (!s) return
     c.parts.st = null
+    if (how === 'slam') {
+      const W = partsSlamTarget(c.x, c.y, c.z, c.yaw, c, s.R)
+      slKnock(s.ag, { x: W.hit[0], y: W.hit[1], z: W.hit[2], yaw: c.yaw + Math.PI, scale: 1, rec: null }, -Math.sin(c.yaw), -Math.cos(c.yaw), 3, c, T, 0, undefined, undefined, GUNS[SLAM_G()].dmg * profDmg(c, 'Slam'), SLAM_G(), 1)
+      GAME.gore.emit(3, W.hit[0], W.hit[1], W.hit[2], W.n[0], W.n[1], W.n[2], 1.2, SLAM_G())
+      partsEmit('slam', c, held, s.ag)
+      return
+    }
     const R = s.R, at = how === 'punt' ? partsKickAt(c, R) : partsHoldAt(c.x, c.y, c.z, c.yaw, c, partsGrip(s.kind), R)
     const L = how === 'drop' ? { v: [0, 0, 0], speed: 0, yaw: c.yaw } : partsLaunch(c, how, PARTS[s.kind].mass)
     const H = partsCentre(s.ag, s.what); at[1] = Math.max(at[1], H + 0.05)
@@ -32709,6 +33013,10 @@ function partsStreetPose(ag, r, t, o) {
     const sx = r.x + (r.hx === undefined ? 0 : h.x - r.hx), sz = r.z + (r.hz === undefined ? 0 : h.z - r.hz)
     o.x = sx + (p[0] - sx) * e; o.z = sz + (p[2] - sz) * e; o.y = Math.max(0, p[1] - H) * e; o.yaw = r.yaw + dy * partsEase(tau / partsTurnS(dy))
     o.clip = dog ? 'flinch' : 'cower'; o.ct = dog ? 0.25 : tau; o.pitch = dog ? 0 : -0.15 * e
+    if (!dog && partsActOf(r.by)[0] === 7) {
+      const th = partsHeldTilt(r.by, h.x, h.y, h.z, h.yaw, C, 0.32), sn = Math.sin(th), cs = Math.cos(th)
+      o.pitch = th; o.x = p[0] - Math.sin(o.yaw) * H * sn; o.z = p[2] - Math.cos(o.yaw) * H * sn; o.y = p[1] - H * cs; o.clip = 'knockback'; o.ct = 0.2
+    }
     if (ag.kind === SL_K.pram) o.pramAt = [r.x, r.z, r.yaw]
     if (ag.kind === SL_K.cyclist) { o.bikeDown = [r.x, r.z, r.yaw]; o.wheel = 0 }
     return
@@ -32805,7 +33113,8 @@ function partsDraw(me, others, t, dt, meD) {
       const H = partsDrawn.get(g - 1)
       if (!H) continue
       const C = GAME.participant(g - 1, 0) || { r: 0.48, h: 0.5 }, q = partsCarryAt(g - 1, H.x, H.y, H.z, H.yaw, C, 'scruff', a.spec?.r ?? 0.4)
-      a.mesh.position.set(q[0], q[1], q[2]); a.mesh.rotation.x = 0
+      const tilt = partsHeldTilt(g - 1, H.x, H.y, H.z, H.yaw, C, a.spec?.r ?? 0.4)
+      a.mesh.position.set(q[0], q[1], q[2]); a.mesh.rotation.order = tilt ? 'YXZ' : 'XYZ'; a.mesh.rotation.x = tilt
       const hm = avatars.get(g - 1)?.mesh
       if (hm) a.mesh.rotation.y = hm.rotation.y + Math.PI
       if (p.id === myId) { if (meD) { meD.x = q[0]; meD.y = q[1]; meD.z = q[2] } if (predicted && !isHost) { predicted.x = q[0]; predicted.y = q[1]; predicted.z = q[2] } }
@@ -32814,9 +33123,10 @@ function partsDraw(me, others, t, dt, meD) {
       a.partsSpin = (a.partsSpin || 0) + dt * GRAB.punt.spin * 0.5
       a.mesh.rotation.x = a.partsSpin
     } else if (a.partsSpin) { a.partsSpin = 0; a.mesh.rotation.x = 0 }
+    if (g <= 0 && a.mesh.rotation.order !== 'XYZ') { a.mesh.rotation.order = 'XYZ'; a.mesh.rotation.x = 0 }
   }
 }
-const PARTS_CLIPS = { grab: 'maniak_grab', hold: 'maniak_hold', scruff: 'maniak_hold_scruff', over: 'maniak_hold_over', pull: 'maniak_pull', throw: 'maniak_throw', punt: 'maniak_punt' }
+const PARTS_CLIPS = { grab: 'maniak_grab', hold: 'maniak_hold', scruff: 'maniak_hold_scruff', over: 'maniak_hold_over', pull: 'maniak_pull', throw: 'maniak_throw', punt: 'maniak_punt', slam: 'maniak_slam' }
 function partsRig(a, R, M, t) {
   if (bodyOf(a.spec.model) !== 'maniak') return
   const act = a.partsAct || 0, code = Math.floor(act / 4), age = act - code * 4, hold = partsHoldsDrawn.get(a.partsId)
@@ -32824,9 +33134,9 @@ function partsRig(a, R, M, t) {
     const clip = rigClip(M, hold.grip === 'scruff' ? PARTS_CLIPS.scruff : hold.grip === 'overhead' ? PARTS_CLIPS.over : PARTS_CLIPS.hold)
     if (clip) rigPose(R, clip, (t / 1000) % clip.duration, 1, RIG_UPPER)
   }
-  const name = code === 1 ? PARTS_CLIPS.punt : code === 2 || code === 5 ? PARTS_CLIPS.throw : code === 3 ? PARTS_CLIPS.pull : code === 4 ? PARTS_CLIPS.grab : null
+  const name = code === 1 ? PARTS_CLIPS.punt : code === 2 || code === 5 ? PARTS_CLIPS.throw : code === 3 ? PARTS_CLIPS.pull : code === 4 ? PARTS_CLIPS.grab : code === 7 ? PARTS_CLIPS.slam : null
   const clip = name && rigClip(M, name)
-  if (clip && age < clip.duration) R.over = { clip, t0: 0, at: t - age * 1000, clock: age, full: code === 1 || code === 3 || !(a.v > 0.6), parts: true }
+  if (clip && age < clip.duration) R.over = { clip, t0: 0, at: t - age * 1000, clock: age, full: code === 1 || code === 3 || code === 7 || !(a.v > 0.6), parts: true }
   else if (R.over?.parts) R.over = null
 }
 
@@ -32838,6 +33148,7 @@ function partsActOf(id) {
 }
 function partsCarryAt(id, x, y, z, yaw, C, grip, R, out = [0, 0, 0]) {
   const [k, age] = partsActOf(id)
+  if (k === 7 && grip === 'scruff') return partsSlamAt(x, y, z, yaw, C, R, age, out)
   if (k === 1 && age < GRAB.punt.drop) {
     const a = partsHoldAt(x, y, z, yaw, C, grip, R, [0, 0, 0]), fx = -Math.sin(yaw), fz = -Math.cos(yaw), f = 0.55 + R * 0.8
     const b = [x + fx * f, y - C.h - C.r + 0.42 + R * 0.5, z + fz * f], u = age / GRAB.punt.drop, e = u * u
@@ -33425,6 +33736,8 @@ GAME.parts = {
 }
 RIG_FILES.maniak_grab = 'maniak_grab.9845e572.glb'
 MODELS.maniak.anims = [...[MODELS.maniak.anims].flat(), RIG_FILES.maniak_grab]
+RIG_FILES.maniak_slam = 'maniak_slam.1b0d9406.glb'
+MODELS.maniak.anims = [...[MODELS.maniak.anims].flat(), RIG_FILES.maniak_slam]
 RIG_FILES.maniak_swim = 'maniak_swim.0ee5f26e.glb'
 MODELS.maniak.anims.push(RIG_FILES.maniak_swim)
 MODELS.maniak.clips.swimIdle = 'maniak_swim_idle'; MODELS.maniak.clips.swim = 'maniak_swim'; MODELS.maniak.clips.swimDive = 'maniak_swim_dive'
