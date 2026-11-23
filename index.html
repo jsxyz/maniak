@@ -28474,27 +28474,32 @@ function bcastSound() {
 GAME.audio = { frame: sfxFrame, radio: radioTick, fx: sfxFx, play: sfxPlay, sound: playSound, voice: playVoice, takeRadio, toggle: sfxToggle, cycle: radioCycle, apply: sfxApply, start: sfxStart, gesture: sfxGesture }
 
 const ACH_KEY = 'maniak.ach.v1'
+const ACH_SECRET = { key: 'secret', n: 600000, s1: '3Ji8o4OQKu9LtfC4iJB7Lw==', f: 'eQOoGaQTp0txWngxZbMuPKaAD8vElDeOAATpAI27bE4=', s2: 'r/atfpWukI1607sobBsFNw==', iv: 'x86A+mnRtGHq6U5a', ct: 'PNxt7jDH9EAUSPOZf4/Q8Xs3MgeuhwxaJev0/u6Oy4nHlQyeuik4X6NpsByFpUMu4HFvv2gu8kyPyRUtnirusN9F2KmNcXJGno0CWw==' }
+const achKeys = () => [...Object.keys(TEXT.ach), ACH_SECRET.key]
+const achLine = v => typeof v === 'string' && v.length > 0 && v.length <= 200
 let achHave = null, achToastT = 0
 function achLoad() {
   if (achHave) return achHave
   achHave = {}
-  try { const o = JSON.parse(localStorage.getItem(ACH_KEY) || '{}'); if (o && typeof o === 'object') for (const k in o) if (Object.hasOwn(TEXT.ach, k)) achHave[k] = +o[k] || 1 } catch (e) {}
+  try { const o = JSON.parse(localStorage.getItem(ACH_KEY) || '{}'); if (o && typeof o === 'object') for (const k in o) if (k === ACH_SECRET.key ? Array.isArray(o[k]) && achLine(o[k][1]) && achLine(o[k][2]) : Object.hasOwn(TEXT.ach, k)) achHave[k] = k === ACH_SECRET.key ? [+o[k][0] || 1, o[k][1], o[k][2]] : +o[k] || 1 } catch (e) {}
   return achHave
 }
-function achReceive(key) {
-  if (!Object.hasOwn(TEXT.ach, key)) return
+function achInfo(k, v) { return k === ACH_SECRET.key ? [v[1], v[2]] : TEXT.ach[k] }
+function achReceive(key, title, desc) {
+  const secret = key === ACH_SECRET.key
+  if (secret ? !achLine(title) || !achLine(desc) : !Object.hasOwn(TEXT.ach, key)) return
   const have = achLoad()
   if (have[key]) return
-  have[key] = Date.now()
+  have[key] = secret ? [Date.now(), title, desc] : Date.now()
   try { localStorage.setItem(ACH_KEY, JSON.stringify(have)) } catch (e) {}
   const t = el('#ach-toast')
-  t.textContent = TEXT.ach[key][0]
+  t.textContent = achInfo(key, have[key])[0]
   t.classList.add('open')
   clearTimeout(achToastT); achToastT = setTimeout(() => t.classList.remove('open'), 4200)
   if (settingsOpen && el('#ach').classList.contains('open')) achRender()
 }
 function achRender() {
-  const have = achLoad(), keys = Object.keys(TEXT.ach), L = el('#ach-list')
+  const have = achLoad(), keys = achKeys(), L = el('#ach-list')
   el('#ach-title').textContent = TEXT.achHeading
   el('#ach-back').textContent = TEXT.achBack
   el('#ach-count').textContent = TEXT.achEarned.replace('{n}', keys.filter(k => have[k]).length).replace('{total}', keys.length)
@@ -28502,8 +28507,8 @@ function achRender() {
   for (const k of keys) {
     const d = L.appendChild(document.createElement('div')), b = d.appendChild(document.createElement('b')), p = d.appendChild(document.createElement('span'))
     d.className = 'ach' + (have[k] ? '' : ' off')
-    b.textContent = have[k] ? TEXT.ach[k][0] : TEXT.achHidden
-    p.textContent = have[k] ? TEXT.ach[k][1] : ''
+    b.textContent = have[k] ? achInfo(k, have[k])[0] : TEXT.achHidden
+    p.textContent = have[k] ? achInfo(k, have[k])[1] : ''
   }
 }
 function openAch() {
@@ -28515,15 +28520,44 @@ function openAch() {
 const achSim = new Map()
 const achOf = id => achSim.get(id) || achSim.set(id, { got: new Set(), n: {}, heat: 0, smk: 0 }).get(id)
 function achWipe(id) { if (id === undefined) achSim.clear(); else achSim.delete(id) }
-function achGrant(id, key) {
-  if (!isHost || !Object.hasOwn(TEXT.ach, key)) return
+function achGrant(id, key, title, desc) {
+  if (!isHost || key !== ACH_SECRET.key && !Object.hasOwn(TEXT.ach, key)) return
   const c = players.get(id)
   if (!c || c.bot || id >= BOT_ID0) return
   const S = achOf(id)
   if (S.got.has(key)) return
   S.got.add(key)
-  if (id === myId) achReceive(key)
-  else { const p = conns.get(id); if (p && p.open) try { p.send(JSON.stringify({ k: 'ach', a: key })) } catch (e) {} }
+  if (id === myId) achReceive(key, title, desc)
+  else { const p = conns.get(id); if (p && p.open) try { p.send(JSON.stringify(title === undefined ? { k: 'ach', a: key } : { k: 'ach', a: key, t: title, d: desc })) } catch (e) {} }
+}
+const achBytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0))
+const achNorm = t => t.normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ')
+async function achSecret(text) {
+  const sub = globalThis.crypto?.subtle
+  if (!sub || text.length > 200) return null
+  const base = await sub.importKey('raw', new TextEncoder().encode(achNorm(text)), 'PBKDF2', false, ['deriveBits', 'deriveKey'])
+  const f = new Uint8Array(await sub.deriveBits({ name: 'PBKDF2', salt: achBytes(ACH_SECRET.s1), iterations: ACH_SECRET.n, hash: 'SHA-256' }, base, 256)), want = achBytes(ACH_SECRET.f)
+  let diff = f.length ^ want.length
+  for (let i = 0; i < f.length; i++) diff |= f[i] ^ want[i]
+  if (diff) return null
+  const key = await sub.deriveKey({ name: 'PBKDF2', salt: achBytes(ACH_SECRET.s2), iterations: ACH_SECRET.n, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt'])
+  const plain = await sub.decrypt({ name: 'AES-GCM', iv: achBytes(ACH_SECRET.iv) }, key, achBytes(ACH_SECRET.ct))
+  const v = JSON.parse(new TextDecoder().decode(plain))
+  return Array.isArray(v) && achLine(v[0]) && achLine(v[1]) ? v : null
+}
+function achChat(id, text) {
+  const S = achOf(id)
+  if ((S.q | 0) >= 3) return Promise.resolve(true)
+  S.q = (S.q | 0) + 1
+  const run = async () => {
+    try {
+      const v = await achSecret(text)
+      if (!v) return false
+      achGrant(id, ACH_SECRET.key, v[0], v[1])
+      return true
+    } catch (e) { return false } finally { S.q-- }
+  }
+  return S.chain = (S.chain || Promise.resolve()).then(run)
 }
 function achCount(id, key, need) {
   const S = achOf(id)
@@ -30590,7 +30624,7 @@ function countDown(raw) {
 }
 
 function sendChat(text, action) {
-  if (isHost) broadcast({ k: 'c', id: myId, m: text, a: action, s: ++chatSeq })
+  if (isHost) { const s = ++chatSeq; achChat(myId, text).then(held => { if (!held) broadcast({ k: 'c', id: myId, m: text, a: action, s }) }) }
   else sendHost({ k: 'c', m: text, a: action, s: ++chatSeq })
 }
 
@@ -30881,8 +30915,11 @@ const HOST_MSGS = {
       text = v.text
       if (hooked.chat) hookEmit('chat', v)
     }
-    showChat(id, text, !!d.a)
-    broadcast({ k: 'c', id, m: text, a: !!d.a, s: d.s }, id)
+    achChat(id, text).then(held => {
+      if (held) return
+      showChat(id, text, !!d.a)
+      broadcast({ k: 'c', id, m: text, a: !!d.a, s: d.s }, id)
+    })
     return
   } },
   nick: { apply: (id, d) => { nickLater(id, d) } },
@@ -31061,7 +31098,7 @@ function rosterTake() {
   applyRoster(list)
 }
 const GUEST_MSGS = {
-  ach: { validate: d => typeof d.a === 'string' && Object.hasOwn(TEXT.ach, d.a) ? d : null, apply: d => { achReceive(d.a) } },
+  ach: { validate: d => typeof d.a === 'string' && (Object.hasOwn(TEXT.ach, d.a) || d.a === ACH_SECRET.key && achLine(d.t) && achLine(d.d)) ? d : null, apply: d => { achReceive(d.a, d.t, d.d) } },
   welcome: { apply: d => {
     myId = d.id | 0
     roomCodeStr = d.code || roomCodeStr
