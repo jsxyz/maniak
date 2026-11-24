@@ -16992,7 +16992,36 @@ function trafficOlderWaiting(o, e) {
   }
   return false
 }
-const trafficPart = { rays: 0, round: 0 }
+const trafficPart = { rays: 0, round: 0, scan: 0, sl: 0 }
+const TRAFFIC_CELL = 64
+let trafficGrid = null
+function trafficGridBuild() {
+  const cells = new Map(), idx = new Map(), veh = []
+  for (let i = 0; i < objs.length; i++) {
+    const p = objs[i], k = Math.floor(p.x / TRAFFIC_CELL) * 65536 + Math.floor(p.z / TRAFFIC_CELL)
+    idx.set(p, i)
+    const c = cells.get(k)
+    if (c) c.push(p); else cells.set(k, [p])
+    if (p.V) veh.push(p)
+  }
+  trafficGrid = { n: objs.length, cells, idx, veh }
+}
+function trafficGridOk(g) {
+  if (!g || g.n !== objs.length) return false
+  for (const p of g.veh) if (objs[g.idx.get(p)] !== p) return false
+  return true
+}
+function trafficObjsNear(o, r) {
+  const g = trafficGrid
+  if (!trafficGridOk(g)) return objs
+  const x0 = Math.floor((o.x - r) / TRAFFIC_CELL), x1 = Math.floor((o.x + r) / TRAFFIC_CELL), z0 = Math.floor((o.z - r) / TRAFFIC_CELL), z1 = Math.floor((o.z + r) / TRAFFIC_CELL)
+  const out = []
+  for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) { const c = g.cells.get(cx * 65536 + cz); if (c) for (const p of c) out.push(p) }
+  const idx = g.idx
+  for (const p of out) if (objs[idx.get(p)] !== p) return objs
+  return out.sort((p, q) => idx.get(p) - idx.get(q))
+}
+const trafficVehicles = () => trafficGridOk(trafficGrid) ? trafficGrid.veh : objs
 function trafficThink(o, dt, people) {
   const a = o.traffic, e = a.edge, fw = rotq(o.q, [0, 0, -1]), yaw = Math.atan2(-fw[0], -fw[2]), speed = speedOf(o)
   const along = (o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, left = e.length - along
@@ -17050,8 +17079,10 @@ function trafficThink(o, dt, people) {
     if (p && (!hold || s < hold.stop)) hold = { p, stop: s, f, r: across, len: length }
     if (Math.abs(side) > o.V.w / 2 && !a.path && e.kind !== 'side' && !R) offset = (side > 0 ? -0.65 : 0.65)
   }
+  const ts0 = performance.now()
   for (const c of people) if (!(c.dead > 0) && !seatOf(c)) obstacle(c.x, c.y, c.z, c.r || 0.5)
-  for (const p of objs) if (p !== o && p.heldBy === undefined) {
+  const near = trafficObjsNear(o, 68)
+  for (const p of near) if (p !== o && p.heldBy === undefined) {
     if (Math.abs(p.x - o.x) > 60 || Math.abs(p.z - o.z) > 60) continue
     if (!p.V) { obstacle(p.x, p.y, p.z, p.R, p.R, p); continue }
     const f = rotq(p.q, [0, 0, -1]), along = Math.abs(f[0] * fw[0] + f[2] * fw[2]), across = Math.abs(f[0] * -fw[2] + f[2] * fw[0])
@@ -17067,13 +17098,15 @@ function trafficThink(o, dt, people) {
       if (s > 38) return
     }
   }
+  const ts1 = performance.now(); trafficPart.scan += ts1 - ts0
   for (const c of GAME.streetLife?.obstacles?.(o.x + fw[0] * 15, o.z + fw[2] * 15, 25, true) || []) {
     const r = c.radius || 0.6, y = c.y || 1
     obstacle(c.x, y, c.z, r)
     if (c.kind !== 'cyclist' && Math.hypot(c.vx || 0, c.vz || 0) > 0.3) for (const s of [0.8, 1.6]) obstacle(c.x + c.vx * s, y, c.z + c.vz * s, r)
     if (a.path) pathGap(c.x, c.z, r)
   }
-  if (a.path) for (const p of objs) {
+  const ts2 = performance.now(); trafficPart.sl += ts2 - ts1
+  if (a.path) for (const p of near) {
     if (p === o || p.heldBy !== undefined || !p.body || !(p.V || vehicleBody(p.K)) || Math.abs(p.y - o.y) > 3.5 || R && p === R.p) continue
     const dx = p.x - o.x, dz = p.z - o.z
     if (dx * fw[0] + dz * fw[2] <= o.V.l / 2 || dx * dx + dz * dz > 45 * 45) continue
@@ -17092,6 +17125,7 @@ function trafficThink(o, dt, people) {
     }
   }
   const reach = 5 + speed * speed / 10, y = o.y + 0.2, tr0 = performance.now()
+  trafficPart.scan += tr0 - ts2
   const rays = (speed < 0.3 && stop < 1 ? [] : R ? [-0.35, 0, 0.35] : [-0.7, 0, 0.7]).map(s => {
     const t = castRay(o.x - fw[2] * s + fw[0] * (o.V.l / 2 + 0.3), y, o.z + fw[0] * s + fw[2] * (o.V.l / 2 + 0.3), fw[0], 0, fw[2], reach, RAY_GROUP | G_OBJ)
     return (t < 1 && R && R.p.body && A.getPointer(rayCb.get_m_collisionObject()) === A.getPointer(R.p.body) ? 1 : t) * reach
@@ -17123,7 +17157,7 @@ function trafficYieldBlocked(o, e, next) {
     if (Math.hypot(x + vx * t, z + vz * t) < 13 && (v2 > 0.5 || Math.hypot(x, z) < 16)) return true
   }
   if (e.kind !== 'side' || trafficSignalled(n)) return false
-  for (const p of objs) {
+  for (const p of trafficVehicles()) {
     if (p === o || !p.V || p.traffic?.edge.kind === 'side' || Math.abs(p.y - o.y) > 4 || !p.traffic && speedOf(p) < 0.3) continue
     const f = rotq(p.q, [0, 0, -1]), x = n.x - p.x, z = n.z - p.z, along = x * f[0] + z * f[2]
     if (along > -p.V.l && along < 12 + speedOf(p) * 5 && Math.abs(x * -f[2] + z * f[0]) < 7) return true
@@ -17664,6 +17698,7 @@ function trafficTick(dt, all) {
   let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0, kinN = 0
   let lane = null, kinNew = []
   const movers = []
+  trafficGridBuild()
   for (const p of objs) if (p.V && !p.traffic && !p.kin && p.body.isActive() && speedOf(p) > 3) movers.push(p)
   parkedTick(dt, people)
   lootTick(dt, people)
@@ -17709,6 +17744,7 @@ function trafficTick(dt, all) {
     }
     if (o.trafficExit && clock - o.trafficExit[0] > 8) o.trafficExit = null
   }
+  trafficGrid = null
   T.rr = rrNext >= 0 ? rrNext : rr
   kinNew.sort((p, q) => q[2] - p[2])
   for (const [o, a] of kinNew.slice(0, TRAFFIC.kinMax)) if (objs.includes(o) && o.traffic === a && !o.kin) kinOn(o, a)
@@ -17722,8 +17758,8 @@ function trafficTick(dt, all) {
   const ms = performance.now() - t; T.stats.ticks++; T.stats.ms += ms; T.stats.maxMs = Math.max(T.stats.maxMs, ms)
   background.simAdd('traffic', ms)
   background.simAdd('traffic think', thinkMs); background.simAdd('traffic kin', kinMs); background.simAdd('traffic drive', driveMs)
-  background.simAdd('traffic rays', trafficPart.rays); background.simAdd('traffic round', trafficPart.round)
-  trafficPart.rays = 0; trafficPart.round = 0; T.kinN = kinN
+  background.simAdd('traffic rays', trafficPart.rays); background.simAdd('traffic round', trafficPart.round); background.simAdd('traffic scan', trafficPart.scan); background.simAdd('traffic sl', trafficPart.sl)
+  trafficPart.rays = 0; trafficPart.round = 0; trafficPart.scan = 0; trafficPart.sl = 0; T.kinN = kinN
 }
 function trafficRows() {
   return trafficState ? [...trafficState.cars.values(), ...trafficState.hw?.cars?.values() || []].map(o => [o.id, o.traffic?.driver ? 1 : 0, ...o.trafficExit || []]) : []
@@ -37281,10 +37317,27 @@ function slWarmStep() {
     slCell(i, j); st.warmAt = performance.now(); return
   }
 }
+const SL_ROAD_CELL = 32
+const slRoadGrids = new WeakMap()
 function slObstacles(x, z, R = 25, warm = false) {
   if (!slState || !LV.faust) return []
   const list = slRoadList(!!warm)
-  return x === undefined ? list : list.filter(o => Math.abs(o.x - x) < R && Math.abs(o.z - z) < R && Math.hypot(o.x - x, o.z - z) < R)
+  if (x === undefined) return list
+  const hit = o => Math.abs(o.x - x) < R && Math.abs(o.z - z) < R && Math.hypot(o.x - x, o.z - z) < R
+  if (list.length < 24) return list.filter(hit)
+  let g = slRoadGrids.get(list)
+  if (!g) {
+    g = new Map()
+    for (let i = 0; i < list.length; i++) { const o = list[i], k = Math.floor(o.x / SL_ROAD_CELL) * 65536 + Math.floor(o.z / SL_ROAD_CELL), c = g.get(k); if (c) c.push(i); else g.set(k, [i]) }
+    slRoadGrids.set(list, g)
+  }
+  const ids = []
+  for (let cx = Math.floor((x - R) / SL_ROAD_CELL), x1 = Math.floor((x + R) / SL_ROAD_CELL); cx <= x1; cx++)
+    for (let cz = Math.floor((z - R) / SL_ROAD_CELL), z1 = Math.floor((z + R) / SL_ROAD_CELL); cz <= z1; cz++) { const c = g.get(cx * 65536 + cz); if (c) for (const i of c) ids.push(i) }
+  ids.sort((p, q) => p - q)
+  const out = []
+  for (const i of ids) if (hit(list[i])) out.push(list[i])
+  return out
 }
 function slDriverExit({ vehicleId, x, z, dx = 1, dz = 0, hit } = {}) {
   if (!isHost || !slState || !Number.isFinite(x) || !Number.isFinite(z)) return
