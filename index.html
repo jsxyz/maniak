@@ -2425,57 +2425,14 @@ const RAIL = { level: { low: 10, high: 17 }, gauge: 2.5, beam: [0.45, 1.5], R: 2
     'Gargoyle Hill', 'Ironside', 'Lantern Quay', 'Obelisk', 'Propaganda Hall', 'Party Street', 'Trophy Row', 'Armory',
     'Graveyard', 'Gasworks', 'Union Gate', 'Bulwark', 'Regent Circus', 'Sunburst', 'Aurora', 'Vanguard', 'Ministry',
     'Tribune', 'Colossus', 'Vigil', 'Searchlight', 'Pinnacle', 'Belvedere', 'Rampart'] }
-let faustIndustryMemo = null
-function faustIndustry(seed) {
-  seed >>>= 0
-  if (faustIndustryMemo?.seed === seed) return faustIndustryMemo
-  const A = 960, r0 = A - 96, h = (a, b) => faustMix(seed ^ 0x494e4453, a, b), f = (a, b) => (h(a, b) >>> 8) / 16777216
-  const axis = genRng(faustMix(seed ^ 0x43484e4c, 83, 1))() < 0.5 ? 0 : 1
-  const cols = axis ? [7, 8, -5, -7, -8] : [4, 5, 7, 8, -5, -7, -8], u = cols[h(1, 2) % cols.length], side = axis ? u < 0 ? 1 : h(1, 1) & 1 ? 1 : -1 : 1
-  const shapes = [{ id: 'river', name: 'RIVER WORKS', kind: 'strip', axis, c: u * 96 + 48, t0: side * (axis && u < 0 ? 400 : 330), t1: side * A, half: 140 }]
-  const tau = Math.PI * 2, kinds = [['RAIL YARDS', 250, 100, 0], ['MARSHALLING YARDS', 230, 100, 0], ['FOUNDRY ROW', 165, 150, 1], ['SCRAPYARD', 110, 105, 2]]
-  for (const [i, [name, a0, b0, mode]] of kinds.entries()) for (let n = 0; n < 16; n++) {
-    let x, z, a = a0, b = b0
-    const e = f(10 + i, n * 3), g = f(11 + i * 3, n * 3 + 1), th = f(12 + i, n * 3 + 2) * tau
-    if (mode === 0) { const k = h(13 + i, n) & 3, t = (e * 1.2 - 0.6) * r0, o = (k & 1 ? 1 : -1) * (r0 - 40); x = k & 2 ? o : t; z = k & 2 ? t : o; if (k & 2) { a = b0; b = a0 } }
-    else { const d = mode === 1 ? 680 : 780; x = Math.cos(th) * d; z = Math.sin(th) * d }
-    const rad = Math.max(a, b), d0 = Math.sqrt(x * x + z * z)
-    if (d0 < 480 + rad * 0.9 || x < -192 + rad && z < 384 + rad && d0 < 1000 + rad || Math.abs(x) > A - 20 || Math.abs(z) > A - 20) continue
-    const R = shapes[0], rp = Math.abs((R.axis ? x : z) - R.c), ra = (R.axis ? z : x) * R.t1
-    if (rp < R.half + rad * 0.6 && ra > -200) continue
-    if (shapes.some(p => p.kind === 'oval' && (p.x - x) ** 2 + (p.z - z) ** 2 < (320 + rad * 0.5) ** 2)) continue
-    shapes.push({ id: 'ind' + i, name, kind: 'oval', x, z, a, b })
-    break
-  }
-  return faustIndustryMemo = { seed, shapes, river: shapes[0] }
-}
-function faustIndustryAt(seed, gx, gz) {
-  const S = faustIndustry(seed).shapes, px = gx * 96 + 48, pz = gz * 96 + 48, j = (faustMix(seed ^ 0x494e4e4a, gx, gz) >>> 8) / 16777216 - 0.5
-  for (let i = 0; i < S.length; i++) {
-    const p = S[i]
-    if (p.kind === 'strip') {
-      const perp = Math.abs((p.axis ? px : pz) - p.c), al = p.axis ? pz : px, s = (al - p.t0) / (p.t1 - p.t0)
-      if (s >= -0.05 && s <= 1.1 && perp < p.half * (0.55 + 0.45 * Math.min(1, Math.max(0, s))) * (1 + j * 0.5)) return i
-    } else {
-      const u = (px - p.x) / p.a, v = (pz - p.z) / p.b
-      if (u * u + v * v < 1 + j * 0.6) return i
-    }
-  }
-  return -1
-}
-function faustIndustryBand(seed, x, z) {
-  const p = faustIndustry(seed).river, al = p.axis ? z : x
-  return Math.abs((p.axis ? x : z) - p.c) < 200 && al * p.t1 > -200 && Math.abs(al) > 60
-}
 function faustCell(seed, gx, gz) {
   const X = gx * 96, Z = gz * 96, districtHash = faustMix(seed ^ 9187, gx, gz), distance = (X + 48) ** 2 + (Z + 48) ** 2
-  const core = distance < 480 ** 2 || distance > 650 ** 2 && districtHash % 97 === 0, civic = !core && gx < -2 && gz < 4 && distance < 1000 ** 2
-  const industry = core || civic ? -1 : faustIndustryAt(seed, gx, gz)
-  const district = core ? 'core' : civic ? 'civic' : industry >= 0 ? 'industrial' : 'tenement'
+  const district = distance < 480 ** 2 || distance > 650 ** 2 && districtHash % 97 === 0 ? 'core' : gx < -2 && gz < 4 && distance < 1000 ** 2 ? 'civic'
+    : distance > 1050 ** 2 || gz < -7 ? 'industrial' : 'tenement'
   const centralPlaza = gx >= -2 && gx <= 1 && gz >= -2 && gz <= 1, plaza = centralPlaza || districtHash % 29 === 0
   const diagonal = gz - gx === 4
   const layout = district === 'industrial' ? 2 : district === 'civic' && districtHash % 3 === 0 || district === 'core' && districtHash % 7 === 0 ? 1 : 4
-  return { X, Z, districtHash, distance, district, industry, centralPlaza, plaza, diagonal, layout }
+  return { X, Z, districtHash, distance, district, centralPlaza, plaza, diagonal, layout }
 }
 const railQuarter = n => Array.from({ length: n + 1 }, (_, i) => { const t = i / n, q = 1 + t * t; return [(1 - t * t) / q, 2 * t / q] })
 const RAIL_Q = railQuarter(16)
@@ -2560,7 +2517,7 @@ function* faustRailSteps(seed, S) {
     const gx = Math.floor(x / 96), gz = Math.floor(z / 96)
     if (gx < -H || gz < -H || gx >= H || gz >= H) return null
     const C = cell(gx, gz)
-    if (C.plaza || C.diagonal || C.layout === 1 || faustIndustryBand(seed, x, z)) return null
+    if (C.plaza || C.diagonal || C.layout === 1) return null
     const out = []
     for (let i = 0; i < C.layout; i++) {
       const lx = C.X + (i & 1 ? 72 : 24), lz = C.Z + (C.layout < 4 ? 48 : i & 2 ? 72 : 24), hx = 12, hz = C.layout < 4 ? 28 : 12
@@ -3444,7 +3401,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 23, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
+  const content = { version: 22, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
   let hash = 2166136261
   const json = JSON.stringify(content)
   for (let i = 0; i < json.length; i++) hash = Math.imul(hash ^ json.charCodeAt(i), 16777619)
@@ -3646,10 +3603,7 @@ const IN_TINT = { plaster: 0xb9b2a3, plasterCool: 0x9fa7ad, wood: 0x5a3a24, wood
   steel: 0x5d656b, green: 0x3f5a4a, leather: 0x4a2a20, paper: 0xd8d3c4, cloth: 0x6b6f7a, red: 0x8a2a24, cream: 0xd9cfb0,
   black: 0x0d0d0f, glass: 0x1a2a34, crate: 0x7a6040, shelf: 0x3a3a3c }
 const inWindowKey = (B, k, face, bay) => B.chunk * 4194304 + B.slot * 1048576 + k * 1024 + face * 256 + bay
-const inDistrict = (cx, cz) => {
-  const F = typeof faustState !== 'undefined' && faustState
-  if (F) return DS_DISTRICT_CODE[faustCell(F.seed, Math.floor(cx / 96), Math.floor(cz / 96)).district]
-  const g = [Math.floor(cx / 96), Math.floor(cz / 96)], cc = [g[0] * 96 + 48, g[1] * 96 + 48], d2 = cc[0] * cc[0] + cc[1] * cc[1]
+const inDistrict = (cx, cz) => { const g = [Math.floor(cx / 96), Math.floor(cz / 96)], cc = [g[0] * 96 + 48, g[1] * 96 + 48], d2 = cc[0] * cc[0] + cc[1] * cc[1]
   return d2 < 230400 ? 0 : g[0] < -2 && g[1] < 4 && d2 < 1e6 ? 1 : d2 > 1102500 || g[1] < -7 ? 3 : 2 }
 const faustPieceLit = (seed, venue, face, piece) => venue === 'liquor' || venue === 'conv' ? true : venue === 'club' ? false : cityHash(seed ^ Math.imul(face * 32 + piece + 7, 0x85ebca6b)) % 100 < FAUST_NIGHT.shops.lit * 100
 function inWindows(B, k) {
@@ -5224,13 +5178,11 @@ function faustChannels(seed, S) {
     return out })
   const first = rng() < 0.5 ? 0 : 1, axis = ok[first].length ? first : ok[1 - first].length ? 1 - first : -1, picks = []
   const r1 = rng(), r2 = rng(), r3 = rng()
-  const IND = faustIndustry(seed).river, indU = Math.floor(IND.c / 96), indOK = axis === IND.axis && indU >= -H && indU < H
-  const nearU = list => { let b = list[0]; for (const u of list) if (Math.abs(u - indU) < Math.abs(b - indU)) b = u; return b }
-  const riverU = faustWaterMix(seed, S).river && axis >= 0 ? indOK ? indU : ok[axis][faustMix(seed ^ 0x52495652, 92, 1) % ok[axis].length] : null
+  const riverU = faustWaterMix(seed, S).river && axis >= 0 ? ok[axis][faustMix(seed ^ 0x52495652, 92, 1) % ok[axis].length] : null
   if (axis >= 0) {
     const pool = ok[axis].filter(u => riverU === null || Math.abs(u - riverU) >= 4)
     if (pool.length) {
-      const u1 = riverU === null && axis === IND.axis ? indOK ? indU : nearU(pool) : pool[Math.floor(r1 * pool.length)], more = pool.filter(u => Math.abs(u - u1) >= 4)
+      const u1 = pool[Math.floor(r1 * pool.length)], more = pool.filter(u => Math.abs(u - u1) >= 4)
       picks.push(u1)
       if (r2 < 0.5 && more.length) picks.push(more[Math.floor(r3 * more.length)])
       picks.sort((p, q) => p - q)
@@ -21004,7 +20956,7 @@ vec3 realRoom(vec3 p, vec3 rd, vec3 size, vec3 seed, vec3 lamp, float lit, bool 
 void realFacade(vec3 N, vec3 T, float u, float hw, float y0, float y1, float lod, inout RealSurf s, inout vec3 nT) {
   vec2 lot = vRealBox.xy;
   vec2 g = floor(lot / 96.0); vec2 cc = g * 96.0 + 48.0; float d2 = dot(cc, cc);
-  int district = dsDist(g);
+  int district = d2 < 230400.0 ? 0 : (g.x < -2.0 && g.y < 4.0 && d2 < 1e6) ? 1 : (d2 > 1102500.0 || g.y < -7.0) ? 3 : 2;
   bool deco = district < 2 || y1 > 300.0, base = y0 < 3.5;
   float face = dot(floor(N + 0.5), vec3(1.0, 2.0, 3.0)), fh = 4.0;
   float fy = vRealW.y / fh, fl = floor(fy), fv = fract(fy);
@@ -21058,7 +21010,7 @@ void realFacade(vec3 N, vec3 T, float u, float hw, float y0, float y1, float lod
 const REAL_SHOP_GLSL = `
 void realShop(vec3 N, vec3 T, float u, float hw, float lod, inout RealSurf s, inout vec3 nT) {
   vec2 g = floor(vRealBox.xy / 96.0); vec2 cc = g * 96.0 + 48.0; float d2 = dot(cc, cc);
-  if (dsDist(g) == 3) return;
+  if (d2 > 1102500.0 || g.y < -7.0) return;
   float n = floor((2.0 * hw - 1.0) / 4.5);
   if (n < 1.0) return;
   float bw = (2.0 * hw - 1.0) / n, f = (u + hw - 0.5) / bw, fu = fract(f), y = vRealW.y;
@@ -21190,7 +21142,7 @@ RealSurf realSurface() {
   dsAA = max(length(fwidth(vRealW)), 1e-3);
 #if defined(REAL_FACADE) || defined(REAL_FAR)
   vec2 g = floor(vRealBox.xy / 96.0); vec2 cc = g * 96.0 + 48.0; float d2 = dot(cc, cc);
-  int district = dsDist(g);
+  int district = d2 < 230400.0 ? 0 : (g.x < -2.0 && g.y < 4.0 && d2 < 1e6) ? 1 : (d2 > 1102500.0 || g.y < -7.0) ? 3 : 2;
   float layer = N.y > 0.5 ? 2.0 : (district < 2 || y1 > 300.0) ? 0.0 : district == 3 ? 2.0 : 1.0;
   float scale = layer == 1.0 ? 1.6 : layer == 0.0 ? 4.8 : 3.0;
   #ifdef REAL_FAR
@@ -21360,7 +21312,7 @@ function realLoadTextures(size) {
 }
 let realTextureSource = realLoadTextures
 const REAL_SKY_GLSL = `
-uniform vec3 moonDir; uniform float uFlash; uniform vec3 uFog; uniform float uHaze;
+uniform vec3 moonDir; uniform float uFlash;
 varying vec3 vDir;
 float realStar(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
 void main() {
@@ -21368,7 +21320,6 @@ void main() {
   float h = d.y, mu = dot(d, moonDir);
   vec3 c = mix(vec3(0.03, 0.021, 0.016), vec3(0.0011, 0.0017, 0.0038), pow(smoothstep(-0.04, 0.62, h), 0.55));
   if (h < 0.0) c = mix(vec3(0.03, 0.021, 0.016), vec3(0.008, 0.007, 0.007), smoothstep(0.0, -0.25, h));
-  c = max(c, (uFog * (1.0 + 0.8 * exp(-max(h, 0.0) * 5.0)) + vec3(0.012, 0.015, 0.022) * pow(max(mu, 0.0), 8.0)) * 1.25 * (1.0 - smoothstep(0.45, 1.0, h)) * uHaze);
   c += vec3(0.8, 0.86, 1.0) * smoothstep(0.99976, 0.99986, mu) * 7.0;
   c += vec3(0.05, 0.06, 0.085) * pow(max(mu, 0.0), 400.0) * 2.0 + vec3(0.01, 0.012, 0.018) * pow(max(mu, 0.0), 10.0);
   vec2 sp = vec2(atan(d.z, d.x) * 95.5, asin(clamp(h, -1.0, 1.0)) * 95.5), cell = floor(sp);
@@ -21377,7 +21328,7 @@ void main() {
   c += vec3(0.3, 0.36, 0.5) * uFlash * (0.4 + 0.6 * smoothstep(-0.05, 0.5, h));
   gl_FragColor = vec4(c, 1.0);
 }`
-const realSkyMaterial = (moonDir, fog) => new THREE.ShaderMaterial({ uniforms: { moonDir: { value: moonDir }, uFlash: { value: 0 }, uFog: { value: fog || new THREE.Color(0, 0, 0) }, uHaze: { value: fog ? 1 : 0 } }, side: THREE.BackSide,
+const realSkyMaterial = moonDir => new THREE.ShaderMaterial({ uniforms: { moonDir: { value: moonDir }, uFlash: { value: 0 } }, side: THREE.BackSide,
   depthTest: false, depthWrite: false, fog: false, toneMapped: false, fragmentShader: REAL_SKY_GLSL,
   vertexShader: 'varying vec3 vDir;\nvoid main() { vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }' })
 function* realEnvironmentSteps(R) {
@@ -21723,7 +21674,7 @@ function* realInitSteps() {
   R.signalGlow = new THREE.Color(6, 6, 6)
   R.env = yield* realEnvironmentSteps(R)
   background.mark('real materials')
-  R.dome = new THREE.Mesh(new THREE.SphereGeometry(30000, 32, 16), realSkyMaterial(R.moonDir, R.fog.color)); R.dome.renderOrder = -10; R.dome.frustumCulled = false
+  R.dome = new THREE.Mesh(new THREE.SphereGeometry(30000, 32, 16), realSkyMaterial(R.moonDir)); R.dome.renderOrder = -10; R.dome.frustumCulled = false
   R.mats = { facade: realCityMaterial('facade', R), ornament: realCityMaterial('ornament', R), far: realCityMaterial('far', R), ground: realCityMaterial('ground', R),
     pool: Object.assign(faustState?.poolMaterial?.clone() || new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }), { opacity: 0.16 }),
     roadLights: null, lens: new THREE.MeshBasicMaterial({ color: new THREE.Color(14, 15, 18), fog: false, toneMapped: false }),
@@ -38313,14 +38264,7 @@ function dsTakeDue() {
   st.due = keep
 }
 
-const dsUniforms = { dsTable: { value: null }, dsCity: { value: new THREE.Vector4() }, dsHashU: { value: new THREE.Vector4() }, dsInd: { value: Array.from({ length: 22 }, () => new THREE.Vector4()) } }
-const DS_DISTRICT_CODE = { core: 0, civic: 1, tenement: 2, industrial: 3 }
-function dsIndFill() {
-  const F = faustState, v = dsUniforms.dsInd.value, w = new Array(88).fill(0)
-  if (F) { const S = F.S, H = S / 2
-    for (let i = 0; i < S; i++) for (let j = 0; j < S; j++) { const k = i * S + j; w[Math.floor(k / 12)] |= DS_DISTRICT_CODE[faustCell(F.seed, i - H, j - H).district] << (k % 12 * 2) } }
-  for (let i = 0; i < 88; i++) v[i >> 2].setComponent(i & 3, w[i])
-}
+const dsUniforms = { dsTable: { value: null }, dsCity: { value: new THREE.Vector4() }, dsHashU: { value: new THREE.Vector4() } }
 let dsTex = null
 function dsTableTexture(slots = DESTRUCT.slots) {
   if (dsTex && dsTex.image.data.length === slots) return dsTex
@@ -38338,7 +38282,6 @@ function dsTableClear() {
   const tex = dsTableTexture()
   tex.image.data.fill(0); tex.needsUpdate = true
   dsUniforms.dsCity.value.set(ARENA, faustState?.S || 20, 0, 0)
-  dsIndFill()
 }
 function dsTableBuild() {
   const st = dsState, F = faustState
@@ -38374,16 +38317,10 @@ const DS_GLSL = () => `
 uniform highp usampler2D dsTable;
 uniform vec4 dsCity;
 uniform vec4 dsHashU;
-uniform vec4 dsInd[22];
-int dsDist(vec2 g) {
-  float S = dsCity.y;
-  if (S < 1.0) { vec2 cc = g * 96.0 + 48.0; float d2 = dot(cc, cc); return d2 < 230400.0 ? 0 : (g.x < -2.0 && g.y < 4.0 && d2 < 1e6) ? 1 : d2 > 1102500.0 ? 3 : 2; }
-  vec2 q = g + S * 0.5;
-  if (q.x < 0.0 || q.y < 0.0 || q.x >= S || q.y >= S) return 3;
-  int k = int(q.x * S + q.y), w = k / 12, sh = (k - w * 12) * 2;
-  return (int(dsInd[w >> 2][w & 3]) >> sh) & 3;
+int dsDistrict(vec2 c) {
+  vec2 g = floor(c / 96.0), cc = g * 96.0 + 48.0; float d2 = dot(cc, cc);
+  return d2 < 230400.0 ? 0 : (g.x < -2.0 && g.y < 4.0 && d2 < 1e6) ? 1 : (d2 > 1102500.0 || g.y < -7.0) ? 3 : 2;
 }
-int dsDistrict(vec2 c) { return dsDist(floor(c / 96.0)); }
 bool dsWindow(vec3 w, vec3 N, vec4 box, vec2 boxY, out uint key, out vec2 q, out vec2 size, out float share) {
   bool alongX = abs(N.z) >= abs(N.x);
   uint face = alongX ? (N.z > 0.0 ? 0u : 1u) : (N.x > 0.0 ? 2u : 3u);
@@ -44851,7 +44788,7 @@ function* mapBuildSteps(seed, S) {
   let n = 0
   for (let ci = 0; ci < S; ci++) for (let cj = 0; cj < S; cj++) {
     const plan = (same && F.chunks.get(faustKey(ci, cj))?.plan) || faustPlan(seed, ci, cj, S)
-    cells.push({ x: (ci - H) * 96, z: (cj - H) * 96, d: MAP_DISTRICTS.indexOf(plan.district), ind: plan.district === 'industrial' ? faustCell(seed, ci - H, cj - H).industry : -1, plaza: plan.plaza, central: plan.centralPlaza, diag: plan.diagonal,
+    cells.push({ x: (ci - H) * 96, z: (cj - H) * 96, d: MAP_DISTRICTS.indexOf(plan.district), plaza: plan.plaza, central: plan.centralPlaza, diag: plan.diagonal,
       roads: plan.roads.map(r => [r.a[0], r.a[2], r.b[0], r.b[2], r.width, r.avenue ? 1 : 0]),
       lots: plan.lots.map(l => [l.x, l.z, l.w, l.d, l.height, l.gothic ? 1 : 0, l.stop ? 1 : 0]) })
     if (++n % 3 === 0) yield
@@ -44878,19 +44815,6 @@ function* mapBuildSteps(seed, S) {
   D.globe = { x: G.x, z: G.z, r: G.radius }; D.head = { x: Hd.position[0], z: Hd.position[2], hx: Hd.size[0] / 2, hz: Hd.size[2] / 2 }
   D.pois.push({ x: G.x, z: G.z, name: 'The Globe', kind: 'mark' }, { x: D.head.x, z: D.head.z, name: 'Faust\'s head', kind: 'mark' }, { x: -48, z: -48, name: 'Faust Plaza', kind: 'mark' })
   for (let d = 0; d < MAP_DISTRICTS.length; d++) {
-    if (MAP_DISTRICTS[d] === 'industrial') {
-      const shapes = faustIndustry(seed).shapes
-      for (let k = 0; k < shapes.length; k++) {
-        const own = cells.filter(c => c.ind === k)
-        if (own.length < 3) continue
-        const mx = own.reduce((t, c) => t + c.x, 0) / own.length, mz = own.reduce((t, c) => t + c.z, 0) / own.length
-        let at = own[0]
-        for (const c of own) if ((c.x - mx) ** 2 + (c.z - mz) ** 2 < (at.x - mx) ** 2 + (at.z - mz) ** 2) at = c
-        D.labels.push({ x: at.x + 48, z: at.z + 48, text: shapes[k].name, size: own.length })
-      }
-      yield
-      continue
-    }
     let best = null, bn = 0
     for (const c of cells) if (c.d === d) { const m = cells.reduce((s, o) => s + (o.d === d && Math.abs(o.x - c.x) <= 288 && Math.abs(o.z - c.z) <= 288 ? 1 : 0), 0); if (m > bn) { bn = m; best = c } }
     if (best && bn >= 6) D.labels.push({ x: best.x + 48, z: best.z + 48, text: MAP_NAMES[MAP_DISTRICTS[d]], size: bn })
