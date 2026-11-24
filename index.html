@@ -37077,7 +37077,9 @@ function slRunTo(x, z, dx, dz, d) {
     if (cars.some(b => slInBox(b, px, pz))) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
     const out = Math.abs(px) > A - 2 || Math.abs(pz) > A - 2
     if (out && Math.abs(x) <= A - 2 && Math.abs(z) <= A - 2) return [x + dx * Math.max(0, k - 0.4), z + dz * Math.max(0, k - 0.4)]
-    const cell = out ? slSubCell(Math.floor(px / FAUST_RINGS.sub.pitch), Math.floor(pz / FAUST_RINGS.sub.pitch), true) : slCell(Math.floor((px + A) / 96), Math.floor((pz + A) / 96))
+    let cell
+    if (out) cell = st.cells.get('sub ' + Math.floor(px / FAUST_RINGS.sub.pitch) + ' ' + Math.floor(pz / FAUST_RINGS.sub.pitch))
+    else { const ci = Math.floor((px + A) / 96), cj = Math.floor((pz + A) / 96), key = ci + ' ' + cj; cell = st.cells.get(key); if (!cell) (st.warmQ ||= new Map()).set(key, [ci, cj]) }
     if (cell) for (const g of cell.rings) if (slInside(g.body, px, pz, SL_CLEAR.r + 0.1)) return [x + dx * Math.max(0, k - 0.6), z + dz * Math.max(0, k - 0.6)]
   }
   return [x + dx * d, z + dz * d]
@@ -37349,6 +37351,16 @@ function slRoadStep(st, job, budget) {
   }
   return true
 }
+const slRoadKey = o => Math.floor(o.x / SL_ROAD_CELL) * 65536 + Math.floor(o.z / SL_ROAD_CELL)
+function slRoadGridStep(job, budget) {
+  const list = job.list, g = job.g ||= new Map(), t0 = performance.now()
+  for (let i = job.gi || 0; i < list.length; i++) {
+    const k = slRoadKey(list[i]), c = g.get(k); if (c) c.push(i); else g.set(k, [i])
+    if ((i & 63) === 63 && performance.now() - t0 > budget) { job.gi = i + 1; return false }
+  }
+  job.gi = list.length
+  return true
+}
 function slRoadList(warm = false) {
   const st = slState, T = slNow(), key = warm ? 'roadWarm' : 'road', cur = st[key]
   if (cur && Math.abs(T - cur.T) < (warm ? 250 : 100)) return cur.list
@@ -37356,10 +37368,12 @@ function slRoadList(warm = false) {
     const job = st.roadJob ||= slRoadJob(st, T), now = performance.now()
     if (now - job.at < 6) return cur.list
     job.at = now
-    const done = slRoadStep(st, job, 0.7)
+    let ready = false
+    if (!job.listDone) job.listDone = slRoadStep(st, job, 0.7)
+    else ready = slRoadGridStep(job, 0.7)
     background.simAdd('sl road', performance.now() - now)
-    if (!done) return cur.list
-    st.roadJob = null; st[key] = { T: job.T, list: job.list }
+    if (!ready) return cur.list
+    st.roadJob = null; slRoadGrids.set(job.list, job.g); st[key] = { T: job.T, list: job.list }
     return job.list
   }
   const job = slRoadJob(st, T)
@@ -37389,7 +37403,7 @@ function slObstacles(x, z, R = 25, warm = false) {
   let g = slRoadGrids.get(list)
   if (!g) {
     g = new Map()
-    for (let i = 0; i < list.length; i++) { const o = list[i], k = Math.floor(o.x / SL_ROAD_CELL) * 65536 + Math.floor(o.z / SL_ROAD_CELL), c = g.get(k); if (c) c.push(i); else g.set(k, [i]) }
+    for (let i = 0; i < list.length; i++) { const k = slRoadKey(list[i]), c = g.get(k); if (c) c.push(i); else g.set(k, [i]) }
     slRoadGrids.set(list, g)
   }
   const ids = []
