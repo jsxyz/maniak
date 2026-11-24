@@ -1438,7 +1438,7 @@ const MANIAK_CAR = { row: 'Maniak car', file: 'maniak_car.5ef6eadc.glb', lods: [
 const ASSETS =
   'https://cdn.jsdelivr.net/gh/enable3d/enable3d.github.io@1dd9baa5328249fe19b48507a880de9b11f4b4a0/src/assets/glb/'
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { blue_freak: 'blue_freak.d6c045c6.glb', blue_freak_anims: 'blue_freak_anims.75288ee1.glb', enforcer_heavy: 'enforcer_heavy.e08a042c.glb', enforcer: 'enforcer.1fea935d.glb', performer_anims: 'performer_anims.672d8111.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.70529d66.glb', pacifier: 'pacifier.56c2f01d.glb', teardrop: 'teardrop.e428dac7.glb', thug: 'thug.0efb1a6f.glb', tony: 'tony.239c090d.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.c8e8e238.glb', civ_f_coat: 'civ_f_coat.039d3d1d.glb', civ_f_dress: 'civ_f_dress.bc633bed.glb', civ_freak: 'civ_freak.5f472166.glb', civ_m_coat: 'civ_m_coat.b8323ce0.glb', civ_m_suit: 'civ_m_suit.fde38668.glb', civ_m_worker: 'civ_m_worker.bd3681f5.glb', maniak: 'maniak.2655657c.glb', maniak_moves: 'maniak_moves.3bfc97da.glb', alistair: 'maniak_alistair.e28c60f3.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
+const RIG_FILES = { blue_freak: 'blue_freak.d6c045c6.glb', blue_freak_anims: 'blue_freak_anims.75288ee1.glb', enforcer_heavy: 'enforcer_heavy.e08a042c.glb', enforcer: 'enforcer.1fea935d.glb', performer_anims: 'performer_anims.672d8111.glb', dancer: 'civ_dancer.4787137a.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.70529d66.glb', pacifier: 'pacifier.56c2f01d.glb', teardrop: 'teardrop.e428dac7.glb', thug: 'thug.0efb1a6f.glb', tony: 'tony.239c090d.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.c8e8e238.glb', civ_f_coat: 'civ_f_coat.039d3d1d.glb', civ_f_dress: 'civ_f_dress.bc633bed.glb', civ_freak: 'civ_freak.5f472166.glb', civ_m_coat: 'civ_m_coat.b8323ce0.glb', civ_m_suit: 'civ_m_suit.fde38668.glb', civ_m_worker: 'civ_m_worker.bd3681f5.glb', maniak: 'maniak.2655657c.glb', maniak_moves: 'maniak_moves.3bfc97da.glb', alistair: 'maniak_alistair.e28c60f3.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -31770,6 +31770,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     if (conns.size) pushRoster()
     return { id: c.id, kind, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100) }
   },
+  stripAt(u) { SL_STRIP.force = Number.isFinite(u) ? Math.min(0.999, Math.max(0, u)) : null; return SL_STRIP.force },
   clubs: () => {
     const F = faustState, me = selfChar()
     if (!LV.faust || !F || !me) return []
@@ -36408,7 +36409,7 @@ function slVenue(cell, P, ci, cj) {
       const croom = S0.rooms.find(q => q.kind === 'club'), dances = ['dance_charleston', 'dance_charleston_fancy', 'dance_lindy'], dress = [[0.25, 1.5, 1.0], [1.9, 1.5, 0.3], [1.9, 1.95, 2.2]]
       ;[stage, ...spots.filter(s => s.kind === 'pole')].filter(Boolean).slice(0, 3).forEach((s, k) => {
         const ag = stand(13 + k, s, { face: [croom ? Math.sign((croom.x0 + croom.x1) / 2 - s.x) || 1 : 1, 0], body: 5, tint: dress[k % dress.length], clip: dances[slHash(base + 13 + k, 6) % 3], role: 'dancer' })
-        if (ag) { ag.y = Math.max(0, s.y - 0.06); ag.plume = true; ag.shimmer = true }
+        if (ag) { ag.y = Math.max(0, s.y - 0.06); ag.plume = true; ag.shimmer = true; ag.dancer = true; ag.dk = slHash(base + 13 + k, 8) % 6; ag.sOff = slHash(base + 13 + k, 7) % SL_STRIP.period }
       })
       continue
     }
@@ -37584,7 +37585,7 @@ function slSkinPatch(tex, blend, gore = slGore0) {
     shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\n#ifdef USE_COLOR\n vec3 slTex = diffuseColor.rgb;\n#endif')
       .replace('#include <color_fragment>', `#include <color_fragment>
 #ifdef USE_COLOR
-  if (max(vColor.r, max(vColor.g, vColor.b)) > 1.4) { float slMx = max(slTex.r, max(slTex.g, slTex.b)), slSat = slMx > 0.0001 ? (slMx - min(slTex.r, min(slTex.g, slTex.b))) / slMx : 0.0; diffuseColor.rgb = mix(slTex, slTex * vColor.rgb, 1.0 - smoothstep(0.04, 0.12, slSat)); }
+  if (max(vColor.r, max(vColor.g, vColor.b)) > 1.4) { float slMx = max(slTex.r, max(slTex.g, slTex.b)), slSat = slMx > 0.0001 ? (slMx - min(slTex.r, min(slTex.g, slTex.b))) / slMx : 0.0; diffuseColor.rgb = mix(slTex, slTex * vColor.rgb * SL_TM, 1.0 - smoothstep(0.04, 0.12, slSat)); }
 #endif`)
     shader.vertexShader = shader.vertexShader
       .replace('#include <skinning_pars_vertex>', `uniform highp sampler2D slAnim;
@@ -37594,6 +37595,7 @@ mat4 slBone(float i, float f) { int x = int(i) * 3, y = int(f);
   return mat4(a.x, b.x, c.x, 0.0, a.y, b.y, c.y, 0.0, a.z, b.z, c.z, 0.0, a.w, b.w, c.w, 1.0); }
 mat4 slSkin(float f) { return slBone(skinIndex.x, f) * skinWeight.x + slBone(skinIndex.y, f) * skinWeight.y + slBone(skinIndex.z, f) * skinWeight.z + slBone(skinIndex.w, f) * skinWeight.w; }
 attribute float slLimb;
+attribute float slLayer;
 varying float vSlRed;
 uniform mat4 slGoreI[5];
 uniform mat4 slGoreW[5];
@@ -37612,8 +37614,10 @@ if (slGm != 0) {
   transformed = (slBoneM(slGoreB[slG]) * slGoreW[slG] * slPl).xyz;
   vSlRed = 1.0;
 } else transformed = (slM * vec4(transformed, 1.0)).xyz;
-transformed.y -= slDrop * 0.85;`)
-    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vSlRed;')
+transformed.y -= slDrop * 0.85;
+int slLy = int(slLayer + 0.5);
+if (slLy > 0 && (slAll & (16 << slLy)) != 0) transformed = vec3(0.0, -50.0, 0.0);`)
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vSlRed;\n#ifdef SL_DANCER\n#define SL_TM 0.7\n#else\n#define SL_TM 1.0\n#endif')
       .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.03, 0.05), vSlRed * 0.85);')
   }
 }
@@ -37663,9 +37667,13 @@ function* slSkinnedSteps(g, clipSrc, want, cap, tag, out, mapImage) {
         for (const c of ['X', 'Y', 'Z', 'W']) { const bit = own[SI['get' + c](i)]; if (bit) w[bit] += SW['get' + c](i) }
         for (const bit of [1, 2, 4, 8, 16]) if (w[bit] >= 0.5) limb[i] = bit }
       geo.setAttribute('slLimb', new THREE.BufferAttribute(limb, 1)) }
+    if (tag === 'dancer' && geo.attributes.uv) { const U = geo.attributes.uv, ly = new Float32Array(U.count), tm = m.material.map, ox = tm ? tm.offset.x : 0, oy = tm ? tm.offset.y : 0, sx = tm ? tm.repeat.x : 1, sy = tm ? tm.repeat.y : 1
+      for (let i = 0; i < ly.length; i++) { const u = U.getX(i) * sx + ox, v = U.getY(i) * sy + oy
+        ly[i] = v < 0.16 && u < 0.18 ? 1 : v < 0.16 && u < 0.58 ? 2 : u > 0.84 && v > 0.38 && v < 0.74 ? 2 : u > 0.84 && v > 0.88 && v < 0.94 ? 3 : 0 }
+      geo.setAttribute('slLayer', new THREE.BufferAttribute(ly, 1)) }
     const mat = m.material.clone(), blend = k === 0
     if (mapImage && mat.map) { const T = mat.map.clone(); T.source = new THREE.Source(mapImage); T.needsUpdate = true; mat.map = T }
-    mat.defines = { ...mat.defines, USE_SKINNING: '' }; mat.onBeforeCompile = slSkinPatch(tex, blend, gore); mat.customProgramCacheKey = () => 'sl-skin' + (blend ? '-b' : '')
+    mat.defines = { ...mat.defines, USE_SKINNING: '', ...tag === 'dancer' ? { SL_DANCER: '' } : {} }; mat.onBeforeCompile = slSkinPatch(tex, blend, gore); mat.customProgramCacheKey = () => 'sl-skin' + (blend ? '-b' : '') + (tag === 'dancer' ? '-d' : '')
     const im = new THREE.InstancedMesh(geo, mat, cap); im.count = 0; im.frustumCulled = false; im.castShadow = k === 0; im.receiveShadow = true
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); im.setColorAt(0, new THREE.Color(1, 1, 1)); im.instanceColor.setUsage(THREE.DynamicDrawUsage)
     if (k === 0) { const dm = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }); dm.defines = { USE_SKINNING: '' }; dm.onBeforeCompile = slSkinPatch(tex, false, gore); dm.customProgramCacheKey = () => 'sl-skin-depth'; im.customDepthMaterial = dm }
@@ -37702,8 +37710,8 @@ function slLoadKit() {
   if (slKitJob || renderHeadless || serving || !scene) return
   slKitJob = { steps: null, failed: false }
   rigLoader()
-  const files = [RIG_FILES.anims, STREET_FILES.anims, ...STREET.bodies.map(b => RIG_FILES[b]), STREET_FILES.bike, STREET_FILES.pram, STREET_FILES.dog, STREET_FILES.pigeon, STREET_FILES.stagger, RIG_FILES.performer_anims]
-  Promise.all([...files.map(f => rigFetch(f).catch(e => { if (f === STREET_FILES.stagger) return null; throw e })), slDancerMap()]).then(gs => {
+  const files = [RIG_FILES.anims, STREET_FILES.anims, ...STREET.bodies.map(b => RIG_FILES[b]), STREET_FILES.bike, STREET_FILES.pram, STREET_FILES.dog, STREET_FILES.pigeon, STREET_FILES.stagger, RIG_FILES.performer_anims, RIG_FILES.dancer]
+  Promise.all([...files.map(f => rigFetch(f).catch(e => { if (f === STREET_FILES.stagger || f === RIG_FILES.dancer) return null; throw e })), slDancerMap()]).then(gs => {
     slKitJob.steps = slKitSteps(gs)
     return background.run('street-kit', slKitJob.steps, { gpu: true, priority: 2 }).then(() => { slKitJob.steps = null; slKitJob.done = true })
   })
@@ -37720,7 +37728,7 @@ function slDancerMap() {
     img.onerror = () => ok(null); img.src = RIG_BASE + SL_DANCER_MAP })
 }
 function* slKitSteps([anims, street, ...rest]) {
-  const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon, stag, perf, dmap] = rest.slice(STREET.bodies.length)
+  const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon, stag, perf, dancerG, dmap] = rest.slice(STREET.bodies.length)
   const root = new THREE.Group(); root.name = 'street life'
   const kit = { root, bodies: [], parts: {} }
   const clips = [...anims.animations, ...street.animations, ...(stag ? stag.animations : []), ...(perf ? perf.animations : [])]
@@ -37729,6 +37737,7 @@ function* slKitSteps([anims, street, ...rest]) {
     kit.bodies.push(b); for (const im of b.ims) root.add(im)
   }
   if (dmap) { const b = {}; yield* slSkinnedSteps(bodies[3], clips, SL_CLIPS.civ.concat(SL_CLIPS.dance), 400, 'f_dress', b, dmap); kit.bodies.push(b); for (const im of b.ims) root.add(im) }
+  if (dancerG) { const b = {}; yield* slSkinnedSteps(dancerG, clips, SL_CLIPS.civ.concat(SL_CLIPS.dance), 80, 'dancer', b); kit.dancer = b; for (const im of b.ims) root.add(im) }
   kit.dog = {}; yield* slSkinnedSteps(dog, dog.animations, SL_CLIPS.dog, 160, '', kit.dog); for (const im of kit.dog.ims) root.add(im)
   kit.pigeon = {}; yield* slSkinnedSteps(pigeon, pigeon.animations, SL_CLIPS.pigeon, 320, '', kit.pigeon); for (const im of kit.pigeon.ims) root.add(im)
   for (const [name, cap] of [['bike_frame', 40], ['bike_wheel', 80], ['bike_crank', 40], ['bike_pedal', 80], ['pram_body', 48], ['pram_wheel_f', 96], ['pram_wheel_r', 96]])
@@ -37753,6 +37762,17 @@ function* slKitSteps([anims, street, ...rest]) {
   yield* warmSceneSteps(activeLook || 'plain', [root])
   scene.add(root); slKit = kit
 }
+const SL_STRIP = { period: 150, at: [0.22, 0.5, 0.78], sets: [[0.2, 1.45, 1.0], [1.5, 1.2, 0.25], [1.5, 1.45, 1.55], [0.25, 0.5, 1.5], [1.5, 0.4, 0.4], [0.2, 1.45, 1.55]] }
+const slBodyOf = (kit, ag) => ag.dancer && kit.dancer ? kit.dancer : kit.bodies[ag.body] || kit.bodies[3]
+function slStripBits(ag, T) {
+  const t = T / 1000 + ag.sOff, u = SL_STRIP.force ?? (t % SL_STRIP.period) / SL_STRIP.period; let m = 0
+  for (let k = 0; k < 3; k++) if (u > SL_STRIP.at[k]) m |= 32 << k
+  return m
+}
+function slDancerTint(ag, T) {
+  const set = Math.floor((T / 1000 + ag.sOff) / SL_STRIP.period)
+  return SL_STRIP.sets[(ag.dk + set) % SL_STRIP.sets.length]
+}
 const slShim = [1, 1, 1], slPlumeUp = new THREE.Vector3(0, 1, 0), slPQ = new THREE.Quaternion(), slPV = new THREE.Vector3(), slPH = new Float32Array(6)
 function slShimmer(ag, T) {
   const k = 1
@@ -37760,7 +37780,7 @@ function slShimmer(ag, T) {
   return slShim
 }
 function slPlume(kit, ag, p) {
-  const K = kit.bodies[ag.body] || kit.bodies[3], C = K && K.clips.get(p.clip), im = kit.plume
+  const K = slBodyOf(kit, ag), C = K && K.clips.get(p.clip), im = kit.plume
   if (!C || !C.head || !im || im.count >= im.instanceMatrix.count) return
   const f = (p.ct / C.dur - Math.floor(p.ct / C.dur)) * C.n, a = Math.floor(f) % C.n, b = (a + 1) % C.n, w = f - Math.floor(f), H = C.head
   for (let i = 0; i < 6; i++) slPH[i] = H[a * 6 + i] + (H[b * 6 + i] - H[a * 6 + i]) * w
@@ -38096,8 +38116,9 @@ function slFrame(t, dt, obl) {
       const d = Math.hypot(p.x - cx, p.z - cz)
       slFadeSet(ag, T, p, d)
       if (ag.kind === SL_K.stray) { if (d < D.dog) slDrawSkinned(kit.dog, p, d, ag.tint, ag.companion ? 0.9 : 0.95); continue }
-      slDrawSkinned(kit.bodies[ag.body] || kit.bodies[3], p, d, ag.shimmer ? slShimmer(ag, T) : ag.tint); people++
-      if (ag.plume && d < D.ped * 0.5) slPlume(kit, ag, p)
+      const strip = ag.dancer && kit.dancer ? slStripBits(ag, T) : 0
+      slDrawSkinned(slBodyOf(kit, ag), p, d, strip || (ag.dancer && kit.dancer) ? slDancerTint(ag, T) : ag.shimmer ? slShimmer(ag, T) : ag.tint, 1, strip); people++
+      if (ag.plume && !(strip & 32) && d < D.ped * 0.5) slPlume(kit, ag, p)
       if (ag.kind === SL_K.pram && d < D.pram && !slPramGone(ag, T) && !partsPram(kit, ag, p, d, T)) {
         const lod = d < 18 ? '' : '_lod1', s = p.scale, f = STREET.pramBack, x = p.x + Math.sin(p.yaw) * f * s, z = p.z + Math.cos(p.yaw) * f * s
         slSet(kit.parts['pram_body' + lod], x, 0, z, p.yaw, s); slBabySeen(ag, p, x, z, d, T)
