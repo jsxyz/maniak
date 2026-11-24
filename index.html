@@ -44923,26 +44923,37 @@ function mcOpen(c) {
   for (const R of [22, 16, 11]) for (let i = 0; i < 12; i++) for (const side of [1, -1]) {
     const a = Math.PI * 2 * i / 12, hx = Math.cos(a), hz = Math.sin(a)
     const F = { x: c.x - hz * side * lat, z: c.z + hx * side * lat }, S = { x: F.x - hx * R, z: F.z - hz * R }
-    if (mcClear(S, F, hx, hz, c)) return { e: null, hx, hz, half: 10, ax: F.x, az: F.z, gy, open: true, pose: { x: F.x, z: F.z, hx, hz }, lead: S, him: { x: c.x, z: c.z } }
+    const ok = mcClear(S, F, hx, hz, c)
+    if (ok) return { e: null, hx, hz, half: 10, ax: F.x, az: F.z, gy: ok.y, open: true, pose: { x: F.x, z: F.z, hx, hz }, lead: S, him: { x: c.x, z: c.z } }
   }
   return null
 }
 function mcClear(K, T, hx, hz, c) {
   const dx = T.x - K.x, dz = T.z - K.z, L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L, W = MC_V.w, Lc = MC_V.l, hw = W / 2 + 0.3
-  const g0 = c.y - c.h - c.r - 0.05, mask = RAY_GROUP | G_OBJ
-  for (let t = 0; t <= L + 0.01; t += 1.5)
+  const g0 = c.y - c.h - c.r - 0.05, mask = RAY_GROUP | G_OBJ, prev = new Map()
+  const probe = (x, z) => { const f = castRay(x, g0 + 1.5, z, 0, -1, 0, 6, RAY_GROUP); return f >= 1 ? null : g0 + 1.5 - f * 6 }
+  let yS = 0, yE = 0
+  for (let t = 0, k = 0; t <= L + 0.01; t += 1.5, k++) {
+    const row = []
     for (const a of [-Lc / 2, 0, Lc / 2]) for (const b of [-hw, hw]) {
-      const x = K.x + ux * t + hx * a + ux * b, z = K.z + uz * t + hz * a + uz * b
-      const f = castRay(x, g0 + 1.5, z, 0, -1, 0, 4, RAY_GROUP)
-      if (f >= 1 || Math.abs(g0 + 1.5 - f * 4 - g0) > 0.45) return false
+      const y = probe(K.x + ux * (t + a) - uz * b, K.z + uz * (t + a) + ux * b), key = a + ':' + b
+      if (y === null || prev.has(key) && Math.abs(y - prev.get(key)) > 0.45) return false
+      prev.set(key, y); row.push(y)
     }
+    if (Math.max(...row) - Math.min(...row) > 0.6) return false
+    const m = row.reduce((p, q) => p + q, 0) / row.length
+    if (k === 0) yS = m
+    yE = m
+  }
+  if (Math.abs(yE - g0) > 0.7) return false
+  const slope = (yE - yS) / L, nrm = Math.hypot(1, slope), dy = slope / nrm
   for (const a of [-Lc / 2, -Lc / 4, 0, Lc / 4, Lc / 2]) for (const h of [0.5, 1.1])
-    if (castRay(K.x + hx * a, g0 + h, K.z + hz * a, ux, 0, uz, L + W / 2 - 0.3, mask) < 1) return false
+    if (castRay(K.x + ux * a, yS + h + slope * a, K.z + uz * a, ux / nrm, dy, uz / nrm, (L + W / 2 - 0.3) * nrm, mask) < 1) return false
   const near = (x, z, r) => { const t = clamp(((x - K.x) * ux + (z - K.z) * uz), 0, L); return Math.hypot(x - K.x - ux * t, z - K.z - uz * t) < hw + r + 0.3 }
   for (const p of players.values()) if (p !== c && !(p.dead > 0) && !seatOf(p) && near(p.x, p.z, p.r || 0.5)) return false
   for (const p of objs) if (!mcCars.has(p.id) && p.heldBy === undefined && Math.abs(p.y - c.y) < 4 && near(p.x, p.z, p.V ? Math.min(p.V.w / 2, p.R) : p.R)) return false
   for (const p of GAME.streetLife?.obstacles?.(K.x + ux * L / 2, K.z + uz * L / 2, L / 2 + 4, true) || []) if (near(p.x, p.z, p.radius || 0.6)) return false
-  return true
+  return { y: yS }
 }
 function mcRoad(e, p) {
   if (e.ring) return { ax: e.from.x, az: e.from.z, half: e.width / 2, len: e.length }
@@ -44962,7 +44973,7 @@ function mcRoad(e, p) {
 }
 function mcSend(o, c, st, T, fresh = false, plan = null) {
   const P = plan || mcPlan(c)
-  if (!P) return mcFail(c, st, "Your car can't reach a road here. Move closer to a street and whistle again.")
+  if (!P) return mcFail(c, st, c.grounded && c.y - (c.h || 0) - (c.r || 0) > 2.5 ? "Your car can't find room beside you here. Move to a clear stretch and whistle again." : "Your car can't reach a road here. Move closer to a street and whistle again.")
   st.plan = P; st.target ||= { x: 0, z: 0 }; st.target.x = P.lead.x; st.target.z = P.lead.z
   st.since = T; st.best = Infinity; st.bestAt = T; st.planAt = T
   const f = rotq(o.q, [0, 0, -1]), d = Math.hypot(o.x - P.pose.x, o.z - P.pose.z), along = f[0] * P.hx + f[2] * P.hz
