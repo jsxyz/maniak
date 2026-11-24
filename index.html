@@ -1069,7 +1069,7 @@ const GUNS = [
   { name:'Shiv',     rate:0.60, dmg: 8, spread:0.25, pellets:2, range: 2.3, knock: 2.0, color:0xb9b2a0,
     melee:true, held:false, punch:'jab', punchMs:200, lead:0.08, windup:0.35, wind:['freak_attack', 0.25, 0.5, 0.66, 0.16], windS:0.35, windHold:0.15, strike:['freak_attack', 0.66, 1.2] },
   { name:'Sledge',   rate:1.60, dmg:26, spread:0.45, pellets:3, range: 3.2, knock:14.0, color:0x9a948a, melee:true, punch:'swing', grip:'bat', model:'Sledge',
-    offGrip:-0.3, lean:[-1.4, 0.6], windup:0.6, wind:['bat_swing', 0.02, 0.21, 0.29, 0.22], windS:0.6, windHold:0.15, strike:['bat_swing', 0.29, 0.9] },
+    offGrip:-0.3, lean:[-1.4, 0.6], windup:0.6, wind:['bat_swing', 0.02, 0.21, 0.29, 0.22, [[0.15, 0.233], [0.85, 0.267]]], windS:0.6, windHold:0.15, strike:['bat_swing', 0.29, 0.9] },
   { name:'Leap-smash', rate:0.8, dmg:24, range:4.2, knock:14, color:0xe8e2d4,
     special:true, melee:true, held:false, kind:'radius', punch:'slam', punchMs:650,
     dive:{ speed:22, pull:16, ref:12, cap:2.6 } },
@@ -1080,8 +1080,8 @@ const GUNS = [
     heldScale:1.15, apply:'Salted' },
   { name:'Knife fan',    rate:2.60, dmg:11, spread:0.15, pellets:5, range:22,  knock: 3.0, color:0xe8e2d6, punch:'throw', grip:'knife', model:'Knife', heldScale:1.15,
     apply:'Salted' },
-  { name:'Bat',          rate:0.95, dmg:16, spread:0.40, pellets:3, range: 2.8, knock: 9.0, color:0x8a6442, melee:true, punch:'swing', grip:'bat', model:'Bat', thick:1.6, lean:[-1.15, 0.85], windup:0.45, wind:['bat_swing', 0.02, 0.21, 0.29, 0.18], windS:0.45, windHold:0.15, strike:['bat_swing', 0.29, 1] },
-  { name:'Pipe',         rate:1.05, dmg:18, spread:0.36, pellets:3, range: 2.9, knock:10.0, color:0x5f6266, melee:true, punch:'swing', grip:'bat', model:'Pipe', thick:1.6, lean:[-1.15, 0.85], windup:0.45, wind:['bat_swing', 0.02, 0.21, 0.29, 0.18], windS:0.45, windHold:0.15, strike:['bat_swing', 0.29, 1] },
+  { name:'Bat',          rate:0.95, dmg:16, spread:0.40, pellets:3, range: 2.8, knock: 9.0, color:0x8a6442, melee:true, punch:'swing', grip:'bat', model:'Bat', thick:1.6, lean:[-1.15, 0.85], windup:0.45, wind:['bat_swing', 0.02, 0.21, 0.29, 0.18, [[0.15, 0.233], [0.85, 0.267]]], windS:0.45, windHold:0.15, strike:['bat_swing', 0.29, 1] },
+  { name:'Pipe',         rate:1.05, dmg:18, spread:0.36, pellets:3, range: 2.9, knock:10.0, color:0x5f6266, melee:true, punch:'swing', grip:'bat', model:'Pipe', thick:1.6, lean:[-1.15, 0.85], windup:0.45, wind:['bat_swing', 0.02, 0.21, 0.29, 0.18, [[0.15, 0.233], [0.85, 0.267]]], windS:0.45, windHold:0.15, strike:['bat_swing', 0.29, 1] },
   { name:'Rifle',        rate:0.60, dmg: 6, spread:0.030, range:70, knock: 1.2, color:0x3a3d38, scar:'hole', burst:3, burstGap:0.1, grip:'rifle' },
   { name:'Punt', rate:0.6, dmg:34, range:2.2, knock:0, color:0xe8e2d4, special:true, melee:true, held:false },
   { name:'Flung', rate:0.6, dmg:26, range:1, knock:10, color:0xe8e2d4, special:true, melee:true, held:false },
@@ -24138,9 +24138,9 @@ function rigAnimate(a, want, dt, t) {
   }
   if (wind?.wind && a.chargeAt !== R.windSeen && t - a.chargeAt < 1000) {
     R.windSeen = a.chargeAt
-    const [n, w0, w1, w2, go] = wind.wind, clip = rigClip(M, n), s = wind.windS ?? wind.windup
+    const [n, w0, w1, w2, go, mid = []] = wind.wind, clip = rigClip(M, n), s = wind.windS ?? wind.windup, A = s - TICK - go
     if (clip) R.over = { clip, t0: w0, at: a.chargeAt, speed: (w1 - w0) / s, stop: w2 ?? w1, until: a.chargeAt + s * 1000 + (wind.windHold ?? 0.7) * 1000, from: rigFrom(M, R.over, t),
-      knots: w2 === undefined ? null : [[0, w0], [s - TICK - go, w1], [s - TICK, w2]] }
+      knots: w2 === undefined ? null : [[0, w0], [A, w1], ...mid.map(([u, c]) => [A + u * go, c]), [s - TICK, w2]] }
   }
   const G = GUNS[a.shotGun], list = G && (G.strike && rigClip(M, G.strike[0]) ? [G.strike] : M.punches[G.punch] || G.melee && M.punches.melee)
   if (list && a.shotAt !== undefined && a.shotAt !== R.shotSeen && t - a.shotAt < 400) {
