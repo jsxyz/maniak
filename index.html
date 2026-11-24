@@ -15310,6 +15310,7 @@ function sprintKick(me, first) {
   return sprintCam.k * (first ? SPRINT_FOV.first : SPRINT_FOV.third)
 }
 const camHold = { r: 0, from: 0, to: 0, at: 0 }
+const camPlace = { p: [0, 0, 0], t: [0, 0, 1], n: 0 }
 let heldF = 1
 function updateCamera(me, inp, cam, firstPerson) {
   const seat = !(me.dead > 0) && seatOf(me)
@@ -31591,6 +31592,12 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
       broken: railState ? [...railState.glass].map(([n, m]) => [railState.cars[n].key, m]) : [] } },
   capture: captureFrames,
   probe: probeApi,
+  camAt(pos, target, frames = 1) {
+    const n = Math.round(+frames), ok = a => Array.isArray(a) && a.length === 3 && a.every(Number.isFinite)
+    hookCheck(ok(pos) && ok(target) && n >= 1 && n <= 900, 'camAt(pos, target, frames) needs two [x, y, z] arrays and 1 to 900 frames')
+    Object.assign(camPlace, { p: pos.slice(), t: target.slice(), n })
+    return n
+  },
   camera: () => { const d = camera.getWorldDirection(new THREE.Vector3()), p = camera.position; return { position: [p.x, p.y, p.z], target: [p.x + d.x, p.y + d.y, p.z + d.z], fov: camera.fov } },
   haunts: () => ({ log: JSON.parse(JSON.stringify(hauntLog)), crews: [...hauntCrews.values()].map(K => ({ key: K.key, owner: K.owner, env: K.env, ids: [...K.ids], help: K.help,
       bots: K.ids.map(id => players.get(id)).filter(Boolean).map(c => ({ id: c.id, kind: c.bot.haunt, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100), hp: Math.round(c.hp), dead: c.dead > 0,
@@ -44693,6 +44700,7 @@ function draw(dt, t) {
   heldF += ((held ? heldFade(cam.ray, me, held) : 1) - heldF) * timeShare(dt, TICK / 0.15)
   for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP))
   shake(camera, t)
+  if (camPlace.n > 0) { camPlace.n--; camera.position.set(...camPlace.p); camera.lookAt(...camPlace.t); camera.updateMatrixWorld() }
   followSun()
   background.sec('camera')
   weatherFrame(dt)
