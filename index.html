@@ -45851,16 +45851,28 @@ GAME.car = {
 }
 
 const MAP_DISTRICTS = ['core', 'civic', 'tenement', 'industrial']
-const MAP_NAMES = { core: 'THE CORE', civic: 'CIVIC QUARTER', tenement: 'TENEMENTS', industrial: 'INDUSTRIAL YARDS' }
 const MAP_LINES = { L: ['Loop line', '#e3b04b'], B: ['Line B', '#e8683f'], C: ['Line C', '#a98ee0'] }
-const MAP_PAL = { ink: '#06080b', field: ['#161c12', '#1d1b13', '#211f16', '#181e14'], hedge: '#0d110a', brass: '#c9a45c', brassDim: '#6d5b35', cream: '#e6dcc2', dim: '#8c8774',
-  ground: { core: '#2b261a', civic: '#1d2833', tenement: '#1d1c21', industrial: '#24201c' }, road: '#090a0d', plaza: '#26383a', air: '#5fc2c0' }
+const MAP_PAL = { ink: '#06080b', land: '#12150f', field: ['#171d12', '#1c1b13', '#201e15', '#191f14'], brass: '#c9a45c', brassDim: '#6d5b35', cream: '#e6dcc2', dim: '#8c8774',
+  ground: { core: '#2c2619', civic: '#1d2833', tenement: '#201f24', industrial: '#33261b' }, plaza: '#24393a', park: '#1f3a28',
+  band: { city: '#1b1d22', urban: '#1c2027', suburb: '#192018', shanty: '#241e14', edge: '#12150f' },
+  water: '#1d4d61', waterEdge: '#4a8aa0', canal: '#0b141a', air: '#5fc2c0', hut: '#7b6446',
+  road: { hwy: '#e2cf94', ramp: '#a99b78', boulevard: '#a49a7c', avenue: '#8f8567', diag: '#b8a46c', street: '#5c584c', plain: '#58554a', lane: '#46433b', alley: '#34322d' },
+  ico: { club: '#e0527a', liquor: '#e3a14b', conv: '#58b8c4', theatre: '#d8b86a', cathedral: '#d8b86a', hotel: '#d8b86a', park: '#6fae7a', site: '#c98a5a', dock: '#7fb0c4', dam: '#d8d2be', station: '#e3b04b' } }
 const MAP_FONT = "'Futura','Century Gothic','Josefin Sans','Trebuchet MS',ui-sans-serif,sans-serif", MAP_TITLE = "'Maniak Display',Impact,'Arial Black',sans-serif"
-const MAP_ZOOM = { max: 3, fit: 0.72 }, MAP_MS = { repaint: 160, warm: 4000 }
-let mapOpen = false, mapData = null, mapJob = null, mapJobKey = '', mapWarmAt = 0, mapLooping = false
+const MAP_ZOOM = { max: 3, fit: 0.72 }, MAP_MS = { repaint: 160, warm: 4000, free: 20000 }
+const MAP_NATIVE = new Set(['highways', 'channels', 'water', 'rings'])
+const MAP_WORDS = ['Aurora', 'Meridian', 'Zenith', 'Orchid', 'Cobalt', 'Lantern', 'Marlowe', 'Verity', 'Halcyon', 'Sable', 'Garnet', 'Vesper', 'Quill', 'Ember', 'Pelham', 'Corbin', 'Dunmore', 'Larkin', 'Ashby', 'Fenwick', 'Gilded', 'Hartley', 'Ivory',
+  'Juniper', 'Kestrel', 'Linden', 'Mercer', 'Nolan', 'Onyx', 'Prism', 'Radiant', 'Sterling', 'Tiber', 'Umber', 'Vandyke', 'Whitlock', 'Yarrow', 'Alder', 'Beacon', 'Crescent', 'Eclipse', 'Fairmont', 'Galena', 'Harlan', 'Iris', 'Jasper', 'Kingsley',
+  'Lyric', 'Mercury', 'Nocturne', 'Opal', 'Parlor', 'Quartz', 'Regent', 'Sapphire', 'Topaz', 'Union', 'Vanguard', 'Willow', 'York', 'Zephyr', 'Bellamy', 'Carraway', 'Delmar', 'Everett', 'Foxglove', 'Granger', 'Holloway', 'Ironwood', 'Jubilee',
+  'Kensington', 'Lowell', 'Montrose', 'Norwood', 'Oakhurst', 'Pembroke', 'Rosewood', 'Stanton', 'Thorne', 'Upton', 'Vincent', 'Wexford', 'Ashton', 'Brandt', 'Calloway', 'Darnell', 'Ellison', 'Fairview', 'Gresham', 'Hollis', 'Ingram', 'Kirkland',
+  'Lambert', 'Marigold', 'Newbury', 'Overton', 'Prescott', 'Quincy', 'Rutland', 'Selby', 'Valmont', 'Winslow', 'Aldgate', 'Birch', 'Cedar', 'Dover', 'Elm', 'Fulton', 'Garland', 'Harbor', 'Inkwell', 'Jade', 'Knoll', 'Laurel', 'Maple', 'Nickel',
+  'Orchard', 'Poplar', 'Raven', 'Silver', 'Tinsel', 'Velvet', 'Wren', 'Amber', 'Bronze', 'Copper', 'Dusk', 'Echo', 'Flint', 'Gable', 'Haven', 'Indigo', 'Jet']
+const MAP_SUFFIX = { boulevard: ['Boulevard'], avenue: ['Avenue', 'Avenue', 'Parkway'], diag: ['Diagonal', 'Boulevard'], street: ['Street', 'Row', 'Way', 'Place', 'Walk'], plain: ['Street', 'Road', 'Way', 'Drive', 'Place'], lane: ['Lane', 'Mews', 'Close'] }
+const MAP_AREA = [['ESTATES', 'ACRES', 'HILLS'], ['PARK', 'HEIGHTS', 'GARDENS'], ['TOWN', 'VILLAGE', 'CROSS']]
+let mapOpen = false, mapData = null, mapJob = null, mapJobKey = '', mapWarmAt = 0, mapLooping = false, mapFreeTimer = 0
 let mapView = { cx: 0, cz: 0, k: 0.2 }, mapCache = null, mapChrome = null, mapSize = { W: 0, H: 0, dpr: 1 }, mapPaintAt = 0, mapHover = null
 let mapMe = null, mapOthers = [], mapCtx = null, mapCacheCv = null, mapChromeCv = null
-const mapPtr = new Map(), mapLayers = []
+const mapPtr = new Map(), mapLayers = [], mapPlaces = new Map()
 
 const mapKey = () => LV.grow ? (LV.grow.seed >>> 0) + ' ' + LV.grow.S : ''
 const mapWorld = () => FAUST.world
@@ -45871,19 +45883,82 @@ function mapClampView() {
 }
 function mapMix(a, b, t) { const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)); const A = p(a), B = p(b)
   return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join('') }
-const MAP_LOT = Array.from({ length: 9 }, (_, i) => mapMix('#2f343d', '#cdbf9a', i / 8))
+const MAP_LOT = Array.from({ length: 9 }, (_, i) => mapMix('#2a2e36', '#b8ac8c', i / 8))
+
+function mapNamer(seed, salt) {
+  const n = MAP_WORDS.length, order = Array.from({ length: n }, (_, i) => i), used = new Set()
+  for (let i = n - 1; i > 0; i--) { const j = faustMix(seed ^ salt, i, 17) % (i + 1); [order[i], order[j]] = [order[j], order[i]] }
+  let at = 0
+  return (kind, h = 0) => {
+    const list = MAP_SUFFIX[kind] || [kind]
+    let name = ''
+    for (let t = 0; t < 8; t++) {
+      name = MAP_WORDS[order[at++ % n]] + ' ' + list[(h + (at / n | 0)) % list.length]
+      if (!used.has(name)) break
+    }
+    used.add(name)
+    return name
+  }
+}
+function* mapJoin(segs) {
+  const key = (x, z) => Math.round(x * 2) * 100003 + Math.round(z * 2), at = new Map(), used = new Uint8Array(segs.length), out = []
+  segs.forEach((s, i) => { for (const e of [0, 1]) { const k = key(s[e * 2], s[e * 2 + 1]); let l = at.get(k); if (!l) at.set(k, l = []); l.push(i * 2 + e) } })
+  for (let i = 0; i < segs.length; i++) {
+    if (i % 40 === 0) yield
+    if (used[i]) continue
+    used[i] = 1
+    const s = segs[i], pts = [s[0], s[1], s[2], s[3]], cls = s[5]; let w = s[4]
+    const grow = tail => {
+      for (;;) {
+        const n = pts.length, x = tail ? pts[n - 2] : pts[0], z = tail ? pts[n - 1] : pts[1], px = tail ? pts[n - 4] : pts[2], pz = tail ? pts[n - 3] : pts[3]
+        let dx = x - px, dz = z - pz; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl
+        let best = -1, bd = 0.9, bx = 0, bz = 0
+        for (const idx of at.get(key(x, z)) || []) {
+          const j = idx >> 1; if (used[j] || segs[j][5] !== cls) continue
+          const o = idx & 1 ? 0 : 2, ox = segs[j][o], oz = segs[j][o + 1]; let ex = ox - x, ez = oz - z; const el = Math.hypot(ex, ez) || 1
+          const d = (dx * ex + dz * ez) / el
+          if (d > bd) { bd = d; best = j; bx = ox; bz = oz }
+        }
+        if (best < 0) return
+        used[best] = 1; w = Math.max(w, segs[best][4])
+        if (tail) pts.push(bx, bz); else pts.unshift(bx, bz)
+      }
+    }
+    grow(true); grow(false)
+    const q = [pts[0], pts[1]]
+    for (let k = 2; k < pts.length - 2; k += 2) {
+      const ax = pts[k] - q[q.length - 2], az = pts[k + 1] - q[q.length - 1], bx = pts[k + 2] - pts[k], bz = pts[k + 3] - pts[k + 1]
+      if (Math.abs(ax * bz - az * bx) > 0.02 * Math.hypot(ax, az) * Math.hypot(bx, bz) || ax * bx + az * bz < 0) q.push(pts[k], pts[k + 1])
+    }
+    q.push(pts[pts.length - 2], pts[pts.length - 1])
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity, len = 0
+    for (let k = 0; k < q.length; k += 2) { x0 = Math.min(x0, q[k]); x1 = Math.max(x1, q[k]); z0 = Math.min(z0, q[k + 1]); z1 = Math.max(z1, q[k + 1]); if (k) len += Math.hypot(q[k] - q[k - 2], q[k + 1] - q[k - 1]) }
+    out.push({ pts: q, w, cls, len, box: [x0, z0, x1, z1] })
+  }
+  return out
+}
 
 function* mapBuildSteps(seed, S) {
-  const A = S * 48, H = S / 2, cells = [], D = { key: seed + ' ' + S, seed, S, A, cells, beams: [], stations: [], lines: [], stops: [], pois: [], labels: [] }
-  const F = typeof faustState !== 'undefined' && faustState, same = F && F.seed === seed && F.S === S
+  const A = S * 48, H = S / 2, cells = [], D = { key: seed + ' ' + S, seed, S, A, cells, beams: [], stations: [], lines: [], stops: [], pois: [], labels: [], roads: [], places: [], courts: [], alleys: [], pools: [], huts: [], parks: [], hwy: [], bridges: [], water: [], canals: [], docks: [], dams: [], band: null }
+  const F = typeof faustState !== 'undefined' && faustState, same = F && F.seed === seed && F.S === S, WL = FAUST.world
   const rail = faustRail(seed, S); yield
+  const segs = [], clubName = n => (FAUST_CLUB.names[n & 3] || 'VELVET') + ' CLUB'
   let n = 0
   for (let ci = 0; ci < S; ci++) for (let cj = 0; cj < S; cj++) {
     const plan = (same && F.chunks.get(faustKey(ci, cj))?.plan) || faustPlan(seed, ci, cj, S)
-    cells.push({ x: (ci - H) * 96, z: (cj - H) * 96, d: MAP_DISTRICTS.indexOf(plan.district), ind: plan.district === 'industrial' ? faustCell(seed, ci - H, cj - H).industry : -1, plaza: plan.plaza, central: plan.centralPlaza, diag: plan.diagonal,
-      roads: plan.roads.map(r => [r.a[0], r.a[2], r.b[0], r.b[2], r.width, r.avenue ? 1 : 0]),
+    const gx = ci - H, gz = cj - H
+    cells.push({ x: gx * 96, z: gz * 96, d: MAP_DISTRICTS.indexOf(plan.district), ind: plan.district === 'industrial' ? faustCell(seed, gx, gz).industry : -1, plaza: plan.plaza, central: plan.centralPlaza, diag: plan.diagonal,
       lots: plan.lots.map(l => [l.x, l.z, l.w, l.d, l.height, l.gothic ? 1 : 0, l.stop ? 1 : 0]) })
-    if (++n % 3 === 0) yield
+    for (const r of plan.roads) segs.push([r.a[0], r.a[2], r.b[0], r.b[2], r.width, r.diagonal || /:diagonal$/.test(r.id) ? 'diag' : r.avenue ? 'avenue' : 'street'])
+    for (const l of plan.lots) {
+      const k = l.landmark || l.venue
+      if (!k) continue
+      const name = k === 'club' ? clubName(l.club ? l.club.name : 0) : k === 'hotel' ? 'HOTEL ' + FAUST_HOTEL[l.seed >>> 9 & 3] : k === 'theatre' ? 'THEATRE' : k === 'cathedral' ? 'CATHEDRAL' : k === 'liquor' ? 'LIQUOR STORE' : 'CONVENIENCE STORE'
+      D.places.push({ x: l.x, z: l.z, kind: k, name, min: k === 'liquor' || k === 'conv' ? 0.55 : k === 'club' ? 0.3 : 0.1 })
+    }
+    for (const s of plan.sites || []) D.places.push({ x: s.x, z: s.z, kind: 'site', name: MAP_SITES[s.k] || 'WORKS', min: s.k === 'site_freight' ? 0.45 : 0.3 })
+    if (plan.plaza && !plan.centralPlaza) D.parks.push({ x: gx * 96 + 48, z: gz * 96 + 48 })
+    yield
   }
   for (const b of rail.beams) D.beams.push({ line: b.line, p: b.p, turnout: !!b.turnout })
   for (const t of rail.stations) {
@@ -45906,27 +45981,137 @@ function* mapBuildSteps(seed, S) {
   const G = FAUST.globe, Hd = FAUST.head
   D.globe = { x: G.x, z: G.z, r: G.radius }; D.head = { x: Hd.position[0], z: Hd.position[2], hx: Hd.size[0] / 2, hz: Hd.size[2] / 2 }
   D.pois.push({ x: G.x, z: G.z, name: 'The Globe', kind: 'mark' }, { x: D.head.x, z: D.head.z, name: 'Faust\'s head', kind: 'mark' }, { x: -48, z: -48, name: 'Faust Plaza', kind: 'mark' })
-  for (let d = 0; d < MAP_DISTRICTS.length; d++) {
-    if (MAP_DISTRICTS[d] === 'industrial') {
-      const shapes = faustIndustry(seed).shapes
-      for (let k = 0; k < shapes.length; k++) {
-        const own = cells.filter(c => c.ind === k)
-        if (own.length < 3) continue
-        const mx = own.reduce((t, c) => t + c.x, 0) / own.length, mz = own.reduce((t, c) => t + c.z, 0) / own.length
-        let at = own[0]
-        for (const c of own) if ((c.x - mx) ** 2 + (c.z - mz) ** 2 < (at.x - mx) ** 2 + (at.z - mz) ** 2) at = c
-        D.labels.push({ x: at.x + 48, z: at.z + 48, text: shapes[k].name, size: own.length })
-      }
-      yield
-      continue
+  yield
+
+  const streetName = mapNamer(seed, 0x53545254), cityChains = (yield* mapJoin(segs)).sort((a, b) => b.len - a.len || a.box[0] - b.box[0] || a.box[1] - b.box[1])
+  for (const c of cityChains) { c.name = streetName(c.cls === 'avenue' && c.w >= 24 ? 'boulevard' : c.cls, c.len | 0); D.roads.push(c) }
+  yield
+
+  const RP = yield* faustRoadsPlanSteps(seed, S), ringSegs = [], FR = { seed, S }, C = FAUST_RINGS.cell, nr = Math.ceil(WL / C), shanty = []
+  const bandCv = document.createElement('canvas'), bg = bandCv.getContext('2d'), bn = 2 * nr
+  bandCv.width = bn; bandCv.height = bn
+  const bands = new Uint8Array(bn * bn), BAND = ['city', 'urban', 'suburb', 'shanty', 'edge']
+  n = 0
+  for (let i = -nr; i < nr; i++) for (let j = -nr; j < nr; j++) {
+    const band = faustRingBand(seed, S, i, j), bi = BAND.indexOf(band)
+    bands[(j + nr) * bn + i + nr] = bi
+    bg.fillStyle = MAP_PAL.band[band]; bg.fillRect(i + nr, j + nr, 1, 1)
+    if (band === 'urban' || band === 'suburb') {
+      const m = faustMapCell(FR, RP, i, j)
+      for (const [ax, az, bx, bz, st] of m.streets) ringSegs.push([ax, az, bx, bz, st === 'boulevard' ? 14 : st === 'lane' ? 7 : 10, st])
+      for (const c of m.courts) D.courts.push(c)
+      for (const c of m.alleys) D.alleys.push(c)
+      for (const c of m.pools) D.pools.push(c)
+    } else if (band === 'shanty' && faustFrac(faustMix(seed ^ 0x5a47, i, j)) < FAUST_RINGS.shanty.odds[0]) {
+      const t = faustRingCell(seed, S, { cells: new Map(), roads: [] }, i, j)
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity
+      for (const grp of t.body) for (const b of grp) if (typeof b.cx === 'number' && typeof b.cz === 'number') { x0 = Math.min(x0, b.cx); x1 = Math.max(x1, b.cx); z0 = Math.min(z0, b.cz); z1 = Math.max(z1, b.cz) }
+      if (x0 < x1 + 1) D.huts.push([(x0 + x1) / 2, (z0 + z1) / 2, Math.max(12, Math.hypot(x1 - x0, z1 - z0) / 2 + 6)])
     }
-    let best = null, bn = 0
-    for (const c of cells) if (c.d === d) { const m = cells.reduce((s, o) => s + (o.d === d && Math.abs(o.x - c.x) <= 288 && Math.abs(o.z - c.z) <= 288 ? 1 : 0), 0); if (m > bn) { bn = m; best = c } }
-    if (best && bn >= 6) D.labels.push({ x: best.x + 48, z: best.z + 48, text: MAP_NAMES[MAP_DISTRICTS[d]], size: bn })
-    yield
+    if (band !== 'city' && band !== 'edge') yield
   }
+  D.band = { cv: bandCv, nr, C, bands, kinds: BAND }
+  const ringName = mapNamer(seed, 0x52494e47)
+  const ringChains = (yield* mapJoin(ringSegs)).sort((a, b) => b.len - a.len || a.box[0] - b.box[0] || a.box[1] - b.box[1])
+  for (const c of ringChains) { c.name = c.len < 450 ? null : ringName(c.cls, c.len | 0); D.roads.push(c) }
+  yield
+
+  const W = faustWater(seed, S), CH = faustChannels(seed, S), waterName = mapNamer(seed, 0x57415452)
+  for (const b of W.bodies) {
+    const rec = { id: b.id, kind: b.kind, caps: b.caps, name: null, x: 0, z: 0, line: null }
+    if (b.kind === 'river') { rec.name = 'THE ' + MAP_WORDS[faustMix(seed ^ 0x52495652, 3, 3) % MAP_WORDS.length].toUpperCase() + ' RIVER'; rec.line = b.centre.flat() }
+    else {
+      let sx = 0, sz = 0, mr = 0; for (const c of b.caps) { sx += c[0]; sz += c[1]; mr = Math.max(mr, c[4]) }
+      rec.x = sx / b.caps.length; rec.z = sz / b.caps.length; rec.r = mr
+      const w = MAP_WORDS[faustMix(seed ^ 0x4c414b45, b.id.length, b.caps.length + (rec.x | 0)) % MAP_WORDS.length].toUpperCase()
+      rec.name = b.dam ? w + ' RESERVOIR' : b.kind === 'bay' ? w + ' BAY' : b.id === 'lake:spring' ? w + ' SPRING' : 'LAKE ' + w
+    }
+    D.water.push(rec)
+    for (const k of b.docks || []) D.docks.push({ x: k.x, z: k.z, yaw: k.yaw, len: k.len || 40 })
+    if (b.dam) D.dams.push({ x: b.dam.x, z: b.dam.z, ang: b.dam.ang })
+    if (b.docks && b.docks.length >= 2) D.places.push({ x: b.docks.reduce((t, k) => t + k.x, 0) / b.docks.length, z: b.docks.reduce((t, k) => t + k.z, 0) / b.docks.length, kind: 'dock', name: 'THE DOCKS', min: 0.02 })
+    else if (b.docks && b.docks.length) D.places.push({ x: b.docks[0].x, z: b.docks[0].z, kind: 'dock', name: 'QUAY', min: 0.12 })
+  }
+  for (const ch of CH.list) {
+    const flat = ch.axis ? [ch.c, ch.lo, ch.c, ch.hi] : [ch.lo, ch.c, ch.hi, ch.c]
+    if (ch.kind !== 'river') D.canals.push({ pts: flat, name: waterName('Canal') })
+    else D.canals.push({ pts: flat, name: null, river: 1 })
+    for (const b of ch.bridges) D.bridges.push({ x0: b.a[0], z0: b.a[1], x1: b.b[0], z1: b.b[1], half: b.half, foot: b.kind === 'foot', name: waterName(b.kind === 'foot' ? 'Footbridge' : 'Bridge') })
+  }
+  yield
+  const wet = (x, z) => { for (const b of W.bodies) for (const c of b.caps) if (c[4] - faustWaterSegDist(c, x, z) > 0) return true
+    for (const ch of CH.list) { const u = ch.axis ? x : z, v = ch.axis ? z : x; if (Math.abs(u - ch.c) < FAUST_CHAN.top && v >= ch.lo && v <= ch.hi) return true }
+    return false }
+  const hwyName = { ring: 'THE RING ROAD', north: 'NORTH TRUNK ROAD', south: 'SOUTH TRUNK ROAD', east: 'EAST TRUNK ROAD', west: 'WEST TRUNK ROAD' }
+  for (const road of RP.roads) {
+    const flat = []; for (const p of road.pts) flat.push(p[0], p[2])
+    D.hwy.push({ pts: flat, half: road.half[road.half.length >> 1], kind: road.kind === 'ramp' ? 'ramp' : 'hwy', name: hwyName[road.id] || null, closed: !!road.closed })
+    if (road.kind === 'ramp') continue
+    let run = null
+    for (let i = 0; i + 1 < road.pts.length; i++) {
+      const p = road.pts[i], q = road.pts[i + 1], len = Math.hypot(q[0] - p[0], q[2] - p[2]), m = Math.max(1, Math.ceil(len / 6))
+      for (let s = 0; s <= m; s++) {
+        const x = p[0] + (q[0] - p[0]) * s / m, z = p[2] + (q[2] - p[2]) * s / m
+        if (wet(x, z)) { if (!run) run = [x, z, x, z, road.half[i]]; else { run[2] = x; run[3] = z } }
+        else if (run) { D.bridges.push({ x0: run[0], z0: run[1], x1: run[2], z1: run[3], half: run[4], hwy: 1, name: null }); run = null }
+      }
+      if (i % 3 === 0) yield
+    }
+    if (run) D.bridges.push({ x0: run[0], z0: run[1], x1: run[2], z1: run[3], half: run[4], hwy: 1, name: null })
+  }
+  yield
+
+  const comp = new Int16Array(S * S).fill(-1), regions = [], dName = mapNamer(seed, 0x44495354), at = (i, j) => i < 0 || j < 0 || i >= S || j >= S ? null : cells[i * S + j]
+  for (let s = 0; s < S * S; s++) {
+    if (comp[s] >= 0 || cells[s].d === 3) continue
+    const id = regions.length, d = cells[s].d, st = [s], mem = []
+    comp[s] = id
+    while (st.length) { const c = st.pop(); mem.push(c); const i = c / S | 0, j = c % S
+      for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const o = at(i + a, j + b); if (o && o.d === d && comp[(i + a) * S + j + b] < 0) { comp[(i + a) * S + j + b] = id; st.push((i + a) * S + j + b) } } }
+    regions.push({ d, mem })
+  }
+  const big = {}
+  for (const r of regions) if (!big[r.d] || r.mem.length > big[r.d].mem.length) big[r.d] = r
+  for (const r of regions) {
+    if (r.mem.length < 4 && r !== big[r.d]) continue
+    const mx = r.mem.reduce((t, c) => t + cells[c].x, 0) / r.mem.length, mz = r.mem.reduce((t, c) => t + cells[c].z, 0) / r.mem.length
+    let best = cells[r.mem[0]]; for (const c of r.mem) if ((cells[c].x - mx) ** 2 + (cells[c].z - mz) ** 2 < (best.x - mx) ** 2 + (best.z - mz) ** 2) best = cells[c]
+    const word = dName('X').split(' ')[0].toUpperCase()
+    const text = r === big[r.d] ? ['DOWNTOWN', 'THE GOTHIC QUARTER', 'THE TENEMENTS'][r.d] : [word + ' EXCHANGE', word + ' QUARTER', word + ' TENEMENTS'][r.d]
+    D.labels.push({ x: best.x + 48, z: best.z + 48, text, size: r.mem.length, kind: 'district', d: r.d })
+  }
+  const shapes = faustIndustry(seed).shapes
+  for (let k = 0; k < shapes.length; k++) {
+    const own = cells.filter(c => c.ind === k)
+    if (own.length < 3) continue
+    const mx = own.reduce((t, c) => t + c.x, 0) / own.length, mz = own.reduce((t, c) => t + c.z, 0) / own.length
+    let at2 = own[0]; for (const c of own) if ((c.x - mx) ** 2 + (c.z - mz) ** 2 < (at2.x - mx) ** 2 + (at2.z - mz) ** 2) at2 = c
+    D.labels.push({ x: at2.x + 48, z: at2.z + 48, text: shapes[k].name, size: own.length, kind: 'industry', d: 3 })
+  }
+  yield
+
+  const nb = new Map(), aName = mapNamer(seed, 0x4e454947), BL = 1440
+  for (let i = -nr; i < nr; i++) for (let j = -nr; j < nr; j++) {
+    const b = bands[(j + nr) * bn + i + nr]; if (b !== 1 && b !== 2) continue
+    const cx = (i + 0.5) * C, cz = (j + 0.5) * C, u = Math.floor(cx / BL), v = Math.floor(cz / BL), k = u * 4096 + v
+    let e = nb.get(k); if (!e) nb.set(k, e = { n: 0, x: 0, z: 0, u, v, band: b }); e.n++; e.x += cx; e.z += cz
+  }
+  for (const e of nb.values()) {
+    if (e.n < 3) continue
+    const t = faustSubDistrict(seed, Math.floor(e.x / e.n / 160), Math.floor(e.z / e.n / 160)), word = aName('X').split(' ')[0].toUpperCase()
+    D.labels.push({ x: e.x / e.n, z: e.z / e.n, text: word + ' ' + MAP_AREA[t][faustMix(seed ^ 0x41524541, e.u, e.v) % 3], size: e.n, kind: 'hood', d: e.band })
+  }
+  const sb = new Map(), sName = mapNamer(seed, 0x534e5459)
+  for (const h of D.huts) { const u = Math.floor(h[0] / 2400), v = Math.floor(h[1] / 2400), k = u * 4096 + v; let e = sb.get(k); if (!e) sb.set(k, e = { n: 0, x: 0, z: 0 }); e.n++; e.x += h[0]; e.z += h[1] }
+  for (const e of sb.values()) if (e.n >= 4) D.labels.push({ x: e.x / e.n, z: e.z / e.n, text: sName('X').split(' ')[0].toUpperCase() + [' FLATS', ' ROW', ' SETTLEMENT'][e.n % 3], size: e.n, kind: 'shanty', d: 4 })
+  yield
+  for (const kind of ['hood', 'shanty']) D.labels.filter(l => l.kind === kind).sort((a, b) => b.size - a.size || a.x - b.x).forEach((l, i) => { l.rank = i })
+  D.parkName = mapNamer(seed, 0x5041524b)
+  for (const p of D.parks) { p.name = D.parkName('X').split(' ')[0].toUpperCase() + ' PARK'; D.places.push({ x: p.x, z: p.z, kind: 'park', name: p.name, min: 0.2 }) }
+  for (const p of D.places) D.pois.push({ x: p.x, z: p.z, name: p.name.charAt(0) + p.name.slice(1).toLowerCase(), kind: p.kind })
   return D
 }
+const MAP_SITES = { site_construction: 'CONSTRUCTION SITE', site_market: 'MARKET', site_yard: 'BUILDERS YARD', site_rubble: 'DEMOLITION SITE', site_freight: 'FREIGHT YARD', site_scrap: 'SCRAPYARD' }
 function mapEnsure() {
   const key = mapKey()
   if (!key || !LV.faust || mapData?.key === key || mapJobKey === key) return
@@ -45949,38 +46134,145 @@ function mapPoly(g, p, close) {
   for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1])
   if (close) g.closePath()
 }
+const mapUi = () => Math.min(mapSize.W, mapSize.H) < 480 ? 1.2 : 1
+
+function mapLabeler(g) {
+  const cand = []
+  return {
+    add(prio, t, x, y, o = {}) { cand.push({ prio, t, x, y, o }) },
+    run(W, H) {
+      cand.sort((a, b) => b.prio - a.prio)
+      const grid = new Map(), cs = 64, hit = (b, x0, y0, x1, y1) => b[0] < x1 && b[2] > x0 && b[1] < y1 && b[3] > y0
+      let placed = 0
+      for (const c of cand) {
+        const o = c.o, size = o.size || 10, space = o.space ?? 1.5, rot = o.rot || 0
+        g.font = (o.weight || 700) + ' ' + size + 'px ' + MAP_FONT
+        const tw = g.measureText(c.t).width + space * c.t.length + 4, th = size + 4, cr = Math.abs(Math.cos(rot)), sr = Math.abs(Math.sin(rot))
+        const hw = (tw * cr + th * sr) / 2, hh = (tw * sr + th * cr) / 2, x0 = c.x - hw, y0 = c.y - hh, x1 = c.x + hw, y1 = c.y + hh
+        if (x1 < -20 || y1 < -20 || x0 > W + 20 || y0 > H + 20) continue
+        if (o.keep && (x0 < 4 || y0 < 4 || x1 > W - 4 || y1 > H - 4)) continue
+        let ok = true
+        const ia = Math.floor(x0 / cs), ib = Math.floor(x1 / cs), ja = Math.floor(y0 / cs), jb = Math.floor(y1 / cs)
+        for (let i = ia; i <= ib && ok; i++) for (let j = ja; j <= jb && ok; j++) for (const b of grid.get(i * 4096 + j) || []) if (hit(b, x0, y0, x1, y1)) { ok = false; break }
+        if (!ok) continue
+        const box = [x0, y0, x1, y1]
+        for (let i = ia; i <= ib; i++) for (let j = ja; j <= jb; j++) { const k = i * 4096 + j; let l = grid.get(k); if (!l) grid.set(k, l = []); l.push(box) }
+        if (rot) { g.save(); g.translate(c.x, c.y); g.rotate(rot); mapText(g, c.t, 0, 0, o); g.restore() } else mapText(g, c.t, c.x, c.y, o)
+        placed++
+      }
+      return placed
+    } }
+}
+function mapAlong(pts, xy, W, H, tw, spacing, fn) {
+  let next = spacing * 0.4, run = 0
+  for (let i = 0; i + 3 < pts.length; i += 2) {
+    const [ax, ay] = xy(pts[i], pts[i + 1]), [bx, by] = xy(pts[i + 2], pts[i + 3]), L = Math.hypot(bx - ax, by - ay)
+    if (L < 0.5) continue
+    let rot = Math.atan2(by - ay, bx - ax); if (rot > Math.PI / 2) rot -= Math.PI; else if (rot < -Math.PI / 2) rot += Math.PI
+    while (next < run + L) {
+      if (L >= tw + 8) {
+        const s = Math.min(Math.max(next - run, tw / 2 + 4), L - tw / 2 - 4), x = ax + (bx - ax) * s / L, y = ay + (by - ay) * s / L
+        if (x > -30 && x < W + 30 && y > -30 && y < H + 30) fn(x, y, rot)
+      }
+      next += spacing
+    }
+    run += L
+  }
+}
+function mapIcon(g, kind, x, y, r) {
+  const col = MAP_PAL.ico[kind] || MAP_PAL.brass
+  g.fillStyle = '#10131a'; g.strokeStyle = col; g.lineWidth = 1.5; g.lineJoin = 'round'
+  g.beginPath()
+  if (kind === 'site') { g.moveTo(x, y - r - 1); g.lineTo(x + r + 1, y + r); g.lineTo(x - r - 1, y + r); g.closePath() }
+  else if (kind === 'park') { g.arc(x, y, r, 0, 2 * Math.PI) }
+  else if (kind === 'dock') { g.rect(x - r, y - r, 2 * r, 2 * r) }
+  else { g.arc(x, y, r, 0, 2 * Math.PI) }
+  g.fill(); g.stroke()
+  g.fillStyle = col; g.strokeStyle = col; g.lineWidth = 1.3
+  if (kind === 'club') { g.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i & 1 ? r * 0.28 : r * 0.62; g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr) } g.closePath(); g.fill() }
+  else if (kind === 'cathedral') { g.beginPath(); g.moveTo(x, y - r * 0.62); g.lineTo(x, y + r * 0.62); g.moveTo(x - r * 0.42, y - r * 0.14); g.lineTo(x + r * 0.42, y - r * 0.14); g.stroke() }
+  else if (kind === 'park') { g.beginPath(); g.arc(x, y, r * 0.5, 0, 2 * Math.PI); g.fill() }
+  else if (kind === 'dock') { g.fillRect(x - r * 0.4, y - r * 0.4, r * 0.8, r * 0.8) }
+  else if (kind === 'site') { g.fillRect(x - 1, y - 1, 2, 3) }
+  else { mapText(g, { liquor: 'L', conv: 'S', theatre: 'T', hotel: 'H' }[kind] || '•', x, y + 0.5, { size: r * 1.35, color: col, halo: 'rgba(0,0,0,0)', space: 0, weight: 800 }) }
+}
+
 function mapPaint(g, D, V, W, H, sc) {
-  const k = V.k, P = MAP_PAL, xy = (x, z) => [(x - V.cx) * k + W / 2, (z - V.cz) * k + H / 2]
+  const k = V.k, P = MAP_PAL, xy = (x, z) => [(x - V.cx) * k + W / 2, (z - V.cz) * k + H / 2], ui = mapUi(), T = n => Math.round(n * ui * 10) / 10
   const x0 = V.cx - W / 2 / k, x1 = V.cx + W / 2 / k, z0 = V.cz - H / 2 / k, z1 = V.cz + H / 2 / k, WL = mapWorld(), A = D.A
   const vis = (a0, b0, a1, b1) => a1 >= x0 && a0 <= x1 && b1 >= z0 && b0 <= z1
-  const px = n => n / k
+  const px = n => n / k, lab = mapLabeler(g)
   g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = P.ink; g.fillRect(0, 0, W * sc, H * sc)
   g.setTransform(sc * k, 0, 0, sc * k, sc * (W / 2 - V.cx * k), sc * (H / 2 - V.cz * k))
   g.lineJoin = 'round'; g.lineCap = 'butt'
-  g.fillStyle = P.field[0]; g.fillRect(-WL, -WL, 2 * WL, 2 * WL)
+  g.fillStyle = P.land; g.fillRect(-WL, -WL, 2 * WL, 2 * WL)
+  const B = D.band, bn = 2 * B.nr, bc = B.C
+  g.save(); g.beginPath(); g.rect(-WL, -WL, 2 * WL, 2 * WL); g.clip()
+  g.imageSmoothingEnabled = true; g.drawImage(B.cv, -B.nr * bc, -B.nr * bc, bn * bc, bn * bc)
+  g.restore()
+  const bandAt = (i, j) => i < -B.nr || j < -B.nr || i >= B.nr || j >= B.nr ? 4 : B.bands[(j + B.nr) * bn + i + B.nr]
   const plot = FAUST_FIELDS.plot
-  if (k * plot >= 7) {
-    const i0 = Math.max(Math.floor(x0 / plot), -WL / plot), i1 = Math.min(Math.ceil(x1 / plot), WL / plot), j0 = Math.max(Math.floor(z0 / plot), -WL / plot), j1 = Math.min(Math.ceil(z1 / plot), WL / plot)
-    const tints = P.field.map(() => [])
-    for (let i = i0; i < i1; i++) for (let j = j0; j < j1; j++) tints[faustMix(D.seed ^ 0x51ed, i, j) % tints.length].push(i * plot, j * plot)
-    const gap = px(1.2)
+  if (k * plot >= 6) {
+    const ia = Math.max(Math.floor(x0 / bc), -B.nr), ib = Math.min(Math.floor(x1 / bc), B.nr - 1), ja = Math.max(Math.floor(z0 / bc), -B.nr), jb = Math.min(Math.floor(z1 / bc), B.nr - 1)
+    const tints = P.field.map(() => []), gap = px(1.1), per = Math.round(bc / plot)
+    for (let i = ia; i <= ib; i++) for (let j = ja; j <= jb; j++) {
+      const b = bandAt(i, j); if (b !== 3 && b !== 4) continue
+      for (let a = 0; a < per; a++) for (let c = 0; c < per; c++) { const pi = i * per + a, pj = j * per + c; tints[faustMix(D.seed ^ 0x51ed, pi, pj) % tints.length].push(pi * plot, pj * plot) }
+    }
     tints.forEach((list, c) => { g.fillStyle = P.field[c]; g.beginPath(); for (let n = 0; n < list.length; n += 2) g.rect(list[n] + gap, list[n + 1] + gap, plot - 2 * gap, plot - 2 * gap); g.fill() })
   }
   if (k >= 0.012 && k < 0.2) {
-    g.strokeStyle = 'rgba(201,164,92,.09)'; g.lineWidth = px(1); g.beginPath()
+    g.strokeStyle = 'rgba(201,164,92,.07)'; g.lineWidth = px(1); g.beginPath()
     for (let u = -WL; u <= WL; u += 1000) { if (u >= x0 && u <= x1) { g.moveTo(u, -WL); g.lineTo(u, WL) } if (u >= z0 && u <= z1) { g.moveTo(-WL, u); g.lineTo(WL, u) } }
     g.stroke()
-  }
-  if (k < 0.12) {
-    g.strokeStyle = 'rgba(201,164,92,.22)'; g.lineWidth = px(1); g.setLineDash([px(2), px(7)])
-    for (const r of [4000, 8000, 12000]) { g.beginPath(); g.arc(0, 0, r, 0, 2 * Math.PI); g.stroke() }
-    g.setLineDash([])
   }
   g.strokeStyle = P.brass; g.lineWidth = px(3); g.strokeRect(-WL, -WL, 2 * WL, 2 * WL)
   g.strokeStyle = 'rgba(201,164,92,.35)'; g.lineWidth = px(1); g.strokeRect(-WL + px(6), -WL + px(6), 2 * WL - px(12), 2 * WL - px(12))
   if (k * 400 >= 5) { g.fillStyle = '#ffb35a'; g.beginPath()
     for (let u = -WL + 200; u < WL; u += 400) for (const [a, b] of [[u, -WL], [u, WL], [-WL, u], [WL, u]]) if (vis(a - 5, b - 5, a + 5, b + 5)) g.rect(a - px(1.5), b - px(1.5), px(3), px(3))
     g.fill() }
+
+  const roadW = { boulevard: 14, plain: 10, lane: 7 }, roadMin = { boulevard: 1.5, plain: 1.1, lane: 0.8 }
+  const roads = (cls, wd, min, color, casing) => {
+    const list = D.roads.filter(r => r.cls === cls && vis(r.box[0] - 20, r.box[1] - 20, r.box[2] + 20, r.box[3] + 20))
+    if (!list.length) return
+    for (const pass of casing ? [0, 1] : [1]) {
+      g.strokeStyle = pass ? color : P.ink; g.lineWidth = Math.max(pass ? wd : wd + px(2), px(min + (pass ? 0 : 2))); g.beginPath()
+      for (const r of list) { const p = r.pts; g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]) }
+      g.stroke()
+    }
+  }
+  if (k >= 0.035) {
+    roads('lane', roadW.lane, roadMin.lane, P.road.lane, k >= 0.3)
+    roads('plain', roadW.plain, roadMin.plain, P.road.plain, k >= 0.25)
+    roads('boulevard', roadW.boulevard, roadMin.boulevard, P.road.boulevard, k >= 0.2)
+  }
+  if (k >= 0.2) {
+    g.fillStyle = P.road.plain; g.strokeStyle = P.road.plain; g.lineCap = 'round'
+    g.lineWidth = Math.max(px(0.9), 9); g.beginPath()
+    for (const [ex, ez, dir] of D.courts) if (vis(ex - 70, ez - 20, ex + 70, ez + 20)) { g.moveTo(ex, ez); g.lineTo(ex + dir * 64, ez) }
+    g.stroke(); g.beginPath()
+    for (const [ex, ez, dir] of D.courts) if (vis(ex - 70, ez - 20, ex + 70, ez + 20)) { g.moveTo(ex + dir * 64 + 10.5, ez); g.arc(ex + dir * 64, ez, Math.max(10.5, px(1.4)), 0, 2 * Math.PI) }
+    g.fill(); g.lineCap = 'butt'
+  }
+  if (k >= 0.25) {
+    g.strokeStyle = P.road.alley; g.lineWidth = Math.max(5, px(0.6)); g.beginPath()
+    for (const [ax, az, bx, bz] of D.alleys) if (vis(Math.min(ax, bx), az - 4, Math.max(ax, bx), az + 4)) { g.moveTo(ax, az); g.lineTo(bx, bz) }
+    g.stroke()
+  }
+  if (k >= 0.5) {
+    g.fillStyle = '#2b86b0'
+    for (const [pxx, pz, hx, hz] of D.pools) if (vis(pxx - hx, pz - hz, pxx + hx, pz + hz)) g.fillRect(pxx - hx, pz - hz, Math.max(2 * hx, px(2)), Math.max(2 * hz, px(2)))
+  }
+  if (D.huts.length && k >= 0.025) {
+    g.fillStyle = 'rgba(123,100,70,.5)'; g.strokeStyle = 'rgba(160,130,90,.6)'; g.lineWidth = px(1); g.beginPath()
+    for (const [hx, hz, hr] of D.huts) if (vis(hx - hr, hz - hr, hx + hr, hz + hr)) { g.moveTo(hx + Math.max(hr, px(2.5)), hz); g.arc(hx, hz, Math.max(hr, px(2.5)), 0, 2 * Math.PI) }
+    g.fill(); g.stroke()
+    if (k >= 0.35) { g.fillStyle = P.hut; g.beginPath()
+      for (const [hx, hz, hr] of D.huts) if (vis(hx - hr, hz - hr, hx + hr, hz + hr)) for (let i = 0; i < 14; i++) { const a = i * 2.399, d = hr * 0.8 * Math.sqrt((i + 0.5) / 14); g.rect(hx + Math.cos(a) * d - 2.5, hz + Math.sin(a) * d - 2, 5, 4) }
+      g.fill() }
+  }
+
   const cells = D.cells.filter(c => vis(c.x, c.z, c.x + 96, c.z + 96))
   for (let d = 0; d < 4; d++) {
     g.fillStyle = P.ground[MAP_DISTRICTS[d]]; g.beginPath()
@@ -45991,24 +46283,12 @@ function mapPaint(g, D, V, W, H, sc) {
   for (const c of cells) if (c.plaza) g.rect(c.x + 2, c.z + 2, 92, 92)
   g.fill()
   if (k * 96 >= 10) {
-    g.strokeStyle = 'rgba(201,164,92,.45)'; g.lineWidth = px(1); g.beginPath()
+    g.strokeStyle = 'rgba(201,164,92,.4)'; g.lineWidth = px(1); g.beginPath()
     for (const c of cells) if (c.plaza) g.rect(c.x + 8, c.z + 8, 80, 80)
     g.stroke()
-    if (k >= 0.12) { g.fillStyle = 'rgba(70,120,80,.5)'; g.beginPath()
+    if (k >= 0.12) { g.fillStyle = 'rgba(80,140,90,.55)'; g.beginPath()
       for (const c of cells) if (c.plaza && !c.central) for (const [a, b] of [[24, 24], [72, 24], [24, 72], [72, 72], [48, 48]]) { g.moveTo(c.x + a + 6, c.z + b); g.arc(c.x + a, c.z + b, 6, 0, 2 * Math.PI) }
       g.fill() }
-  }
-  const road = (pred, width, color, min) => {
-    g.strokeStyle = color; g.lineWidth = Math.max(width, px(min)); g.beginPath()
-    for (const c of cells) for (const r of c.roads) if (pred(r)) { g.moveTo(r[0], r[1]); g.lineTo(r[2], r[3]) }
-    g.stroke()
-  }
-  g.lineCap = 'butt'
-  if (k >= 0.06) road(r => !r[5], 8, P.road, 0.8)
-  road(r => r[5] && r[4] < 24, 20, P.road, 1.4)
-  road(r => r[5] && r[4] >= 24, 26, P.road, 1.8)
-  if (k >= 0.2) {
-    g.setLineDash([px(8), px(6)]); road(r => r[5], 0, 'rgba(201,164,92,.42)', 0.8); g.setLineDash([])
   }
   if (k >= 0.05) {
     for (let h = 0; h < 9; h++) {
@@ -46020,11 +46300,74 @@ function mapPaint(g, D, V, W, H, sc) {
       for (const c of cells) for (const l of c.lots) if (l[5]) g.rect(l[0] - l[2], l[1] - l[3], 2 * l[2], 2 * l[3])
       g.stroke() }
   }
-  g.strokeStyle = 'rgba(201,164,92,.6)'; g.lineWidth = px(1.4); g.strokeRect(-A, -A, 2 * A, 2 * A)
+  g.strokeStyle = 'rgba(201,164,92,.55)'; g.lineWidth = px(1.2); g.strokeRect(-A, -A, 2 * A, 2 * A)
+
+  const wpass = (fn) => { for (const w of D.water) for (const c of w.caps) fn(w, c) }
+  const shore = Math.max(px(1.8), 0)
+  for (const pass of [0, 1]) {
+    g.fillStyle = pass ? P.water : P.waterEdge; g.strokeStyle = pass ? P.water : P.waterEdge; g.lineCap = 'round'
+    wpass((w, c) => {
+      const r = Math.max(c[4] - (w.kind === 'river' ? 0 : 6), px(1.2)) + (pass ? 0 : shore)
+      if (!vis(Math.min(c[0], c[2]) - r, Math.min(c[1], c[3]) - r, Math.max(c[0], c[2]) + r, Math.max(c[1], c[3]) + r)) return
+      if (c[0] === c[2] && c[1] === c[3]) { g.beginPath(); g.arc(c[0], c[1], r, 0, 2 * Math.PI); g.fill() }
+      else { g.lineWidth = 2 * r; g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(c[2], c[3]); g.stroke() }
+    })
+    g.lineCap = 'butt'
+  }
+  for (const ch of D.canals) {
+    const p = ch.pts
+    if (!vis(Math.min(p[0], p[2]) - 40, Math.min(p[1], p[3]) - 40, Math.max(p[0], p[2]) + 40, Math.max(p[1], p[3]) + 40)) continue
+    for (const [wd, col] of [[2 * FAUST_CHAN.top, P.canal], [2 * FAUST_CHAN.floor, '#2a5a70']]) { g.strokeStyle = col; g.lineWidth = Math.max(wd, px(1.4)); mapPoly(g, p, false); g.stroke() }
+  }
+  g.fillStyle = P.ico.dock; g.strokeStyle = P.ico.dock; g.lineWidth = Math.max(4, px(1.4)); g.beginPath()
+  for (const d of D.docks) if (vis(d.x - 60, d.z - 60, d.x + 60, d.z + 60)) { g.moveTo(d.x, d.z); g.lineTo(d.x + Math.cos(d.yaw) * d.len, d.z + Math.sin(d.yaw) * d.len) }
+  g.stroke()
+  g.strokeStyle = P.ico.dam; g.lineWidth = Math.max(px(2.4), 8); g.beginPath()
+  for (const d of D.dams) if (vis(d.x - 150, d.z - 150, d.x + 150, d.z + 150)) { g.moveTo(d.x + Math.sin(d.ang) * 130, d.z - Math.cos(d.ang) * 130); g.lineTo(d.x - Math.sin(d.ang) * 130, d.z + Math.cos(d.ang) * 130) }
+  g.stroke()
+
+  const cityRoads = (cls, color, wd, min, casing) => {
+    const list = D.roads.filter(r => r.cls === cls && vis(r.box[0] - 20, r.box[1] - 20, r.box[2] + 20, r.box[3] + 20))
+    if (!list.length) return
+    for (const pass of casing ? [0, 1] : [1]) {
+      g.strokeStyle = pass ? color : P.ink; g.lineWidth = Math.max(pass ? wd : wd + px(2), px(min + (pass ? 0 : 2))); g.beginPath()
+      for (const r of list) { const p = r.pts; g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]) }
+      g.stroke()
+    }
+  }
+  if (k >= 0.05) cityRoads('street', P.road.street, 8, 0.9, k >= 0.2)
+  cityRoads('avenue', P.road.avenue, 20, 1.5, k >= 0.05)
+  cityRoads('diag', P.road.diag, 26, 1.8, true)
+  if (k >= 0.2) {
+    g.setLineDash([px(8), px(6)]); g.strokeStyle = 'rgba(201,164,92,.42)'; g.lineWidth = px(0.8); g.beginPath()
+    for (const r of D.roads) if ((r.cls === 'avenue' || r.cls === 'diag') && vis(r.box[0] - 20, r.box[1] - 20, r.box[2] + 20, r.box[3] + 20)) { const p = r.pts; g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]) }
+    g.stroke(); g.setLineDash([])
+  }
   if (vis(-192, -192, 192, 192)) {
     g.strokeStyle = 'rgba(201,164,92,.6)'; g.lineWidth = px(1); g.beginPath()
     for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; g.moveTo(-48 + Math.cos(a) * 24, -48 + Math.sin(a) * 24); g.lineTo(-48 + Math.cos(a) * (i & 1 ? 120 : 168), -48 + Math.sin(a) * (i & 1 ? 120 : 168)) }
     g.stroke(); g.beginPath(); g.arc(-48, -48, 24, 0, 2 * Math.PI); g.arc(-48, -48, 80, 0, 2 * Math.PI); g.stroke()
+  }
+
+  g.lineCap = 'butt'
+  for (const pass of [0, 1, 2]) for (const h of D.hwy) {
+    const ramp = h.kind === 'ramp', p = h.pts
+    if (pass === 2 && (ramp || k < 0.15)) continue
+    let a0 = Infinity, b0 = Infinity, a1 = -Infinity, b1 = -Infinity
+    for (let i = 0; i < p.length; i += 2) { a0 = Math.min(a0, p[i]); a1 = Math.max(a1, p[i]); b0 = Math.min(b0, p[i + 1]); b1 = Math.max(b1, p[i + 1]) }
+    if (!vis(a0 - 40, b0 - 40, a1 + 40, b1 + 40)) continue
+    const wd = 2 * h.half
+    g.strokeStyle = pass === 0 ? P.ink : pass === 1 ? (ramp ? P.road.ramp : P.road.hwy) : P.ink
+    g.lineWidth = pass === 0 ? Math.max(wd, px(ramp ? 1.8 : 2.6)) + px(2.4) : pass === 1 ? Math.max(wd, px(ramp ? 1.6 : 2.4)) : Math.max(px(0.8), 0.5)
+    if (pass === 2) g.setLineDash([px(10), px(8)])
+    mapPoly(g, p, h.closed); g.stroke()
+    if (pass === 2) g.setLineDash([])
+  }
+  for (const b of D.bridges) {
+    if (!vis(Math.min(b.x0, b.x1) - 40, Math.min(b.z0, b.z1) - 40, Math.max(b.x0, b.x1) + 40, Math.max(b.z0, b.z1) + 40)) continue
+    const wd = Math.max(2 * b.half, px(b.hwy ? 2.4 : b.foot ? 1 : 1.6))
+    g.strokeStyle = P.brass; g.lineWidth = wd + px(b.hwy ? 3.4 : 2.4); g.beginPath(); g.moveTo(b.x0, b.z0); g.lineTo(b.x1, b.z1); g.stroke()
+    g.strokeStyle = b.hwy ? P.road.hwy : b.foot ? '#9a9378' : P.road.avenue; g.lineWidth = wd; g.beginPath(); g.moveTo(b.x0, b.z0); g.lineTo(b.x1, b.z1); g.stroke()
   }
   for (const pass of [0, 1]) for (const b of D.beams) {
     if (pass === 0 && !b.turnout) continue
@@ -46040,7 +46383,7 @@ function mapPaint(g, D, V, W, H, sc) {
     g.strokeStyle = P.brass; g.lineWidth = px(2); g.stroke()
     g.strokeStyle = 'rgba(201,164,92,.4)'; g.lineWidth = px(1); g.beginPath()
     for (const f of [0.33, 0.66]) { g.moveTo(Gb.x + Gb.r * f, Gb.z); g.ellipse(Gb.x, Gb.z, Gb.r * f, Gb.r, 0, 0, 2 * Math.PI) }
-    for (const f of [0.5, 0.86]) { g.moveTo(Gb.x + Gb.r, Gb.z + Gb.r * f * 0); g.ellipse(Gb.x, Gb.z, Gb.r, Gb.r * f, 0, 0, 2 * Math.PI) }
+    for (const f of [0.5, 0.86]) { g.moveTo(Gb.x + Gb.r, Gb.z); g.ellipse(Gb.x, Gb.z, Gb.r, Gb.r * f, 0, 0, 2 * Math.PI) }
     g.stroke()
   }
   if (vis(Hd.x - Hd.hx, Hd.z - Hd.hz, Hd.x + Hd.hx, Hd.z + Hd.hz)) {
@@ -46048,29 +46391,59 @@ function mapPaint(g, D, V, W, H, sc) {
     g.strokeStyle = P.cream; g.lineWidth = px(1.6); g.strokeRect(Hd.x - Hd.hx, Hd.z - Hd.hz, 2 * Hd.hx, 2 * Hd.hz)
   }
   g.setTransform(sc, 0, 0, sc, 0, 0)
+  const on = (x, z, m = 60) => { const [a, b] = xy(x, z); return a > -m && a < W + m && b > -m && b < H + m }
   const pin = (x, z, f) => { const [a, b] = xy(x, z); if (a > -40 && a < W + 40 && b > -40 && b < H + 40) f(a, b) }
-  if (k >= 0.1 && k < 0.34) for (const l of D.labels) pin(l.x, l.z, (a, b) => mapText(g, l.text, a, b, { size: clamp(k * 90, 9, 14), color: 'rgba(230,220,194,.8)', space: 3 }))
-  if (k < 0.1) pin(0, A, (a, b) => mapText(g, 'FAUSTLAND', a, b + 14, { size: 11, color: P.cream, space: 3 }))
+
   for (const s of D.stations) pin(s.x, s.z, (a, b) => {
     const big = s.name === 'Globe Cross', r = k >= 0.3 ? (big ? 6 : 4.5) : k >= 0.08 ? 3 : 2
     g.fillStyle = '#10131a'; g.strokeStyle = MAP_LINES[s.line][1]; g.lineWidth = k >= 0.08 ? 2 : 1.2
     g.beginPath(); g.arc(a, b, r, 0, 2 * Math.PI); g.fill(); g.stroke()
-    if (k >= 0.45) mapText(g, s.name.toUpperCase(), a, b + 12, { size: 9, space: 1.2, color: MAP_LINES[s.line][1] })
+    if (k >= 0.45) lab.add(55, s.name.toUpperCase(), a, b + T(12), { size: T(9), space: 1.2, color: MAP_LINES[s.line][1] })
   })
   for (const s of D.stops) pin(s.x, s.z, (a, b) => {
     const r = k >= 0.08 ? 5 : 3.2
     g.fillStyle = '#10131a'; g.strokeStyle = P.air; g.lineWidth = 1.6
     g.beginPath(); g.moveTo(a, b - r); g.lineTo(a + r, b); g.lineTo(a, b + r); g.lineTo(a - r, b); g.closePath(); g.fill(); g.stroke()
   })
-  pin(Gb.x, Gb.z, (a, b) => mapText(g, 'THE GLOBE', a, b, { size: clamp(k * 600, 10, 15), color: P.brass, space: 4 }))
-  pin(Hd.x, Hd.z + Hd.hz + 90, (a, b) => mapText(g, 'FAUST', a, b, { size: clamp(k * 520, 10, 15), color: P.cream, space: 4 }))
-  if (k >= 0.1) pin(-48, -48, (a, b) => mapText(g, 'FAUST PLAZA', a, b, { size: 10, color: P.brass, space: 2.5 }))
-  pin(0, -WL, (a, b) => { if (b > 50) mapText(g, 'THE WORLD\'S EDGE', a, b + 14, { size: 10, color: P.brassDim, space: 3 }) })
-  if (k < 0.12) for (const [r, t] of [[4000, '4 KM'], [8000, '8 KM'], [12000, '12 KM']]) pin(r * 0.7071, r * 0.7071, (a, b) => mapText(g, t, a, b, { size: 9, color: P.brassDim, space: 2 }))
+  for (const p of D.places) if (k >= p.min) pin(p.x, p.z, (a, b) => {
+    const r = T(k >= 0.5 ? 6.5 : 5)
+    mapIcon(g, p.kind, a, b, r)
+    if (k >= p.min * 1.5 || p.kind === 'dock' || p.kind === 'theatre' || p.kind === 'cathedral' || p.kind === 'hotel') lab.add(p.kind === 'dock' ? 70 : 48, p.name, a, b + r + T(7), { size: T(8.5), color: MAP_PAL.ico[p.kind] || MAP_PAL.cream, space: 1 })
+  })
+  for (const l of mapPlaces.values()) if (k >= (l.min || 0.1)) pin(l.x, l.z, (a, b) => { mapIcon(g, l.kind || 'site', a, b, T(6)); if (l.name) lab.add(50, l.name, a, b + T(14), { size: T(8.5), space: 1 }) })
+  for (const l of D.labels) {
+    if (l.kind === 'district' && k >= 0.04 && k < 0.5) pin(l.x, l.z, (a, b) => lab.add(80, l.text, a, b, { size: T(clamp(k * 70, 10, 14)), color: 'rgba(236,226,196,.88)', space: 3.5 }))
+    else if (l.kind === 'industry' && k >= 0.04 && k < 0.5) pin(l.x, l.z, (a, b) => lab.add(76, l.text, a, b, { size: T(clamp(k * 60, 9.5, 12.5)), color: 'rgba(214,170,120,.9)', space: 3 }))
+    else if (l.kind === 'hood' && k >= 0.016 && k < 0.3 && (l.rank < 10 || k >= 0.035)) pin(l.x, l.z, (a, b) => lab.add(40, l.text, a, b, { size: T(clamp(k * 100, 9.5, 12)), color: l.d === 1 ? 'rgba(190,200,215,.8)' : 'rgba(170,200,160,.8)', space: 2.5 }))
+    else if (l.kind === 'shanty' && k >= 0.016 && k < 0.3 && (l.rank < 6 || k >= 0.035)) pin(l.x, l.z, (a, b) => lab.add(38, l.text, a, b, { size: T(clamp(k * 100, 9, 11.5)), color: 'rgba(205,170,120,.85)', space: 2.2 }))
+  }
+  if (k < 0.07) for (const [r, t] of [[3500, 'OUTER CITY'], [8000, 'THE SUBURBS'], [12750, 'SHANTY TOWNS']]) for (const [sx, sz] of [[1, -1], [-1, 1], [1, 1], [-1, -1]]) pin(sx * r * 0.82, sz * r * 0.82, (a, b) => lab.add(34, t, a, b, { size: T(clamp(k * 380, 10, 14)), color: 'rgba(201,164,92,.5)', space: 7, keep: 1 }))
+  if (k < 0.07) for (const [sx, sz] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) pin(sx * 13700, sz * 13700, (a, b) => lab.add(33, 'THE FIELDS', a, b, { size: T(clamp(k * 380, 10, 14)), color: 'rgba(170,190,120,.5)', space: 7, keep: 1 }))
+  const lakes = D.water.filter(w => w.kind !== 'river')
+  if (k >= 0.012) {
+    for (const w of lakes) pin(w.x, w.z, (a, b) => lab.add(85, w.name, a, b, { size: T(11), color: '#9cc8d8', space: 4 }))
+    for (const w of D.water) if (w.line) { const tw = w.name.length * 9 + 24; mapAlong(w.line, xy, W, H, tw, 520, (a, b, rot) => lab.add(85, w.name, a, b, { size: T(11), color: '#9cc8d8', space: 6, rot })) }
+  }
+  if (k >= 0.012) for (const h of D.hwy) if (h.name) { const tw = h.name.length * 9 + 24; mapAlong(h.pts, xy, W, H, tw, 560, (a, b, rot) => lab.add(90, h.name, a, b, { size: T(10), color: '#f0e2b0', space: 3, rot })) }
+  const streetMin = { avenue: 0.2, diag: 0.18, street: 0.5, boulevard: 0.12, plain: 0.3, lane: 0.6 }
+  for (const r of D.roads) {
+    if (!r.name || k < streetMin[r.cls] || !vis(r.box[0] - 20, r.box[1] - 20, r.box[2] + 20, r.box[3] + 20)) continue
+    const nm = r.name.toUpperCase(), size = T(r.cls === 'avenue' || r.cls === 'diag' || r.cls === 'boulevard' ? 9.5 : 8.5), tw = nm.length * (size * 0.72 + 1.2)
+    let cnt = 0
+    mapAlong(r.pts, xy, W, H, tw, 330, (a, b, rot) => { if (cnt++ < 8) lab.add((r.cls === 'diag' ? 46 : r.cls === 'avenue' || r.cls === 'boulevard' ? 42 : 24) + Math.min(10, r.len / 400), nm, a, b, { size, color: r.cls === 'lane' || r.cls === 'street' ? '#bdb496' : '#e4d9b8', space: 1.2, rot, weight: 600 }) })
+  }
+  if (k >= 0.6) for (const b of D.bridges) if (b.name && !b.foot) pin((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2, (a, bb) => lab.add(30, b.name.toUpperCase(), a, bb - T(10), { size: T(8), color: '#d8c588', space: 1 }))
+  if (k < 0.1) pin(0, A, (a, b) => lab.add(60, 'FAUSTLAND', a, b + 14, { size: T(11), color: P.cream, space: 3 }))
+  pin(Gb.x, Gb.z, (a, b) => lab.add(95, 'THE GLOBE', a, b, { size: T(clamp(k * 600, 10, 15)), color: P.brass, space: 4 }))
+  pin(Hd.x, Hd.z + Hd.hz + 90, (a, b) => lab.add(94, 'FAUST', a, b, { size: T(clamp(k * 520, 10, 15)), color: P.cream, space: 4 }))
+  if (k >= 0.1) pin(-48, -48, (a, b) => lab.add(93, 'FAUST PLAZA', a, b, { size: T(10), color: P.brass, space: 2.5 }))
+  pin(-WL * 0.55, WL, (a, b) => lab.add(20, 'THE WORLD\'S EDGE', a, b - 12, { size: T(10), color: P.brassDim, space: 3 }))
+  pin(-WL, WL * 0.45, (a, b) => lab.add(20, 'THE WORLD\'S EDGE', a + 12, b, { size: T(10), color: P.brassDim, space: 3, rot: -Math.PI / 2 }))
+  if (k < 0.12) for (const [r, t] of [[4000, '4 KM'], [8000, '8 KM'], [12000, '12 KM']]) pin(r * 0.7071, -r * 0.7071, (a, b) => lab.add(10, t, a, b, { size: T(9), color: P.brassDim, space: 2 }))
+  lab.run(W, H)
   const c = { xy, k, W, H, D, t: performance.now() }
   for (const L of mapLayers) if (L.static) try { g.save(); L.static(g, c); g.restore() } catch (e) { console.warn('map layer ' + L.name + ':', e?.message || e) }
 }
-
 function mapPaintChrome(g, W, H, sc, compact) {
   g.setTransform(sc, 0, 0, sc, 0, 0); g.clearRect(0, 0, W, H)
   const B = MAP_PAL.brass, m = 6, c = 14
@@ -46088,7 +46461,7 @@ function mapPaintChrome(g, W, H, sc, compact) {
   g.beginPath(); g.arc(0, 0, r * 0.62, 0, 2 * Math.PI); g.globalAlpha = 0.5; g.stroke(); g.globalAlpha = 1
   for (let i = 0; i < 4; i++) { g.save(); g.rotate(i * Math.PI / 2); g.fillStyle = i ? B : MAP_PAL.cream; g.beginPath(); g.moveTo(0, -r - 4); g.lineTo(r * 0.2, -r * 0.1); g.lineTo(0, 0); g.lineTo(-r * 0.2, -r * 0.1); g.closePath(); g.fill(); g.restore() }
   g.restore(); mapText(g, 'N', ox, oy - r - 12, { size: 12, color: MAP_PAL.cream, space: 0 })
-  const rows = [['you', 'you'], ['player', 'players'], ['car', 'his car'], ['rail', 'monorail'], ['air', 'zeppelins']]
+  const rows = [['you', 'you'], ['player', 'players'], ['car', 'his car'], ['rail', 'monorail'], ['air', 'zeppelins'], ['hwy', 'highway'], ['water', 'water'], ['club', 'club'], ['shop', 'shops']].slice(0, compact ? 6 : 9)
   const lx = 22, ly = H - 28 - (compact ? rows.length * 15 + 6 : rows.length * 17 + 8)
   g.fillStyle = 'rgba(8,10,14,.78)'; g.strokeStyle = 'rgba(201,164,92,.5)'; g.lineWidth = 1
   const lh = compact ? 15 : 17; g.beginPath(); g.rect(lx - 8, ly - 8, compact ? 92 : 112, rows.length * lh + 10); g.fill(); g.stroke()
@@ -46098,6 +46471,10 @@ function mapPaintChrome(g, W, H, sc, compact) {
     else if (kind === 'player') { g.fillStyle = '#7fd4b4'; g.beginPath(); g.arc(lx + 6, y, 3.4, 0, 2 * Math.PI); g.fill() }
     else if (kind === 'car') mapCar(g, lx + 6, y, 0.9)
     else if (kind === 'rail') { g.strokeStyle = MAP_LINES.L[1]; g.lineWidth = 2.2; g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke() }
+    else if (kind === 'hwy') { g.strokeStyle = MAP_PAL.road.hwy; g.lineWidth = 3; g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke() }
+    else if (kind === 'water') { g.fillStyle = MAP_PAL.water; g.strokeStyle = MAP_PAL.waterEdge; g.lineWidth = 1; g.fillRect(lx - 1, y - 4, 14, 8); g.strokeRect(lx - 1, y - 4, 14, 8) }
+    else if (kind === 'club') mapIcon(g, 'club', lx + 6, y, 5)
+    else if (kind === 'shop') mapIcon(g, 'liquor', lx + 6, y, 5)
     else { g.strokeStyle = MAP_PAL.air; g.lineWidth = 1.6; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke(); g.setLineDash([]) }
     mapText(g, text.toUpperCase(), lx + 22, y, { size: 9, align: 'left', space: 1.2, color: MAP_PAL.dim })
   })
@@ -46134,7 +46511,7 @@ function mapFrame(now) {
   const C = mapCache, margin = Math.round(0.22 * Math.max(W, H)), CW = W + 2 * margin, CH = H + 2 * margin
   const off = !C || Math.abs(C.k - V.k) > 1e-9 || Math.abs(C.cx - V.cx) * V.k > 0.5 || Math.abs(C.cz - V.cz) * V.k > 0.5 || C.dirty
   if (off && (!C || C.dirty || now - mapPaintAt >= MAP_MS.repaint)) {
-    const sc = Math.min(dpr, Math.sqrt(4.2e6 / (CW * CH))) || 1
+    const sc = Math.min(dpr, Math.sqrt((IS_TOUCH ? 1.7e6 : 4.2e6) / (CW * CH))) || 1
     const cc = mapCacheCv ||= document.createElement('canvas')
     if (cc.width !== Math.round(CW * sc) || cc.height !== Math.round(CH * sc)) { cc.width = Math.round(CW * sc); cc.height = Math.round(CH * sc) }
     mapPaint(cc.getContext('2d'), mapData, V, CW, CH, sc)
@@ -46208,9 +46585,14 @@ function mapGoMe() {
 }
 function mapGoCity() { mapView.cx = 0; mapView.cz = 0; mapView.k = Math.min(mapSize.W || innerWidth, mapSize.H || innerHeight) / (2 * (mapData?.A || 960)) * 0.9; mapClampView() }
 function mapGoWorld() { mapView.cx = 0; mapView.cz = 0; mapView.k = 0; mapClampView() }
+function mapRelease() {
+  if (mapOpen) return
+  for (const c of [mapCacheCv, mapChromeCv]) if (c) { c.width = 0; c.height = 0 }
+  mapCache = null; mapChrome = null; mapCtx = null; mapCacheCv = null; mapChromeCv = null
+}
 function openMap() {
   if (mapOpen || phase !== 'playing' || serving || !LV.faust || chatOpen || menuUp()) return
-  mapEnsure()
+  mapEnsure(); clearTimeout(mapFreeTimer)
   mapOpen = true; letGo()
   mapMe = selfChar()
   mapSize = { W: innerWidth, H: innerHeight, dpr: 1 }; mapGoMe()
@@ -46220,6 +46602,7 @@ function openMap() {
 function closeMap() {
   if (!mapOpen) return
   mapOpen = false; show('map'); mapHover = null; mapPtr.clear()
+  clearTimeout(mapFreeTimer); mapFreeTimer = setTimeout(mapRelease, MAP_MS.free)
   if (phase === 'playing' && !chatOpen && !pauseOpen && !settingsOpen && !modalOpen) lockPointer()
 }
 const toggleMap = () => mapOpen ? closeMap() : openMap()
@@ -46277,7 +46660,8 @@ function initMap() {
     return r
   }
 }
-GAME.map = { layer: (name, spec) => { const i = mapLayers.findIndex(L => L.name === name); if (i >= 0) mapLayers.splice(i, 1); mapLayers.push({ name, ...spec }); if (mapCache) mapCache.dirty = true },
+GAME.map = { layer: (name, spec) => { if (MAP_NATIVE.has(name)) return; const i = mapLayers.findIndex(L => L.name === name); if (i >= 0) mapLayers.splice(i, 1); mapLayers.push({ name, ...spec }); if (mapCache) mapCache.dirty = true },
+  place: (id, spec) => { if (spec) mapPlaces.set(id, spec); else mapPlaces.delete(id); if (mapCache) mapCache.dirty = true },
   dirty: () => { if (mapCache) mapCache.dirty = true }, open: openMap, close: closeMap, toggle: toggleMap,
   get isOpen() { return mapOpen }, get data() { return mapData }, view: mapView, paint: mapPaint, build: mapBuildSteps }
 
