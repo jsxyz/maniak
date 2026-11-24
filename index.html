@@ -34286,12 +34286,12 @@ function partsHoldOf(id, p) {
   return !H ? null : rig && H.grip !== 'overhead' ? 'grip' : 'lift'
 }
 const partsHoldsDrawn = new Map()
-function partsDrawPrep(me, others) {
+function partsDrawPrep(me, others, drawn) {
   partsHoldsDrawn.clear()
   const all = [me && { ...me, id: myId, grab: isHost ? partsPack(me) : me.grabBy !== undefined ? me.grabBy + 1 : me.puntedNet ? -1 : 0 }, ...others].filter(Boolean)
   for (const p of all) { const a = avatars.get(p.id); if (a) { a.partsId = p.id; a.partsAct = p.id === myId ? partsAct(me) : p.act || 0; a.goreMask = p.gm | 0 } }
   for (const p of all) if ((p.grab | 0) > 0) partsHoldsDrawn.set(p.grab - 1, { R: 0.4, grip: 'scruff', who: p.id })
-  for (const o of objs) { const by = o.heldBy ?? objHeld.get(o.id); if (by !== undefined && !o.K.carry) partsHoldsDrawn.set(by, { R: o.R || objR(o.K), grip: o.K.cover && partsActOf(by)[0] === 6 ? 'chest' : partsGrip(partsKindOf(o), o.R || objR(o.K)), obj: o }) }
+  for (const o of objs) { const by = o.heldBy ?? objHeld.get(o.id); if (by !== undefined && !o.K.carry) partsHoldsDrawn.set(by, { R: o.R || objR(o.K), grip: o.K.cover && partsActOf(by)[0] === 6 ? 'chest' : partsGrip(partsKindOf(o), o.R || objR(o.K)), obj: o, at: drawn?.get(o.id) }) }
   for (const r of partsGrabbed.values()) { const T = slNow(); if (r.t <= T && T - r.t < STREET.backS * 1000) { const ag = partsAgent(r.id)
     partsHoldsDrawn.set(r.by, { R: r.what ? 0.45 : ag?.kind === SL_K.stray ? 0.3 : 0.32, grip: r.what || ag?.kind === SL_K.stray ? 'chest' : 'scruff', street: r }) } }
 }
@@ -34322,9 +34322,65 @@ function partsDraw(me, others, t, dt, meD) {
   }
 }
 const PARTS_CLIPS = { grab: 'maniak_grab', hold: 'maniak_hold', scruff: 'maniak_hold_scruff', over: 'maniak_hold_over', pull: 'maniak_pull', throw: 'maniak_throw', punt: 'maniak_punt', slam: 'maniak_slam' }
+const ARM_CARRY = { ease: 0.35, out: 0.12, bend: 0.96, wrist: 0.07, edge: 0.05, half: [0.2, 0.34], k: 0.45 }
+const armV = Array.from({ length: 11 }, () => new THREE.Vector3()), armQ = Array.from({ length: 6 }, () => new THREE.Quaternion())
+function armUnder(K) {
+  if (K.armUnder === undefined) { const H = hullOf(K); K.armUnder = H ? -Math.min(...H.pts.map(p => p[1])) : K.r || K.half?.[1] || 0 }
+  return K.armUnder
+}
+function armReach(R, n0, n1, n2, goal, pole, w) {
+  const upper = R.bones.get(n0), lower = R.bones.get(n1), end = R.bones.get(n2)
+  if (!upper || !lower || !end) return
+  const [p0, p1, p2, t, dir, hinge, from, to] = armV, [parentQ, delta, tmpQ, wasU, wasL] = armQ
+  wasU.copy(upper.quaternion); wasL.copy(lower.quaternion)
+  const rotate = (b, u, v) => {
+    b.parent.getWorldQuaternion(parentQ)
+    delta.setFromUnitVectors(u.normalize(), v.normalize())
+    tmpQ.copy(parentQ).invert().multiply(delta).multiply(parentQ).multiply(b.quaternion)
+    b.quaternion.copy(tmpQ)
+  }
+  upper.getWorldPosition(p0); lower.getWorldPosition(p1); end.getWorldPosition(p2)
+  const u = p0.distanceTo(p1), f = p1.distanceTo(p2)
+  dir.subVectors(goal, p0)
+  const d = clamp(dir.length(), Math.abs(u - f) + 0.001, (u + f) * ARM_CARRY.bend); dir.normalize()
+  t.copy(p0).addScaledVector(dir, d)
+  const along = (u * u - f * f + d * d) / (2 * d)
+  hinge.subVectors(pole, p0); hinge.addScaledVector(dir, -hinge.dot(dir)).normalize()
+  hinge.multiplyScalar(Math.sqrt(Math.max(0, u * u - along * along))).addScaledVector(dir, along).add(p0)
+  rotate(upper, from.subVectors(p1, p0), to.subVectors(hinge, p0))
+  lower.getWorldPosition(p1); end.getWorldPosition(p2)
+  rotate(lower, from.subVectors(p2, p1), to.subVectors(t, p1))
+  if (w < 1) { tmpQ.copy(upper.quaternion); upper.quaternion.copy(wasU).slerp(tmpQ, w); tmpQ.copy(lower.quaternion); lower.quaternion.copy(wasL).slerp(tmpQ, w) }
+}
+function armCarry(a, R, hold, w) {
+  const at = hold.at, K = at.K, m = a.mesh, ry = m.rotation.y, fx = -Math.sin(ry), fz = -Math.cos(ry), rx = Math.cos(ry), rz = -Math.sin(ry)
+  const [, , , , , , , , goal, pole, s0] = armV
+  m.updateMatrixWorld(true)
+  const sh = [R.bones.get('upperarm_l'), R.bones.get('upperarm_r')]
+  if (!sh[0] || !sh[1]) return
+  let fe = hold.R, le = hold.R
+  if (K.half && at.q) {
+    const q = armQ[5].set(at.q[0], at.q[1], at.q[2], at.q[3]); fe = le = 0
+    K.half.forEach((hv, i) => { s0.set(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0).applyQuaternion(q); fe += Math.abs(s0.x * fx + s0.z * fz) * hv; le += Math.abs(s0.x * rx + s0.z * rz) * hv })
+  }
+  const half = Math.min(clamp(le * ARM_CARRY.k, ARM_CARRY.half[0], ARM_CARRY.half[1]), Math.max(0.06, le - 0.03))
+  sh[0].getWorldPosition(s0); const mx = s0.x, mz = s0.z; sh[1].getWorldPosition(s0)
+  const cx = (mx + s0.x) / 2, cz = (mz + s0.z) / 2, off = (at.x - cx) * fx + (at.z - cz) * fz, back = clamp(off, 0, Math.max(0, fe - ARM_CARRY.edge))
+  const y = at.y - armUnder(K) - ARM_CARRY.wrist
+  ;[['l', -1], ['r', 1]].forEach(([s, sg], i) => {
+    goal.set(at.x - fx * back + rx * half * sg, y, at.z - fz * back + rz * half * sg)
+    sh[i].getWorldPosition(s0)
+    pole.set(s0.x + rx * sg * 0.45 - fx * 0.25, s0.y - 0.1, s0.z + rz * sg * 0.45 - fz * 0.25)
+    armReach(R, 'upperarm_' + s, 'lowerarm_' + s, 'hand_' + s, goal, pole, w)
+  })
+}
 function partsRig(a, R, M, t) {
   if (bodyOf(a.spec.model) !== 'maniak') return
   const act = a.partsAct || 0, code = Math.floor(act / 4), age = act - code * 4, hold = partsHoldsDrawn.get(a.partsId)
+  const arms = !!hold?.at && hold.grip === 'overhead' && !hold.at.K.cover && !hold.at.K.limb && R.lod < 2, dt = Math.min(0.1, Math.max(0, t - (R.carryT ?? t)) / 1000)
+  R.carryT = t
+  R.carryW = clamp((R.carryW || 0) + (arms && !code ? dt / ARM_CARRY.ease : -dt / ARM_CARRY.out), 0, 1)
+  if (arms && R.carryW > 0) { const e = R.carryW; armCarry(a, R, hold, e * e * (3 - 2 * e)) }
   if (hold && !code) {
     const clip = rigClip(M, hold.grip === 'scruff' ? PARTS_CLIPS.scruff : hold.grip === 'overhead' ? PARTS_CLIPS.over : PARTS_CLIPS.hold)
     if (clip) rigPose(R, clip, (t / 1000) % clip.duration, 1, RIG_UPPER)
@@ -44481,7 +44537,7 @@ function draw(dt, t) {
   background.sec('others')
   const obl = easeHolds(objectsDrawn(others), t), holdOf = (id, p) => partsHoldOf(id, p) || (sits.has(id) ? 'sit' : lifts.has(id) ? 'lift' : p.web > 0 ? 'swing' : (diving(p) ? 'dive' : flightOf(p, avatars.get(id)?.hold)))
   lifts.clear(); sits.clear(); carries.clear()
-  partsDrawPrep(me, others)
+  partsDrawPrep(me, others, new Map(obl.map(o => [o.id, o])))
   for (const o of obl) (o.K.carry ? carries : lifts).add(o.heldBy ?? objHeld.get(o.id) ?? o.liftBy)
   for (const [s, p] of objSeats) sits.set(p, [s >> 3, s & 7])
   if (isHost) for (const o of objs) o.riders?.forEach((p, i) => { if (p !== undefined) sits.set(p, [o.id, i]) })
