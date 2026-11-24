@@ -771,7 +771,6 @@ const TEXT = {
   killBaby: '§f{killer} §7dropped §f{victim} §8({weapon})',
   runOver: 'was run over by a {vehicle}',
   blast: 'was caught in a {vehicle}\'s blast',
-  pramBlast: 'was caught in a {pram}\'s blast',
   death: '§f{victim} §7{how}',
   enemyTag: 'enemy',
   enemyArrives: '§f{name} §7{line}',
@@ -34047,14 +34046,12 @@ function partsAfter(all, dt, credit) {
   for (let i = partsFlights.length - 1; i >= 0; i--) {
     const F = partsFlights[i], r = F.rec, tau = (T - r.t) / 1000, by = players.get(F.by)
     if (tau > r.tl / 1000 + 0.05) {
-      if (r.what && F.how !== 'drop') GAME.streetLife?.pramBoom?.(r.id, { x: r.x1, z: r.z1, by: F.by })
       partsEmit('land', r)
       partsFlights.splice(i, 1); continue
     }
     if (F.wall && tau >= r.tw / 1000) {
       const [x, y, z, nx, nz] = F.wall; F.wall = null
       try { GAME.destruction?.breakAt?.(x, y, z, nx, nz, 2) } catch (e) {}
-      if (r.what && F.how !== 'drop' && GAME.streetLife?.pramBoom?.(r.id, { x, z, by: F.by })) { partsFlights.splice(i, 1); continue }
     }
     const p = partsFlyAt(r, Math.min(tau, r.tw / 1000), partsTmp, partsCentre(F.ag, r.what)), sp = Math.hypot(r.vx, r.vz)
     if (!by || sp < GRAB.fly.min || tau > r.tw / 1000) continue
@@ -34064,7 +34061,6 @@ function partsAfter(all, dt, credit) {
       F.struck.add(v.id)
       strike(by, v, { ...FG, dmg: FG.dmg * clamp(sp / 25, 0.5, 1.3) }, r.vx / sp, 0.3, r.vz / sp)
       if (downed(v) && credit) credit(by.id, by)(v, FG)
-      if (r.what && GAME.streetLife?.pramBoom?.(r.id, { x: p.x, z: p.z, by: F.by })) F.boomed = true
     }
     if (p.y < 2.6) slAround(p.x, p.z, 2, T, (ag, q) => {
       const pq = ag.id !== r.id && slPramOnly(ag, q, T)
@@ -37173,7 +37169,6 @@ function slBlastStreet(x, z, B, by, T) {
   slBirdsNear(x, z, B.radius, T, (f, i, q) => slBirdKill(f, i, by, (q.x - x) || 0.01, q.z - z, T))
   slPanic(x, z, T, STREET.scareR * 2)
 }
-const slPramBoom = () => VEHICLES.find(V => V.name === 'Car')?.boom || { radius: 7, dmg: 120, knock: 16 }
 const slBlastLog = []
 function slBlastNote(what, x, z, B, by, caught, prams, skipped, T, hitP = []) {
   const kind = ag => Object.keys(SL_K).find(k => SL_K[k] === ag.kind) ?? null
@@ -37931,7 +37926,7 @@ function slSpawnTest(kind, x, z, yaw, y = 0, dead = false, down = false) {
   return ag
 }
 function slClearTest(e) { const i = e.cell.agents.indexOf(e.ag); if (i >= 0) e.cell.agents.splice(i, 1)
-  const B = slBabyOf(slState); B.hurt.delete(e.ag.id); B.mad.delete(e.ag.id); B.live.delete(e.ag.id) }
+  const B = slBabyOf(slState); B.mad.delete(e.ag.id); B.live.delete(e.ag.id) }
 function slClearTests() { if (slState?.tests) for (const e of slState.tests.splice(0)) slClearTest(e) }
 function slSpawnNearPram(x, z, d) {
   const st = slState; if (!isHost || !st || ![x, z, d].every(Number.isFinite) || d < 0 || d > 30) return null
@@ -40302,11 +40297,10 @@ const SL_BABY = {
   seat: -0.03, hip: 0.86, muzzle: [0.23, 0.28, -0.07],
   lod: [9, 20], draw: 40, pool: 8, refreshMs: 20000,
 }
-const SL_PRAM_HIT = { hp: 24, fuse: 2.5, flame: 0.25, ring: 3.5 }
 const slHit = { part: null, dmg: Infinity }
 const SL_BABY_ID = -45, SL_BOOM_IDS = 16
 const SL_BABY_ROW = { name: SL_BABY.name, side: 'freaks' }
-const slBabyOf = st => st.bb ||= { live: new Map(), recs: new Map(), pending: [], booms: 0, mad: new Map(), hurt: new Map() }
+const slBabyOf = st => st.bb ||= { live: new Map(), recs: new Map(), mad: new Map() }
 function slBabyRec(r, a, local) {
   const st = slState, B = slBabyOf(st)
   if (r.kind === 6) r.tgt = a[5] | 0
@@ -40348,63 +40342,17 @@ function slPramAt(p, o) {
 
 function slPramHit(ag, p, by, T) {
   if (!isHost || !slState || slPramGone(ag, T)) return
-  const B = slBabyOf(slState)
-  if (by && players.get(by.id) === by && !by.bot) (B.mad.get(ag.id) || B.mad.set(ag.id, new Set()).get(ag.id)).add(by.id)
-  if (slHit.part === 'mother') return
-  const h = B.hurt.get(ag.id) || { ag, hp: SL_PRAM_HIT.hp, fuse: T + SL_PRAM_HIT.fuse * 1000, flame: 0, by: null }
-  h.hp -= slHit.dmg; if (by && players.get(by.id) === by) h.by = by
-  if (h.hp <= 0) { const q = slPramAt(p, {}); return slPramBlow(ag.id, q.x, q.z, h.by, T) }
-  if (!B.hurt.has(ag.id)) { B.hurt.set(ag.id, h); const q = slPramAt(p, {}); sfxPlay('burning', { x: q.x, y: 0.6, z: q.z }, 'world', 1, 0, SL_PRAM_HIT.fuse, 'Car') }
+  if (by && players.get(by.id) === by && !by.bot) { const B = slBabyOf(slState); (B.mad.get(ag.id) || B.mad.set(ag.id, new Set()).get(ag.id)).add(by.id) }
 }
 function slPramOnly(ag, p, T) { return ag.kind === SL_K.pram && p.down && !p.hidden && !slPramGone(ag, T) ? slPramAt(p, {}) : null }
 function slPramReport(ag, T) {
-  const gone = !!slPramGone(ag, T), h = isHost && !gone ? slBabyOf(slState).hurt.get(ag.id) : null
-  return { baby: gone ? 'dead' : 'alive', blown: gone, fuse: h ? +Math.max(0, (h.fuse - T) / 1000).toFixed(2) : null,
-    pramHp: isHost ? (gone ? 0 : +(h ? h.hp : SL_PRAM_HIT.hp).toFixed(1)) : null, mother: slDeathOf(ag.id, Math.round(T)) ? 'dead' : 'alive', blastR: slPramBoom().radius }
+  const gone = !!slPramGone(ag, T)
+  return { baby: gone ? 'dead' : 'alive', blown: gone, mother: slDeathOf(ag.id, Math.round(T)) ? 'dead' : 'alive' }
 }
 function slBlastHurt(ag, p, by, T) {
   if (slLying(p, T) && !slDeathOf(ag.id, Math.round(T)) && by && !by.bot && ag.kind !== SL_K.stray) heatCrime(by, seatOf(by) ? 'ram' : 'civilian', p.x, p.z, 1, false, ag)
 }
 function slPramStrike(ag, p, by, T, dmg) { slHit.part = 'pram'; slHit.dmg = dmg ?? Infinity; try { slPramHit(ag, p, by, T) } finally { slHit.part = null; slHit.dmg = Infinity } }
-function slPramBlow(id, x, z, by, T) {
-  slAddRec([7, id, Math.round(T), slR2(x), slR2(z)])
-  if (by) { achEvent(by.id, 'pram'); achEvent(by.id, 'kill', { victim: 'Baby', group: 'street', age: 'baby', armed: false }) }
-  slBabyOf(slState).pending.push({ x, z, by: by && players.get(by.id) === by ? by : null, T })
-  slState.bb.live.delete(id); slState.bb.hurt.delete(id); slState.bb.mad.delete(id)
-}
-function slPramBlast(e, credit) {
-  const B = slPramBoom(), at = [e.x, 0.55, e.z], by = e.by, T = e.T
-  const hitP = []
-  for (const c of players.values()) {
-    const dx = c.x - at[0], dz = c.z - at[2], d = Math.hypot(dx, c.y - at[1], dz), k = 1 - d / B.radius
-    const was = hookHitOn && [c.hp, c.mark, c.markT]
-    if (c.dead > 0 || k <= 0 || seatOf(c)) continue
-    const dm = stat(c, 'take', B.dmg * k); c.hp -= dm; hitP.push([c, d, dm])
-    if (was && !hookHit(by, c, 'Pram', was)) continue
-    knockChar(c, dx / (d || 1), 0.5, dz / (d || 1), B.knock * k)
-    if (downed(c)) by && credit ? credit(by.id, by)(c, { name: 'Pram' }) : fell(c, gameText('pramBlast', { pram: enemyName('Pram').toLowerCase() }), 'Pram')
-  }
-  for (const o of objs) if (o.V) {
-    const d = Math.hypot(o.x - at[0], o.y - at[1], o.z - at[2])
-    if (d < B.radius) { o.hp -= B.dmg * (1 - d / B.radius); if (by) o.by = by.id }
-  }
-  const caught = []
-  const prams = []
-  const skipped = []
-  slAround(at[0], at[2], B.radius, T, (ag, p) => { const d = Math.hypot(p.x - at[0], p.z - at[2]); if (d < B.radius && (!p.down || slLying(p, T))) caught.push([ag, { ...p }, d]); else { if (d < B.radius) skipped.push([ag, p.dead ? 'dead' : 'held or flying', d]); const q = slPramOnly(ag, p, T), e = q && Math.hypot(q.x - at[0], q.z - at[2]); if (q && e < B.radius) prams.push([ag, { ...p }, e]) } })
-  for (const [ag, p, d] of prams) slPramStrike(ag, p, by, T, B.dmg * (1 - d / B.radius))
-  for (const [ag, p, d] of caught) {
-    slHit.part = ag.kind === SL_K.pram ? 'pram' : null; slHit.dmg = B.dmg * (1 - d / B.radius)
-    try { slKnock(ag, p, (p.x - at[0]) || 0.01, p.z - at[2], 1 + (1 - d / B.radius) * B.knock * 0.4, by, T, undefined, undefined, undefined, slHit.dmg, -1, 5) } finally { slHit.part = null; slHit.dmg = Infinity }
-    slBlastHurt(ag, p, by, T)
-  }
-  slBlastNote('pram', at[0], at[2], B, by, caught, prams, skipped, T, hitP)
-  slBirdsNear(at[0], at[2], B.radius, T, (f, i, q) => slBirdKill(f, i, by, q.x - at[0] || 0.01, q.z - at[2], T))
-  slPanic(at[0], at[2], T)
-  const seed = Math.random() * 2 ** 31 | 0, B_ = slBabyOf(slState)
-  tracers.push([r2(at[0]), r2(at[1]), r2(at[2]), SL_PRAM_HIT.ring, 0, -1, -1, 6, by?.id ?? -1, 0, OBJ_MAX + (B_.booms++ % SL_BOOM_IDS), seed])
-  sfxPlay('boom', { x: at[0], y: at[1], z: at[2] }, 'world', 1, 0, 0)
-}
 function slBabyKill(v) {
   if (resultsLeft > 0) return
   achEvent(v.id, 'killed', { by: 'baby' })
@@ -40465,13 +40413,6 @@ function slBabyThink(bb, q, men, dt, T) {
 function slBabyHost(t) {
   const st = slState; if (!st || !isHost || !LV.faust) return
   const B = slBabyOf(st), T = tickAt || now(), dt0 = t.dt || 1 / 60
-  for (const [id, h] of B.hurt) {
-    if (slPramGone(h.ag, T)) { B.hurt.delete(id); continue }
-    const q = slPramAt(slPose(h.ag, T, slTmpPose), {})
-    if (T >= h.fuse) { slPramBlow(id, q.x, q.z, h.by, T); continue }
-    if ((h.flame -= dt0) <= 0) { h.flame = SL_PRAM_HIT.flame; tracers.push([r2(q.x), 0.3, r2(q.z), r2(q.x), 1.8, r2(q.z), -1, 5, h.by?.id ?? -1, 0, OBJ_MAX + SL_BOOM_IDS, -1]) }
-  }
-  for (const e of B.pending.splice(0)) slPramBlast(e, t.credit)
   if ((B.tick = (B.tick || 0) + 1) % 3) return
   const dt = dt0 * 3, men = [...players.values()].filter(c => !c.bot && !(c.dead > 0)), seen = new Map()
   for (const c of men) slAround(c.x, c.z, SL_BABY.range + 6, T, (ag, p) => {
@@ -40578,10 +40519,6 @@ function slBabyFrame(dt) {
   slFrameSafe = (t, dt, ...more) => { fr(t, dt, ...more); try { slBabyFrame(Math.min(0.1, dt || 0.016)) } catch (e) { frameFailed('street', e) } }
   Object.assign(GAME.streetLife, {
     babies: () => slState?.bb ? [...slState.bb.live.values()].map(b => ({ id: b.id, tgt: b.tgt, yaw: +b.yaw.toFixed(3), pitch: +b.pitch.toFixed(3), shots: b.shots || 0, x: b.x, z: b.z })) : [],
-    pramBoom(id, { x, z, by } = {}) { if (!isHost || !slState) return false; const T = tickAt || now(); let done = false
-      if (slPramGone({ id }, T)) return false
-      if (Number.isFinite(x) && Number.isFinite(z)) { slPramBlow(id, x, z, by, T); return true }
-      for (const c of players.values()) slAround(c.x, c.z, 200, T, (ag, p) => { if (ag.id === id && !done) { slKnock(ag, p, 1, 0, 3, by || null, T); done = true } }); return done },
     gone: (id, T) => !!(slState && slPramGone({ id }, T ?? slNow())),
     babyDraw: () => slBabyKit ? slBabyKit.pool.filter(e => e.id !== null).map(e => ({ id: e.id, yaw: +e.yaw.toFixed(3), pitch: +e.pitch.toFixed(3), w: +e.w.toFixed(2), lod: e.lods.findIndex(m => m?.visible), x: +e.o.position.x.toFixed(2), y: +e.o.position.y.toFixed(3), z: +e.o.position.z.toFixed(2) })) : null,
   })
