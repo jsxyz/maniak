@@ -12458,6 +12458,12 @@ FAUSTLAND_API.water.waterAt = FAUSTLAND_API.water.at
 let frameJsAt = 0
 let gameSpeed = 1
 const realNow = /\[native code\]/.test(Function.prototype.toString.call(performance.now)) ? performance.now.bind(performance) : () => Date.now()
+const gpuView = { who: null }
+const gpuLabel = o => {
+  if (!o) return '-'
+  const g = o.geometry, m = Array.isArray(o.material) ? o.material[0] : o.material, im = m?.map?.image
+  return (o.name || o.type) + ':' + (o.parent?.name || o.parent?.type || '') + ':v' + (g?.attributes?.position?.count ?? 0) + ':' + (m?.name || m?.type || '') + (im ? ':' + (im.width || 0) + 'x' + (im.height || 0) : '')
+}
 const background = (() => {
   const jobs = new Map(), stats = { slices: 0, steps: 0, maxSliceMs: 0, maxStepMs: 0, completed: 0, cancelled: 0, last: '', long: [], late: [], lateCount: 0 }
   const frameLog = []
@@ -12560,6 +12566,10 @@ const background = (() => {
       const t = performance.now()
       const ms = lastFrameT ? Math.round(t - lastFrameT) : 0
       gpuOpen.upKB = Math.round(gpuOpen.upKB)
+      if (gpuOpen.objs) {
+        if (gpuOpen.upKB > 4096 || gpuOpen.uploads > 200) gpuEvent({ kind: 'bigframe', i, upKB: gpuOpen.upKB, uploads: gpuOpen.uploads, who: [...gpuOpen.objs].sort((x, y) => y[1][1] - x[1][1]).slice(0, 12).map(([o, [n, kb]]) => [gpuLabel(o), n, Math.round(kb)]) })
+        delete gpuOpen.objs
+      }
       const sim = [...simMap].filter(([, v]) => v >= 0.3).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + (v < 10 ? v.toFixed(1) : Math.round(v))); simMap.clear()
       const js = frameJsAt ? +(realNow() - frameJsAt).toFixed(1) : 0, bg = +(open.bgMs || 0).toFixed(1)
       frameLog.push({ i, t: Math.round(t), ms, speed: gameSpeed, js, bg, gap: +Math.max(0, ms - js - bg).toFixed(1), draw: Math.round(draw), phase, q, ticks: simTicks, sim, parts: open.parts, steps: open.steps, programs: open.programs, gpu: gpuOpen }); simTicks = 0
@@ -12591,7 +12601,8 @@ const background = (() => {
     uploadSlot(bytes) { const kb = bytes / 1024; if (planKB && planKB + kb > UPLOAD_KB && !paceOff()) return false; planKB += kb; return true },
     gpu(kind, n = 1, what = '') {
       const job = current ? current.key + (current.phase ? '/' + current.phase : '') : 'draw'
-      if (kind === 'up') { gpuOpen.upKB += n / 1024; gpuOpen.uploads = (gpuOpen.uploads || 0) + 1; if (current) gpuOpen.bgKB = (gpuOpen.bgKB || 0) + n / 1024; if (n >= 1048576) gpuEvent({ kind: 'upload', MB: +(n / 1048576).toFixed(1), what, job }) }
+      if (kind === 'up') { gpuOpen.upKB += n / 1024; gpuOpen.uploads = (gpuOpen.uploads || 0) + 1; if (current) gpuOpen.bgKB = (gpuOpen.bgKB || 0) + n / 1024; { const w = gpuView.who, e = (gpuOpen.objs ||= new Map()).get(w) || (gpuOpen.objs.set(w, [0, 0]), gpuOpen.objs.get(w)); e[0]++; e[1] += n / 1024 }
+        if (n >= 262144) gpuEvent({ kind: 'upload', KB: Math.round(n / 1024), what, job, who: gpuLabel(gpuView.who), stack: (new Error().stack || '').split('\n').slice(2, 9).map(s => s.trim().split(' ')[1] || s.trim()).join('<') }) }
       else if (kind === 'link') { gpuOpen.links++; if (current) gpuOpen.bgLinks = (gpuOpen.bgLinks || 0) + 1; gpuEvent({ kind: 'link', job }) }
       else if (kind === 'shader') gpuOpen.shaders++
       else if (kind === 'capture') { gpuOpen.caps = (gpuOpen.caps || 0) + 1; gpuEvent({ kind: 'capture', what, job }) }
@@ -15338,19 +15349,23 @@ function updateCamera(me, inp, cam, firstPerson) {
 }
 
 function reticleAt(me, r, bodies, objects, reach) {
+  const ta0 = realNow()
   const nx = r.x + r.dx * r.near, ny = r.y + r.dy * r.near, nz = r.z + r.dz * r.near
   let best = r.near + staticRay(nx, ny, nz, r.dx, r.dy, r.dz, reach)
   const into = staticRay(r.x, r.y, r.z, r.dx, r.dy, r.dz, r.near)
   if (into < r.near && staticRay(nx, ny, nz, -r.dx, -r.dy, -r.dz, r.near) > r.near - into + 1e-3) best = into
+  const ta1 = realNow(); background.simAdd('aim static', ta1 - ta0)
   for (const c of bodies) {
     if (c === me || c.dead > 0 || c.prot > 0) continue
     const t = rayCapsule(r.x, r.y, r.z, r.dx, r.dy, r.dz, c)
     if (t > r.near && t < best) best = t
   }
+  const ta2 = realNow(); background.simAdd('aim bodies', ta2 - ta1)
   for (const o of objects) {
     const t = rayObject(r.x, r.y, r.z, r.dx, r.dy, r.dz, o)
     if (t < best && (t > r.near || (t > 0 && rayObject(nx, ny, nz, r.dx, r.dy, r.dz, o) === 0))) best = t
   }
+  background.simAdd('aim objs', realNow() - ta2)
   return best
 }
 function aimAngles(c, reach = CAM.far) {
@@ -22536,6 +22551,7 @@ function buildWorld() {
   skipStill(worldGroup); skipStill(objGroup)
   scene.onBeforeRender = (r, s, cam) => { cullView(cam); inkPrepare(s) }
   const render = renderer.render.bind(renderer)
+  if (renderer.renderBufferDirect) { const rbd = renderer.renderBufferDirect; renderer.renderBufferDirect = function (c, s, g, m, o, gr) { gpuView.who = o; return rbd.call(this, c, s, g, m, o, gr) } }
   renderer.render = (s, cam) => {
     if (renderer.getContext().isContextLost()) { graphicsLost(); return }
     if (graphics.state === 'lost') return
@@ -44854,10 +44870,12 @@ function draw(dt, t) {
   input.d = 0; input.view = null
   const view = cam.ray || cam.seatRay || firstPerson && !seatOf(me) && (([dx, dy, dz]) => ({ x: meD.x, y: eyeOf(meD), z: meD.z, dx, dy, dz, near: 0 }))(aimDir(input.yaw, input.pitch))
   if (view && !(me.dead > 0)) {
+    const tv0 = realNow()
     shotSkip = sits.get(myId)?.[0] ?? null
     const bodies = isHost ? [...players.values()].map(c => (P => P ? { ...c, x: P[0], y: P[1], z: P[2] } : c)(c === me ? null : drawnPose(c)))
       : others.filter(o => shotSkip === null || sits.get(o.id)?.[0] !== shotSkip).map(o => { const C = GAME.participant(o.id, o.cid)
                           return { x: o.x, y: o.y, z: o.z, r: C.r, h: C.h, dead: o.dead, prot: o.prot } })
+    background.simAdd('aim prep', realNow() - tv0)
     const d = reticleAt(me, view, bodies, obl, CAM.far)
     if (cam.ray) input.d = d
     shotSkip = null
