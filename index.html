@@ -2463,10 +2463,10 @@ function cityChunk(seed, S, ci, cj, B = [], scenery = [], spot = [[], [], [], []
 
 const FAUST = { cell: 96, lid: 3800, world: 16000, navTop: 1200, detail: 2, physics: 1, retain: 3, calls: 220, triangles: 180000,
   airBand: [540, 840], cruiseY: 740, skyFar: 40000, globe: { x: 0, y: 2140, z: -3000, radius: 1400 },
-  head: { position: [0, 1560, -1938], size: [1296, 1472, 589],
-    model: { file: 'faust_head.33fc019b.glb', position: [-3.8, 1617.9, -1911.2], pitch: 0.15, scale: 1.8, lod: [0, 1000], stop: { centre: [2.1, -34.0, -9.9], radii: [331.2, 412.6, 360.8] } },
+  head: { position: [0, 2550, -1677], size: [1080, 1227, 491],
+    model: { file: 'faust_head.33fc019b.glb', position: [-3.2, 2599.3, -1657.1], pitch: 0.1, scale: 1.5, lod: [0, 1000], stop: { centre: [2.1, -34.0, -9.9], radii: [331.2, 412.6, 360.8] } },
     floods: [{ color: 0xb4ccff, intensity: 1.9, from: [500, -1500, 1300] }, { color: 0xb4ccff, intensity: 0.5, from: [0, -1400, 2400] }],
-    neck: { bins: 96, steps: 16, depth: 0.6, bend: 0.25, flare: 0.3, shade: 0.85 } } }
+    neck: { bins: 128, steps: 24, cut: -358, start: -345, ellipse: [0, 30, 135, 150, 200], half: [205, 230], lift: -60, shade: 0.8, top: 0.9, fade: 0.5, melt: 0.9999 } } }
 const faustBox = (cx, cy, cz, ex, ey, ez, more) => ({ cx, cy, cz, ex, ey, ez, ...more })
 const faustKey = (x, z) => x + ' ' + z
 const faustMix = (seed, x, z) => cityHash((seed >>> 0) ^ Math.imul(x, 73856093) ^ Math.imul(z, 19349663))
@@ -10307,12 +10307,32 @@ function faustRoofBeams() {
     lens.position.copy(beam.position); F.skyScene.add(lens)
   }
 }
+const faustTurnVec = new THREE.Vector3()
+function faustTurnSky(F, cam) {
+  const T = F.skyTurn
+  if (!T) return
+  const G = FAUST.globe, H = FAUST.head.position, now = performance.now(), dt = F.turnAt ? clamp((now - F.turnAt) / 1000, 0, 0.1) : 0
+  F.turnAt = now
+  const yaw = Math.atan2(cam.position.x - G.x, cam.position.z - G.z), drop = Math.atan2(H[1] - cam.position.y, Math.hypot(cam.position.x - H[0], cam.position.z - H[2])), pitch = clamp(drop - 0.07, 0, 0.26)
+  const gate = clamp((Math.hypot(cam.position.x - G.x, cam.position.z - G.z) - 1100) / 700, 0, 1)
+  if (F.turnYaw == null) { F.turnYaw = gate > 0 ? yaw : 0; F.turnPitch = pitch }
+  else {
+    const k = 1 - Math.exp(-dt * 1.2)
+    F.turnYaw += Math.atan2(Math.sin(yaw - F.turnYaw), Math.cos(yaw - F.turnYaw)) * k * gate
+    F.turnPitch += (pitch - F.turnPitch) * k
+  }
+  T.rotation.set(F.turnPitch, F.turnYaw, 0, 'YXZ'); T.updateMatrixWorld(true)
+  if (F.skyOccTurn) F.skyOccTurn.rotation.copy(T.rotation)
+  const b = faustHeadBound
+  if (F.headBound && b) { faustTurnVec.set(b[0] - G.x, b[1] - G.y, b[2] - G.z).applyEuler(T.rotation); F.headBound[0] = G.x + faustTurnVec.x; F.headBound[1] = G.y + faustTurnVec.y; F.headBound[2] = G.z + faustTurnVec.z }
+}
 function faustRender(render, s, cam) {
   const F = faustState
   if (!LV.faust || s !== scene || !F?.skyScene || renderHeadless) return render(s, cam)
   if (!faustHeadLoading && (FAUST_HEAD.software || !softGL())) faustHeadLoad()
   const skyCam = F.skyCamera, autoClear = renderer.autoClear, reset = renderer.info.autoReset, background = s.background
   faustSkyHead(cam.position)
+  faustTurnSky(F, cam)
   const gap = faustSkyGap(cam.position)
   skyCam.copy(cam, false); skyCam.near = clamp(gap * 0.5, 0.1, 10); skyCam.far = FAUST.skyFar; skyCam.updateProjectionMatrix(); skyCam.updateMatrixWorld(true)
   F.skyScene.background = background
@@ -10354,7 +10374,7 @@ function faustRender(render, s, cam) {
 function faustDisposeSky() {
   const F = faustState
   if (!F?.skyScene) return
-  if (faustHeadModel) F.skyScene.remove(faustHeadModel)
+  faustHeadModel?.parent?.remove(faustHeadModel)
   if (airView) F.skyScene.remove(airView.far)
   const geometries = new Set(), materials = new Set(), textures = new Set()
   F.skyScene.traverse(o => { if (o.geometry) geometries.add(o.geometry); for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m) materials.add(m) })
@@ -10362,7 +10382,7 @@ function faustDisposeSky() {
   for (const geometry of geometries) geometry.dispose()
   for (const texture of textures) texture.dispose()
   for (const pool of F.beamPools || []) pool.removeFromParent()
-  F.skyScene.clear(); F.skyScene = null; F.skyCamera = null; F.skyBeams = []; F.roofBeams = null; F.beamPools = []; F.headMesh = null
+  F.skyScene.clear(); F.skyScene = null; F.skyCamera = null; F.skyBeams = []; F.roofBeams = null; F.beamPools = []; F.headMesh = null; F.skyTurn = F.skyOccTurn = F.headBound = null
   F.skyHead?.geometry.dispose(); F.skyStand?.dispose(); F.skyOccluder = F.skyStand = F.skyHead = F.skyBounds = null
 }
 function faustGlobeShader(real) {
@@ -10408,7 +10428,7 @@ function faustGlobeBytes() {
     .catch(e => { faustGlobeBlob = null; throw e })
 }
 function faustGlobeUpgrade(globe) {
-  const material = globe.material, alive = () => !!faustState?.skyScene && globe.parent === faustState.skyScene
+  const material = globe.material, alive = () => !!faustState?.skyScene && globe.parent === faustState.skyTurn
   return background.run('faust-globe/' + globe.uuid, function* () {
     while (typeof startingGame !== 'undefined' && startingGame || typeof landingBusy === 'function' && landingBusy()) yield 'frame'
     const bitmap = yield faustGlobeBytes().then(blob => createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none' }))
@@ -10487,11 +10507,11 @@ function faustReplaceHead(mesh) {
   const F = faustState
   if (!mesh?.isMesh || mesh.children.length || !F?.skyScene) throw new TypeError('Faust head requires one mesh and an active city')
   const previous = F.headMesh || null
-  if (previous) F.skyScene.remove(previous)
-  mesh.position.fromArray(FAUST.head.position); mesh.rotation.set(0, 0, 0); mesh.scale.fromArray(FAUST.head.size)
+  previous?.parent?.remove(previous)
+  mesh.position.fromArray(FAUST.head.position); if (F.skyTurn) mesh.position.sub(F.skyTurn.position); mesh.rotation.set(0, 0, 0); mesh.scale.fromArray(FAUST.head.size)
   mesh.castShadow = mesh.receiveShadow = false
   for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) { material.fog = false; material.needsUpdate = true }
-  F.headMesh = mesh; F.skyScene.add(mesh); mesh.updateMatrix(); mesh.updateMatrixWorld(true)
+  F.headMesh = mesh; (F.skyTurn || F.skyScene).add(mesh); mesh.updateMatrix(); mesh.updateMatrixWorld(true)
   return previous
 }
 let faustHeadModel = null, faustHeadLoading = null
@@ -10504,7 +10524,7 @@ function faustHeadLoad() {
     gltf.scene.updateMatrixWorld(true)
     M.lod.forEach((distance, i) => {
       const mesh = root.getObjectByName('lod' + i)
-      mesh.matrix.copy(mesh.matrixWorld); mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale)
+      mesh.matrix.copy(mesh.matrixWorld); mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale); faustHeadTrim(mesh, FAUST.head.neck.cut)
       if (material) { mesh.material = material; material.side = THREE.DoubleSide; material.roughnessMap = null; material.roughness = 0.88; material.color.multiplyScalar(1.3); material.emissiveIntensity = 2 }
       mesh.material.fog = false; mesh.castShadow = mesh.receiveShadow = false
       mesh.material.userData.inkSky = true
@@ -10518,41 +10538,57 @@ function faustHeadLoad() {
     }, { gpu: true, valid: () => !faustHeadModel || faustHeadModel === lod })
   }).catch(e => console.warn('Faust head: keeping the placeholder,', e?.message || e))
 }
+function faustHeadTrim(mesh, cut) {
+  const g = mesh.geometry, p = g.attributes.position, ix = g.index
+  if (!ix) return
+  const v = new THREE.Vector3(), low = new Float32Array(p.count), keep = []
+  for (let i = 0; i < p.count; i++) low[i] = v.fromBufferAttribute(p, i).applyMatrix4(mesh.matrix).y
+  for (let i = 0; i < ix.count; i += 3) { const a = ix.getX(i), b = ix.getX(i + 1), c = ix.getX(i + 2); if (low[a] >= cut && low[b] >= cut && low[c] >= cut) keep.push(a, b, c) }
+  g.setIndex(keep.length > 65535 ? new THREE.Uint32BufferAttribute(keep, 1) : new THREE.Uint16BufferAttribute(keep, 1))
+}
 function faustHeadNeck(source, M) {
   const K = FAUST.head.neck, G = FAUST.globe, F = FAUST.head.position, f = M.stop.centre, c = Math.cos(M.pitch), sn = Math.sin(M.pitch)
   const p = source.geometry.attributes.position, tc = source.geometry.attributes.uv, v = new THREE.Vector3(), pts = []
   let low = Infinity
   for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i).applyMatrix4(source.matrix); pts.push([v.x, v.y, v.z, tc.getX(i), tc.getY(i)]); low = Math.min(low, v.y) }
-  const rim = pts.filter(q => q[1] < low + 12); let cx = 0, cz = 0
-  for (const q of rim) { cx += q[0]; cz += q[2] }
-  cx /= rim.length; cz /= rim.length
-  const bins = Array(K.bins).fill(null)
-  for (const q of rim) { const k = Math.floor((Math.atan2(q[2] - cz, q[0] - cx) + Math.PI) / (2 * Math.PI) * K.bins) % K.bins, r = Math.hypot(q[0] - cx, q[2] - cz); if (!bins[k] || r > bins[k].r) bins[k] = { r, q } }
-  const ring = bins.filter(Boolean).map(o => o.q), n = ring.length, centre = [cx, low, cz]
+  const E = K.ellipse, cx = E[0], cz = E[1]
+  let near = pts[0], best = Infinity
+  for (const q of pts) { const d = (q[0] - cx) ** 2 + (q[1] - K.start) ** 2 + (q[2] - E[4]) ** 2; if (d < best) { best = d; near = q } }
+  const ring = Array.from({ length: K.bins }, (_, i) => { const a = i / K.bins * Math.PI * 2; return [cx + E[2] * Math.cos(a), K.start, cz + E[3] * Math.sin(a), near[3], near[4]] }), n = ring.length, centre = [cx, K.start, cz]
   const dx = G.x - F[0], dy = G.y - F[1], dz = G.z - F[2], globe = [f[0] + dx / M.scale, f[1] + (dy * c + dz * sn) / M.scale, f[2] + (-dy * sn + dz * c) / M.scale]
-  const norm = a => { const l = Math.hypot(...a); return a.map(t => t / l) }, cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-  const out = norm(centre.map((t, i) => t - globe[i])), end = globe.map((t, i) => t + out[i] * K.depth * G.radius / M.scale)
-  const reach = Math.hypot(...end.map((t, i) => t - centre[i])), mid = [centre[0], centre[1] - K.bend * reach, centre[2]], d0 = [0, -1, 0]
-  const pos = [], nor = [], uv = [], col = [], idx = []
-  for (let j = 0; j <= K.steps; j++) {
-    const t = j / K.steps, u = 1 - t, at = [0, 1, 2].map(i => u * u * centre[i] + 2 * u * t * mid[i] + t * t * end[i])
-    const tg = norm([0, 1, 2].map(i => 2 * u * (mid[i] - centre[i]) + 2 * t * (end[i] - mid[i]))), cr = cross(d0, tg), sl = Math.hypot(...cr), ang = Math.atan2(sl, dot(d0, tg)), ax = sl > 1e-6 ? cr.map(t2 => t2 / sl) : [1, 0, 0]
-    const rot = w => { const co = Math.cos(ang), si = Math.sin(ang), k = cross(ax, w), d = dot(ax, w); return [0, 1, 2].map(i => w[i] * co + k[i] * si + ax[i] * d * (1 - co)) }
-    const grow = 1 + K.flare * t * t, shade = 1 - K.shade * Math.min(1, Math.max(0, (t - 0.05) / 0.5))
-    for (const q of ring) { const rv = rot([q[0] - cx, 0, q[2] - cz]), m = norm(rv)
-      pos.push(at[0] + rv[0] * grow, at[1] + rv[1] * grow, at[2] + rv[2] * grow); nor.push(m[0], m[1], m[2]); uv.push(q[3], q[4]); col.push(shade, shade, shade) }
+  const norm = a => { const l = Math.hypot(...a); return a.map(t => t / l) }, cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+  const Rm = G.radius / M.scale, skin = Rm + K.lift / M.scale, u = norm(centre.map((t, i) => t - globe[i])), e1 = norm(cross(u, [0, 1, 0])), e2 = cross(u, e1)
+  const pos = [], uv = [], col = [], idx = []
+  for (const q of ring) {
+    const a = Math.atan2(q[2] - cz, q[0] - cx), off = [0, 1, 2].map(i => e1[i] * Math.cos(a) * K.half[0] / M.scale + e2[i] * Math.sin(a) * K.half[1] / M.scale)
+    const tip = norm([0, 1, 2].map(i => u[i] * Rm + off[i])), T = globe.map((t, i) => t + tip[i] * skin), reach = Math.hypot(...T.map((t, i) => t - q[i]))
+    const P1 = q.map((t, i) => t + (T[i] - t) / 3), P2 = q.map((t, i) => t + (T[i] - t) * 2 / 3)
+    for (let j = 0; j <= K.steps; j++) {
+      const t = j / K.steps, w = 1 - t, b = [0, 1, 2].map(i => w * w * w * q[i] + 3 * w * w * t * P1[i] + 3 * w * t * t * P2[i] + t * t * t * T[i])
+      const dark = K.top + (1 - K.shade - K.top) * Math.min(1, t / K.fade), alpha = 1 - Math.min(1, Math.max(0, (t - K.melt) / (1 - K.melt))) ** 2
+      pos.push(b[0], b[1], b[2]); uv.push(q[3], q[4]); col.push(dark, dark, dark, alpha)
+    }
   }
-  for (let j = 0; j < K.steps; j++) for (let i = 0; i < n; i++) { const a = j * n + i, b = j * n + (i + 1) % n, d = (j + 1) * n + i, e = (j + 1) * n + (i + 1) % n; idx.push(a, d, b, b, d, e) }
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx); g.computeBoundingSphere()
-  const material = source.material.clone(); material.vertexColors = true; material.needsUpdate = true
+  const row = K.steps + 1
+  for (let i = 0; i < n; i++) { const i2 = (i + 1) % n; for (let j = 0; j < K.steps; j++) { const a = i * row + j, b = i2 * row + j, d = i * row + j + 1, e = i2 * row + j + 1; idx.push(a, d, b, b, d, e) } }
+  const nor = new Float32Array(pos.length)
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t] * 3, b = idx[t + 1] * 3, d = idx[t + 2] * 3, ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2], vx = pos[d] - pos[a], vy = pos[d + 1] - pos[a + 1], vz = pos[d + 2] - pos[a + 2]
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
+    for (const k of [a, b, d]) { nor[k] += nx; nor[k + 1] += ny; nor[k + 2] += nz }
+  }
+  for (let k = 0; k < nor.length; k += 3) { const l = Math.hypot(nor[k], nor[k + 1], nor[k + 2]) || 1; nor[k] /= l; nor[k + 1] /= l; nor[k + 2] /= l }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4)); g.setIndex(idx); g.computeBoundingSphere()
+  const material = source.material.clone(); material.vertexColors = true; material.roughness = 1; material.metalness = 0; material.needsUpdate = true
   const mesh = new THREE.Mesh(g, material); mesh.castShadow = mesh.receiveShadow = false; mesh.frustumCulled = false; mesh.name = 'faust_neck'
   return mesh
 }
 function faustHeadInstall() {
   const F = faustState, lod = faustHeadModel
-  if (!lod || !F?.skyScene || lod.parent === F.skyScene) return
-  if (F.headMesh) { F.skyScene.remove(F.headMesh); F.headMesh.geometry.dispose(); F.headMesh.material.dispose(); F.headMesh = null }
-  F.skyScene.add(lod)
+  if (!lod || !F?.skyTurn || lod.parent === F.skyTurn) return
+  if (F.headMesh) { F.headMesh.parent?.remove(F.headMesh); F.headMesh.geometry.dispose(); F.headMesh.material.dispose(); F.headMesh = null }
+  const at = FAUST.head.model.position, G = FAUST.globe
+  lod.position.set(at[0] - G.x, at[1] - G.y, at[2] - G.z); F.skyTurn.add(lod)
 }
 function faustMonument() {
   faustDisposeSky()
@@ -10602,7 +10638,9 @@ function faustMonument() {
   globe.material.onBeforeCompile = faustGlobeShader(false)
   globe.material.customProgramCacheKey = () => 'faust-globe-building-1'
   globe.material.userData.inkGlobe = true
-  far.add(globe)
+  const G0 = FAUST.globe, turn = F.skyTurn = new THREE.Group()
+  turn.position.set(G0.x, G0.y, G0.z); F.turnYaw = null; far.add(turn)
+  globe.position.set(-G0.x, -G0.y, -G0.z); turn.add(globe)
   faustGlobeUpgrade(globe)
   const eyeStart = batch.count * 3
   batch.tri([-35, 401, 65], [-23, 395, 70], [-17, 399, 69], 0xffffff)
@@ -10616,8 +10654,8 @@ function faustMonument() {
   faustReplaceHead(new THREE.Mesh(headGeometry, skyStone))
   for (const L of FAUST.head.floods) {
     const flood = new THREE.DirectionalLight(L.color, L.intensity), at = FAUST.head.model.position
-    flood.position.set(at[0] + L.from[0], at[1] + L.from[1], at[2] + L.from[2])
-    flood.target.position.fromArray(at); far.add(flood, flood.target)
+    flood.position.set(at[0] + L.from[0] - G0.x, at[1] + L.from[1] - G0.y, at[2] + L.from[2] - G0.z)
+    flood.target.position.set(at[0] - G0.x, at[1] - G0.y, at[2] - G0.z); turn.add(flood, flood.target)
   }
   faustHeadInstall()
   faustSkyWeather(far)
@@ -10629,10 +10667,12 @@ function faustMonument() {
 function faustSkyHead(p) {
   const F = faustState, t = faustHeadTrisMemo, b = faustHeadBound
   if (!t || !b || !F?.skyOccluder || F.skyHead) return
-  if (!F.skyBounds.includes(b)) F.skyBounds.push(b)
+  if (!F.headBound) { F.headBound = b.slice(); F.skyBounds.push(F.headBound) }
   if (!p || Math.hypot(p.x - b[0], p.y - b[1], p.z - b[2]) - b[3] > 1500) return
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(t, 3)); g.boundingSphere = new THREE.Sphere(new THREE.Vector3(b[0], b[1], b[2]), b[3])
-  F.skyHead = new THREE.Mesh(g, F.skyStand); F.skyOccluder.add(F.skyHead)
+  const G = FAUST.globe, group = F.skyOccTurn = new THREE.Group()
+  group.position.set(G.x, G.y, G.z); F.skyOccluder.add(group)
+  F.skyHead = new THREE.Mesh(g, F.skyStand); F.skyHead.position.set(-G.x, -G.y, -G.z); group.add(F.skyHead)
 }
 const faustSkyGap = p => Math.min(...(faustState?.skyBounds || []).map(b => Math.hypot(p.x - b[0], p.y - b[1], p.z - b[2]) - b[3]), Infinity)
 function faustAtmosphere() {
@@ -22403,7 +22443,7 @@ function realRender(raw, s, cam) {
   }
 }
 function realHeadStop(R, tier) {
-  const u = R.pass.shafts.uniforms, F = faustState, sculpt = !!faustHeadModel && faustHeadModel.parent === F?.skyScene
+  const u = R.pass.shafts.uniforms, F = faustState, sculpt = !!faustHeadModel && faustHeadModel.parent === F?.skyTurn
   const o = sculpt ? faustHeadModel : F?.headMesh
   u.uHeadOn.value = 0
   if (!o || tier.headStop === 0) return
