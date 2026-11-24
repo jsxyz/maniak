@@ -44830,6 +44830,7 @@ function mcNearRoads(x, z, radius) {
     for (let j = Math.floor((z - radius) / C); j <= Math.floor((z + radius) / C); j++) trafficRingCell(i, j)
 }
 function mcPlan(c) {
+  if (c.grounded && c.y - (c.h || 0) - (c.r || 0) > 2.5) return mcOpen(c)
   if (!trafficState) trafficReset()
   mcNearRoads(c.x, c.z, 96)
   const V = MC_V, w = V.w, seatZ = V.seats[0][2]
@@ -44881,7 +44882,7 @@ function mcPlan(c) {
 }
 function mcOpen(c) {
   const gy = c.y - (c.h || 0) - (c.r || 0)
-  if (Math.abs(gy) > 2.5) return null
+  if (gy < -2.5 || gy > 2.5 && !c.grounded) return null
   const lat = MC_V.w / 2 + (c.r || 0.5) + MCAR.come.pull
   for (const R of [22, 16, 11]) for (let i = 0; i < 12; i++) for (const side of [1, -1]) {
     const a = Math.PI * 2 * i / 12, hx = Math.cos(a), hz = Math.sin(a)
@@ -44994,7 +44995,7 @@ function mcSpawn(c, st, T) {
   st.nextTry = T + 300
   if (st.since !== st.badSince) { st.bad = new Set(); st.badSince = st.since }
   const P = mcPlan(c), people = mcPeople(), [lo, hi] = MCAR.come.ring, late = T - st.since > MCAR.come.wait * 1000
-  if (!P) return mcFail(c, st, "Your car can't reach a road here. Move closer to a street and whistle again.")
+  if (!P) return mcFail(c, st, c.grounded && c.y - (c.h || 0) - (c.r || 0) > 2.5 ? "Your car can't find room beside you here. Move to a clear stretch and whistle again." : "Your car can't reach a road here. Move closer to a street and whistle again.")
   if (!mcRoom(people)) return mcFail(c, st, "Your car can't come while the roads are this crowded. Try again in a moment.")
   const anchor = Math.hypot(P.pose.x - c.x, P.pose.z - c.z) > 60 ? P.pose : c
   mcNearRoads(anchor.x, anchor.z, hi)
@@ -45016,6 +45017,7 @@ function mcSpawn(c, st, T) {
       mcRemove(o); st.car = undefined; st.mode = 'spawn'; st.since = since
     }
   }
+  if (P.open && P.gy > 2.5) { if (late) mcFail(c, st, "Your car can't find room beside you here. Move to a clear stretch and whistle again."); return }
   const spots = []
   for (const e of trafficState.edges) {
     const len = e.length || 96
