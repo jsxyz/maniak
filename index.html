@@ -31846,7 +31846,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z), yaw: Math.round((c.yaw ?? 0) * 1000) / 1000 })) : [],
   models: () => ({ ...modelDiag, files: Object.fromEntries(modelDiag.files), rigs: Object.fromEntries(modelDiag.rigs), cars: periodFleet && { ready: !!periodFleet.ready, failed: !!periodFleet.failed }, street: slKitJob && { done: !!slKitJob.done, failed: !!slKitJob.failed }, gpu: modelGpu() }),
-  perf: () => ({ level: govLevel, ...GOV_LEVELS[govLevel], awake: govAwake(), bodies: objs.filter(o => o.body).length, who: simWho(), log: govLog.slice() }),
+  perf: () => ({ drops: slDrops, dropsFrame: slDropFrame, lying: slLie.length, frozen: slFrozen.size, level: govLevel, ...GOV_LEVELS[govLevel], awake: govAwake(), bodies: objs.filter(o => o.body).length, who: simWho(), log: govLog.slice() }),
   perfSet: n => govSet(clamp(n | 0, 0, GOV_LEVELS.length - 1), 'hook', 0),
   fps(n) { if (n !== undefined) fpsCap = +n >= 5 && +n <= 240 ? +n : 0; return fpsCap },
   telescreen: (n = 120) => teleState(n),
@@ -36571,7 +36571,10 @@ function slHoldEval(ag, T, withAmb) {
   return !slUnseen(A.x, A.z) || !!B && !slUnseen(B.x, B.z)
 }
 const slGone = new Set()
-const SL_BODY_CAP = 40
+const SL_BODY_CAP = 600
+const slFrozen = new Map()
+let slFreezing = false
+let slDrops = 0, slDropPrev = 0, slDropFrame = 0
 const slLie = []
 function slLieNote(ag, p, cx, cz, T) {
   if (p.hidden || p.scale <= 0.01 || !(p.down || p.dead) || !slFrus.intersectsSphere(slSph.set(slV.set(p.x, 1, p.z), 2.2))) return
@@ -36599,7 +36602,7 @@ function slRetire(st, T) {
     let r = null, d = null
     for (const q of L) { if (q.kind === 11) d = q; else if (q.kind === 1 || q.kind === 3 || q.kind === 4 || q.kind === 5) r = q }
     if (d && slGone.has(d.key)) continue
-    if (d && T - d.t < dead) bodies.push({ id, r: d, d: 0, ag: null })
+    if (d) { bodies.push({ id, r: d, d: 0, ag: null }); continue }
     r = d || r; if (!r || slHold.has(id)) continue
     const limit = d ? dead : r.kind === 4 ? keep : back, age = T - r.t
     if (age < limit - 2000 || age >= limit || r.chk > T - 250) continue
@@ -36643,8 +36646,8 @@ function slAddRec(a, local) {
 }
 function slPrune(t) {
   const st = slState
-  for (const [k, r] of st.rec) if (!slHeldKeys.has(k) && t - r.t > (r.kind === 11 || r.kind === 13 || (r.kind === 9 && !r.what || r.kind === 4) && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {
-    st.rec.delete(k); st.exits.delete(k)
+  for (const [k, r] of st.rec) if (!slHeldKeys.has(k) && !(r.kind === 11 && !slGone.has(k)) && t - r.t > (r.kind === 11 || r.kind === 13 || (r.kind === 9 && !r.what || r.kind === 4) && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {
+    st.rec.delete(k); st.exits.delete(k); slFrozen.delete(r.id)
     if (r.kind === 8 && partsGrabbed.get(r.id) === r) partsGrabbed.delete(r.id)
     if (r.kind === 12) continue
     if (r.kind === 2) st.panics.splice(st.panics.indexOf(r), 1)
@@ -36758,6 +36761,11 @@ function slFleeStart(ag, at) {
 }
 const SL_POSE = () => ({ x: 0, z: 0, y: 0, yaw: 0, clip: 'idle', ct: 0, scale: 1, mode: 0, v: 0, s: 0, i: 0, u: 0, down: false, rec: null, hidden: false, bike: null, prop: 0 })
 function slPose(ag, t, o) {
+  const fz = slFrozen.get(ag.id)
+  if (fz && !slFreezing) {
+    if (t >= fz.t0 && fz.st === slState && slState.byId.get(ag.id)?.at(-1) === fz.r && !slGone.has(fz.r.key)) return Object.assign(o, fz.p)
+    slFrozen.delete(ag.id)
+  }
   o.y = 0; o.scale = 1; o.down = false; o.hidden = false; o.rec = null; o.lieRoll = 0; o.roll = 0; o.pitch = 0; o.dead = false; o.fw = 0
   const r = ag.kind === SL_K.exit ? slRecFor(ag, t) || ag.r : slRecFor(ag, t)
   if (ag.kind === SL_K.cyclist && !ag.route) slRider(ag.line, ag, t, o)
@@ -36767,7 +36775,20 @@ function slPose(ag, t, o) {
   if (r) { o.rec = r; o.hidden = false; o.scale = 1; slDetached(ag, r, t, o)
     if (ag.y) o.y += r.kind === 2 || r.kind === 5 ? ag.y * clamp(1 - (t - r.t) / 300, 0, 1) : r.kind === 1 || r.kind === 10 || r.kind === 11 ? ag.y : 0 }
   if (amb) slClip(ag, o, t)
+  if (r && r.kind === 11 && o.dead && !slFreezing && !r.fzTry && t - r.t > 6000) slFreeze(ag, r, t, o)
   return o
+}
+function slFreeze(ag, r, t, o) {
+  r.fzTry = true
+  const own = slState.byId.get(ag.id)
+  if (!own || own.at(-1) !== r || own.some(q => q.kind === 8 || q.kind === 9) || ag.companion) return
+  const a = { ...o }
+  slFreezing = true
+  const b = { ...slPose(ag, t + 800, { ...o }) }
+  slFreezing = false
+  for (const k of ['x', 'y', 'z', 'yaw', 'pitch', 'roll', 'clip', 'ct', 'scale', 'hidden']) if (a[k] !== b[k]) return
+  if (a.bikeDown || a.pramAt) return
+  slFrozen.set(ag.id, { p: a, r, t0: t, st: slState })
 }
 function slClip(ag, o, t) {
   const H = ag.body >= 3 ? 1.66 : 1.78
@@ -37002,7 +37023,7 @@ const slR2 = v => Math.round(v * 100) / 100
 const slFling = v => clamp(0.25 * v * 0.45 + 0.1 * (v * 0.45) ** 2, 0.3, 12)
 const SL_HP = { adult: 40, kid: 25, dog: 25, heal: 60 }
 const slHpOf = ag => ag.kind === SL_K.stray ? SL_HP.dog : ag.kid ? SL_HP.kid : SL_HP.adult * (0.85 + 0.275 * slRnd(ag.id, 101))
-function slDeathOf(id, t) { const own = slState?.byId.get(id); if (own) for (const r of own) if (r.kind === 11 && r.t <= t && !slGone.has(r.key) && (t - r.t < STREET.deadS * 1000 || slHeld(id, r.key))) return r; return null }
+function slDeathOf(id, t) { const own = slState?.byId.get(id); if (own) for (const r of own) if (r.kind === 11 && r.t <= t && !slGone.has(r.key)) return r; return null }
 const slLying = (p, T) => p.down && !p.dead && (p.rec?.kind === 1 || p.rec?.kind === 9 && !p.rec.what && T >= p.rec.t + p.rec.tl)
 const slSwings = new Set()
 function slSwingDmg(c, h, G, T) {
@@ -37471,11 +37492,11 @@ function* slKitSteps([anims, street, ...rest]) {
   const kit = { root, bodies: [], parts: {} }
   const clips = [...anims.animations, ...street.animations, ...(stag ? stag.animations : []), ...(perf ? perf.animations : [])]
   for (const [i, g] of bodies.entries()) {
-    const b = {}; yield* slSkinnedSteps(g, clips, dmap ? SL_CLIPS.civ : i < 3 ? SL_CLIPS.civ : SL_CLIPS.civ.concat(SL_CLIPS.dance), i < 3 ? 110 : 80, STREET.bodies[i].replace('civ_', ''), b)
+    const b = {}; yield* slSkinnedSteps(g, clips, dmap ? SL_CLIPS.civ : i < 3 ? SL_CLIPS.civ : SL_CLIPS.civ.concat(SL_CLIPS.dance), i < 3 ? 500 : 400, STREET.bodies[i].replace('civ_', ''), b)
     kit.bodies.push(b); for (const im of b.ims) root.add(im)
   }
-  if (dmap) { const b = {}; yield* slSkinnedSteps(bodies[3], clips, SL_CLIPS.civ.concat(SL_CLIPS.dance), 80, 'f_dress', b, dmap); kit.bodies.push(b); for (const im of b.ims) root.add(im) }
-  kit.dog = {}; yield* slSkinnedSteps(dog, dog.animations, SL_CLIPS.dog, 48, '', kit.dog); for (const im of kit.dog.ims) root.add(im)
+  if (dmap) { const b = {}; yield* slSkinnedSteps(bodies[3], clips, SL_CLIPS.civ.concat(SL_CLIPS.dance), 400, 'f_dress', b, dmap); kit.bodies.push(b); for (const im of b.ims) root.add(im) }
+  kit.dog = {}; yield* slSkinnedSteps(dog, dog.animations, SL_CLIPS.dog, 160, '', kit.dog); for (const im of kit.dog.ims) root.add(im)
   kit.pigeon = {}; yield* slSkinnedSteps(pigeon, pigeon.animations, SL_CLIPS.pigeon, 320, '', kit.pigeon); for (const im of kit.pigeon.ims) root.add(im)
   for (const [name, cap] of [['bike_frame', 40], ['bike_wheel', 80], ['bike_crank', 40], ['bike_pedal', 80], ['pram_body', 48], ['pram_wheel_f', 96], ['pram_wheel_r', 96]])
     for (const lod of ['', '_lod1']) { const im = slPart(name.startsWith('bike') ? bike : pram, name + lod, cap, true); if (im) { kit.parts[name + lod] = im; root.add(im) } }
@@ -37539,7 +37560,7 @@ function slFrameFade(kitm, p, out, i) {
   return true
 }
 function slSet(im, x, y, z, yaw, s, roll = 0, pitch = 0) {
-  const i = im.count; if (i >= im.instanceMatrix.count) return -1
+  const i = im.count; if (i >= im.instanceMatrix.count) { slDrops++; return -1 }
   slE.set(pitch, yaw, roll, 'YXZ'); slQ.setFromEuler(slE); slV.set(x, y, z); slS.set(s, s, s); slM4.compose(slV, slQ, slS)
   slM4.toArray(im.instanceMatrix.array, i * 16); im.count++
   return i
@@ -37786,7 +37807,7 @@ function slFrame(t, dt, obl) {
   const T = isHost ? drawNow() : renderT, kit = slKit, cam = camera
   if (st.view) { cam.position.set(...st.view.p); cam.lookAt(...st.view.t) }
   cam.updateMatrixWorld(); slPM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); slFrus.setFromProjectionMatrix(slPM)
-  slVw.ok = true; slVw.x = cam.position.x; slVw.z = cam.position.z; slLie.length = 0; slRetire(st, T)
+  slDropFrame = slDrops - slDropPrev; slDropPrev = slDrops; slVw.ok = true; slVw.x = cam.position.x; slVw.z = cam.position.z; slLie.length = 0; slRetire(st, T)
   for (const c of kit.root.children) if (c.isInstancedMesh) c.count = 0
   const qn = (STREET.quality[settings.quality] ?? 1) * (STREET.scale ?? 1), qd = STREET.qualityDraw[settings.quality] ?? 1, D = Object.fromEntries(Object.entries(STREET.draw).map(([k, v]) => [k, v * qd]))
   const cx = cam.position.x, cz = cam.position.z, A = st.S * 48, seen = (x, y, z, r) => slFrus.intersectsSphere(slSph.set(slV.set(x, y, z), r))
