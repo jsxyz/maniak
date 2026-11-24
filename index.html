@@ -37008,7 +37008,7 @@ function slDetached(ag, r, t, o) {
   else { o.clip = late ? 'walk' : 'flee'; o.ct = late ? run / (0.57 * H) : run / (3.25 * H) }
 }
 
-function slAround(x, z, R, T, fn, skip, warm = false) {
+function slAround(x, z, R, T, fn, skip, warm = false, sink = null) {
   const st = slState, S = st.S, A = S * 48, pose = slAroundPose
   const pad = 25, i0 = Math.max(0, Math.floor((x - R - pad + A) / 96)), i1 = Math.min(S - 1, Math.floor((x + R + pad + A) / 96))
   const j0 = Math.max(0, Math.floor((z - R - pad + A) / 96)), j1 = Math.min(S - 1, Math.floor((z + R + pad + A) / 96))
@@ -37023,16 +37023,18 @@ function slAround(x, z, R, T, fn, skip, warm = false) {
       for (const ag of cell.agents) {
         const b = ag.box
         if (b && (b[0] > x + R || b[2] < x - R || b[1] > z + R || b[3] < z - R) && !st.byId.has(ag.id)) continue
+        if (sink) { sink.push(ag, cell, null); continue }
         if (skip && skip(ag)) continue
         slPose(ag, T, pose); if (pose.hidden) continue
         if (Math.abs(pose.x - x) < R && Math.abs(pose.z - z) < R) fn(ag, pose, cell)
       }
     }
   for (const L of slLinesNear(x, z, R)) for (const ag of L.riders) {
+    if (sink) { sink.push(ag, null, L); continue }
     ag.line = L; slPose(ag, T, pose); if (pose.hidden) continue
     if (Math.abs(pose.x - x) < R && Math.abs(pose.z - z) < R) fn(ag, pose, null)
   }
-  for (const r of st.exits.values()) { slPose(r.ag, T, pose); if (!pose.hidden && Math.abs(pose.x - x) < R && Math.abs(pose.z - z) < R) fn(r.ag, pose, null) }
+  for (const r of st.exits.values()) { if (sink) { sink.push(r.ag, null, null); continue }; slPose(r.ag, T, pose); if (!pose.hidden && Math.abs(pose.x - x) < R && Math.abs(pose.z - z) < R) fn(r.ag, pose, null) }
 }
 const slAroundPose = SL_POSE()
 function slLinesNear(x, z, R) {
@@ -37291,29 +37293,63 @@ function slStruck(c, h, G, ux, uy, uz) {
   try { slKnock(h.agent, h.pose, ux, uz, power, c, T, undefined, undefined, undefined, h.pram ? 0 : slHit.dmg, GUNS.indexOf(G), G?.kind === 'radius' ? 5 : G?.name === 'Cinderblock' ? 4 : 1) } finally { slHit.part = null; slHit.dmg = Infinity }
 }
 const slRoadFuture = SL_POSE()
-function slRoadList(warm = false) {
-  const st = slState, T = slNow(), key = warm ? 'roadWarm' : 'road'
-  if (st[key] && Math.abs(T - st[key].T) < (warm ? 250 : 100)) return st[key].list
-  const list = [], seen = new Set(), back = STREET.backS * 1000
-  const live = st.panics.filter(q => q.t <= T && T - q.t < back)
+const slRoadPose = SL_POSE()
+function slRoadJob(st, T) {
+  const humans = [...players.values()].filter(c => !c.bot), pts = []
+  for (const c of players.values()) if (!c.bot || !humans.some(h => Math.abs(h.x - c.x) < 160 && Math.abs(h.z - c.z) < 160)) pts.push([c.x, c.z])
+  return { T, pts, pi: 0, items: null, ii: 0, list: [], seen: new Set(), at: 0,
+    live: st.panics.filter(q => q.t <= T && T - q.t < STREET.backS * 1000) }
+}
+function slRoadStep(st, job, budget) {
+  const T = job.T, list = job.list, seen = job.seen, live = job.live, t0 = performance.now(), pose = slRoadPose
   const quiet = ag => { if (ag.cr || ag.kind === SL_K.cyclist || st.byId.has(ag.id)) return false
     for (const q of live) if (ag.pan?.get(q.key) !== false) return false
     return true }
-  const humans = [...players.values()].filter(c => !c.bot)
-  for (const c of players.values()) if (!c.bot || !humans.some(h => Math.abs(h.x - c.x) < 160 && Math.abs(h.z - c.z) < 160)) slAround(c.x, c.z, 160, T, (ag, p) => {
-    if (!(p.mode === 2 || ag.kind === SL_K.cyclist || p.rec) || p.hidden || seen.has(ag.id)) return
-    seen.add(ag.id)
-    let ahead
-    if (ag.kind === SL_K.cyclist && !p.rec) {
-      const q = slPose(ag, T + 6000, slRoadFuture)
-      if (!q.hidden && Math.hypot(q.x - p.x, q.z - p.z) < 80) ahead = [q.x, q.z]
+  while (job.pi < job.pts.length) {
+    const [x, z] = job.pts[job.pi]
+    if (!job.items) { job.items = []; job.ii = 0; slAround(x, z, 160, T, null, null, true, job.items) }
+    const it = job.items
+    while (job.ii < it.length) {
+      const ag = it[job.ii], cell = it[job.ii + 1], line = it[job.ii + 2]; job.ii += 3
+      if (cell && (seen.has(ag.id) || quiet(ag))) continue
+      if (line) ag.line = line
+      slPose(ag, T, pose)
+      if (!pose.hidden && Math.abs(pose.x - x) < 160 && Math.abs(pose.z - z) < 160) {
+        const p = pose
+        if (!(p.mode === 2 || ag.kind === SL_K.cyclist || p.rec) || p.hidden || seen.has(ag.id)) continue
+        seen.add(ag.id)
+        let ahead
+        if (ag.kind === SL_K.cyclist && !p.rec) {
+          const q = slPose(ag, T + 6000, slRoadFuture)
+          if (!q.hidden && Math.hypot(q.x - p.x, q.z - p.z) < 80) ahead = [q.x, q.z]
+        }
+        list.push({ id: ag.id, x: p.x, y: p.y, z: p.z, ahead, radius: ag.kind === SL_K.cyclist ? (ag.route ? 0.45 : 0.9) : ag.kind === SL_K.pram ? 0.8 : 0.45,
+          vx: Math.sin(p.yaw) * p.v, vz: Math.cos(p.yaw) * p.v, kind: ag.kind === SL_K.cyclist ? 'cyclist' : ag.kind === SL_K.pram ? 'pram' : ag.kind === SL_K.stray ? 'dog' : 'ped' })
+      }
+      if (performance.now() - t0 > budget) return false
     }
-    list.push({ id: ag.id, x: p.x, y: p.y, z: p.z, ahead, radius: ag.kind === SL_K.cyclist ? (ag.route ? 0.45 : 0.9) : ag.kind === SL_K.pram ? 0.8 : 0.45,
-     
-      vx: Math.sin(p.yaw) * p.v, vz: Math.cos(p.yaw) * p.v, kind: ag.kind === SL_K.cyclist ? 'cyclist' : ag.kind === SL_K.pram ? 'pram' : ag.kind === SL_K.stray ? 'dog' : 'ped' })
-  }, ag => seen.has(ag.id) || quiet(ag), warm)
-  st[key] = { T, list }
-  return list
+    job.items = null; job.pi++
+    if (performance.now() - t0 > budget) return job.pi >= job.pts.length
+  }
+  return true
+}
+function slRoadList(warm = false) {
+  const st = slState, T = slNow(), key = warm ? 'roadWarm' : 'road', cur = st[key]
+  if (cur && Math.abs(T - cur.T) < (warm ? 250 : 100)) return cur.list
+  if (warm && cur && Math.abs(T - cur.T) < 3000) {
+    const job = st.roadJob ||= slRoadJob(st, T), now = performance.now()
+    if (now - job.at < 6) return cur.list
+    job.at = now
+    const done = slRoadStep(st, job, 0.7)
+    background.simAdd('sl road', performance.now() - now)
+    if (!done) return cur.list
+    st.roadJob = null; st[key] = { T: job.T, list: job.list }
+    return job.list
+  }
+  const job = slRoadJob(st, T)
+  slRoadStep(st, job, Infinity)
+  st.roadJob = null; st[key] = { T, list: job.list }
+  return job.list
 }
 function slWarmStep() {
   const st = slState, q = st.warmQ
