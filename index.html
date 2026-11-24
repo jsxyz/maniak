@@ -31713,6 +31713,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
       hookCheck([x, z, r].every(Number.isFinite) && r > 0 && r <= 250 && (T === undefined || Number.isFinite(T)), 'around(x, z, r <= 250, T?) needs numbers')
       return GAME.streetLife.around(x, z, r, T)
     },
+    lying() { return GAME.streetLife.lying() },
     drawn(x, z, r = 30) {
       hookCheck([x, z, r].every(Number.isFinite) && r > 0 && r <= 250, 'drawn(x, z, r <= 250) needs numbers')
       return GAME.streetLife.drawn(x, z, r)
@@ -36536,13 +36537,73 @@ function slRider(L, R, t, o) {
     o.s = g[1] + (g[3] - g[1]) * e; o.mode = 3; o.v = R.v
   }
   const along = -L.A * L.dir + o.s * L.dir, lane = 8.3 * L.dir
-  if (Math.abs(L.c) < 192) {
-    o.scale = clamp((Math.abs(along) - 182) / 1.5, 0, 1)
-    if (!o.scale) { o.hidden = true; return o }
-  }
   if (L.axis === 'x') { o.x = along; o.z = L.c + lane; o.yaw = L.dir > 0 ? Math.PI / 2 : -Math.PI / 2 }
   else { o.x = L.c - lane; o.z = along; o.yaw = L.dir > 0 ? 0 : Math.PI }
+  if (Math.abs(L.c) < 192 && Math.abs(along) < 183.5 && slUnseen(o.x, o.z)) o.hidden = true
   return o
+}
+const slVw = { ok: false, x: 0, z: 0 }
+const slUnseen = (x, z) => !slVw.ok || Math.hypot(x - slVw.x, z - slVw.z) > 45 && !slFrus.intersectsSphere(slSph.set(slV.set(x, 1, z), 3))
+const slHold = new Map()
+const slHeldKeys = new Set()
+const slHeld = (id, key) => slHold.get(id)?.key === key
+function slHoldSet(id, h) { const o = slHold.get(id); if (o) slHeldKeys.delete(o.key); slHold.set(id, h); slHeldKeys.add(h.key) }
+function slHoldDel(id) { const o = slHold.get(id); if (o) { slHeldKeys.delete(o.key); slHold.delete(id) } }
+let slRetA = null
+let slRetB = null
+function slAmbPose(ag, T, o) {
+  if (ag.kind === SL_K.exit) return null
+  if (ag.kind === SL_K.cyclist && !ag.route) { if (!ag.line) return null; slRider(ag.line, ag, T, o); return o }
+  slAmbient(ag, T, o); return o
+}
+function slHoldEval(ag, T, withAmb) {
+  const A = slPose(ag, T, slRetA ||= SL_POSE()), B = withAmb ? slAmbPose(ag, T, slRetB ||= SL_POSE()) : null
+  return !slUnseen(A.x, A.z) || !!B && !slUnseen(B.x, B.z)
+}
+const slGone = new Set()
+const SL_BODY_CAP = 40
+const slLie = []
+function slLieNote(ag, p, cx, cz, T) {
+  if (p.hidden || p.scale <= 0.01 || !(p.down || p.dead) || !slFrus.intersectsSphere(slSph.set(slV.set(p.x, 1, p.z), 2.2))) return
+  const d = Math.hypot(p.x - cx, p.z - cz), L = STREET.qualityLod[settings.quality] || STREET.lod, kit = slKit
+  const km = kit && (ag.kind === SL_K.stray ? kit.dog : kit.bodies?.[ag.body] || kit.bodies?.[3]), C = km?.clips.get(p.clip)
+  const lift = C?.abs || !km ? 0 : -(km.footY || 0) * p.scale * Math.cos(p.roll || 0)
+  slLie.push({ id: ag.id, kind: ag.kind, x: p.x, y: p.y + lift, z: p.z, yaw: p.yaw, roll: p.roll || 0, pitch: p.pitch || 0, base: [p.x, p.y, p.z], lift, path: 'instanced', lod: d < L[0] ? 0 : d < L[1] ? 1 : 2, dist: d,
+    clip: p.clip, ct: p.ct, fw: p.fw || 0, rec: p.rec ? p.rec.kind : null, tau: p.rec ? (T - p.rec.t) / 1000 : null, dead: !!p.dead, down: !!p.down, bike: p.bikeDown ? p.bikeDown.slice() : null })
+}
+function slBodyCap(st, T, bodies) {
+  if (bodies.length <= SL_BODY_CAP || st.capAt > T - 500) return
+  st.capAt = T
+  for (const b of bodies) { const ag = b.r.hag ||= partsAgent(b.id); if (!ag) { b.d = -1; continue } const A = slPose(ag, T, slRetA ||= SL_POSE()); b.d = Math.hypot(A.x - slVw.x, A.z - slVw.z); b.ag = ag }
+  bodies.sort((p, q) => q.d - p.d)
+  let n = bodies.length
+  for (const b of bodies) {
+    if (n <= SL_BODY_CAP) break
+    if (b.d < 0 || slHoldEval(b.ag, T, true)) continue
+    slGone.add(b.r.key); n--
+  }
+}
+function slRetire(st, T) {
+  const back = STREET.backS * 1000, keep = STREET.keepMs, dead = STREET.deadS * 1000, bodies = []
+  for (const [id, L] of st.byId) {
+    let r = null, d = null
+    for (const q of L) { if (q.kind === 11) d = q; else if (q.kind === 1 || q.kind === 3 || q.kind === 4 || q.kind === 5) r = q }
+    if (d && slGone.has(d.key)) continue
+    if (d && T - d.t < dead) bodies.push({ id, r: d, d: 0, ag: null })
+    r = d || r; if (!r || slHold.has(id)) continue
+    const limit = d ? dead : r.kind === 4 ? keep : back, age = T - r.t
+    if (age < limit - 2000 || age >= limit || r.chk > T - 250) continue
+    r.chk = T
+    const ag = r.hag ||= partsAgent(id); if (!ag) continue
+    if (slHoldEval(ag, T, r.kind !== 4)) slHoldSet(id, { key: r.key, ag, at: T, amb: r.kind !== 4 })
+  }
+  slBodyCap(st, T, bodies)
+  for (const [id, h] of slHold) {
+    if (!st.rec.has(h.key)) { slHoldDel(id); continue }
+    if (T - h.at < 250) continue
+    h.at = T
+    if (!slHoldEval(h.ag, T, h.amb)) slHoldDel(id)
+  }
 }
 
 const SL_REC = { knock: 1, panic: 2, scatter: 3, exit: 4, dodge: 5, stagger: 10, death: 11, bird: 13 }
@@ -36572,7 +36633,7 @@ function slAddRec(a, local) {
 }
 function slPrune(t) {
   const st = slState
-  for (const [k, r] of st.rec) if (t - r.t > (r.kind === 11 || r.kind === 13 || (r.kind === 9 && !r.what || r.kind === 4) && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {
+  for (const [k, r] of st.rec) if (!slHeldKeys.has(k) && t - r.t > (r.kind === 11 || r.kind === 13 || (r.kind === 9 && !r.what || r.kind === 4) && slDeathOf(r.id, t) ? STREET.deadS * 1000 : STREET.keepMs)) {
     st.rec.delete(k); st.exits.delete(k)
     if (r.kind === 8 && partsGrabbed.get(r.id) === r) partsGrabbed.delete(r.id)
     if (r.kind === 12) continue
@@ -36588,9 +36649,9 @@ function slRecFor(ag, t) {
   const dr = own && slDeathOf(ag.id, Math.round(t))
   if (dr) { let q = null; for (const r of own) if ((r.kind === 8 || r.kind === 9) && !r.what && r.t <= t && (!q || r.t >= q.t)) q = r
     return q && (q.kind === 8 ? t - q.t < back : t < q.t + q.tl + STREET.knockS * 600) ? q : dr }
-  if (own) for (const r of own) if (r.t <= t && t - r.t < back && (r.kind !== 10 || t - r.t < slStaggerLen(ag, r)) && (!best || r.t > best.t)) best = r
+  if (own) for (const r of own) if (r.t <= t && (t - r.t < back || slHeld(ag.id, r.key)) && (r.kind !== 10 || t - r.t < slStaggerLen(ag, r)) && (!best || r.t > best.t)) best = r
   for (const p of st.panics) {
-    if (p.t > t || t - p.t >= back || best && best.t >= p.t || ag.kind === SL_K.cyclist || ag.kind === SL_K.exit) continue
+    if (p.t > t || t - p.t >= back && !slHeld(ag.id, p.key) || best && best.t >= p.t || ag.kind === SL_K.cyclist || ag.kind === SL_K.exit) continue
     const c = ag.pan?.get(p.key) ?? slCaught(ag, p)
     if (c) best = p
   }
@@ -36695,12 +36756,6 @@ function slPose(ag, t, o) {
   if (amb && ag.y) o.y = ag.y
   if (r) { o.rec = r; o.hidden = false; o.scale = 1; slDetached(ag, r, t, o)
     if (ag.y) o.y += r.kind === 2 || r.kind === 5 ? ag.y * clamp(1 - (t - r.t) / 300, 0, 1) : r.kind === 1 || r.kind === 10 || r.kind === 11 ? ag.y : 0 }
-  else if (ag.kind !== SL_K.cyclist && ag.kind !== SL_K.exit) {
-    const own = slState.byId.get(ag.id), last = own?.at(-1), back = (last?.kind === 11 ? STREET.deadS : STREET.backS) * 1000
-    const ended = last && t - last.t >= back && t - last.t < back + 400 ? (t - last.t - back) / 400 : 1
-    let pe = 1; for (const p of slState.panics) if (p.t <= t && t - p.t >= back && t - p.t < back + 400 && ag.pan?.get(p.key)) pe = Math.min(pe, (t - p.t - back) / 400)
-    o.scale = Math.min(ended, pe)
-  }
   if (amb) slClip(ag, o, t)
   return o
 }
@@ -36785,7 +36840,6 @@ function slSwimPose(r, wl, q, o, H, dog, face) {
   o.x = cx - Math.sin(yaw) * back; o.z = cz - Math.cos(yaw) * back; o.yaw = yaw; o.pitch = pitch
   o.y = q < wl.tf ? Math.max(sw, GRAV / 2 * q * q) : sw * (1 - climb)
   o.clip = 'idle'; o.ct = q; o.down = true
-  if (wl.stay) o.scale = 1 - clamp((q - wl.T + 0.5) / 0.5, 0, 1)
 }
 let swimTmp = null
 function slSwimAt(ag, T) {
@@ -36837,18 +36891,17 @@ function slDetached(ag, r, t, o) {
       o.x = r.x + (r.x1 - r.x) * e; o.z = r.z + (r.z1 - r.z) * e; o.y = air * hh
       o.yaw = face; o.clip = dog ? 'flinch' : 'knockback'; o.ct = u * 0.8; o.down = true
       if (dog) { o.roll = u * Math.PI / 2; o.y += Math.sin(o.roll) * 0.22 }
-    } else if (wl && tau < kw) { slSwimPose(r, wl, tau - k0, o, H, dog, face)
-    } else if (wl?.stay) { o.hidden = true; o.scale = 0
+    } else if (wl && (wl.stay || tau < kw)) { slSwimPose(r, wl, tau - k0, o, H, dog, face)
     } else if (!wl && tau < k1) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = dog ? 'idle' : 'death'; o.ct = 2.39; o.down = true
       if (dog) { o.roll = Math.PI / 2; o.y = 0.22 } }
-    else if (!wl && tau < k2) { o.x = r.x1; o.z = r.z1; o.yaw = face; o.clip = dog ? 'flinch' : 'getup'; o.ct = tau - k1; o.down = true
+    else if (!wl && tau < k2) { o.x = r.x1; o.z = r.z1; o.yaw = face; if (r.kind === 1 && Math.hypot(X2 - X1, Z2 - Z1) > 0.01) { const gu = clamp((tau - k1) / S.getupS, 0, 1); o.yaw = slWrap(face + slWrap(Math.atan2(X2 - X1, Z2 - Z1) - face) * gu * gu * (3 - 2 * gu)) }; o.clip = dog ? 'flinch' : 'getup'; o.ct = tau - k1; o.down = true
       if (dog) { const f = 1 - (tau - k1) / S.getupS; o.roll = Math.PI / 2 * f; o.y = 0.22 * Math.sin(o.roll) } }
     else {
       const d = Math.hypot(X2 - X1, Z2 - Z1), tr = tau - K2, run = r.kind === 1 ? slPushOff(tr, 0, S.run) : tr * S.run, f = d > 0.01 ? Math.min(1, run / d) : 1
       o.x = X1 + (X2 - X1) * f; o.z = Z1 + (Z2 - Z1) * f; o.yaw = Math.atan2(X2 - X1, Z2 - Z1)
       o.clip = dog ? 'run' : 'flee'; o.ct = run / (dog ? 1.55 : 3.25 * H); o.v = r.kind === 1 ? slPushV(tr, 0, S.run) : S.run
       const end = d / S.run + (r.kind === 1 ? SL_PUSH / 2 : 0)
-      if (tau - K2 > end) { const g = (tau - K2 - end) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
+      if (tau - K2 > end) { o.clip = 'idle'; o.ct = t / 1000; o.v = 0 }
     }
     if (ag.kind === SL_K.cyclist) {
       const b = r.bike || [r.x1, r.z1, face], f = r.kind === 1 || r.kind === 11 ? Math.min(1, tau / S.knockS) : 1, e = f * (1 + f - f * f), y0 = b[2] - (slRnd(ag.id) - 0.5)
@@ -36867,16 +36920,16 @@ function slDetached(ag, r, t, o) {
   }
   const cow = r.kind === 2 && !dog && ag.kind !== SL_K.pram && Math.hypot(ax - r.x, az - r.z) < 6 ? 1.3 : 0
   if (tau < cow) { o.x = ax; o.z = az; o.yaw = Math.atan2(r.x - o.x, r.z - o.z); o.clip = 'cower'; o.ct = tau; o.v = 0; o.s = 0; return }
-  const v = ag.kind === SL_K.pram ? 3 : dog ? 5.5 : S.run, tr = Math.min(tau - cow, S.fleeS), v0 = cow ? 0 : clamp(at.v || 0, 0, v), run = slPushOff(tr, v0, v)
+  const v = ag.kind === SL_K.pram ? 3 : dog ? 5.5 : S.run, tf = tau - cow, tr = Math.min(tf, S.fleeS), v0 = cow ? 0 : clamp(at.v || 0, 0, v), late = tf > S.fleeS
+  const wv = dog ? S.dogWalk : ag.kind === SL_K.pram ? S.pram : S.walk[1] - 0.1, run = slPushOff(tr, v0, v) + (late ? (tf - S.fleeS) * wv : 0)
   if (run < d0) { const f = run / d0; o.x = ax + (q0.x - ax) * f; o.z = az + (q0.z - az) * f; o.yaw = Math.atan2(q0.x - ax, q0.z - az) }
   else { const sp = s0 + dir * (run - d0); slAlong(R, sp, o); if (dir < 0) o.yaw = slWrap(o.yaw + Math.PI); slTurnAlong(R, sp, dir, o) }
-  o.v = tau < S.fleeS ? slPushV(tr, v0, v) : 0
-  if (tau - cow > S.fleeS) { const g = (tau - cow - S.fleeS) / 0.35; o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 }
+  o.v = late ? wv : slPushV(tr, v0, v)
   o.s = run
-  if (ag.kind === SL_K.pram) { o.clip = 'push'; o.ct = run / (0.57 * H) * 0.55 }
-  else if (dog) { o.clip = 'run'; o.ct = run / 1.55 }
-  else if (ag.kind === SL_K.walker) { o.clip = 'flee'; o.ct = run / (3.25 * H) }
-  else { o.clip = 'flee'; o.ct = run / (3.25 * H) }
+  if (ag.kind === SL_K.pram) { o.clip = 'push'; o.ct = run / (0.57 * H) * (late ? 1 : 0.55) }
+  else if (dog) { o.clip = late ? 'walk' : 'run'; o.ct = late ? run / 0.95 : run / 1.55 }
+  else if (ag.kind === SL_K.walker) { o.clip = late ? 'leash_walk' : 'flee'; o.ct = late ? run / (0.57 * H) : run / (3.25 * H) }
+  else { o.clip = late ? 'walk' : 'flee'; o.ct = late ? run / (0.57 * H) : run / (3.25 * H) }
 }
 
 function slAround(x, z, R, T, fn, skip, warm = false) {
@@ -36939,7 +36992,7 @@ const slR2 = v => Math.round(v * 100) / 100
 const slFling = v => clamp(0.25 * v * 0.45 + 0.1 * (v * 0.45) ** 2, 0.3, 12)
 const SL_HP = { adult: 40, kid: 25, dog: 25, heal: 60 }
 const slHpOf = ag => ag.kind === SL_K.stray ? SL_HP.dog : ag.kid ? SL_HP.kid : SL_HP.adult * (0.85 + 0.275 * slRnd(ag.id, 101))
-function slDeathOf(id, t) { const own = slState?.byId.get(id); if (own) for (const r of own) if (r.kind === 11 && r.t <= t && t - r.t < STREET.deadS * 1000) return r; return null }
+function slDeathOf(id, t) { const own = slState?.byId.get(id); if (own) for (const r of own) if (r.kind === 11 && r.t <= t && !slGone.has(r.key) && (t - r.t < STREET.deadS * 1000 || slHeld(id, r.key))) return r; return null }
 const slLying = (p, T) => p.down && !p.dead && (p.rec?.kind === 1 || p.rec?.kind === 9 && !p.rec.what && T >= p.rec.t + p.rec.tl)
 const slSwings = new Set()
 function slSwingDmg(c, h, G, T) {
@@ -36952,7 +37005,7 @@ function slSwingDmg(c, h, G, T) {
 }
 function slHpNow(ag, T) { if (!isHost || !slState) return null; if (slDeathOf(ag.id, Math.round(T))) return 0; const h = slState.hp?.get(ag.id); return +(h && T - h.t < SL_HP.heal * 1000 ? h.hp : slHpOf(ag)).toFixed(1) }
 const slDeathFns = []
-function slDeadFade(tau, o) { o.dead = true; o.down = true; const g = tau - STREET.bodyS; if (g > 0) { o.scale = Math.max(0, 1 - g); o.hidden = g >= 1 } }
+function slDeadFade(tau, o) { o.dead = true; o.down = true }
 function slDeadLanding(ag, r, t) { const own = slState.byId.get(ag.id); let q = null
   if (own) for (const x of own) if (x.kind === 9 && !x.what && x.t + x.tl <= t && x.t + x.tl + STREET.knockS * 600 > r.t && (!q || x.t > q.t)) q = x
   return q }
@@ -37720,6 +37773,7 @@ function slFrame(t, dt, obl) {
   const T = isHost ? drawNow() : renderT, kit = slKit, cam = camera
   if (st.view) { cam.position.set(...st.view.p); cam.lookAt(...st.view.t) }
   cam.updateMatrixWorld(); slPM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); slFrus.setFromProjectionMatrix(slPM)
+  slVw.ok = true; slVw.x = cam.position.x; slVw.z = cam.position.z; slLie.length = 0; slRetire(st, T)
   for (const c of kit.root.children) if (c.isInstancedMesh) c.count = 0
   const qn = (STREET.quality[settings.quality] ?? 1) * (STREET.scale ?? 1), qd = STREET.qualityDraw[settings.quality] ?? 1, D = Object.fromEntries(Object.entries(STREET.draw).map(([k, v]) => [k, v * qd]))
   const cx = cam.position.x, cz = cam.position.z, A = st.S * 48, seen = (x, y, z, r) => slFrus.intersectsSphere(slSph.set(slV.set(x, y, z), r))
@@ -37750,6 +37804,8 @@ function slFrame(t, dt, obl) {
     for (const ag of cell.agents) {
       if (ag.rank >= qn && !ag.venue && !st.byId.has(ag.id)) continue
       const p = ag._av.p
+      if (p.rec?.kind === 2 && T - p.rec.t > STREET.backS * 1000 - 1500 && !slHold.has(ag.id)) slHoldSet(ag.id, { key: p.rec.key, ag, at: T, amb: true })
+      slLieNote(ag, p, cx, cz, T)
       if (ag.kind === SL_K.cyclist) {
         p.bikeDown = p.rec?.kind === 1 || p.rec?.kind === 8 || p.rec?.kind === 9 ? p.bikeDown : null
         if (p.bikeDown) { const [bx, bz, by] = p.bikeDown, d = Math.hypot(bx - cx, bz - cz)
@@ -37795,7 +37851,7 @@ function slFrame(t, dt, obl) {
   }
   for (const L of slLinesNear(cx, cz, D.bike)) for (const ag of L.riders) {
     if (slRnd(ag.id, 77) >= qn && !st.byId.has(ag.id)) continue
-    ag.line = L; const p = slPose(ag, T, slPoseA); p.bikeDown = p.rec?.kind === 1 || p.rec?.kind === 8 || p.rec?.kind === 9 ? p.bikeDown : null
+    ag.line = L; const p = slPose(ag, T, slPoseA); p.bikeDown = p.rec?.kind === 1 || p.rec?.kind === 8 || p.rec?.kind === 9 ? p.bikeDown : null; slLieNote(ag, p, cx, cz, T)
     if (p.bikeDown) { const [bx, bz, by] = p.bikeDown, d = Math.hypot(bx - cx, bz - cz)
       if (near(bx, bz, D.bike) && seen(bx, 0.4, bz, 1.6)) slBikeDown(kit, d < 16 ? '' : '_lod1', bx, bz, by, p.bikeDown[3] ?? 1) }
     if (p.hidden || !near(p.x, p.z, D.bike) || !seen(p.x, 1, p.z, 2.4)) continue
@@ -37877,8 +37933,8 @@ function slDeadBirdPose(r, T, q) {
   q.x = r.x + (r.x1 - r.x) * e; q.z = r.z + (r.z1 - r.z) * e; q.y = B.hop * Math.sin(Math.PI * u) + B.lie * u
   q.yaw = r.yaw; q.roll = (2 * Math.PI - B.roll) * s; q.pitch = 0.4 * Math.sin(Math.PI * u)
   q.clip = 'fly'; q.ct = B.wing + B.beats * s
-  const g = tau - STREET.bodyS; q.scale = g > 0 ? Math.max(0, 1 - g) : 1
-  return q.scale > 0
+  q.scale = 1
+  return true
 }
 const slBirdTmp = { x: 0, y: 0, z: 0, yaw: 0, clip: 'idle', ct: 0, pitch: 0, roll: 0, scale: 1 }
 function slBirdsNear(x, z, R, T, fn) {
@@ -38015,6 +38071,7 @@ GAME.streetLife = {
     slAround(x, z, r, T ?? slNow(), (ag, p) => out.push({ id: ag.id, kind: Object.keys(SL_K).find(k => SL_K[k] === ag.kind), x: +p.x.toFixed(3), z: +p.z.toFixed(3), yaw: +p.yaw.toFixed(3), clip: p.clip, mode: p.mode, rec: p.rec?.kind || 0, down: p.down, dead: !!p.dead, hp: slHpNow(ag, T ?? slNow()), y: +p.y.toFixed(3), roll: +(p.roll || 0).toFixed(3),
       pram: ag.kind === SL_K.pram ? [slR2(p.x + Math.sin(p.yaw) * STREET.pramBack * p.scale), slR2(p.z + Math.cos(p.yaw) * STREET.pramBack * p.scale), slR2(p.yaw)] : undefined,
       ...(ag.kind === SL_K.pram ? slPramReport(ag, T ?? slNow()) : {}) })); return out },
+  lying() { return slLie.map(e => ({ ...e, base: e.base.slice(), bike: e.bike })) },
   drawn(x, z, r = 30) { const out = []; if (!slState) return out
     for (let i = 0; i < slAv.n; i++) { const e = slAv.pool[i], p = e.p; if (e.dr !== slState.frame || Math.abs(p.x - x) >= r || Math.abs(p.z - z) >= r) continue
       out.push({ id: e.ag.id, kind: Object.keys(SL_K).find(k => SL_K[k] === e.ag.kind), x: +p.x.toFixed(3), z: +p.z.toFixed(3), bx: +e.bx.toFixed(3), bz: +e.bz.toFixed(3), g: e.pt.grp, clip: p.clip, v: +(p.v || 0).toFixed(2), pram: e.ag.kind === SL_K.pram ? [+(p.x + Math.sin(p.yaw) * STREET.pramBack).toFixed(3), +(p.z + Math.cos(p.yaw) * STREET.pramBack).toFixed(3)] : undefined }) }
