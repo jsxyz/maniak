@@ -6289,7 +6289,7 @@ const FAUST_RINGS = { version: 10, near: 700, close: 220, tree: 40, cell: 480, c
   tints: { street: 0x2b2d31, walk: 0x4a4c50, park: 0x26301f, lot: 0x34363a, dirt: 0x3a3127, pole: 0x30353c,
     urban: [0x8d97ab, 0x77849b, 0x9ea9b5, 0x7d8796, 0x968b81], house: [0x8f8a7e, 0x7b8086, 0x9a8f78, 0x6f7a73, 0x857466],
     roof: [0x3b2a26, 0x2f3338, 0x4a3328, 0x3a3f36], glass: 0x1a212b, door: [0x3b2b22, 0x2c3a40, 0x4a2622], trim: 0xb9b2a0, porch: 0x9c978d, porchEdge: 0x2b2824, plank: 0x8a7a5a,
-    pave: 0x5c5e63, kerb: 0x7a7c80, path: 0x6a665e, picket: 0xc8c2b2, hedge: [0x1f2b1c, 0x25331f, 0x1b2619], garageDoor: [0x8e8a80, 0x7d6c5c, 0x6c767c], garageLine: 0x3a3833,
+    pave: 0x5c5e63, kerb: 0x7a7c80, verge: 0x76633f, path: 0x6a665e, picket: 0xc8c2b2, hedge: [0x1f2b1c, 0x25331f, 0x1b2619], garageDoor: [0x8e8a80, 0x7d6c5c, 0x6c767c], garageLine: 0x3a3833,
     board: 0x4e4236, store: [0x7a6a58, 0x6a7470, 0x7d6250], awning: [0x6a2a24, 0x2a4a3a, 0x5a4a2a], sign: [0x8a2b22, 0x2a3a6a, 0x3a5a2a],
     crown: [0x23331f, 0x2c3b22, 0x1e2c1c, 0x34402a], trunk: 0x3a2e24, lawn: [0x26331f, 0x2b3822, 0x22301d, 0x303b25], earth: 0x2e2a22, cloth: [0xc9c4b8, 0x8a9aa8, 0xa87a6a, 0xb8b090],
     shackLow: [0x4f4a45, 0x5a3a2e, 0x463c32], shackHigh: [0x6e5a3e, 0x6d6f6c, 0x3e5566, 0x7a6a4f, 0x5b4a3a], patch: [0x8a7a5a, 0x5d6a6e, 0x7a4632, 0x9a9488],
@@ -6565,7 +6565,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
         }
         for (const sg of [-1, 1]) for (const [a, b] of ms.filter(m => m[0] === sg).reduce((ps, m) => ps.flatMap(([u, v]) => m[2] <= u || m[1] >= v ? [[u, v]] : [[u, m[1]], [m[2], v]].filter(([p, q]) => q - p > 0.5)), [[a0, b0]])) {
         const p0 = c + sg * 5, p1 = c + sg * 7
-        if (style === 'lane') { const q0 = c + sg * 5, q1 = c + sg * 6.4; alongZ ? flat(Math.min(q0, q1), a, Math.max(q0, q1), b, 0.06, T.dirt) : flat(a, Math.min(q0, q1), b, Math.max(q0, q1), 0.06, T.dirt); continue }
+        if (style === 'lane') { const q0 = c + sg * 5, q1 = c + sg * 7.6; alongZ ? flat(Math.min(q0, q1), a, Math.max(q0, q1), b, 0.06, T.verge) : flat(a, Math.min(q0, q1), b, Math.max(q0, q1), 0.06, T.verge); continue }
         alongZ ? flat(Math.min(p0, p1), a, Math.max(p0, p1), b, 0.09, T.pave) : flat(a, Math.min(p0, p1), b, Math.max(p0, p1), 0.09, T.pave)
         out.pavements.push(alongZ ? [Math.min(p0, p1), a, Math.max(p0, p1), b] : [a, Math.min(p0, p1), b, Math.max(p0, p1)])
         const k0 = c + sg * 5.08, m = (a + b) / 2, h = (b - a) / 2
@@ -6693,7 +6693,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
       const inf = faustSubInfill(seed, bi, bj)
       const court = inf?.kind === 'court' && faustRingClear(segs, cx + inf.side * e + -inf.side * 40, cz, 42, 8) && faustRingClear(segs, cx - inf.side * (e - 64), cz, 14, 14) ? inf : null
       const lane = inf?.kind === 'lane' && faustRingClear(segs, cx, cz, e, 3) ? inf : null
-      const back = court ? 38 : lane ? 2.6 : 0
+      const back = court ? 38 : lane ? 3.4 : 0
       for (const sg of [-1, 1]) yield* rowOf({ bi, bj, sg, cx, cz: cz + sg * back, ex: e, ez: e - back, court: false })
       if (court) {
         const ex0 = cx + court.side * e, dir = -court.side, xc = ex0 + dir * 64, W = 4.5, R_ = 10.5
@@ -6757,12 +6757,12 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
       if (lane) {
         yield
         const x_a = cx - e, x_b = cx + e
-        flat(x_a, cz - 2.4, x_b, cz + 2.4, 0.06, T.lot)
+        flat(x_a, cz - 3.2, x_b, cz + 3.2, 0.06, T.lot)
         const hl = H(0x5b61, bi, bj)
-        for (let q = 0; q < 3; q++) { const bx = cx - e + 14 + ((hl >>> (q * 6)) % 64) / 64 * (2 * e - 28), side = (hl >>> (20 + q)) & 1 ? 1 : -1, bz = cz + side * 1.85
+        for (let q = 0; q < 3; q++) { const bx = cx - e + 14 + ((hl >>> (q * 6)) % 64) / 64 * (2 * e - 28), side = (hl >>> (20 + q)) & 1 ? 1 : -1, bz = cz + side * 2.5
           near('body', 0.3, 0.55, 0.25, bx, 0.55, bz, 0, 0, T.pole); out.solid.push(faustBox(faustCm(bx), 0.6, faustCm(bz), 0.3, 0.6, 0.25)) }
-        body(x_a + 2.5, 3.2, cz + 1.9, 0.09, 3.2, 0.09, T.pole)
-        near('light', 0.3, 0.07, 0.3, x_a + 2.5, 6.2, cz + 1.9, 0, 0, 0xffffff); near('pool', 3.2, 1, 3.2, x_a + 2.5, 0.115, cz, 0, 0, T.pave)
+        body(x_a + 2.5, 3.2, cz + 2.6, 0.09, 3.2, 0.09, T.pole)
+        near('light', 0.3, 0.07, 0.3, x_a + 2.5, 6.2, cz + 2.6, 0, 0, 0xffffff); near('pool', 3.2, 1, 3.2, x_a + 2.5, 0.115, cz, 0, 0, T.pave)
         out.walks.push([[x_a + 1, cz], [x_b - 1, cz]])
       }
     }
@@ -8641,7 +8641,7 @@ const FAUST_SURFACE = {
       shingle: [T.roof[1], T.roof[3]], tile: [T.roof[0], T.roof[2]], glass: [T.glass], door: T.door, garage: T.garageDoor,
       wood: [T.trim, T.picket, T.plank, T.board, T.trunk, T.shackHigh[0], T.shackHigh[3], T.shackHigh[4], ...T.shackLow],
       tin: [...T.tin, T.patch[1], T.shackHigh[1]], paint: [T.garageLine, T.patch[2], T.patch[3], ...T.awning, ...T.sign, ...T.cloth],
-      asphalt: [T.street, T.lot, T.porchEdge], concrete: [T.walk, T.pave, T.path, T.kerb, T.porch], grass: [T.park, ...T.lawn], dirt: [T.dirt, T.earth], metal: [T.pole] }
+      asphalt: [T.street, T.lot, T.porchEdge], concrete: [T.walk, T.pave, T.path, T.kerb, T.porch], grass: [T.park, ...T.lawn], dirt: [T.dirt, T.earth, T.verge], metal: [T.pole] }
   }
 }
 function faustSurfaceMap() {
