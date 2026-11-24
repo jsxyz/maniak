@@ -6327,7 +6327,7 @@ function faustSubMouth(seed, c, t) {
   const w = faustSubInfill(seed, k - 1, bj), e = faustSubInfill(seed, k, bj)
   return !!(w && (w.kind === 'lane' || w.side > 0) || e && (e.kind === 'lane' || e.side < 0))
 }
-const FAUST_DISTRICT = [{ kit: [2, 8, 9], court: [90, 97] }, { kit: [4, 7, 9], court: [40, 75] }, { kit: [2, 3, 6], court: [10, 60] }]
+const FAUST_DISTRICT = [{ kit: [2, 8, 9], court: [90, 97, 100] }, { kit: [4, 7, 9], court: [36, 68, 90] }, { kit: [2, 3, 6], court: [8, 52, 86] }]
 function faustSubDistrict(seed, bi, bj) {
   const d = faustMix(seed ^ 0x5b91, Math.floor(bi / 9), Math.floor(bj / 9)) % 100
   return d < 45 ? 0 : d < 80 ? 1 : 2
@@ -6335,7 +6335,7 @@ function faustSubDistrict(seed, bi, bj) {
 function faustSubVariant(seed, bi, bj) {
   const R = FAUST_RINGS, P = R.sub.pitch, r = Math.max(Math.abs((bi + 0.5) * P), Math.abs((bj + 0.5) * P)), t = Math.max(0, Math.min(1, (r - R.urban) / (R.suburb - R.urban)))
   const h = faustMix(seed ^ 0x5b72, bi, bj), u = (h >>> 8) % 100, K = FAUST_DISTRICT[faustSubDistrict(seed, bi, bj)].court
-  const v = u < K[0] ? 0 : u < K[1] ? 1 : 2
+  const v = u < K[0] ? 0 : u < K[1] ? 1 : u < K[2] ? 2 : 3
   return v && (h >>> 16) % 100 < 60 * t ? 0 : v
 }
 function faustSubInfill(seed, bi, bj) {
@@ -6787,7 +6787,20 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
           yield
           const fz = -s, hq = H(0x5b73, bi * 2 + (s > 0), bj), xa = ex0 + dir * 8, xb = ex0 + dir * 52
           flat(Math.min(xa, xb), Math.min(cz + s * 4.5, cz + s * 11.5), Math.max(xa, xb), Math.max(cz + s * 4.5, cz + s * 11.5), 0.06, T.lot)
-          if (variant === 1) for (let u = 0; u < 5; u++) {
+          if (variant === 3) for (let u = 0; u < 5; u++) {
+            const hh = H(0x5b75, bi * 16 + u * 2 + (s > 0), bj), hx = 3.8, hz = 7, y = 4.2, x = ex0 + dir * (13.8 + hx + u * 2 * hx), z = cz + s * (11.5 + hz)
+            const sd = (hh >>> 29) & 1 ? -1 : 1, fy = fz > 0 ? 0 : 2 * HALF, pz = z + fz * (hz + 0.03), dx = x + sd * 0.5 * hx, wx = x - sd * 0.4 * hx, conv = (hh >>> 3) % 5 < 1
+            body(x, y / 2, z, hx, y / 2, hz, pick(T.store, hh >>> 16))
+            out.buildings.push({ id: 'ring ' + i + ' ' + j + ' ' + out.buildings.length, kind: 'house', box: out.solid[out.solid.length - 1], storeys: 1, seed: hh >>> 0,
+              door: { x: faustCm(dx), z: faustCm(z + fz * hz), face: [0, fz] }, kit: 'strip', ...(conv ? { venue: 'conv' } : {}) })
+            part('body', hx + 0.02, 0.3, hz + 0.02, x, y + 0.3, z, 0, 0, pick(T.roof, hh >>> 26))
+            part('pane', 0.5, 1.05, 1, dx, 1.05, pz, fy, 0, pick(T.door, hh >>> 3))
+            part('lit', 1.3, 0.95, 1, wx, 1.45, pz + fz * 0.01, fy, 0, T.glass)
+            near('shed', 2.3, 0.35, 0.75, wx, 2.55, z + fz * (hz + 0.75), fy, 0, pick(T.awning, hh >>> 18))
+            part('pane', hx * 0.85, 0.4, 1, x, y - 0.75, pz + fz * 0.02, fy, 0, pick(T.sign, hh >>> 20))
+            part('lit', hx * 0.6, 0.16, 1, x, y - 0.75, pz + fz * 0.03, fy, 0, T.glass)
+            near('light', 0.09, 0.12, 0.09, dx + sd * 0.92, 2.4, z + fz * (hz + 0.1), 0, 0, 0xffffff)
+          } else if (variant === 1) for (let u = 0; u < 5; u++) {
             const hh = H(0x5b74, bi * 16 + u * 2 + (s > 0), bj), hx = 3.8, hz = 6, y = U.storeys[1], x = ex0 + dir * (13.8 + hx + u * 2 * hx), z = cz + s * (11.5 + hz)
             const sd = (hh >>> 29) & 1 ? -1 : 1, fy = fz > 0 ? 0 : 2 * HALF, pz = z + fz * (hz + 0.03), dx = x + sd * 0.4 * hx
             body(x, y / 2, z, hx, y / 2, hz, T.house[(u + (hq >>> 4)) % T.house.length])
