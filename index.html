@@ -31095,6 +31095,26 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
         yaw: Math.round((c.yaw ?? 0) * 1000) / 1000, aiYaw: Math.round((c.ai.yaw ?? 0) * 1000) / 1000, lurk: !!c.ai.lurk, tgt: c.ai.tgt, flee: c.ai.fleeT > 0, rush: c.ai.rush?.ph ?? null, rushV: c.ai.rush?.v ?? null, rushTop: c.ai.rush?.top ?? null, rushK: c.rushK || 0,
         speed: Math.round(Math.hypot(c.vx || 0, c.vz || 0) * 100) / 100, shots: [...c.ai.shots || []], guard: !!c.ai.gd?.up, think: c.ai.dbg ? { ...c.ai.dbg } : null })) })),
     env: LV.faust && faustState && selfChar() ? hauntEnv(selfChar()) : null }),
+  placeEnemy: (name, dist = 8, o = {}) => {
+    const me = selfChar(), want = String(name).trim().toLowerCase()
+    if (!isHost || !me || me.dead > 0) return null
+    const i = /^\d+$/.test(want) ? +want : BOTS.findIndex(B => [B.name, enemyName(B.name)].some(n => n.toLowerCase() === want))
+    if (!BOTS[i]) return null
+    const id = BOT_ID0 + i
+    if (!players.has(id) && !addBot(i)) return null
+    const c = players.get(id)
+    if (c.dead > 0) respawn(c)
+    const spot = clearAhead(me, dist, c.r, c.h)
+    if (!spot) return null
+    setCharPos(c, spot.x, spot.gy + c.h + c.r + 0.05, spot.z)
+    c.prot = 0; c.knT = 0; c.knUp = 0; me.prot = 0
+    c.yaw = c.ai.yaw = input.yaw + Math.PI
+    c.stillTest = true
+    Object.assign(c.ai, { pin: false, passive: false, lurk: 0, tgt: me.id, hunt: me.id })
+    if (o.hp) c.hp = o.hp
+    if (conns.size) pushRoster()
+    return { id, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100) }
+  },
   hauntSpawn: (kind, dist = 2.5, o = {}) => {
     const me = selfChar(), i = isHost && me && HAUNT_ROWS[kind]?.find(r => !players.has(BOT_ID0 + r))
     if (i === undefined || i === false) return null
