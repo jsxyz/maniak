@@ -39811,7 +39811,7 @@ const LOOT = { every: 0.5, cap: 40, perTick: 2, near: 28, keep: 140, moved: 0.35
     pantry: [['Wooden box', 0.9], ['Wooden box', 0.6], ['Bottle', 0.5], ['Shelf unit', 0.4]], lobby: [['Chair', 0.6], ['TV', 0.3], ['Table', 0.3], ['Wooden box', 0.2]], hall: [['Chair', 0.3], ['Wooden box', 0.3]],
     office: [['Chair', 0.7], ['Table', 0.4], ['Chair', 0.5], ['TV', 0.15]], meeting: [['Chair', 0.9], ['Chair', 0.8], ['Table', 0.8], ['TV', 0.3]], records: [['Wooden box', 0.8], ['Shelf unit', 0.6]],
     storeroom: [['Wooden box', 0.9], ['Wooden box', 0.7], ['Bottle', 0.5], ['Shelf unit', 0.4]] } }
-const lootState = { t: 0, clock: 0, live: new Map(), seen: new Map() }
+const lootState = { t: 0, clock: 0, live: new Map(), seen: new Map(), ringTaken: new Set() }
 const lootKey = (B, k, i) => DS_LOOT * 4294967296 + B.chunk * 1024 + B.li * 64 + k * 32 + i
 function lootRecord(key) {
   const F = faustState, local = key - DS_LOOT * 4294967296, chunk = Math.floor(local / 1024), code = local % 1024
@@ -39819,30 +39819,48 @@ function lootRecord(key) {
   const lot = faustGet(Math.floor(chunk / F.S), chunk % F.S)?.plan?.lots?.[Math.floor(code / 64)]
   return lot ? { chunk, at: [lot.x, 1, lot.z], p: { code } } : null
 }
-function lootItems(B, k) {
-  B.loot ||= new Map()
-  let L = B.loot.get(k)
-  if (L) return L
-  L = []
-  const S = inStorey(B, k), floor = B.storeys[k]?.y
-  if (!(floor >= 0)) { B.loot.set(k, L); return L }
-  S.rooms.forEach((r, ri) => {
+function lootBuild(seed, k, rooms, boxes, ramps, floor, door) {
+  const L = []
+  if (!(floor >= 0)) return L
+  const clash = (x, z, r, h) => boxes.some(b => b.c && Math.abs(b.cx - x) < b.ex + r + 0.05 && Math.abs(b.cz - z) < b.ez + r + 0.05 && b.cy + b.ey > floor + 0.1 && b.cy - b.ey < floor + 2 * h)
+  const onRamp = (x, z) => ramps.some(q => x > Math.min(q.x0, q.x1) - 0.7 && x < Math.max(q.x0, q.x1) + 0.7 && z > Math.min(q.z0, q.z1) - 0.7 && z < Math.max(q.z0, q.z1) + 0.7)
+  rooms.forEach((r, ri) => {
     const menu = LOOT.menu[r.kind]
     if (!menu) return
     menu.forEach(([name, prob], e) => {
-      const h = parkedHash(B.seed, k, ri, e, 0x6c6f6f74), K = OBJECTS.findIndex(Q => Q.name === name), row = OBJECTS[K]
+      const h = parkedHash(seed, k, ri, e, 0x6c6f6f74), K = OBJECTS.findIndex(Q => Q.name === name), row = OBJECTS[K]
       if (L.length >= 31 || K < 0 || (h & 0xffff) / 65536 >= prob) return
       const side = h >>> 16 & 3, along = (h >>> 18 & 1023) / 1023, inset = Math.max(row.half[0], row.half[2]) + LOOT.inset
       if (r.x1 - r.x0 < 2 * inset + 0.3 || r.z1 - r.z0 < 2 * inset + 0.3) return
       const x = side === 0 ? r.x0 + inset : side === 1 ? r.x1 - inset : r.x0 + inset + (r.x1 - r.x0 - 2 * inset) * along
       const z = side === 2 ? r.z0 + inset : side === 3 ? r.z1 - inset : r.z0 + inset + (r.z1 - r.z0 - 2 * inset) * along
-      const dx = side === 0 ? 1 : side === 1 ? -1 : 0, dz = side === 2 ? 1 : side === 3 ? -1 : 0
-      if (k === 0 && B.door && Math.hypot(x - B.door.x, z - B.door.z) < 1.8) return
-      L.push({ i: L.length, K, x, z, floor, yaw: Math.atan2(dx, dz), r: Math.max(row.half[0], row.half[2]), h: row.half[1] })
+      const dx = side === 0 ? 1 : side === 1 ? -1 : 0, dz = side === 2 ? 1 : side === 3 ? -1 : 0, rr = Math.max(row.half[0], row.half[2])
+      if (k === 0 && door && Math.hypot(x - door.x, z - door.z) < 1.8) return
+      if (clash(x, z, rr, row.half[1]) || onRamp(x, z)) return
+      L.push({ i: L.length, K, x, z, floor, yaw: Math.atan2(dx, dz), r: rr, h: row.half[1] })
     })
   })
-  B.loot.set(k, L)
   return L
+}
+function lootItems(B, k) {
+  B.loot ||= new Map()
+  let L = B.loot.get(k)
+  if (!L) { const S = inStorey(B, k); B.loot.set(k, L = lootBuild(B.seed, k, S.rooms, S.boxes, S.ramps || [], B.storeys[k]?.y, B.door)) }
+  return L
+}
+function lootRingItems(O, k) {
+  O.loot ||= new Map()
+  let L = O.loot.get(k)
+  if (!L) {
+    const F = O.P.floors.find(f => f.k === k)
+    O.loot.set(k, L = F ? lootBuild(O.b.seed, k, F.rooms, F.boxes, O.P.ramps || [], F.y, O.b.door) : [])
+  }
+  return L
+}
+function lootRingPoint(O, x, z) {
+  if (!O.yaw) return [x, z]
+  const r = O.P.rect, cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2, cs = Math.cos(O.yaw), sn = Math.sin(O.yaw), dx = x - cx, dz = z - cz
+  return [cx + dx * cs + dz * sn, cz - dx * sn + dz * cs]
 }
 function lootRetire(o, key) {
   if (key !== undefined) lootState.seen.delete(key)
@@ -39855,6 +39873,7 @@ function lootRetire(o, key) {
 function lootReport() {
   const St = lootState, byStorey = new Map()
   for (const O of faustIn.open.values()) for (const k of O.storeys.keys()) byStorey.set(O.id + ' ' + k, { building: O.id, storey: k, candidates: O.B?.loot?.get(k)?.length ?? 0, rejected: 0, spawned: 0, taken: 0 })
+  for (const O of faustState?.ringIn?.open.values() || []) for (const F of O.P?.floors || []) byStorey.set(O.id + ' ' + F.k, { building: O.id, storey: F.k, candidates: O.loot?.get(F.k)?.length ?? 0, rejected: 0, spawned: 0, taken: 0 })
   for (const v of St.seen.values()) { const q = byStorey.get(v.b + ' ' + v.k); if (q) q[v.state]++ }
   return { open: [...byStorey.values()], live: [...St.live.entries()].map(([key, o]) => ({ key, name: o.K.name, x: +o.x.toFixed(2), y: +o.y.toFixed(2), z: +o.z.toFixed(2), asleep: !o.body.isActive() })),
     loose: objs.filter(o => o.K.loot).length, cap: LOOT.cap }
@@ -39869,13 +39888,31 @@ function lootTick(dt, people) {
   for (const [key, o] of [...St.live]) {
     const it = o.lootAt
     if (!objs.includes(o) || o.heldBy !== undefined || o.thrownBy !== undefined || Math.hypot(o.x - it.x, o.z - it.z) > LOOT.moved || Math.abs(o.y - it.y) > LOOT.moved + 0.3) {
-      St.live.delete(key); delete o.lootAt; o.lootTaken = true; dsBreak(DS_LOOT, key, 1); { const v = St.seen.get(key); if (v) v.state = 'taken' } continue
+      St.live.delete(key); delete o.lootAt; o.lootTaken = true
+      if (typeof key === 'number') dsBreak(DS_LOOT, key, 1); else St.ringTaken.add(key)
+      { const v = St.seen.get(key); if (v) v.state = 'taken' }
+      continue
     }
     if (!near(it.x, it.z, LOOT.near + 12)) lootRetire(o, key)
   }
   for (const o of [...objs]) if (o.lootTaken && o.heldBy === undefined && !near(o.x, o.z, LOOT.keep)) lootRetire(o)
   if (!people.length || objs.length >= OBJ_MAX - 64 || objs.reduce((n, o) => n + (o.K.loot ? 1 : 0), 0) >= LOOT.cap) return
   let made = 0
+  const spawn = (key, O, k, it, x, z, yaw) => {
+    if (St.live.has(key) || St.ringTaken.has(key) || typeof key === 'number' && dsState.all.has(key) || !near(x, z, LOOT.near)) return 0
+    const seen = St.seen.get(key)
+    if (seen?.state === 'rejected' && St.clock < seen.until) return 0
+    const gy = clearGround(x, z, it.floor, it.r, it.h, 0.3, false)
+    if (gy === null) { St.seen.set(key, { b: O.id, k, state: 'rejected', until: St.clock + 10, name: OBJECTS[it.K].name, x, z }); return 0 }
+    const id = partsFreeId()
+    if (id < 0) return -1
+    const o = addObject(it.K, [x, gy + it.h + 0.03, z], id, yaw)
+    if (!o) return 0
+    o.lootAt = { x, z, y: gy + it.h + 0.03 }
+    world.updateSingleAabb(o.body); o.body.setActivationState(CF_SLEEPING)
+    St.live.set(key, o); St.seen.set(key, { b: O.id, k, state: 'spawned', name: OBJECTS[it.K].name, x, z })
+    return 1
+  }
   for (const O of faustIn.open.values()) {
     const B = O.B
     if (!B || B.sg !== undefined || !/^\d+ \d+ \d+$/.test(String(O.id)) || !(B.li < 16) || !Number.isInteger(B.chunk)) continue
@@ -39883,20 +39920,19 @@ function lootTick(dt, people) {
       if (!(k < 2)) continue
       for (const it of lootItems(B, k)) {
         if (made >= LOOT.perTick) return
-        const key = lootKey(B, k, it.i)
-        if (St.live.has(key) || dsState.all.has(key) || !near(it.x, it.z, LOOT.near)) continue
-        const seen = St.seen.get(key)
-        if (seen?.state === 'rejected' && St.clock < seen.until) continue
-        const gy = clearGround(it.x, it.z, it.floor, it.r, it.h, 0.3, false)
-        if (gy === null) { St.seen.set(key, { b: O.id, k, state: 'rejected', until: St.clock + 10, name: OBJECTS[it.K].name, x: it.x, z: it.z }); continue }
-        const id = partsFreeId()
-        if (id < 0) return
-        const o = addObject(it.K, [it.x, gy + it.h + 0.03, it.z], id, it.yaw)
-        if (!o) continue
-        o.lootAt = { x: it.x, z: it.z, y: gy + it.h + 0.03 }
-        world.updateSingleAabb(o.body); o.body.setActivationState(CF_SLEEPING)
-        St.live.set(key, o); St.seen.set(key, { b: O.id, k, state: 'spawned', name: OBJECTS[it.K].name, x: it.x, z: it.z }); made++
+        const r = spawn(lootKey(B, k, it.i), O, k, it, it.x, it.z, it.yaw)
+        if (r < 0) return
+        made += r
       }
+    }
+  }
+  for (const O of faustState.ringIn?.open.values() || []) {
+    if (O.urban || !O.P?.floors || !(O.b?.kind === 'house' || O.b?.kind === 'shack')) continue
+    for (const F of O.P.floors) for (const it of lootRingItems(O, F.k)) {
+      if (made >= LOOT.perTick) return
+      const [x, z] = lootRingPoint(O, it.x, it.z), r = spawn('ring ' + O.id + ' ' + F.k + ' ' + it.i, O, F.k, it, x, z, it.yaw + (O.yaw || 0))
+      if (r < 0) return
+      made += r
     }
   }
 }
