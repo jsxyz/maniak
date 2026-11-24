@@ -25487,7 +25487,7 @@ function drawObjects(list, wheelsAt = () => null) {
   const listed = new Set(list.map(o => o.id ?? o)), limbSeen = new Set()
   for (const key of objOf.keys()) if (!listed.has(key)) objOf.delete(key)
   const held = new Set(objOf.values())
-  for (const o of list) {
+  for (const o of list) try {
     const K = OBJECTS[o.k]
     if (K && K.shape === 'hull') {
       if (K.ownLook?.(o, wheelsAt)) continue
@@ -25534,15 +25534,14 @@ function drawObjects(list, wheelsAt = () => null) {
     if (!(n[o.k] < OBJ_MAX)) continue
     if (!objMesh[o.k]) objGroup.add(objMesh[o.k] = objLook(OBJECTS[o.k]))
     objMesh[o.k].setMatrixAt(n[o.k]++, T[0].compose(T[1].set(o.x, o.y, o.z), T[2].set(...o.q), T[3]))
-  }
-  limbViewsEnd(limbSeen)
-  coverMarks(list)
+  } catch (e) { drawFault('object ' + o.k, e) }
+  drawSafe('limbs', () => { limbViewsEnd(limbSeen); coverMarks(list) })
   objMesh.forEach((m, k) => {
     if (m && (m.count = n[k])) { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere() }
   })
-  trafficDraw(list)
-  squadBarsDraw(list)
-  periodWheelsFrame()
+  drawSafe('traffic', () => trafficDraw(list))
+  drawSafe('squad bars', () => squadBarsDraw(list))
+  drawSafe('period wheels', () => periodWheelsFrame())
   if (wheelBucket) {
     for (const m of wheelBucket) m.count = wheelN
     if (wheelN) { wheelBucket[0].instanceMatrix.needsUpdate = true; wheelBucket[0].computeBoundingSphere(); wheelBucket[1].boundingSphere = wheelBucket[0].boundingSphere }
@@ -42787,6 +42786,15 @@ function frameFailed(where, e) {
   try { console.error('[SKs] frame failed in ' + where, e) } catch (err) {}
 }
 
+const drawFaults = new Set()
+function drawFault(where, e) {
+  const key = where + ':' + (e && e.message)
+  if (drawFaults.has(key)) { frameFails++; return }
+  drawFaults.add(key)
+  frameFailed(where, e)
+  try { const time = new Date().toISOString(); for (const line of ('frame failed in ' + where + ': ' + ((e && e.stack) || e)).split('\n').slice(0, 6)) gameLog.push({ time, kind: 'b', text: line }); while (gameLog.length > 200) gameLog.shift() } catch (err) {}
+}
+const drawSafe = (where, f) => { try { return f() } catch (e) { drawFault(where, e) } }
 const FRAME_LATE = 1.5
 let drawT0 = 0, frameT = 0, frameTl = 0
 function frameBody() {
@@ -43499,7 +43507,10 @@ function draw(dt, t) {
   background.sec('me avatar')
   bodyState(myId, me, t)
   meMesh.visible = rigShown(myId, me.dead) && !helloDue
-  const meP = drawnPose(me), meD = carrierShift(me, meP ? { ...me, x: meP[0], y: meP[1], z: meP[2] } : me)
+  let meD = me, myArmed = false
+  try {
+  const meP = drawnPose(me)
+  meD = carrierShift(me, meP ? { ...me, x: meP[0], y: meP[1], z: meP[2] } : me)
   meMesh.position.set(meD.x, meD.y, meD.z)
   const myHold = holdOf(myId, me) || me.ceil && 'ceiling'
   avatars.get(myId).moveState = me.winIn ? 5 : me.mantle || me.mantleFall ? 4 : smashDiving(me) ? 3 : me.leap ? 2 : me.springT > SPRING_TAP ? 1 : 0; avatars.get(myId).moveCharge = clamp(((me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP), 0, 1)
@@ -43509,16 +43520,17 @@ function draw(dt, t) {
   if (!drawSeat(meMesh, me, sits.get(myId), obl) && !drawCeiling(meMesh, meD, myHold === 'ceiling', dt, myTicks)) drawTurned(meMesh, meD, animOf(me) === 4 && GAME.participantOf(me)?.wallRun, dt, myTicks)
   setAnim(myId, me.water && !myHold ? swimWant(me.water, me) : crouchOf(myId, me.cid, animOf(me), me.springT > SPRING_TAP, myHold), dt, t, myHold, false, myTicks, [me.x - meD.x, me.y - meD.y, me.z - meD.z])
   background.sec('me pose')
-  const myArmed = GAME.view.passengerAim(myId, me, t, sits.get(myId)?.[1])
+  myArmed = GAME.view.passengerAim(myId, me, t, sits.get(myId)?.[1])
   poseSeatAim(myId, myArmed && me, t)
   drawHealth(myId, me.hp)
   swimFx(myId, me.water | 0, me, dt); carFx(dt)
+  } catch (e) { drawFault('maniak', e) }
 
   background.sec('players')
   cullFrom(camera)
   const live = new Set([myId])
   background.acc(null)
-  for (const o of others) {
+  for (const o of others) try {
     live.add(o.id)
     const m = avatarFor(o.id, o.cid, o.cap | 0)
     background.acc('avatarFor')
@@ -43557,29 +43569,28 @@ function draw(dt, t) {
     perfDraw(o.id, (!sits.has(o.id) || armed) && o, t)
     dealDraw(o.id, (!sits.has(o.id) || armed) && o, t)
     background.acc('perfDraw')
-  }
+  } catch (e) { drawFault('avatar ' + o.id, e) }
   background.accFlush('av')
   background.sec('avatars')
-  partsDraw(me, others, t, dt, meD)
+  drawSafe('parts', () => partsDraw(me, others, t, dt, meD))
   for (const id of [...avatars.keys()]) if (id >= 0 && !live.has(id)) dropAvatar(id)
   for (const id of bodySeen.keys()) if (!live.has(id)) bodySeen.delete(id)
   for (const [id, P] of bodyPipes) if (!live.has(id)) { P.removeFromParent(); P.userData.flame.removeFromParent(); bodyPipes.delete(id) }
   if (!offPlay()) clearPrepared(true)
 
-  drawPickups(pkl, t)
+  drawSafe('pickups', () => drawPickups(pkl, t))
   background.sec('held')
-  drawObjects(obl, d => wheelsOf(d, isHost ? now() : renderT, camera.position))
+  drawSafe('objects', () => drawObjects(obl, d => wheelsOf(d, isHost ? now() : renderT, camera.position)))
   try { carSounds(obl, dt) } catch (e) { sfxFaults++ }
   try { worldHums(obl, dt) } catch (e) { sfxFaults++ }
   try { parkedStandFrame() } catch (e) { frameFailed('parked stand-ins', e) }
   background.sec('objects')
-  spawnFace(me)
-  GAME.audio.frame(me, others, t, obl)
-  GAME.audio.radio()
+  drawSafe('spawn face', () => spawnFace(me))
+  drawSafe('audio', () => { GAME.audio.frame(me, others, t, obl); GAME.audio.radio() })
 
   background.sec('audio')
-  const cam = updateCamera(meD, input, camera, firstPerson, others)
-  GAME.view.radar(meD, others, t)
+  const cam = drawSafe('camera', () => updateCamera(meD, input, camera, firstPerson, others)) || { dist: 0, hideSelf: false, fade: 1 }
+  drawSafe('radar', () => GAME.view.radar(meD, others, t))
   const held = cam.ray && obl.find(o => !o.K.carry && (o.heldBy ?? objHeld.get(o.id)) === myId)
   heldF += ((held ? heldFade(cam.ray, me, held) : 1) - heldF) * timeShare(dt, TICK / 0.15)
   for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP))
