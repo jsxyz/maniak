@@ -31940,7 +31940,18 @@ const lastSeen = new Map()
 let myId = 0, myCid = START, myName = ''
 const HELLO_MS = 500
 let admitted = false, helloAt = 0, helloDue = false
-const hello = () => { helloDue = false; helloAt = now(); sendHost({ k: 'hello', cid: myCid, name: myName }) }
+const buildOf = text => {
+  let a = 0x811c9dc5, b = 0x9747b28c
+  for (let i = 0; i < text.length; i++) { const c = text.charCodeAt(i); a = Math.imul(a ^ c, 16777619); b = Math.imul(b + c, 0x5bd1e995) ^ b >>> 13 }
+  return (a >>> 0).toString(36) + (b >>> 0).toString(36) + text.length.toString(36)
+}
+const gameScript = scripts => scripts.reduce((best, s) => s.textContent.length > best.length ? s.textContent : best, '')
+let buildMemo = null
+const BUILD_STRICT_SERVER = false
+const buildId = () => buildMemo ||= buildOf(gameScript([...document.scripts].filter(s => !s.src)))
+const buildLive = () => fetch(location.href.split(/[?#]/)[0], { cache: 'no-store' }).then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
+  .then(t => buildOf(gameScript([...new DOMParser().parseFromString(t, 'text/html').scripts].filter(s => !s.src))))
+const hello = () => { helloDue = false; helloAt = now(); sendHost({ k: 'hello', cid: myCid, name: myName, b: buildId() }) }
 function hostIn() {
   const me = Object.assign(newChar(myCid, -6, 0), { id: 0 })
   players.set(0, me)
@@ -32511,6 +32522,7 @@ let serving = false, servedAt = 0, stopping = false, stopTimer = 0
 function startServer() {
   serving = true
   servedAt = now()
+  console.info('[maniak] server build ' + buildId())
   bytesUpAll = 0; bytesDownAll = 0; GAME.view.serverReset()
   myName = 'The server'
   document.body.classList.add('serving')
@@ -32547,6 +32559,10 @@ function dropBot(c) { clearSeat(c); detachBody(c); players.delete(c.id); inputs.
 
 const HOST_MSGS = {
   hello: { apply: (id, d) => {
+    if (d.b !== buildId()) {
+      if (serverPage() && !BUILD_STRICT_SERVER) console.warn('[maniak] build mismatch: guest ' + id + ' runs ' + (d.b || 'an older build') + ', this server runs ' + buildId() + '; admitted')
+      else { const c = conns.get(id); if (c?.open) { c.send({ k: 'refused', b: buildId() }); setTimeout(() => { try { c.close() } catch (e) {} }, 300) } return }
+    }
     if (players.has(id)) { const c = conns.get(id); if (!(now() - c.welcomedAt < HELLO_MS)) c.welcomedAt = now(), c.send(welcome(id)); return }
     if (hookFilters.has('join') && !(d = hookJoin(id, d))) return
     const cid = GAME.rows.admit(id, d.cid)
@@ -32787,6 +32803,15 @@ const GUEST_MSGS = {
   kicked: { apply: d => { kickedBy = String(d.by || 'the host').slice(0, 16) } },
   dropped: { apply: d => { droppedWhy = String(d.why || 'The host let this game go.').slice(0, 240)
     setTimeout(() => { if (droppedWhy && !isHost && phase === 'playing') endSession('Disconnected', droppedWhy, true) }, 600) } },
+  refused: { validate: d => typeof d.b === 'string' && d.b.length <= 40 ? d : null, apply: d => {
+    const note = () => endSession('Different version', 'This room runs a different version of the game than this page.', false)
+    buildLive().then(live => {
+      const tried = sessionStorage.getItem('maniak.build'), stale = live !== buildId() && live === d.b && tried !== live
+      if (!stale) return note()
+      sessionStorage.setItem('maniak.build', live)
+      const u = new URL(location.href); u.searchParams.set('r', live); location.replace(u.href)
+    }).catch(note)
+  } },
   full: { apply: d => { endSession('Room full', 'The room takes ' + (d.n | 0) + ' players.', false) } },
   hostgone: { validate: d => ({ ...d, back: d.back === true }), apply: d => {
     if (d.back) endSession('Disconnected', 'The server is restarting…', 'back')
