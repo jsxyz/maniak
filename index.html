@@ -15944,6 +15944,15 @@ function carUnstack() {
   }
   for (const [o, f] of unstackHeld) if (!unstackNow.has(o)) { if (o.body && objs.includes(o)) o.body.setFriction(f); unstackHeld.delete(o) }
 }
+const SPEED_CAP = 120
+function capBody(b) {
+  const v = b.getLinearVelocity(), m = Math.hypot(v.x(), v.y(), v.z())
+  if (m > SPEED_CAP) { const k = SPEED_CAP / m; velVec.setValue(v.x() * k, v.y() * k, v.z() * k); b.setLinearVelocity(velVec) }
+}
+function capSpeeds() {
+  for (const c of players.values()) if (c.body) capBody(c.body)
+  for (const o of objs) if (o.body) capBody(o.body)
+}
 function stepPhysics(dt) {
   let s = realNow()
   padLaunch()
@@ -15951,6 +15960,7 @@ function stepPhysics(dt) {
   const swept = carsAtSpeed()
   s = simLap('physics pre', s)
   world.stepSimulation(dt, 0)
+  capSpeeds()
   s = simLap('bullet', s)
   carSweep(swept)
   carUnstack()
@@ -43994,11 +44004,24 @@ function mcInput(t) {
     else mcWhistle(c)
   }
 }
+function mcBlock(c) {
+  if (c.winIn) return "Your car can't come while you ride a train."
+  for (const k of carriers.values()) {
+    const p = carrierPose(k), [lx, ly, lz] = carrierLocal(p, c.x, c.y, c.z)
+    if (k.volume.some(v => Math.abs(lx - v[0]) <= v[3] && Math.abs(ly - v[1]) <= v[4] + 0.3 && Math.abs(lz - v[2]) <= v[5]))
+      return k.id.startsWith('air:') ? "Your car can't come while you ride a zeppelin." : "Your car can't come while you ride a train."
+  }
+  if (c.water) return "Your car can't come while you are in the water."
+  if (faustState && inAt(c.x, c.y - (c.h || 0) - (c.r || 0), c.z)?.inside) return "Your car can't come while you are inside a building."
+  return ''
+}
 const mcStateOf = id => mcOwn.get(id) || mcOwn.set(id, { car: undefined, mode: '', since: 0 }).get(id)
 const mcCarOf = st => st.car === undefined ? null : objs.find(o => o.id === st.car && o.k === MC_K) || null
 function mcWhistle(c) {
   const T = mcClock(), st = mcStateOf(c.id)
   if (T - (st.whistled ?? -Infinity) < MCAR.whistle.cd * 1000) return
+  const why = mcBlock(c)
+  if (why) { st.whistled = T; st.mode = ''; tell(c.id, '§7' + why, 'a'); return }
   st.whistled = T; mcWhistles.set(c.id, Math.round(T))
   achEvent(c.id, 'whistle')
   let o = mcCarOf(st)
@@ -44270,6 +44293,7 @@ function mcHostTick(t) {
   for (const [pid, st] of mcOwn) {
     const c = players.get(pid)
     if (!c) { const o = mcCarOf(st); if (o) mcLetGo(o); mcOwn.delete(pid); continue }
+    if (st.mode && mcBlock(c)) { const o = mcCarOf(st); if (o?.traffic) GAME.traffic.cancel(o.id); st.mode = ''; continue }
     if (st.mode === 'spawn') {
       if (c.dead > 0) st.mode = ''
       else if (T - st.since > 30000) mcFail(c, st, "Your car couldn't get through. Move along the street and whistle again.")
@@ -44419,6 +44443,7 @@ function mcPress() {
   const me = selfChar(), t = now()
   if (!me || me.dead > 0 || seatOf(me) || me.ride || t - mcMine < MCAR.whistle.cd * 1000) return
   mcMine = t
+  if (mcBlock(me)) return
   mcHearAt(myId, me, 0)
 }
 function mcHearAt(id, c, age) {
