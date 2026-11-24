@@ -13518,6 +13518,7 @@ const SMASH_RECOVER = 0.6
 const smashDiving = c => !!c.dove && GUNS[c.dove]?.name === 'Leap-smash'
 const HOP_STEER = 6
 const CHARGE_RUN = 0.85, CHARGE_EASE = 0.5, LEAP_CARRY = 0.8
+const LEAP_LAND = { vy: 1.5, stuck: 8, max: 12 }
 const WEB_HOP = 4
 const BOT_ACC = 40
 const FLING_ACC = 25
@@ -13745,7 +13746,9 @@ function applyIntent(c, inp, dt) {
   const CV = carrierCarry(c, dt), CX = CV ? CV[0] : 0, CZ = CV ? CV[2] : 0
   c.smashCam = Math.max(0, (c.smashCam || 0) - dt)
   if (c.leap && c.air) c.leapAir = true
-  if (c.leap && c.leapAir && c.grounded) c.leap = 0
+  c.leapG = c.leap && c.grounded ? (c.leapG || 0) + 1 : 0
+  c.leapT = c.leap ? (c.leapT || 0) + dt : 0
+  if (c.leap && (c.leapT > LEAP_LAND.max || (c.leapAir ? c.grounded && (c.vy <= LEAP_LAND.vy || c.leapG > 1) : c.leapG > LEAP_LAND.stuck))) c.leap = 0
   if (c.hop) { if (c.air) c.hopAir = true; else if (c.hopAir || ++c.hop > 6) c.hop = c.hopAir = 0 }
   chainIntent(c, inp, dt)
   if (!c.winIn && c.winMasked) winMask(c, false)
@@ -43607,11 +43610,11 @@ const OWN_PREDICTION = (F => {
   const S = GAME.schema.step, fuelEps = S.fuel + S.fuel / 10
   if (REWIND_EPS < Math.hypot(S.x, S.y, S.z)) throw Error('REWIND_EPS is under the wire step')
   return {
-    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.face ??= c.face; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.wt = c.water | 0; e.sp = c.springT || 0; e.ja = [c.airT || 0, !!c.jAir, !!c.jWas, !!c.jUsed]; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ml = c.mantle ? [...c.mantle] : null; e.mf = !!c.mantleFall; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
+    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.face ??= c.face; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.wt = c.water | 0; e.sp = c.springT || 0; e.ja = [c.airT || 0, !!c.jAir, !!c.jWas, !!c.jUsed]; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0, c.leapG || 0, c.leapT || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ml = c.mantle ? [...c.mantle] : null; e.mf = !!c.mantleFall; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
       const bh = c.body?.getBroadphaseHandle(); e.dsh = [!!c.dashOn, c.dashRun || 0, c.dashHit && [...c.dashHit], bh && A.getPointer(bh) ? bh.get_m_collisionFilterMask() : null]; e.cv = c.carryV ? [...c.carryV] : null; e.cvId = c.carryId; e.wi = c.winIn ? [...c.winIn] : null; return e },
     err: (e, a) => Math.hypot(e.x - a[F.x], e.y - a[F.y], e.z - a[F.z]),
     agrees: (e, a, web) => (e.web || 0) === web && Math.abs(e.fuel - a[F.fuel]) <= fuelEps && e.jl === !!a[F.jLock],
-    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.water = e.wt | 0; c.springT = e.sp; [c.airT, c.jAir, c.jWas, c.jUsed] = e.ja || [0, false, false, false]; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace] = e.leap; [c.hop, c.hopAir] = e.hop; c.mantle = e.ml ? [...e.ml] : null; c.mantleFall = !!e.mf; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
+    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.water = e.wt | 0; c.springT = e.sp; [c.airT, c.jAir, c.jWas, c.jUsed] = e.ja || [0, false, false, false]; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace, c.leapG = 0, c.leapT = 0] = e.leap; [c.hop, c.hopAir] = e.hop; c.mantle = e.ml ? [...e.ml] : null; c.mantleFall = !!e.mf; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
       c.dashOn = e.dsh[0]; c.dashRun = e.dsh[1]; c.dashMask = e.dsh[3]; c.dashHit = e.dsh[2] && new Set(e.dsh[2]); c.carryV = e.cv ? [...e.cv] : null; c.carryId = e.cvId; c.winIn = e.wi ? [...e.wi] : null },
     restore: (c, a, web) => { const [x, y, z, vx, vy, vz] = ownExact || [a[F.x], a[F.y], a[F.z], a[F.vx], a[F.vy], a[F.vz]]; restoreChar(c, x, y, z, vx, vy, vz, a[F.fuel])
       const bh = c.body?.getBroadphaseHandle(), m = c.dashMask; c.dashMask = null
