@@ -35397,7 +35397,8 @@ function hauntTick(dt, all) {
     if (!hauntNext.has(p.id)) hauntNext.set(p.id, T + HAUNT.first * 1000)
     const seat = seatOf(p)
     if (hauntNext.get(p.id) > T || seat && speedOf(seat[0]) > 6) continue
-    const env = hauntEnv(p), list = HAUNT_CREWS[env], kinds = list[Math.random() * list.length | 0].slice(0, room), at = hauntSpot(p, env)
+    const hs0 = realNow(), env = hauntEnv(p), list = HAUNT_CREWS[env], kinds = list[Math.random() * list.length | 0].slice(0, room), hs1 = realNow(), at = hauntSpot(p, env)
+    background.simAdd('hn env', hs1 - hs0); background.simAdd('hn spot', realNow() - hs1)
     if (!at) { hauntNext.set(p.id, T + HAUNT.retry * 1000); continue }
     const key = 'h' + ++hauntSerial, K = { key, owner: p.id, env, ids: [], at: T, help: kinds.length < 3 ? 2 : 0 }, yaw = Math.atan2(-(p.x - at.x), -(p.z - at.z)), sx = Math.cos(yaw), sz = -Math.sin(yaw)
     kinds.forEach((kind, n) => {
@@ -35406,7 +35407,8 @@ function hauntTick(dt, all) {
       const o = (n - (kinds.length - 1) / 2) * 1.1
       const q = [[sx * o, sz * o], [-sx * o, -sz * o], [sz * o, -sx * o], [-sz * o, sx * o], [0, 0]].find(([dx, dz]) => { const t = staticRay(at.x + dx, at.y + 1.2, at.z + dz, 0, -1, 0, 2.4); return t < 2.4 && Math.abs(at.y + 1.2 - t - at.y) < 0.6 }) || [0, 0]
       ENFORCER_AT = [at.x + q[0], at.y + 0.6, at.z + q[1], yaw]
-      const ok = addBot(i)
+      const ab0 = realNow(), ok = addBot(i)
+      background.simAdd('hn add', realNow() - ab0)
       ENFORCER_AT = null
       if (!ok) return
       const c = players.get(BOT_ID0 + i)
