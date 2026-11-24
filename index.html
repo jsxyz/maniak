@@ -5009,14 +5009,27 @@ function* faustRoadCellSolid(plan, key) {
   yield* faustRoadCellSteps(plan, key, { face, box: (b, tint, light, solid) => { if (solid) boxes.push(b) } }, false)
   return { tris: new Float32Array(tris), boxes }
 }
-function faustRoadBuf() {
-  const P = [], N = [], C = [], Gl = [], col = new THREE.Color()
-  const vert = (q, n, c, g) => { P.push(q[0], q[1], q[2]); N.push(n[0], n[1], n[2]); C.push(c.r, c.g, c.b); Gl.push(g) }
+let faustTintLayers = null
+function faustTintLayer(tint) {
+  if (!faustTintLayers) {
+    const m = faustTintLayers = new Map(), put = (name, list) => { for (const h of [].concat(list)) m.set(h, FAUST_SURFACE.layers.indexOf(name)) }
+    const C = FAUST_CHAN.tint, W = FAUST_WATER.tint, Fd = FAUST_FIELDS
+    put('asphalt', [0x2a2d33, 0x575c63, C.deckTop]); put('concrete', [0x5c6168, 0x8a8f95, 0x9ea2a7, 0x6a6f76, C.bank, C.floor, C.gutter, C.lip, C.wall, C.cap, C.joint, C.damp, C.stainTop, C.stainMid, C.stainToe, C.sheen, C.walk, C.under, C.fascia, C.stone, C.stoneDark, C.pier, C.flute, ...FAUST_WATER.dam.tint, 0x404b5b, 0x2a2f37, 0x4a525d, 0x353b45])
+    put('metal', [0x7a7f86, 0x30353c, W.bollard]); put('line', [0xd9d2be, C.mark]); put('paint', [0xd8d0bb, 0x8e3a2c, ...C.paint])
+    put('dirt', [C.bed, W.mud, W.sand, W.deep, W.water, Fd.tints[1]]); put('wood', [W.dock, W.pile]); put('grass', [Fd.tints[0], Fd.tints[2], Fd.tints[3]]); put('leaf', Fd.hedgeTint)
+  }
+  return faustTintLayers.get(tint) ?? FAUST_SURFACE.layers.indexOf('concrete')
+}
+function faustRoadBuf(roads = false) {
+  const P = [], N = [], C = [], Gl = [], Lr = [], col = new THREE.Color()
+  let ly = 0
+  const vert = (q, n, c, g) => { P.push(q[0], q[1], q[2]); N.push(n[0], n[1], n[2]); C.push(c.r, c.g, c.b); Gl.push(g); Lr.push(ly) }
   const tri = (t, nrm, tint, g, vn) => {
     const u = [t[1][0] - t[0][0], t[1][1] - t[0][1], t[1][2] - t[0][2]], v = [t[2][0] - t[0][0], t[2][1] - t[0][1], t[2][2] - t[0][2]]
     const dot = (u[1] * v[2] - u[2] * v[1]) * nrm[0] + (u[2] * v[0] - u[0] * v[2]) * nrm[1] + (u[0] * v[1] - u[1] * v[0]) * nrm[2]
     const o = dot < 0 ? [0, 2, 1] : [0, 1, 2], l = faustLen(faustLen(nrm[0], nrm[1]), nrm[2]) || 1, n = [nrm[0] / l, nrm[1] / l, nrm[2] / l]
     if (!Array.isArray(tint)) col.setHex(tint)
+    ly = roads ? faustTintLayer(Array.isArray(tint) ? tint[0] : tint) : -1
     for (const k of o) { if (Array.isArray(tint)) col.setHex(tint[k]); vert(t[k], vn ? vn[k] : n, col, Array.isArray(g) ? g[k] : g) }
   }
   const face = (a, b, c, d, nrm, tint, g = 0) => { tri([a, b, c], nrm, tint, g); tri([a, c, d], nrm, tint, g) }
@@ -5036,12 +5049,13 @@ function faustRoadBuf() {
     g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n * 2), 2))
     g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(C), 3))
     g.setAttribute('faustGlow', new THREE.BufferAttribute(new Float32Array(Gl), 1))
+    g.setAttribute('faustLayer', new THREE.BufferAttribute(new Float32Array(Lr), 1))
     g.computeBoundingSphere(); return g
   }
   return { tri, face, box, geometry, get count() { return Gl.length / 3 } }
 }
 function* faustRoadCellLook(plan, key) {
-  const buf = faustRoadBuf(), up = [0, 1, 0], pool = 0x2a2d33
+  const buf = faustRoadBuf(true), up = [0, 1, 0], pool = 0x2a2d33
   const fan = (m, r, a, b) => {
     const dx = b[0] - a[0], dz = b[2] - a[2], l = faustLen(dx, dz) || 1, gr = (b[1] - a[1]) / l, ux = dx / l, uz = dz / l
     const rim = k => { const t = k / 12 * 6.283185307179586, x = m[0] + Math.cos(t) * r, z = m[2] + Math.sin(t) * r
@@ -5099,7 +5113,7 @@ function faustRoadsFrame() {
       const g = yield* faustRoadCellLook(plan, k)
       try {
       { const bytes = geometryBytes({ traverse: fn => fn({ geometry: g }) }); while (!background.uploadSlot(bytes)) yield 'frame' }
-      v.mesh = new THREE.Mesh(g, F.materials.stone); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
+      v.mesh = new THREE.Mesh(g, faustSurfaceMaterial(F, 'body')); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
       } finally { if (!v.mesh) g.dispose() }
     }, { valid: () => faustState === F && F.roadLooks === V && V.get(k) === v }).catch(e => frameFailed('roads', e))
   }
@@ -5434,7 +5448,7 @@ function* faustChanSolid(ch, k) {
   return new Float32Array(out)
 }
 function* faustChanLook(ch, k) {
-  const buf = faustRoadBuf()
+  const buf = faustRoadBuf(true)
   yield* faustChanPiece(ch, k, { face: (a, b, c, d, nrm, tint, solid, g) => buf.face(a, b, c, d, nrm, tint, g || 0), tri: (a, b, c, nrm, tint, solid, g) => buf.tri([a, b, c], nrm, tint, g || 0) }, true)
   return buf.geometry()
 }
@@ -5526,7 +5540,7 @@ function faustChanFrame() {
     V.set(key, v)
     background.run('chanlook:' + key, function* () {
       const g = yield* faustChanLook(ch, k)
-      v.mesh = new THREE.Mesh(g, F.materials.stone); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
+      v.mesh = new THREE.Mesh(g, faustSurfaceMaterial(F, 'body')); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
       v.water = new THREE.Mesh(yield* faustChanWater(ch, k), F.materials.stone); v.water.receiveShadow = true
       v.water.userData.water = { id: ch.id, kind: ch.kind === 'river' ? 'river' : 'channel', level: ch.kind === 'river' ? FAUST_WATER.river.level : FAUST_CHAN.ground - FAUST_CHAN.depth - FAUST_CHAN.gutter[2] + FAUST_CHAN.water }
       FAUST_WATER.dress?.(v.water, v.water.userData.water)
@@ -5992,7 +6006,7 @@ function* faustWaterCellSolid(seed, S, i, j) {
   return new Float32Array(out)
 }
 function* faustWaterCellLook(seed, S, i, j) {
-  const buf = faustRoadBuf()
+  const buf = faustRoadBuf(true)
   yield* faustWaterCell(seed, S, i, j, { face: (a, b, c, d, nrm, tint, solid, g) => buf.face(a, b, c, d, nrm, tint, g || 0), tri: (a, b, c, nrm, tint, solid, g, vn) => buf.tri([a, b, c], nrm, tint, g || 0, vn) }, true)
   return buf.geometry()
 }
@@ -6043,7 +6057,7 @@ function faustWaterFrame() {
     V.set(key, v)
     background.run('waterlook:' + key, function* () {
       const g = yield* faustWaterCellLook(F.seed, F.S, i, j)
-      v.mesh = new THREE.Mesh(g, F.materials.stone); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
+      v.mesh = new THREE.Mesh(g, faustSurfaceMaterial(F, 'body')); v.mesh.receiveShadow = true; worldGroup.add(v.mesh)
       v.surf = []; v.rise = []
       for (const sf of faustWaterSurface(F.seed, F.S, i, j)) {
         const m = new THREE.Mesh(sf.geo, F.materials.stone); m.receiveShadow = true; m.userData.water = sf.info
@@ -7623,31 +7637,31 @@ const FAUST_CUBE = [0, 1, 2].flatMap(axis => [-1, 1].flatMap(sign => {
   })
   return [0, 1, 2, 0, 2, 3].map(i => corners[i])
 }))
-function faustBatch(capacity = 12288) {
-  let cur = Math.min(capacity, 8192)
+function faustBatch(capacity = 12288, layered = false) {
+  let cur = Math.min(capacity, 8192), ly = -1
   let p = new Float32Array(cur * 3), n = new Float32Array(cur * 3), uv = new Float32Array(cur * 2), colors = new Float32Array(cur * 3)
-  let glow = new Float32Array(cur); const col = new THREE.Color(); let count = 0, lit = 0
+  let glow = new Float32Array(cur), lay = layered ? new Float32Array(cur) : null; const col = new THREE.Color(); let count = 0, lit = 0
   const grow = () => {
     if (count >= capacity) throw new Error('Faustland geometry budget exceeded')
     const next = Math.min(capacity, cur * 2), big = (a, k) => { const b = new Float32Array(next * k); b.set(a); return b }
-    p = big(p, 3); n = big(n, 3); uv = big(uv, 2); colors = big(colors, 3); glow = big(glow, 1); cur = next
+    p = big(p, 3); n = big(n, 3); uv = big(uv, 2); colors = big(colors, 3); glow = big(glow, 1); if (lay) lay = big(lay, 1); cur = next
   }
   const vertex = (x, y, z, nx, ny, nz, u, v) => {
     if (count >= cur) grow()
     const i = count * 3, j = count * 2
     p[i] = x; p[i + 1] = y; p[i + 2] = z; n[i] = nx; n[i + 1] = ny; n[i + 2] = nz
-    uv[j] = u; uv[j + 1] = v; colors[i] = col.r; colors[i + 1] = col.g; colors[i + 2] = col.b; glow[count] = lit; count++
+    uv[j] = u; uv[j + 1] = v; colors[i] = col.r; colors[i + 1] = col.g; colors[i + 2] = col.b; glow[count] = lit; if (lay) lay[count] = ly; count++
   }
   const tri = (a, b, c, tint, coords, gl) => {
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, length = Math.hypot(nx, ny, nz) || 1
-    col.setHex(tint)
+    col.setHex(tint); if (lay) ly = faustTintLayer(tint)
     for (let i = 0; i < 3; i++) { const q = [a, b, c][i]; if (gl) lit = gl[i]; vertex(q[0], q[1], q[2], nx / length, ny / length, nz / length, coords?.[i]?.[0] || 0, coords?.[i]?.[1] || 0) }
     if (gl) lit = 0
   }
   const glowTri = (a, b, c, tint, light) => { lit = light; tri(a, b, c, tint); lit = 0 }
   const box = (b, tint = 0x70757c, light = 0, skip = 0) => {
-    col.setHex(tint); lit = light
+    col.setHex(tint); lit = light; if (lay) ly = faustTintLayer(tint)
     const flat = b.ey < 0.015
     for (const v of FAUST_CUBE) {
       if (flat && !(v[6] === 1 && v[4] > 0)) continue
@@ -7661,6 +7675,7 @@ function faustBatch(capacity = 12288) {
     const g = new THREE.BufferGeometry()
     for (const [key, values, size] of [['position', p, 3], ['normal', n, 3], ['uv', uv, 2], ['color', colors, 3], ['faustGlow', glow, 1]])
       g.setAttribute(key, new THREE.BufferAttribute(values.slice(0, count * size), size))
+    if (lay) g.setAttribute('faustLayer', new THREE.BufferAttribute(lay.slice(0, count), 1))
     g.computeBoundingSphere(); return g
   }
   return { box, tri, glowTri, geometry, get count() { return count / 3 }, get room() { return capacity - count } }
@@ -8266,9 +8281,9 @@ function faustHeroHook(shader) {
 `)
 }
 const FAUST_SURFACE = {
-  layers: ['stucco', 'siding', 'brick', 'shingle', 'tile', 'glass', 'wood', 'grass', 'concrete', 'asphalt', 'tin', 'dirt', 'door', 'garage', 'paint', 'metal', 'leaf'],
-  scale: { stucco: 2, siding: 1.2, brick: 0.9, shingle: 1.6, tile: 1.2, glass: 1, wood: 1, grass: 2, concrete: 1.5, asphalt: 3, tin: 1.5, dirt: 2, door: 1, garage: 1, paint: 2, metal: 1, leaf: 0.8 },
-  real: { stucco: 'stucco', siding: 'siding', brick: 'houseBrick', shingle: 'shingle', tile: 'brick', wood: 'wood', grass: 'grass', concrete: 'concrete', asphalt: 'asphalt', tin: 'iron', dirt: 'stucco', paint: 'stucco', metal: 'steel' },
+  layers: ['stucco', 'siding', 'brick', 'shingle', 'tile', 'glass', 'wood', 'grass', 'concrete', 'asphalt', 'tin', 'dirt', 'door', 'garage', 'paint', 'metal', 'leaf', 'line'],
+  scale: { stucco: 2, siding: 1.2, brick: 0.9, shingle: 1.6, tile: 1.2, glass: 1, wood: 1, grass: 2, concrete: 1.5, asphalt: 3, tin: 1.5, dirt: 2, door: 1, garage: 1, paint: 2, metal: 1, leaf: 0.8, line: 2 },
+  real: { stucco: 'stucco', siding: 'siding', brick: 'houseBrick', shingle: 'shingle', tile: 'brick', wood: 'wood', grass: 'grass', concrete: 'concrete', asphalt: 'asphalt', tin: 'iron', dirt: 'stucco', paint: 'stucco', metal: 'steel', line: 'paintWhite' },
   kinds: { body: { fallback: 'stucco' }, roof: { fallback: 'shingle' }, shed: { fallback: 'tin' }, picket: { fallback: 'wood' }, flat: { fallback: 'concrete' },
     pane: { fallback: 'paint', quad: true }, lit: { fallback: 'glass', quad: true } },
   tints() {
@@ -8336,7 +8351,8 @@ function faustSurfaceTexture() {
     garage: (u, v, r) => { const t = v * 4, f = fp(t), inP = f > 0.16 && f < 0.84 && u > 0.05 && u < 0.95, g = (f < 0.05 || f > 0.96 ? 0.38 : inP ? 0.88 : 1) * (0.95 + 0.06 * (r - 0.5)); return [g, g, g, 1] },
     paint: (u, v, r) => { const g = 0.93 + 0.05 * (n8(u, v) - 0.5) + 0.03 * (r - 0.5); return [g, g, g, 1] },
     metal: (u, v, r) => { const g = 0.8 + 0.16 * (n32(u, 0.37) - 0.5) + 0.05 * (r - 0.5); return [g, g, g * 1.02, 1] },
-    leaf: (u, v, r) => { const g = 0.5 + 0.6 * (n16(u, v) - 0.4) * (0.6 + 0.8 * n8(u, v)) + 0.28 * (r - 0.4) + 0.12 * (n32(u, v) - 0.5); return [g * 0.9, g, g * 0.75, 1] }
+    leaf: (u, v, r) => { const g = 0.5 + 0.6 * (n16(u, v) - 0.4) * (0.6 + 0.8 * n8(u, v)) + 0.28 * (r - 0.4) + 0.12 * (n32(u, v) - 0.5); return [g * 0.9, g, g * 0.75, 1] },
+    line: (u, v, r) => { const g = 0.9 + 0.06 * (n8(u, v) - 0.5) + 0.04 * (r - 0.5) - 0.12 * sm(0.7, 0.95, n6(u, v)); return [g, g, g * 0.97, 1] }
   }
   S.layers.forEach((name, layer) => {
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
@@ -9952,8 +9968,8 @@ function faustMonument() {
   faustDisposeSky()
   const F = faustState, far = F.skyScene = new THREE.Scene(), batch = faustBatch(), dark = 0x242d39, black = 0x151d28
   F.skyCamera = new THREE.PerspectiveCamera()
-  const plaza = faustBatch(36); plaza.box(faustBox(0, -0.01, 0, 192, 0.015, 192), 0x404b5b)
-  const paving = new THREE.Mesh(plaza.geometry(), F.materials.stone); paving.receiveShadow = true; worldGroup.add(paving)
+  const plaza = faustBatch(36, true); plaza.box(faustBox(0, -0.01, 0, 192, 0.015, 192), 0x404b5b)
+  const paving = new THREE.Mesh(plaza.geometry(), faustSurfaceMaterial(F, 'body')); paving.receiveShadow = true; worldGroup.add(paving)
   far.add(new THREE.HemisphereLight(0x94a9c5, 0x0d1420, 0.26))
   const moon = new THREE.DirectionalLight(0xb8d3ff, 2.5); moon.position.set(-28, 18, 14); far.add(moon)
   const skyStone = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.91, fog: false })
@@ -10142,7 +10158,7 @@ function* faustFieldsSteps(cx, cz, seed) {
     if (r.a0 < r.a1 && r.b0 < r.b1) for (const q of subtractRects(r, city)) pieces.push([q, tints[faustMix(seed ^ 0x51ed, i, j) % tints.length]])
     if (++n % 128 === 0) yield
   }
-  const batch = faustBatch(pieces.length * 18), quad = (x0, z0, x1, z1, tint) => { if (x1 - x0 > 0.01 && z1 - z0 > 0.01) {
+  const batch = faustBatch(pieces.length * 18, true), quad = (x0, z0, x1, z1, tint) => { if (x1 - x0 > 0.01 && z1 - z0 > 0.01) {
     batch.tri([x0, 0, z0], [x0, 0, z1], [x1, 0, z1], tint); batch.tri([x0, 0, z0], [x1, 0, z1], [x1, 0, z0], tint) } }
   for (let k = 0; k < pieces.length; k++) {
     const [q, tint] = pieces[k], e = Math.min(E, (q.a1 - q.a0) / 2, (q.b1 - q.b0) / 2)
@@ -10173,10 +10189,10 @@ function faustOutskirts() { return drain(faustOutskirtsSteps()) }
 function* faustOutskirtsSteps() {
   const W = FAUST.world, F = faustState
   const geometry = yield* faustFieldsSteps(0, 144, F.seed)
-  const fields = new THREE.Mesh(geometry, F.materials.stone); fields.position.y = -0.02; fields.receiveShadow = true; worldGroup.add(fields)
+  const fields = new THREE.Mesh(geometry, faustSurfaceMaterial(F, 'body')); fields.position.y = -0.02; fields.receiveShadow = true; worldGroup.add(fields)
   F.fields = { mesh: fields, at: '0 144', job: null }
   F.roadLooks = new Map(); F.roadStamp = ''; faustRoadsMapLayer(); F.ringStamp = ''; F.ringMeshes = []; faustRingsMapLayer(); F.chanLooks = new Map(); F.chanStamp = ''; faustChanMapLayer(); F.waterLooks = new Map(); F.waterStamp = ''; faustWaterMapLayer()
-  const H = 36, pylons = Math.ceil((2 * W - 200) / 400), wall = faustBatch(4 * 36 * (2 + 2 * pylons))
+  const H = 36, pylons = Math.ceil((2 * W - 200) / 400), wall = faustBatch(4 * 36 * (2 + 2 * pylons), true)
   for (const side of [-1, 1]) for (const axis of [0, 1]) {
     const at = (u, eu, ey, ev, y) => axis ? faustBox(side * (W + ev), y, u, ev, ey, eu) : faustBox(u, y, side * (W + ev), eu, ey, ev)
     wall.box(at(0, W + 8, H / 2, 2, H / 2), 0x2a2f37)
@@ -10186,7 +10202,7 @@ function* faustOutskirtsSteps() {
       wall.box(at(u, 1.2, 0.5, 1.2, H + 8.5), 0xffb35a, -1)
     }
   }
-  const border = new THREE.Mesh(wall.geometry(), faustState.materials.stone); border.receiveShadow = true; worldGroup.add(border)
+  const border = new THREE.Mesh(wall.geometry(), faustSurfaceMaterial(faustState, 'body')); border.receiveShadow = true; worldGroup.add(border)
 }
 
 function faustBuildWorld() { return drain(faustBuildWorldSteps()) }
