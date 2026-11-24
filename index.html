@@ -6538,7 +6538,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
             yield
             const mm = (p + q) / 2, hh = (q - p) / 2
             alongZ ? flat(c - 0.9, p, c + 0.9, q, 0.09, T.park) : flat(p, c - 0.9, q, c + 0.9, 0.09, T.park)
-            for (const o of [-0.98, 0.98]) alongZ ? near('body', 0.08, 0.07, hh, c + o, 0.07, mm, 0, 0, T.kerb) : near('body', hh, 0.07, 0.08, mm, 0.07, c + o, 0, 0, T.kerb)
+            for (const o of [-0.98, 0.98]) alongZ ? near('body', 0.12, 0.08, hh, c + o, 0.08, mm, 0, 0, T.picket) : near('body', hh, 0.08, 0.12, mm, 0.08, c + o, 0, 0, T.picket)
             for (let t = p + 6; t <= q - 4; t += 16) {
               const tx = alongZ ? c : t, tz = alongZ ? t : c, tt = H(0x5b41, Math.round(tx * 4), Math.round(tz * 4))
               part('body', 0.14, 1.7, 0.14, tx, 1.7, tz, 0, 0, T.trunk)
@@ -6687,6 +6687,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
           const w = Math.sqrt(R_ * R_ - Math.max(Math.abs(k), Math.abs(k + 1)) ** 2)
           flat(xc - w, cz + k, xc + w, cz + k + 1, 0.05, T.street); flat(xc + k, cz - w, xc + k + 1, cz + w, 0.05, T.street) }
         flat(Math.min(ex0, ex0 + dir * 2), cz - W, Math.max(ex0, ex0 + dir * 2), cz + W, 0.095, T.street)
+        for (let k = -2; k < 2; k++) { const w = Math.sqrt(2.6 * 2.6 - Math.max(Math.abs(k), Math.abs(k + 1)) ** 2); flat(xc - w, cz + k, xc + w, cz + k + 1, 0.075, T.pave); flat(xc + k, cz - w, xc + k + 1, cz + w, 0.075, T.pave) }
         yield
         const lp = [xc + dir * 12.5, cz]
         body(lp[0], 3.2, lp[1], 0.09, 3.2, 0.09, T.pole)
@@ -6700,7 +6701,32 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
           near('body', 2.27, 0.05, 0.86, tx, 0.34, tz, 0, 0, FS.tyre)
           out.solid.push(faustBox(faustCm(tx), 0.95, faustCm(tz), FS.carHL, 0.95, FS.carHW)); courtParked.push({ x: faustCm(tx), z: faustCm(tz), yaw: 0, hl: FS.carHL, hw: FS.carHW, tint }) }
         out.walks.push([[ex0 + dir * 3, cz], [xc, cz]])
-        for (const sg of [-1, 1]) later.push({ bi, bj: bj + 5003, sg, cx: ex0 + dir * 37, cz: cz - sg * 38, ex: 25, ez: 33.5, court: true })
+        const variant = H(0x5b72, bi, bj) % 3
+        if (variant === 0) for (const sg of [-1, 1]) later.push({ bi, bj: bj + 5003, sg, cx: ex0 + dir * 37, cz: cz - sg * 38, ex: 25, ez: 33.5, court: true })
+        else for (const s of [-1, 1]) {
+          yield
+          const fz = -s, hq = H(0x5b73, bi * 2 + (s > 0), bj), xa = ex0 + dir * 8, xb = ex0 + dir * 52
+          flat(Math.min(xa, xb), Math.min(cz + s * 4.5, cz + s * 11.5), Math.max(xa, xb), Math.max(cz + s * 4.5, cz + s * 11.5), 0.06, T.lot)
+          if (variant === 1) for (let u = 0; u < 5; u++) {
+            const hh = H(0x5b74, bi * 16 + u * 2 + (s > 0), bj), hx = 3.8, hz = 6, y = U.storeys[1], x = ex0 + dir * (13.8 + hx + u * 2 * hx), z = cz + s * (11.5 + hz)
+            const sd = (hh >>> 29) & 1 ? -1 : 1, fy = fz > 0 ? 0 : 2 * HALF, pz = z + fz * (hz + 0.03), dx = x + sd * 0.4 * hx
+            body(x, y / 2, z, hx, y / 2, hz, pick(T.house, hh >>> 20))
+            out.buildings.push({ id: 'ring ' + i + ' ' + j + ' ' + out.buildings.length, kind: 'house', box: out.solid[out.solid.length - 1], storeys: 2, seed: hh >>> 0,
+              door: { x: faustCm(dx), z: faustCm(z + fz * hz), face: [0, fz] }, kit: 'townhouse' })
+            out.roof.push([faustCm(x), y, faustCm(z), faustCm(hx + 0.05), faustCm(U.roof[0] + ((hh >>> 23) % 8) / 7 * (U.roof[1] - U.roof[0])), faustCm(hz + 0.4), 0, pick(T.roof, hh >>> 26)])
+            part('pane', 0.5, 1.05, 1, dx, 1.05, pz, fy, 0, pick(T.door, hh >>> 3))
+            near('body', 0.08, 1.14, 0.06, dx - 0.58, 1.14, z + fz * (hz + 0.06), 0, 0, T.trim); near('body', 0.08, 1.14, 0.06, dx + 0.58, 1.14, z + fz * (hz + 0.06), 0, 0, T.trim)
+            near('body', 0.66, 0.08, 0.06, dx, 2.22, z + fz * (hz + 0.06), 0, 0, T.trim)
+            near('light', 0.09, 0.12, 0.09, dx + sd * 0.92, 1.95, z + fz * (hz + 0.1), 0, 0, 0xffffff)
+            part((hh >>> 28) & 1 ? 'lit' : 'pane', 0.6, 0.6, 1, x - sd * 0.5 * hx, 1.55, pz, fy, 0, T.glass)
+            for (const u2 of [-0.5, 0.5]) part((hh >>> 27) & 1 && u2 > 0 ? 'lit' : 'pane', 0.55, 0.55, 1, x + u2 * hx, 4.3, pz, fy, 0, T.glass)
+          } else {
+            const sh = 2 + (hq >>> 5) % 3, ay = sh * R.storey, hh = hq >>> 0
+            const fb = faustBox(faustCm(ex0 + dir * 34), ay / 2, faustCm(cz + s * 23.5), faustCm(16), ay / 2, faustCm(12))
+            out.far.push([fb, pick(T.urban, hh >>> 8)]); out.solid.push(fb)
+            out.buildings.push({ id: 'ring ' + i + ' ' + j + ' ' + out.buildings.length, kind: 'urban', box: fb, storeys: sh, seed: hh, door: { x: fb.cx, z: faustCm(fb.cz + fz * fb.ez), face: [0, fz] } })
+          }
+        }
       }
       if (lane) {
         yield
@@ -6709,6 +6735,8 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
         const hl = H(0x5b61, bi, bj)
         for (let q = 0; q < 3; q++) { const bx = cx - e + 14 + ((hl >>> (q * 6)) % 64) / 64 * (2 * e - 28), side = (hl >>> (20 + q)) & 1 ? 1 : -1, bz = cz + side * 1.85
           near('body', 0.3, 0.55, 0.25, bx, 0.55, bz, 0, 0, T.pole); out.solid.push(faustBox(faustCm(bx), 0.6, faustCm(bz), 0.3, 0.6, 0.25)) }
+        body(x_a + 2.5, 3.2, cz + 1.9, 0.09, 3.2, 0.09, T.pole)
+        near('light', 0.3, 0.07, 0.3, x_a + 2.5, 6.2, cz + 1.9, 0, 0, 0xffffff); near('pool', 3.2, 1, 3.2, x_a + 2.5, 0.115, cz, 0, 0, T.pave)
         out.walks.push([[x_a + 1, cz], [x_b - 1, cz]])
       }
     }
