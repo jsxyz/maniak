@@ -10003,6 +10003,7 @@ function faustFarCull(cam) {
     mesh.visible = -(e[2] * x + e[6] * y + e[10] * z + e[14]) < end
   }
 }
+const faustBeamBlend = m => { m.blending = THREE.CustomBlending; m.blendEquation = THREE.AddEquation; m.blendSrc = THREE.SrcAlphaFactor; m.blendDst = THREE.OneFactor; m.blendSrcAlpha = THREE.ZeroFactor; m.blendDstAlpha = THREE.OneFactor }
 const faustHit = new THREE.Vector3(), faustDir = new THREE.Vector3(), faustDown = new THREE.Vector3(0, -1, 0)
 function faustRoofBeams() {
   const F = faustState, seen = new Set(), stops = []
@@ -10030,7 +10031,7 @@ function faustRender(render, s, cam) {
   F.skyScene.background = background
   const t = performance.now() / 1000
   const inkLook = activeLook === 'ink' ? 1 : 0
-  if (F.beamInk.value !== inkLook) { F.beamInk.value = inkLook; F.beamMaterial.blending = F.beamPoolMaterial.blending = inkLook ? THREE.NormalBlending : THREE.AdditiveBlending }
+  if (F.beamInk.value !== inkLook) { F.beamInk.value = inkLook; for (const m of [F.beamMaterial, F.beamPoolMaterial]) { if (inkLook) { m.blending = THREE.NormalBlending; m.blendSrcAlpha = null; m.blendDstAlpha = null } else faustBeamBlend(m) } }
   const hit = faustHit
   for (const beam of F.skyBeams || []) {
     const phase = beam.userData.phase
@@ -10152,7 +10153,8 @@ function faustSkyWeather(far) {
   }
   const beamInk = { value: 0 }
   const beamMaterial = new THREE.MeshBasicMaterial({ color: 0xdcecff, opacity: 0.62, transparent: true, fog: false,
-    depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending })
+    depthWrite: false, side: THREE.DoubleSide })
+  faustBeamBlend(beamMaterial)
   beamMaterial.onBeforeCompile = shader => {
     shader.uniforms.faustBeamInk = beamInk
     shader.vertexShader = 'varying float faustBeamV; varying float faustBeamFace;\n' + shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
@@ -10164,11 +10166,12 @@ function faustSkyWeather(far) {
    diffuseColor.rgb = mix(vec3(0.9), vec3(0.01), edge); diffuseColor.a = mix(0.5, 0.95, edge) * smoothstep(0.02, 0.2, faustBeamV); }
  else diffuseColor.a *= (0.12 + 0.88 * faustBeamCore * faustBeamCore) * faustBeamLen;`)
   }
-  beamMaterial.customProgramCacheKey = () => 'faust-downlight-2'
+  beamMaterial.customProgramCacheKey = () => 'faust-downlight-3'
   F.beamInk = beamInk; F.beamMaterial = beamMaterial
   const poolInk = beamInk
   const poolMaterial = new THREE.MeshBasicMaterial({ color: 0xdcecff, opacity: 0.55, transparent: true, fog: false,
-    depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
+    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })
+  faustBeamBlend(poolMaterial)
   poolMaterial.onBeforeCompile = shader => {
     shader.uniforms.faustBeamInk = poolInk
     shader.vertexShader = 'varying float faustPoolR;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n faustPoolR = length(uv - 0.5) * 2.0;')
@@ -10178,7 +10181,7 @@ function faustSkyWeather(far) {
    diffuseColor.rgb = mix(vec3(0.85), vec3(0.01), ring); diffuseColor.a = (1.0 - smoothstep(0.97, 1.0, faustPoolR)) * mix(0.4, 0.95, ring); }
  else diffuseColor.a *= faustPoolFall * faustPoolFall * (0.35 + 0.65 * faustPoolFall);`)
   }
-  poolMaterial.customProgramCacheKey = () => 'faust-beampool-1'
+  poolMaterial.customProgramCacheKey = () => 'faust-beampool-2'
   F.beamPoolMaterial = poolMaterial
   const poolGeometry = new THREE.CircleGeometry(1, 28); poolGeometry.rotateX(-Math.PI / 2)
   F.beamPools = []
@@ -21710,7 +21713,8 @@ void main() {
       vec3 x = uCamPos + rd * (seg.x + (float(k) + j) * stp), q = x - a;
       float h = dot(q, v), rr = length(q - v * h) / max(h * tanA, 1e-3);
       float g = 1.0 + 1.2 * pow(max(dot(normalize(q), -rd), 0.0), 8.0);
-      acc += (1.0 - smoothstep(0.35, 1.0, rr)) / (1.0 + h * h * uConeC[i].w) * smoothstep(L, 0.75 * L, h) * g * exp(-max(x.y, 0.0) / 420.0);
+      float realSky = step(100.0, L);
+      acc += mix(1.0 - smoothstep(0.35, 1.0, rr), 2.0 * exp(-6.0 * rr * rr), realSky) / (1.0 + h * h * uConeC[i].w) * smoothstep(L, mix(0.75, 0.4, realSky) * L, h) * g * exp(-max(x.y, 0.0) / 420.0);
     }
     sum += uConeC[i].rgb * acc * stp;
   }
