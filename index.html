@@ -13750,9 +13750,10 @@ function applyIntent(c, inp, dt) {
     if (!deadWater(c)) c.body.setLinearVelocity(zeroVec)
     c.dove = false
     if (c.dead <= 0) GAME.death.up(c, team)
+    apLap('ai dead')
     return
   }
-  if (partsHeldIntent(c, inp, dt)) return
+  if (partsHeldIntent(c, inp, dt)) { apLap('ai held'); return }
   groundCheck(c)
   c.air = !c.grounded
   apLap('ai ground')
@@ -17725,7 +17726,7 @@ function trafficTick(dt, all) {
   }
   const thinkStep = TRAFFIC.think / Math.max(0.4, scale)
   const budget = Math.min(Math.max(3, Math.round(TRAFFIC.thinkBudget * scale)), Math.ceil(Math.max(1, T.cars.size - (T.kinN || 0)) * dt / thinkStep * 1.5) + 2)
-  let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0, kinN = 0, repMs = 0, detMs = 0, retMs = 0
+  let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0, kinN = 0, repMs = 0, detMs = 0, retMs = 0, retN = 0
   let lane = null, kinNew = []
   const movers = []
   trafficGridBuild()
@@ -17773,8 +17774,8 @@ function trafficTick(dt, all) {
         }
       }
     }
-    if (!o.riders?.some(v => v !== undefined) && o.heldBy === undefined && people.length && (people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.retire) || (o.traffic?.stuck || 0) > ROUND.stuck) && trafficHidden(o.x, o.z, people) && o.trafficAmbient) {
-      const q0 = performance.now(); trafficDetach(o, false); dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({id:o.id,until:clock+12}); T.stats.retired++
+    if (retN < 1 && !o.riders?.some(v => v !== undefined) && o.heldBy === undefined && people.length && (people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.retire) || (o.traffic?.stuck || 0) > ROUND.stuck) && trafficHidden(o.x, o.z, people) && o.trafficAmbient) {
+      const q0 = performance.now(); retN++; trafficDetach(o, false); dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({id:o.id,until:clock+12}); T.stats.retired++
       for (const sent of objSent.values()) sent.delete(o.id)
       retMs += performance.now() - q0
     }
@@ -35250,7 +35251,7 @@ function dealerTick(dt, all) {
     if (!c || !ds) { dealBots.delete(key); dealSpotOf.delete(id); continue }
     if (!humans.some(p => Math.hypot(p.x - c.x, p.z - c.z) < DEAL.keep && Math.hypot(p.x - ds.sp.x, p.z - ds.sp.z) < DEAL.keep)) { dealerDrop(c); moved = true }
   }
-  for (const [key, w] of want) if (!dealBots.has(key) && (dealGone.get(key) ?? 0) <= T && dealBots.size < DEAL.cap && dealerAdd(key, w.sp, w.role)) moved = true
+  for (const [key, w] of want) if (!dealBots.has(key) && (dealGone.get(key) ?? 0) <= T && dealBots.size < DEAL.cap && dealerAdd(key, w.sp, w.role)) { moved = true; break }
   if (moved && conns.size) pushRoster()
 }
 function dealerAdd(key, sp, role) {
