@@ -31417,6 +31417,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   log: () => gameLog.map(line => ({ ...line })),
   shaderCheck,
   loot: () => lootReport(),
+  pull: r => dsPullReport(r),
   trace: (name, on = true) => {
     if (name === 'launch') { launchTrace.on = !!on; launchTrace.frozen = false; launchTrace.rows = []; launchTrace.at = 0 }
     return { on: launchTrace.on, frozen: launchTrace.frozen, at: launchTrace.at, rows: launchTrace.rows.slice(), trips: speedLog.slice() }
@@ -39778,6 +39779,29 @@ function dsPropsReach(c, kind, reach) {
   if (out.length && dsLooseFull()) {
     if (!(now() - (c.looseMsg || 0) < 3000)) { c.looseMsg = now(); try { tell(c.id, '§7Too many loose objects nearby', 'a') } catch (e) {} }
     return []
+  }
+  return out
+}
+function dsPullReport(r = 6) {
+  const c = selfChar(), F = faustState
+  if (!c) return null
+  const out = { host: isHost, ready: !!(F && dsCheck()), feet: +(c.y - c.h - c.r).toFixed(2), lift: liftOf(c), loose: objs.filter(o => o.K.prop).length, cap: DS_LOOSE_MAX,
+    pull: c.parts ? { act: c.parts.act, press: +(c.parts.press ?? -1).toFixed(2), pulled: !!c.parts.pulled, held: !!partsHeld(c) } : null, props: [] }
+  if (!out.ready) return out
+  const ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96)
+  for (let i = Math.max(0, ci - 1); i <= Math.min(F.S - 1, ci + 1); i++) for (let j = Math.max(0, cj - 1); j <= Math.min(F.S - 1, cj + 1); j++) {
+    dsPropSites(dsPlan(i, j)).forEach(s => {
+      const d = Math.hypot(s.f.x - c.x, s.f.z - c.z)
+      if (d > r) return
+      const key = dsPropKey(i * F.S + j, s.i), row = OBJECTS.find(K => K.prop === s.f.k)
+      out.props.push({ kind: s.f.k, x: s.f.x, z: s.f.z, d: +d.toFixed(2), gap: +(d - c.r - Math.max(s.boxes[0]?.ex || 0.2, s.boxes[0]?.ez || 0.2)).toFixed(2), broken: dsState.all.has(key), row: !!row, mass: row?.mass ?? null, hard: s.hard })
+    })
+    dsFeatSites(dsPlan(i, j)).forEach(s => {
+      if (!s) return
+      const d = Math.hypot(s.f.x - c.x, s.f.z - c.z)
+      if (d > r) return
+      out.props.push({ kind: s.f.k, feat: true, x: s.f.x, z: s.f.z, d: +d.toFixed(2), gap: +(d - c.r - Math.max(s.boxes[0]?.ex || 0.2, s.boxes[0]?.ez || 0.2)).toFixed(2), broken: dsState.all.has(dsFeatKey(i * F.S + j, s.i)) })
+    })
   }
   return out
 }
