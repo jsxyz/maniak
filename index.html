@@ -37141,7 +37141,7 @@ function slScatter(f, x, z, T) {
 function slFlocksNear(x, z, R, fn) {
   const st = slState, A = st.S * 48, ci = Math.floor((x + A) / 96), cj = Math.floor((z + A) / 96)
   for (let i = Math.max(0, ci - 1); i <= Math.min(st.S - 1, ci + 1); i++) for (let j = Math.max(0, cj - 1); j <= Math.min(st.S - 1, cj + 1); j++)
-    for (const f of slCell(i, j).flocks) if (Math.hypot(f.x - x, f.z - z) < R + 1.5) fn(f)
+    { const c = st.cells.get(i + ' ' + j); if (c) for (const f of c.flocks) if (Math.hypot(f.x - x, f.z - z) < R + 1.5) fn(f) }
 }
 function slForget(st) {
   const t = performance.now(); if (t - (st.forgotAt || 0) < 5000) return; st.forgotAt = t
@@ -37227,7 +37227,7 @@ function slHostTick() {
         return slKnock(ag, p, Ls > 0 ? -fz * side : fx, Ls > 0 ? fx * side : fz, sp * 0.45, null, T, fl)
       }
       slKnock(ag, p, fx * A + -fz * side * Ls, fz * A + fx * side * Ls, sp * 0.45, players.get(o.riders?.[0]), T, d, undefined, undefined, 12 * (sp - 2), -1, 2)
-    })
+    }, null, true)
   }
   lap('sl cars')
   for (const c of who) {
@@ -37284,7 +37284,7 @@ function slStruck(c, h, G, ux, uy, uz) {
 const slRoadFuture = SL_POSE()
 function slRoadList(warm = false) {
   const st = slState, T = slNow(), key = warm ? 'roadWarm' : 'road'
-  if (st[key] && Math.abs(T - st[key].T) < 100) return st[key].list
+  if (st[key] && Math.abs(T - st[key].T) < (warm ? 250 : 100)) return st[key].list
   const list = [], seen = new Set(), back = STREET.backS * 1000
   const live = st.panics.filter(q => q.t <= T && T - q.t < back)
   const quiet = ag => { if (ag.cr || ag.kind === SL_K.cyclist || st.byId.has(ag.id)) return false
