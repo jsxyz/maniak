@@ -20221,6 +20221,28 @@ function buildScenery(boxes, unit = ARENA / 72) {
 
 let lookPending = null, lookPreparedKey = '', lookSerial = 0, warmDepth = null, inkWarmNormal = null, inkWarmTarget = null, warmShadowTarget = null, interiorProbe = null
 const DEPTH_SIDE = { [THREE.FrontSide]: THREE.BackSide, [THREE.BackSide]: THREE.FrontSide, [THREE.DoubleSide]: THREE.DoubleSide }
+let rigProbe = null, rigProbeSig = ''
+function rigWarmProbe() {
+  const specs = [...CHARS, ...BOTS].filter(C => MODELS[C.model || 'man']?.kind === 'rig' && MODELS[C.model || 'man'].proto)
+  const sig = specs.map(C => C.model || 'man').join()
+  if (rigProbe && sig === rigProbeSig) return rigProbe
+  rigProbeSig = sig; rigProbe = new THREE.Group(); rigProbe.name = 'rig probe'
+  const seen = new Set()
+  for (const C of specs) {
+    const M = MODELS[C.model || 'man'], B = bonesOf(C), key = (C.model || 'man') + '|' + JSON.stringify(B ?? null) + '|' + JSON.stringify(C.rig ?? null)
+    if (seen.has(key)) continue
+    seen.add(key)
+    for (const soft of CHARS.includes(C) ? [false, true] : [false]) try {
+      const P = B ? rigFor(M, B) : M, inst = cloneSkinned(P.proto), mesh = new THREE.Group()
+      inst.traverse(n => { if (n.isMesh && !Array.isArray(n.material)) n.material = n.material.clone() })
+      mesh.add(inst)
+      if (C.rig) rigDress(mesh, inst, rigParts(inst, P).bones, C.rig)
+      mesh.traverse(n => { const m = n.material; if (!m || Array.isArray(m)) return; if (!m.userData.ghostDither) ghostMaterial(m); if (soft && ![...rigAcc.mat.values()].includes(m)) { m.transparent = true; m.depthWrite = false } })
+      rigProbe.add(mesh)
+    } catch (e) {}
+  }
+  return rigProbe
+}
 function interiorWarmProbe() {
   if (interiorProbe || !LV?.faust || typeof inMaterials !== 'function') return interiorProbe
   const g = new THREE.BufferGeometry(); interiorProbe = new THREE.Group(); interiorProbe.name = 'interiors'
@@ -20296,6 +20318,7 @@ function warmSetup(name, target, R, normal = false, sky = false) {
         if (m && m !== 'beam') {
           if (m === R.mats.facade || m === R.mats.ornament) realBoxes(o.geometry)
           put(o, 'material', m)
+          if (orig.transparent && m.userData?.nearFade && !m.transparent) put(m, 'transparent', true)
           if (!sky) inkPrepare({ traverse: fn => fn(o) })
         }
       }
@@ -20341,7 +20364,7 @@ function* lookWatchSteps() {
 }
 function* warmSceneSteps(name, roots = null) {
   if (renderHeadless || !renderer || !camera || !scene.fog) return
-  const all = roots || [scene, faustState?.skyScene, fxWarmed, interiorWarmProbe()].filter(Boolean), R = realState
+  const all = roots || [scene, faustState?.skyScene, fxWarmed, interiorWarmProbe(), rigWarmProbe()].filter(Boolean), R = realState
   const target = name === 'realistic' ? R?.t?.hdr || null : name === 'ink' ? inkPost?.target || null : null
   for (const root of all) {
     const part = 'warm ' + name + ' ' + (root === scene ? 'scene' : root === faustState?.skyScene ? 'sky' : root.name || 'part')
@@ -22678,6 +22701,7 @@ function* avatarSteps(id, cid, cap, body) {
     mesh.castShadow = true
   }
   yield
+  mesh.traverse(n => { if (n.material && !Array.isArray(n.material) && !n.material.userData.ghostDither) ghostMaterial(n.material) })
   avatarGroup.add(mesh)
   mesh.traverse(cullSkin)
   avatars.set(id, { mesh, cid, spec: C, stand: standOf(C), mixer, actions, prof, drop, walkDrop, sprintDrop, ankle, turned, anim: -1, fast: false, v: 0, model: built || !!M.proto,
@@ -23521,7 +23545,7 @@ function rigAccGeo(kind) {
 }
 function rigAccMat(color, kind, glow) {
   const key = color + kind + (glow ? 'g' : '')
-  if (!rigAcc.mat.has(key)) rigAcc.mat.set(key, glow ? new THREE.MeshBasicMaterial({ color, toneMapped: false }) : new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }))
+  if (!rigAcc.mat.has(key)) { const m = glow ? new THREE.MeshBasicMaterial({ color, toneMapped: false }) : new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }); ghostMaterial(m); rigAcc.mat.set(key, m) }
   return rigAcc.mat.get(key)
 }
 function rigDress(mesh, inst, bones, spec) {
