@@ -44476,7 +44476,19 @@ function mcPlan(c) {
     if (Math.abs(o2) - room < 1.5) break
     if (mcClear(P(sCar, sg * room), P(sCar, o2), hx, hz, c)) { oEnd = o2; break }
   }
-  return { e, hx, hz, half, ax, az, pose: { ...P(sCar, oEnd), hx, hz }, lead: P(sCar - MCAR.come.lead, oLane), him: { x: c.x, z: c.z } }
+  const plan = { e, hx, hz, half, ax, az, pose: { ...P(sCar, oEnd), hx, hz }, lead: P(sCar - MCAR.come.lead, oLane), him: { x: c.x, z: c.z } }
+  return Math.hypot(plan.pose.x - c.x, plan.pose.z - c.z) > 8 && mcOpen(c) || plan
+}
+function mcOpen(c) {
+  const gy = c.y - (c.h || 0) - (c.r || 0)
+  if (Math.abs(gy) > 2.5) return null
+  const lat = MC_V.w / 2 + (c.r || 0.5) + MCAR.come.pull
+  for (const R of [22, 16, 11]) for (let i = 0; i < 12; i++) for (const side of [1, -1]) {
+    const a = Math.PI * 2 * i / 12, hx = Math.cos(a), hz = Math.sin(a)
+    const F = { x: c.x - hz * side * lat, z: c.z + hx * side * lat }, S = { x: F.x - hx * R, z: F.z - hz * R }
+    if (mcClear(S, F, hx, hz, c)) return { e: null, hx, hz, half: 10, ax: F.x, az: F.z, gy, open: true, pose: { x: F.x, z: F.z, hx, hz }, lead: S, him: { x: c.x, z: c.z } }
+  }
+  return null
 }
 function mcClear(K, T, hx, hz, c) {
   const dx = T.x - K.x, dz = T.z - K.z, L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L, W = MC_V.w, Lc = MC_V.l, hw = W / 2 + 0.3
@@ -44587,7 +44599,7 @@ function mcSpawn(c, st, T) {
   const anchor = Math.hypot(P.pose.x - c.x, P.pose.z - c.z) > 60 ? P.pose : c
   mcNearRoads(anchor.x, anchor.z, hi)
   if (!objs.some(o => Math.hypot(o.x - P.lead.x, o.z - P.lead.z) < 7)) {
-    const o = mcAdd(c, st, P.lead.x, P.lead.z, P.hx, P.hz)
+    const o = mcAdd(c, st, P.lead.x, P.lead.z, P.hx, P.hz, P.gy || 0)
     if (o) {
       const fw = rotq(o.q, [0, 0, -1]), sp = MCAR.come.rush * 0.8
       velVec.setValue(fw[0] * sp, 0, fw[2] * sp); o.body.setLinearVelocity(velVec); o.body.activate(); setParked(o, false)
@@ -44638,14 +44650,14 @@ function mcSpawn(c, st, T) {
   }
   if (late) mcFail(c, st, "Your car can't find a clear route here. Move along the street and whistle again.")
 }
-function mcAdd(c, st, x, z, hx, hz) {
+function mcAdd(c, st, x, z, hx, hz, gy = 0) {
   let id = OBJ_MAX - 1
   while (id >= 16 && (objs.some(o => o.id === id) || trafficState.departures.some(v => v.id === id && v.until > trafficClock()))) id--
   if (id < 16) return null
   faustEnsure([[x, z]])
   const o = addObject(MC_K, [x, 1, z], id, Math.atan2(-hx, -hz))
   if (!o) return null
-  o.at = [x, -o.low + 0.02, z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body)
+  o.at = [x, gy - o.low + 0.02, z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body)
   trafficState.cars.set(o.id, o); o.trafficAmbient = false
   mcCars.set(o.id, c.id); st.car = o.id
   return o
