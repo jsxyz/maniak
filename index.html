@@ -15596,7 +15596,7 @@ function leave(c, o, i) {
   c.warp = (c.warp || 0) + 1
   restoreChar(c, ...p, v.x(), v.y(), v.z())
 }
-function driveStep(c, inp) {
+function driveStep(c, inp, dt = TICK) {
   const s = seatOf(c)
   if (!s || s[1]) return
   if (s[0].V.fly) return
@@ -15611,6 +15611,17 @@ function driveStep(c, inp) {
   const out = !inp.j && want * (want - was) > 0 && (want * was < 0 || Math.abs(yw) < 0.4)
   const rate = lock / drive(V, out ? 'turnIn' : 'steerTime') * TICK * (Math.abs(want) < Math.abs(was) ? 2 : 1)
   o.steer = was + clamp(want - was, -rate, rate)
+  const at = o.body.getWorldTransform().getOrigin(), push = Math.abs(inp.f || 0) > 0.5 && !inp.j && rotq(o.q, [0, 1, 0])[1] > 0.5
+  const st = o.stuck && push ? o.stuck : o.stuck = push ? { x: at.x(), z: at.z(), t: 0, n: 0 } : null
+  if (st) {
+    const moved = Math.hypot(at.x() - st.x, at.z() - st.z)
+    if (moved > UNSTICK.moved) { st.x = at.x(); st.z = at.z(); st.t = 0; if (moved > UNSTICK.free) st.n = 0 }
+    else if ((st.t += dt) > UNSTICK.wait && st.n < UNSTICK.up.length) {
+      const d = Math.sign(inp.f) * UNSTICK.fwd[st.n]
+      teleportBody(o.body, at.x(), at.y() + UNSTICK.lift[st.n], at.z(), null, [v.x() + fw[0] * d, v.y() + UNSTICK.up[st.n], v.z() + fw[2] * d]); o.body.activate()
+      st.n++; st.t = -UNSTICK.rest
+    }
+  }
   W.at.forEach(([, , , front], k) => {
     o.car.applyEngineForce(front || inp.j ? 0 : -f * V.engine, k)
     o.car.setBrake(front ? brake * B[0] : Math.max(brake * (B[1] ?? B[0]), inp.j ? drive(V, 'hand') : 0), k)
@@ -15703,7 +15714,7 @@ function tickChars(list, inputFor, dt, P, t) {
   preTick(list, inputFor, dt)
   s = simLap('pre', s)
   if (P) present(list)
-  for (const c of list) { carryStep(c, inputFor(c), dt); driveStep(c, inputFor(c)) }
+  for (const c of list) { carryStep(c, inputFor(c), dt); driveStep(c, inputFor(c), dt) }
   s = simLap('carry', s)
   waterTick(list, inputFor, dt)
   s = simLap('water', s)
@@ -15724,6 +15735,7 @@ function tickChars(list, inputFor, dt, P, t) {
 }
 
 const CAR_SWEEP = { speed: 3, ny: 0.5 }
+const UNSTICK = { moved: 0.25, wait: 0.45, rest: 0.6, free: 1.5, lift: [0.25, 0.4], up: [3, 4], fwd: [2, 3] }
 const carSwept = []
 let carSweepCb = null, carSweepA = null, carSweepB = null
 function carsAtSpeed() {
