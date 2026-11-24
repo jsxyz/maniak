@@ -1315,9 +1315,9 @@ OBJECTS.push(
   { name: 'Planter', half: [1.9, 1.95, 1.9], mass: 10, bounce: 0.05, friction: 0.8, damp: [0.2, 0.5], hit: 1, color: 0x6f767f, stripe: 0x2a2a22, prop: 'planter', dmg: 70 },
   { name: 'Phone box', half: [1.0, 1.18, 0.45], mass: 6, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0x2b333d, stripe: 0xffd7a0, prop: 'phone', dmg: 50 })
 OBJECTS.push(
-  { name: 'Steel pipe', half: [0.1, 0.1, 1.5], mass: 2.2, bounce: 0.2, friction: 0.5, damp: [0.08, 0.3], hit: 1, color: 0x7c828a, stripe: 0x5c6671, loot: 'pipe', dmg: 26 },
-  { name: 'Plank', half: [0.15, 0.025, 1.2], mass: 0.8, bounce: 0.1, friction: 0.6, damp: [0.1, 0.35], hit: 1, color: 0x9a7a4a, stripe: 0x6a4a2a, loot: 'plank', dmg: 14 },
-  { name: 'Girder', half: [0.13, 0.13, 1.6], mass: 6.5, bounce: 0.05, friction: 0.6, damp: [0.15, 0.4], hit: 1, color: 0x8a8f94, stripe: 0x7a7f84, loot: 'girder', dmg: 50 },
+  { name: 'Steel pipe', half: [0.1, 0.1, 1.5], mass: 2.2, bounce: 0.2, friction: 0.5, damp: [0.08, 0.3], hit: 1, color: 0x7c828a, stripe: 0x5c6671, loot: 'pipe', across: 1, dmg: 26 },
+  { name: 'Plank', half: [0.15, 0.025, 1.2], mass: 0.8, bounce: 0.1, friction: 0.6, damp: [0.1, 0.35], hit: 1, color: 0x9a7a4a, stripe: 0x6a4a2a, loot: 'plank', across: 1, dmg: 14 },
+  { name: 'Girder', half: [0.13, 0.13, 1.6], mass: 6.5, bounce: 0.05, friction: 0.6, damp: [0.15, 0.4], hit: 1, color: 0x8a8f94, stripe: 0x7a7f84, loot: 'girder', across: 1, dmg: 50 },
   { name: 'Cement bag', half: [0.28, 0.09, 0.2], mass: 1.1, bounce: 0.05, friction: 0.8, damp: [0.2, 0.5], hit: 1, color: 0xb8b0a0, stripe: 0xa09888, loot: 'cement', dmg: 10 },
   { name: 'Site barrel', half: [0.28, 0.45, 0.28], mass: 1.4, bounce: 0.15, friction: 0.5, damp: [0.1, 0.3], hit: 1, color: 0xd8861e, stripe: 0x2b333d, loot: 'sbarrel', dmg: 22 },
   { name: 'Cone', half: [0.17, 0.3, 0.17], mass: 0.25, bounce: 0.3, friction: 0.5, damp: [0.1, 0.3], hit: 1, color: 0xe8601c, stripe: 0xf2f2ea, loot: 'cone', dmg: 6 },
@@ -15911,7 +15911,13 @@ function carryOff(c, o) {
   e = e * e * (3 - 2 * e)
   const a = partsActOf(c.id)
   if (a[0] === 2) e *= 1 - clamp(a[1] / 0.12, 0, 1)
-  return e > 0 ? [CARRY_OFF.up * g * e, CARRY_OFF.fwd * g * e] : null
+  if (!(e > 0)) return null
+  const hx = o.K.half ? o.K.half[0] : o.R || objR(o.K), hz = o.K.half ? o.K.half[2] : hx, depth = o.K.across ? hx : hz
+  return [CARRY_OFF.up * g * e, Math.min(CARRY_OFF.fwd * g * e, Math.max(0, depth - 0.1))]
+}
+function carryQ(c, o) {
+  const y = c.yaw + (o.K.across ? Math.PI / 2 : 0)
+  return [0, Math.sin(y / 2), 0, Math.cos(y / 2)]
 }
 function handOf(c, o, out) {
   const H = !out && hullOf(o.K), under = !out && o.low !== undefined ? -o.low : H ? -Math.min(...H.pts.map(p => p[1])) : o.K.r || o.K.half?.[1]
@@ -15980,7 +15986,7 @@ function holdObjects() {
     const c = whoIs(o.heldBy)
     if (!c) { holdBy(o, null); continue }
     syncFromBody(c)
-    putObject(o, [...(partsHand(c, o) || handOf(c, o)), ...(o.K.limb ? clubOut.q : o.K.cover ? (partsActOf(c.id)[0] === 6 ? hammerOut.q : coverOut.q) : [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)]), 0, 0, 0, 0, 0, 0])
+    putObject(o, [...(partsHand(c, o) || handOf(c, o)), ...(o.K.limb ? clubOut.q : o.K.cover ? (partsActOf(c.id)[0] === 6 ? hammerOut.q : coverOut.q) : carryQ(c, o)), 0, 0, 0, 0, 0, 0])
   }
 }
 let carTuning = null
@@ -32080,7 +32086,7 @@ const objectsDrawn = (others = []) => (objDrawn.clear(), isHost ? objs.map(drawn
   if (C && (o.K.carry || ph)) {
     const p = ph || handOf({ ...c, r: C.r, h: C.h }, { K: o.K, R: objR(o.K) })
     objEase.set(o.id, { at: p })
-    return { ...o, held: true, x: p[0], y: p[1], z: p[2], q: o.K.limb && ph ? clubOut.q.slice() : o.K.cover && ph ? (partsActOf(c.id)[0] === 6 ? hammerOut.q : coverOut.q).slice() : [0, Math.sin(c.yaw / 2), 0, Math.cos(c.yaw / 2)] }
+    return { ...o, held: true, x: p[0], y: p[1], z: p[2], q: o.K.limb && ph ? clubOut.q.slice() : o.K.cover && ph ? (partsActOf(c.id)[0] === 6 ? hammerOut.q : coverOut.q).slice() : carryQ(c, o) }
   }
   if (!e) return o
   if (!e.off) Object.assign(e, { off: [0, 1, 2].map(i => e.at[i] - [o.x, o.y, o.z][i]), t: renderT })
