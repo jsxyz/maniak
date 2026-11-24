@@ -10280,7 +10280,13 @@ function faustHeadMount(M) {
     return -b - Math.sqrt(Math.max(0, b * b - (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]) + R * R)) }
   const last = K.rings[K.rings.length - 1][1]; let near = Infinity; for (let i = 0; i < N; i++) near = Math.min(near, reach(last, i / N * Math.PI * 2))
   const pos = [], nor = [], idx = []
-  const vert = (p, n) => { pos.push(p[0], p[1], p[2]); nor.push(n[0], n[1], n[2]); return pos.length / 3 - 1 }
+  const GW = [G.x, G.y, G.z], toWorld = p => [p[0] + M.position[0], p[1] * c - p[2] * s + M.position[1], p[1] * s + p[2] * c + M.position[2]]
+  const unit = a => { const l = Math.hypot(...a); return a.map(v => v / l) }
+  const uvDir = d => { const q = unit(d); return [(Math.atan2(-q[0], -q[2]) / (Math.PI * 2) + 1) % 1, 1 - Math.acos(Math.max(-1, Math.min(1, q[1]))) / Math.PI] }
+  const d0 = unit(toWorld([0, 1, 2].map(i => A[i] + u[i] * near)).map((v, i) => v - GW[i])), uv0 = uvDir(d0), S0 = GW.map((v, i) => v + R * d0[i])
+  const planar = p => { const w = toWorld(p), k = [0, 1, 2].reduce((m, i) => m + (w[i] - S0[i]) * d0[i], 0); return uvDir([0, 1, 2].map(i => w[i] - k * d0[i] - GW[i])) }
+  const uvs = []
+  const vert = (p, n, uv) => { pos.push(p[0], p[1], p[2]); nor.push(n[0], n[1], n[2]); uvs.push(uv[0], uv[1]); return pos.length / 3 - 1 }
   const at = (t, r, a, ground) => { const d = dir(a), tt = ground ? reach(r, a) + 6 : t; return [0, 1, 2].map(i => A[i] + u[i] * tt + d[i] * r) }
   const quad = (a, b, c2, d) => idx.push(a, b, c2, a, c2, d)
   for (let k = 0; k + 1 < K.rings.length; k++) {
@@ -10289,12 +10295,15 @@ function faustHeadMount(M) {
     for (const [t, r, gnd] of [[t0, r0, false], [t1, r1, end]]) { const row = []
       for (let i = 0; i <= N; i++) { const a = i / N * Math.PI * 2, d = dir(a)
         const n = t1 > t0 ? norm([0, 1, 2].map(j => d[j] - u[j] * slope)) : u.map(v => (r1 > r0 ? -v : v))
-        row.push(vert(at(t, r, a, gnd), n)) }
+        const point = at(t, r, a, gnd), uv = Math.abs(slope) < 0.5 && t1 > t0 ? [uv0[0] + (a - Math.PI) * r / (Math.PI * 2 * R), uv0[1] + (near - t) / (Math.PI * R)] : planar(point)
+        row.push(vert(point, n, uv)) }
       rows.push(row) }
     for (let i = 0; i < N; i++) quad(rows[0][i], rows[0][i + 1], rows[1][i + 1], rows[1][i])
   }
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setIndex(idx); g.computeBoundingSphere()
-  const material = new THREE.MeshStandardMaterial({ color: 0x5d646f, roughness: 0.9, metalness: 0, side: THREE.DoubleSide, fog: false }); material.userData.inkSky = true
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); g.setIndex(idx); g.computeBoundingSphere()
+  const base = faustState?.globeMaterial, material = base ? base.clone() : new THREE.MeshStandardMaterial({ color: 0x5d646f, roughness: 0.9, metalness: 0, fog: false })
+  material.side = THREE.DoubleSide; material.fog = false; material.userData.inkSky = true
+  if (base) { material.onBeforeCompile = faustGlobeShader(false); material.customProgramCacheKey = base.customProgramCacheKey; material.userData.inkGlobe = true }
   const mesh = new THREE.Mesh(g, material); mesh.castShadow = mesh.receiveShadow = false; mesh.frustumCulled = false; mesh.name = 'faust_mount'
   return mesh
 }
@@ -10352,6 +10361,7 @@ function faustMonument() {
   globe.material.onBeforeCompile = faustGlobeShader(false)
   globe.material.customProgramCacheKey = () => 'faust-globe-building-1'
   globe.material.userData.inkGlobe = true
+  F.globeMaterial = globe.material
   far.add(globe)
   faustGlobeUpgrade(globe)
   const eyeStart = batch.count * 3
