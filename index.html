@@ -947,7 +947,7 @@ const VOICES = {
   },
 }
 
-const LOOK_DEFAULT = 'ink'
+const LOOK_DEFAULT = 'plain'
 const LOOKS = {
   ink: { label: 'Ink', render: inkRender, teardown: inkDispose, scale: quality => quality === 'low' ? 0.8 : 1 },
   plain: { label: 'Plain' },
@@ -28993,7 +28993,7 @@ function detectQuality() {
 }
 
 const settings = { look: LOOK_DEFAULT, sens: 1, fov: 72, shadows: true, quality: 'high', sound: true, volume: 0.8,
-                   qualityChosen: false, viewChosen: false, rate: 0, station: RADIO_START, view: 'third', distance: 'normal',
+                   qualityChosen: false, viewChosen: false, lookPick: '', rate: 0, station: RADIO_START, view: 'third', distance: 'normal',
                    padSens: 1, padDeadzone: 0.18, padCurve: 1.5, padAccel: 0.5, padInvert: false, padRumble: true }
 let qualityAuto = ''
 
@@ -29002,7 +29002,7 @@ function loadSettings() {
     const raw = localStorage.getItem(SET_KEY)
     if (raw) Object.assign(settings, JSON.parse(raw))
   } catch (e) {}
-  if (!Object.hasOwn(LOOKS, settings.look)) settings.look = LOOK_DEFAULT
+  settings.look = Object.hasOwn(LOOKS, settings.lookPick) ? settings.lookPick : LOOK_DEFAULT
   settings.sens = clamp(+settings.sens || 1, 0.2, 3)
   for (const [key, value, lo, hi] of [['padSens', 1, 0.2, 3], ['padDeadzone', 0.18, 0, 0.5], ['padCurve', 1.5, 0.5, 3], ['padAccel', 0.5, 0, 2]])
     settings[key] = clamp(Number.isFinite(+settings[key]) ? +settings[key] : value, lo, hi)
@@ -29071,7 +29071,7 @@ const onOff = v => v ? 'on' : 'off', nextOf = (list, v) => list[(list.indexOf(v)
 const SET_BUTTONS = {
   'set-pad-invert': [() => 'Controller invert Y: ' + onOff(settings.padInvert), () => { settings.padInvert = !settings.padInvert }],
   'set-pad-rumble': [() => 'Controller rumble: ' + onOff(settings.padRumble), () => { settings.padRumble = !settings.padRumble; if (!settings.padRumble) gamepadInput.stopRumble() }],
-  'set-look': [() => 'Look: ' + LOOKS[settings.look].label + (activeLook && activeLook !== settings.look ? ' (preparing…)' : ''), () => { settings.look = nextOf(Object.keys(LOOKS), settings.look) }],
+  'set-look': [() => 'Look: ' + LOOKS[settings.look].label + (activeLook && activeLook !== settings.look ? ' (preparing…)' : ''), () => { settings.lookPick = settings.look = nextOf(Object.keys(LOOKS), settings.look) }],
   'set-view': [() => 'View: ' + (firstPerson ? 'first' : 'third'), () => setView(!firstPerson)],
   'set-quality': [() => 'Quality: ' + settings.quality,
     () => { settings.quality = nextOf(QNAMES, settings.quality); settings.qualityChosen = true; qualityAuto = '' }],
