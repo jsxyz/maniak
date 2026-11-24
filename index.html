@@ -12620,6 +12620,8 @@ function chainInward(g, ptr, i) {
   const P = carrierPose(B.c), b = winBox(P, ...g.p), s = i < 3 ? -1 : 1, [x0, x1] = RAIL_GLASS.panes[i % 3], cv = carrierPointV(P, g.p[0], g.p[2])
   const q = winWorld(P, [clamp(b[0], x0 + 0.25, x1 - 0.25), 1.6, -s * (RAIL.car.width - 0.15)]), d = q.map((v, j) => v - g.p[j]), n = Math.hypot(...d) || 1, sp = Math.max(12, Math.hypot(...g.v.map((v, j) => v - cv[j])) * 0.85)
   g.v = d.map((v, j) => v / n * sp + cv[j]); g.home = null
+  const G = RAIL_GLASS, o = winWorld(P, [clamp(b[0], x0 + 0.3, x1 - 0.3), clamp(b[1], G.y[0] + 0.25, G.y[1] - 0.25), s * (RAIL.car.width - 0.3)])
+  chainPlace(g, o)
 }
 function chainHomeStep(g) {
   const h = g.home, k = h && carriers.get(h.id)
@@ -12715,8 +12717,8 @@ function chainIntent(c, inp, dt) {
     const from = g.p, to = from.map((v, i) => v + g.v[i] * dt)
     g.v[1] += GRAV * 0.12 * dt
     let hit = chainSweep(g, from, to)
-    const pane = hit && g.through === undefined && railPaneHit(hit, g.v)
-    if (pane) { g.through = pane - 1; chainInward(g, hit.ptr, pane - 1); const q = hit.p, n = Math.hypot(...g.v) || 1; to.splice(0, 3, ...q.map((v, i) => v + g.v[i] / n * 0.25)); hit = null }
+    const pane = hit && g.through === undefined && (railPaneHit(hit, g.v) || railPaneNear(hit, g.v))
+    if (pane) { g.through = pane - 1; chainInward(g, hit.ptr, pane - 1); const q = g.p, n = Math.hypot(...g.v) || 1; to.splice(0, 3, ...q.map((v, i) => v + g.v[i] / n * 0.25)); hit = null }
     g.travel += chainGap(from, hit ? hit.p : to)
     const person=chainCharacterHit(c,g,from,to,hit)
     if(person) chainStrike(c,g,person)
@@ -31087,6 +31089,10 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   shaderCheck,
   clearTests: () => clearTestSpawns(),
   glassStats: () => FAUST_GLASS_STATS.map(q => ({ ...q })),
+  grapple: () => { const c = selfChar(), g = c?.chain
+    return c && { phase: g?.phase ?? 0, block: g?.p ? g.p.map(v => +v.toFixed(2)) : null, carrier: g?.carrier?.id ?? null, pane: g?.carrier?.pane ?? null, sill: !!g?.carrier?.sill,
+      through: g?.through ?? null, home: g?.home ? [g.home.id, g.home.i] : null, len: c.tie ? +c.tie.len.toFixed(2) : null, win: c.winIn ? +c.winIn[1].toFixed(3) : null, carry: !!c.carryOn,
+      broken: railState ? [...railState.glass].map(([n, m]) => [railState.cars[n].key, m]) : [] } },
   capture: captureFrames,
   probe: probeApi,
   camera: () => { const d = camera.getWorldDirection(new THREE.Vector3()), p = camera.position; return { position: [p.x, p.y, p.z], target: [p.x + d.x, p.y + d.y, p.z + d.z], fov: camera.fov } },
@@ -42013,7 +42019,7 @@ const RAIL_VIEW = { tiers: { beam: [300, 300, 2600], pylon: [140, 500, 2000], ki
   colors: { deck: 0x2c2a2a, edge: 0xb08d57, stone: 0x4a4744, chrome: 0xb9c0c6, enamel: 0x1d1215, livery: 0x8e1a16, concrete: 0x3a3d42, sign: 0x15100f } }
 
 const RAIL_CARRY = { radius: 9, dt: 20 }
-const RAIL_GLASS = { panes: [[-6.07, -3.85], [-2.35, 2.35], [3.85, 6.07]], y: [1.15, 2.25], heal: 240, near: 40, shards: 80 }
+const RAIL_GLASS = { panes: [[-6.07, -3.85], [-2.35, 2.35], [3.85, 6.07]], y: [1.15, 2.25], heal: 240, near: 40, shards: 80, edge: [0.3, 0.45, 0.25, 0.15] }
 const railPanes = car => car.end ? [0, 1, 3, 4] : [0, 1, 2, 3, 4, 5]
 const railGlassOut = (car, i) => !!((railState?.glass.get(car.n) || 0) >> i & 1)
 function railPaneHit(hit, v) {
@@ -42021,6 +42027,18 @@ function railPaneHit(hit, v) {
   if (!isHost || !car || i === undefined) return false
   railGlassBreak(car, i, v)
   const k = B.c.chunks?.[B.i]
+  if (k?.on) { k.on = false; k.ray.out = true; world.removeRigidBody(k.ray.body) }
+  return i + 1
+}
+function railPaneNear(hit, v) {
+  const B = carrierBodies.get(hit.ptr), car = B?.c.rail
+  if (!isHost || !car) return 0
+  const G = RAIL_GLASS, W = RAIL.car.width - 0.05, P = carrierPose(B.c), b = winBox(P, ...hit.p), s = Math.sign(b[2]) || 1
+  if (Math.abs(b[2]) < W - G.edge[0] || Math.abs(b[2]) > W + G.edge[1] || b[1] < G.y[0] - G.edge[2] || b[1] > G.y[1] + G.edge[2]) return 0
+  const i = railPanes(car).find(i => (i < 3 ? -1 : 1) === s && !railGlassOut(car, i) && b[0] > G.panes[i % 3][0] - G.edge[3] && b[0] < G.panes[i % 3][1] + G.edge[3])
+  if (i === undefined) return 0
+  railGlassBreak(car, i, v)
+  const j = B.c.parts.findIndex(p => p.pane === i), k = B.c.chunks?.[j]
   if (k?.on) { k.on = false; k.ray.out = true; world.removeRigidBody(k.ray.body) }
   return i + 1
 }
