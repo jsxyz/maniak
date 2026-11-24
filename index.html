@@ -25227,7 +25227,7 @@ function periodPick(look, d, lo = 0, hi = 1, state = look.userData) {
   const range = [lo, lo + (hi - lo) * a, lo + (hi - lo) * b, hi]
   for (const c of look.children) if (c.userData.lod !== undefined) periodRange(c, range[c.userData.lod], range[c.userData.lod + 1])
 }
-function periodWheelFits(P, n) { const b = periodFleet.wheels[P.wheels + 0], c = periodFleet.wheels[P.wheels + 1]; return b.userData.n + n <= PERIOD.wheelCap && c.userData.n + n <= PERIOD.wheelCap }
+function periodWheelFits(P, n, keep = 0) { const b = periodFleet.wheels[P.wheels + 0], c = periodFleet.wheels[P.wheels + 1]; return b.userData.n + n <= PERIOD.wheelCap - keep && c.userData.n + n <= PERIOD.wheelCap - keep }
 function periodWheelOut(P, pos, quat, r, lo, hi, split) {
   const T = objTmp, mid = lo + (hi - lo) * split
   T[0].compose(T[1].set(...pos), T[2].set(...quat), T[4].set(r, r, r))
@@ -25484,7 +25484,7 @@ function drawObjects(list, wheelsAt = () => null) {
   const n = OBJECTS.map(() => 0)
   for (const m of objPool) m.visible = false
   wheelN = 0
-  const listed = new Set(list.map(o => o.id ?? o)), limbSeen = new Set()
+  const listed = new Set(list.map(o => o.id ?? o)), limbSeen = new Set(), selfC = selfChar(), mineId = selfC && (seatOf(selfC)?.[0]?.id ?? selfC.ride?.[0])
   for (const key of objOf.keys()) if (!listed.has(key)) objOf.delete(key)
   const held = new Set(objOf.values())
   for (const o of list) try {
@@ -25517,7 +25517,7 @@ function drawObjects(list, wheelsAt = () => null) {
       const state = m.userData.periodState ||= {}, dark = W && Q && parkedDark(o), coverage = dark ? parkedLiveFade(m, d, state) : 1
       let roll = 0
       if (W) {
-        const posed = wheelsAt(o), rolling = !!posed && (Q ? periodWheelFits(Q, W.at.length) : wheelN + W.at.length <= WHEEL_CAP)
+        const posed = wheelsAt(o), keep = o.id === mineId ? 0 : 24, rolling = !!posed && (Q ? periodWheelFits(Q, W.at.length, keep) : wheelN + W.at.length <= WHEEL_CAP - keep)
         roll = rolling ? Q ? periodBlend(state, 'rolling', d, WHEELS_NEAR / (1 + PERIOD.fade * 0.5 + PERIOD.hysteresis)) : 1 : 0
         m.children[0].visible = roll > 0; m.children[1].visible = roll < 1
         const split = Q ? periodBlend(state, 'wheel', d, PERIOD.wheelNear[periodTier()]) : 0
