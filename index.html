@@ -6466,17 +6466,22 @@ function* faustSubStreetsideSteps(seed, i, j, ctx) {
       return !keep.some(q => x + ex > q[0] && x - ex < q[2] && z + ez > q[1] && z - ez < q[3]) }
     const across = (sx, sz) => alongZ ? [sz, sx] : [sx, sz]
     const box = (alongHalf, sy, acrossHalf, t, y, off, tint, yw = 0, roll = 0) => { const [x, z] = at(t, off), [ex, ez] = across(alongHalf, acrossHalf); near('body', ex, sy, ez, x, y, z, yw, roll, tint) }
-    if (poles) for (let n = Math.floor((lo - F.poleAt) / F.lampStep); n <= Math.floor((hi - F.poleAt) / F.lampStep); n++) {
-      yield
-      const t = n * F.lampStep + F.poleAt, po = F.poleOff, [px, pz] = at(t, poleSide * po)
-      if (!here(t) || H(0x5b02, key(n), dir) % 100 >= 94 || !clear(px, pz, 1) || !offDrives(t, 0.4, poleSide, po) || !offTrunk(px, pz, 0.4)) continue
-      box(0.12, 4.3, 0.12, t, 4.3, poleSide * po, F.wood)
-      box(0.07, 0.07, 1.3, t, 7.9, poleSide * po, F.wood)
-      solid(px, 4.3, pz, 0.14, 4.3, 0.14); post(px, pz, 0.14, 0.14)
-      const t2 = t + F.lampStep, [qx, qz] = at(t2, poleSide * po), sag = 0.35, q = F.lampStep / 4, ang = Math.atan2(sag, F.lampStep / 2)
-      if (clear(qx, qz, 1)) for (const w of [-0.9, 0.9]) for (const [tm, sgn] of [[t + q, -1], [t + 3 * q, 1]])
-        box(q / Math.cos(ang), 0.015, 0.015, tm, 7.9 - sag / 2, poleSide * po + w, F.wire, yaw, sgn * ang)
-    }
+    if (poles) { const po = F.poleOff
+      let prev = null
+      const span = (a, b) => { const L = b - a, sag = 0.35 * L / F.lampStep, q = L / 4, ang = Math.atan2(sag, L / 2)
+        for (const w of [-0.9, 0.9]) for (const [tm, sgn] of [[a + q, -1], [a + 3 * q, 1]]) { const [x, z] = at(tm, poleSide * po + w); near('body', q / Math.cos(ang), 0.015, 0.015, x, 7.9 - sag / 2, z, yaw, sgn * ang, F.wire) } }
+      for (let n = Math.floor((lo - F.poleAt) / F.lampStep); n <= Math.floor((hi - F.poleAt) / F.lampStep); n++) {
+        yield
+        const t = n * F.lampStep + F.poleAt, [px, pz] = at(t, poleSide * po)
+        if (!here(t)) continue
+        if (!clear(px, pz, 1)) { prev = null; continue }
+        if (H(0x5b02, key(n), dir) % 100 >= 94 || !offDrives(t, 0.4, poleSide, po) || !offTrunk(px, pz, 0.4)) continue
+        box(0.12, 4.3, 0.12, t, 4.3, poleSide * po, F.wood)
+        box(0.07, 0.07, 1.3, t, 7.9, poleSide * po, F.wood)
+        solid(px, 4.3, pz, 0.14, 4.3, 0.14); post(px, pz, 0.14, 0.14)
+        if (prev !== null && t - prev <= 2 * F.lampStep) span(prev, t)
+        prev = t
+      } }
     for (let n = Math.floor((lo - F.lampAt) / F.lampStep); n <= Math.floor((hi - F.lampAt) / F.lampStep); n++) {
       yield
       const t = n * F.lampStep + F.lampAt, side = poles ? -poleSide : n & 1 ? 1 : -1, [px, pz] = at(t, side * F.off)
