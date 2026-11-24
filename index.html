@@ -5253,7 +5253,7 @@ const FAUST_CHAN = { version: 2, depth: 8, top: 28, floor: 18, lip: 2, wall: 0.9
     ramp: 0x838890, drain: 0x07090c, collar: 0x8a8f95, stain: 0x2c3a38, paint: [0xa8505f, 0x4f8f94, 0xb09a4f, 0x7a5ea3, 0x5f9a68, 0xbdbdb5, 0xb27a52] },
   sec: { foot: 18, h: 8, land: 4, kinds: ['floor', 'gutter', 'gutter'], inner: [[18, 0], [2.5, 0], [1.2, -0.25]] },
   glow: { bank: 0.3, floor: 0.17, wall: 0.25, under: 0.3, paint: 0.04, water: 0.1 } }
-const FAUST_QUAY = { at: 31, len: 26, gap: 1, pct: 40, face: 19, back: 36, top: 0.15, ladder: 6, bay: 27, house: 7 }
+const FAUST_QUAY = { at: 31, len: 26, gap: 1, pct: 40, works: 85, face: 19, back: 36, top: 0.15, ladder: 6, bay: 27, house: 7 }
 const faustChanSec = ch => ch.kind === 'river' ? FAUST_WATER.river.sec : FAUST_CHAN.sec
 function faustChanBed(sec, u) {
   const p = sec.inner
@@ -5339,11 +5339,12 @@ function faustChannels(seed, S) {
       const Q = FAUST_QUAY
       for (let k = kLo; k <= kHi; k++) for (const e of [-1, 1]) {
         const h = faustMix(seed ^ 0x51554159, k * 2 + (e > 0 ? 1 : 0), u), s = k * 96 + e * Q.at, side = (h >>> 8) & 1 ? 1 : -1, hl = Q.len / 2 + Q.gap
-        if (h % 100 >= Q.pct || s - hl < lo + 40 || s + hl > hi - 40) continue
+        const works = faustIndustryAt(seed, Math.floor((axis ? c : s) / 96), Math.floor((axis ? s : c) / 96)) >= 0
+        if (h % 100 >= (works ? Q.works : Q.pct) || s - hl < lo + 40 || s + hl > hi - 40) continue
         const hit = chan.bridges.some(b => b.kind === 'diag' ? Math.abs(s - (b.s + side * 16.6)) < 25 + hl : Math.abs(s - b.s) < b.half + hl)
           || chan.ramps.some(r => r.side === side && Math.abs(r.s - s) < r.w / 2 + hl) || chan.outfalls.some(o => o.kind === 'wall' && o.side === side && Math.abs(o.s - s) < o.r + hl)
         if (hit) continue
-        chan.quays.push({ id: id + ':q:' + k + (e > 0 ? 'b' : 'a'), side, s, len: Q.len, kind: (h >>> 9) % 3 ? 'dock' : 'yard', h: h >>> 12, ladders: [s - Q.ladder, s + Q.ladder] })
+        chan.quays.push({ id: id + ':q:' + k + (e > 0 ? 'b' : 'a'), side, s, len: Q.len, kind: works ? 'port' : (h >>> 9) % 3 ? 'dock' : 'yard', h: h >>> 12, ladders: [s - Q.ladder, s + Q.ladder] })
       }
     }
     chan.rect = axis ? { a0: c - K.cut, a1: c + K.cut, b0: lo, b1: hi } : { a0: lo, a1: hi, b0: c - K.cut, b1: c + K.cut }
@@ -5455,6 +5456,15 @@ function* faustChanPiece(ch, k, emit, look) {
         const hh = faustMix(0x51434e54 ^ q.h, row * 3 + i, ch.u), n = 1 + hh % 3, u0 = Q.face + 3 + row * 3.4, col = T.paint[(hh >>> 4) % T.paint.length]
         for (let j = 0; j < n; j++) qb(S0 + (i - 1) * 6.6, 3.05, u0, u0 + 2.44, qy + j * 2.6, qy + (j + 1) * 2.6, col, G.paint, true)
       }
+      if (q.kind === 'port') {
+        const cr = 0xc4562a, gy = qy + 14
+        for (const sc of [-11, 11]) for (const u of [Q.face + 1.4, Q.face + 10.4]) qb(S0 + sc, 0.45, u - 0.45, u + 0.45, qy, gy, cr, G.paint, true)
+        for (const u of [Q.face + 1.4, Q.face + 10.4]) qb(S0, 11.6, u - 0.4, u + 0.4, gy, gy + 0.9, cr, G.paint, true)
+        for (const sc of [-11, 11]) qb(S0 + sc, 0.5, Q.face + 1.4 - 0.4, Q.face + 10.8, gy, gy + 0.9, cr, G.paint, true)
+        qb(S0 + 11, 0.4, Q.face - 9, Q.face + 1.8, gy + 0.9, gy + 1.5, cr, G.paint, true)
+        qb(S0 + 11, 0.12, Q.face + 1.8, Q.face + 6, gy + 1.5, gy + 4.2, cr, 0, true)
+        if (look) { qb(S0 + 11, 0.3, Q.face - 9, Q.face - 8.4, gy + 0.2, gy + 0.9, T.lamp, -1, false); qb(S0 + 11, 0.06, Q.face - 6.4, Q.face - 6.34, qy + 3.5, gy, 0x20242a, 0, false) }
+      }
     }
     if (look) {
       const rust = 0x6b5a45
@@ -5465,9 +5475,9 @@ function* faustChanPiece(ch, k, emit, look) {
       }
       if (q.kind === 'dock') for (const o of [-7.5, 0, 7.5]) {
         qb(S0 + o, 2.3, Q.bay - 0.58, Q.bay - 0.5, qy + 1.1, qy + 5.1, T.drain, 0, false)
-        qb(S0 + o, 2.1, Q.bay - 0.62, Q.bay - 0.58, qy + 1.1, qy + 5, 0x9fb0b4, G.wall, false)
+        qb(S0 + o, 2.1, Q.bay - 0.62, Q.bay - 0.58, qy + 1.1, qy + 5, 0xb8a67f, G.wall, false)
         for (let y = qy + 1.5; y < qy + 5; y += 0.5) qb(S0 + o, 2.1, Q.bay - 0.65, Q.bay - 0.62, y, y + 0.08, 0x59686c, 0, false)
-        qb(S0 + o, 0.2, Q.bay - 0.6, Q.bay - 0.5, qy + 5.3, qy + 5.6, T.lamp, -1, false)
+        qb(S0 + o, 0.5, Q.bay - 0.7, Q.bay - 0.5, qy + 5.25, qy + 5.7, T.lamp, -1, false)
       }
       if (q.kind === 'dock') {
         qb(S0, 11.2, Q.bay - 0.58, Q.bay - 0.5, qy + 5.9, qy + 6.8, T.paint[q.h % T.paint.length], G.paint, false)
