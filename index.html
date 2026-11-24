@@ -39803,7 +39803,7 @@ function dsFeatsNearPt(x, z, r) {
   }
   return out.sort((p, q) => p.d - q.d)
 }
-const DS_LOOT = 22
+const DS_LOOT = 22, DS_LOOT_RING = 23, LOOT_RING_BASE = 2097152
 const LOOT = { every: 0.5, cap: 40, perTick: 2, near: 28, keep: 140, moved: 0.35, inset: 0.25,
   menu: { living: [['Chair', 0.8], ['Table', 0.6], ['TV', 0.5], ['Chair', 0.4]], kitchen: [['Chair', 0.8], ['Table', 0.7], ['Bottle', 0.6]], bedroom: [['Chair', 0.5], ['TV', 0.3], ['Wooden box', 0.4]],
     bar: [['Chair', 0.9], ['Table', 0.8], ['Bottle', 0.9], ['Bottle', 0.7], ['Chair', 0.6], ['TV', 0.4]], diner: [['Chair', 0.9], ['Table', 0.8], ['Chair', 0.7], ['Bottle', 0.5], ['TV', 0.3]],
@@ -39841,6 +39841,20 @@ function lootBuild(seed, k, rooms, boxes, ramps, floor, door) {
     })
   })
   return L
+}
+function lootRingKey(O, k, i) {
+  const m = /^ring (-?\d+) (-?\d+) (\d+)$/.exec(String(O.id))
+  if (!m) return null
+  const a = +m[1], b = +m[2], n = +m[3]
+  if (!(Math.abs(a) < 64 && Math.abs(b) < 64 && n < 512 && k < 2 && i < 32)) return null
+  return DS_LOOT_RING * 4294967296 + LOOT_RING_BASE + (((a + 64) * 128 + (b + 64)) * 512 + n) * 64 + k * 32 + i
+}
+function lootRingRecord(key) {
+  const F = faustState, p = key - DS_LOOT_RING * 4294967296 - LOOT_RING_BASE
+  if (!F || !(p >= 0 && p < 536870912)) return null
+  const x = ((p >> 22 & 127) - 64) * FAUST_RINGS.cell + FAUST_RINGS.cell / 2, z = ((p >> 15 & 127) - 64) * FAUST_RINGS.cell + FAUST_RINGS.cell / 2
+  const ci = Math.max(0, Math.min(F.S - 1, Math.floor((x + ARENA) / 96))), cj = Math.max(0, Math.min(F.S - 1, Math.floor((z + ARENA) / 96)))
+  return { chunk: ci * F.S + cj, at: [x, 1, z], p: {} }
 }
 function lootItems(B, k) {
   B.loot ||= new Map()
@@ -39889,7 +39903,7 @@ function lootTick(dt, people) {
     const it = o.lootAt
     if (!objs.includes(o) || o.heldBy !== undefined || o.thrownBy !== undefined || Math.hypot(o.x - it.x, o.z - it.z) > LOOT.moved || Math.abs(o.y - it.y) > LOOT.moved + 0.3) {
       St.live.delete(key); delete o.lootAt; o.lootTaken = true
-      if (typeof key === 'number') dsBreak(DS_LOOT, key, 1); else St.ringTaken.add(key)
+      if (typeof key === 'number') dsBreak(Math.floor(key / 4294967296), key, 1); else St.ringTaken.add(key)
       { const v = St.seen.get(key); if (v) v.state = 'taken' }
       continue
     }
@@ -39930,7 +39944,7 @@ function lootTick(dt, people) {
     if (O.urban || !O.P?.floors || !(O.b?.kind === 'house' || O.b?.kind === 'shack')) continue
     for (const F of O.P.floors) for (const it of lootRingItems(O, F.k)) {
       if (made >= LOOT.perTick) return
-      const [x, z] = lootRingPoint(O, it.x, it.z), r = spawn('ring ' + O.id + ' ' + F.k + ' ' + it.i, O, F.k, it, x, z, it.yaw + (O.yaw || 0))
+      const [x, z] = lootRingPoint(O, it.x, it.z), r = spawn(lootRingKey(O, F.k, it.i) ?? 'ring ' + O.id + ' ' + F.k + ' ' + it.i, O, F.k, it, x, z, it.yaw + (O.yaw || 0))
       if (r < 0) return
       made += r
     }
@@ -39955,6 +39969,7 @@ function dsPropKind() {
 dsKindRegister(DS_PROP, { record: dsPropRecord, apply: dsPropApply, undo: dsPropUndo, fresh: dsPropFresh })
 dsKindRegister(DS_FEAT, { record: dsFeatRecord, apply: dsFeatApply, undo: dsFeatUndo, fresh: dsFeatFresh })
 dsKindRegister(DS_LOOT, { record: lootRecord, apply() {}, undo() {}, fresh() {} })
+dsKindRegister(DS_LOOT_RING, { record: lootRingRecord, apply() {}, undo() {}, fresh() {} })
 dsPropKind()
 
 const SL_BABY = {
