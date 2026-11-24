@@ -36755,7 +36755,7 @@ function slDrawSkinned(kitm, p, d, tint, scale = 1, gone = 0) {
 }
 const SL_NUDGE = { char: 1.1, clear: 0.5, look: 1, lookMax: 10, hold: 0.35, out: 3, outCar: 4.5, back: 0.9, max: 2.6, moving: 0.15, offFrames: 30, acc: 14 }
 const SL_AVOID = { move: 0.4, idle: 0.62, still: 0.8, lookMax: 3, max: 1.1, out: 1.5, cell: 6, still_v: 0.05 }
-const slAv = { pool: [], n: 0, hash: new Map(), list: [] }
+const slAv = { pool: [], n: 0, hash: new Map(), list: [], drawn: [], grid: new Map() }
 const slAvPt = () => ({ car: false, ped: true, x: 0, z: 0, r: 0, vx: 0, vz: 0, sp: 0, grp: 0, idle: false })
 function slAvoidBegin() { slAv.n = 0 }
 function slAvoidPose(ag, T) {
@@ -36796,6 +36796,32 @@ function slAvoidList(ag, p, base) {
     for (const c of arr) if (c.grp !== grp) { c.r = c.idle ? (idle ? S.idle : S.still) : S.move; L.push(c) }
   }
   return L
+}
+function slAvoidSeparate(frame, dt) {
+  const a = slAv, D = a.drawn, g = a.grid, R = 0.55, map = slState.nudge || (slState.nudge = new Map())
+  for (const arr of g.values()) arr.length = 0
+  for (const e of D) {
+    if (e.ag.companion || e.f !== frame) continue
+    const k = slAvKey(Math.floor(e.p.x), Math.floor(e.p.z)); let arr = g.get(k)
+    if (!arr) g.set(k, arr = [])
+    arr.push(e)
+  }
+  for (const e of D) {
+    const ag = e.ag, p = e.p; if (ag.companion || e.f !== frame) continue
+    const bi = Math.floor(p.x), bj = Math.floor(p.z)
+    for (let i = bi - 1; i <= bi + 1; i++) for (let j = bj - 1; j <= bj + 1; j++) {
+      const arr = g.get(slAvKey(i, j)); if (!arr) continue
+      for (const o of arr) {
+        if (o.ag.id <= ag.id || o.pt.grp === e.pt.grp) continue
+        const q = o.p, dx = p.x - q.x, dz = p.z - q.z, d = Math.hypot(dx, dz); if (d >= R) continue
+        const ux = d < 1e-3 ? Math.cos(p.yaw || 0) : dx / d, uz = d < 1e-3 ? -Math.sin(p.yaw || 0) : dz / d, h = Math.min((R - d) / 2, 3 * Math.min(dt || 0.017, 0.1))
+        for (const [m, s] of [[e, 1], [o, -1]]) {
+          const n = map.get(m.ag.id) || (map.set(m.ag.id, { x: 0, z: 0, f: frame, vx: 0, vz: 0 }), map.get(m.ag.id))
+          n.x += ux * h * s; n.z += uz * h * s; n.f = frame; m.p.x += ux * h * s; m.p.z += uz * h * s; m.nd = n
+        }
+      }
+    }
+  }
 }
 const slExtents = new WeakMap()
 function slCarExtent(K) {
@@ -36968,6 +36994,14 @@ function slFrame(t, dt, obl) {
   slAvoidBegin()
   for (const cell of cellsNear) for (const ag of cell.agents) { if (ag.rank >= qn && !ag.venue && !st.byId.has(ag.id)) ag._av = null; else slAvoidPose(ag, T) }
   slAvoidIndex(st.frame)
+  slAv.drawn.length = 0
+  for (const cell of cellsNear) for (const ag of cell.agents) {
+    const e = ag._av; if (!e) continue
+    const p = e.p; e.nd = null
+    if (ag.kind === SL_K.cyclist || p.hidden || p.scale <= 0.01 || !near(p.x, p.z, D.ped) || !seen(p.x, 1, p.z, 2.2)) continue
+    e.nd = slNudge(ag, p, slAvoidList(ag, p, pushers), cell, dt); slAv.drawn.push(e)
+  }
+  slAvoidSeparate(st.frame, dt)
   for (const cell of cellsNear) {
     for (const ag of cell.agents) {
       if (ag.rank >= qn && !ag.venue && !st.byId.has(ag.id)) continue
@@ -36983,7 +37017,7 @@ function slFrame(t, dt, obl) {
         continue
       }
       if (p.hidden || p.scale <= 0.01 || !near(p.x, p.z, D.ped) || !seen(p.x, 1, p.z, 2.2)) continue
-      const nudged = slNudge(ag, p, slAvoidList(ag, p, pushers), cell, dt)
+      const nudged = ag._av.nd
       const d = Math.hypot(p.x - cx, p.z - cz)
       slFadeSet(ag, T, p, d)
       if (ag.kind === SL_K.stray) { if (d < D.dog) slDrawSkinned(kit.dog, p, d, ag.tint, ag.companion ? 0.9 : 0.95); continue }
