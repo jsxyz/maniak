@@ -10102,6 +10102,7 @@ function* faustVisualSteps(c) {
   const root = new THREE.Group()
   let placed = false
   try {
+  const lookV = dsLookV(c)
   for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
     const mesh = new THREE.Mesh(data.geometry(), mat); mesh.castShadow = data === facade; mesh.receiveShadow = true; root.add(mesh)
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }
@@ -10117,6 +10118,7 @@ function* faustVisualSteps(c) {
   background.gpu('cell')
   if (teles.length) { root.userData.screens = teles; root.add(screenMeshes(teles)) }
   root.userData.cell = [c.ci, c.cj]; c.visual = root; worldGroup.add(root); placed = true; still(root)
+  if (dsLookV(c) !== lookV) dsLookAgain(c, root)
   faustSkyCell(c, false)
   craterRegrow({ a0: X, a1: X + 96, b0: Z, b1: Z + 96 })
   } finally { if (!placed) root.traverse(n => n.geometry?.dispose()) }
@@ -38428,6 +38430,24 @@ function dsRemove(key) {
   else if (dsKinds.has(rec.kind)) dsKindCall(rec, 'undo')
   else if (rec.kind === DS_KIND.lamp || rec.kind === DS_KIND.post) { const c = faustState.chunks.get(faustKey(rec.p.ci, rec.p.cj)); if (c?.visual) dsRelight(c); if (typeof faustLamp === 'object') { faustLamp.sites.delete(faustKey(rec.p.ci, rec.p.cj)); faustLamp.built = false } st.fallenDirty = true }
 }
+const dsLookV = c => dsState?.chunks.get(c.ci * faustState.S + c.cj)?.v ?? 0
+function dsLookAgain(c, root) {
+  const stone = faustState.materials.stone
+  for (const m of root.children) {
+    if (!m.isMesh) continue
+    if (m.userData.feat) dsFeatsLook(c, m.geometry)
+    else if (m.material === stone) { dsLampLook(c, m.geometry); dsPropsLook(c, m.geometry) }
+  }
+}
+const dsTagOf = f => { let h = 2166136261; for (const ch of f.k + ' ' + Math.round(f.x * 100) + ' ' + Math.round(f.z * 100)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return 1 + (h >>> 0) % 2047 }
+function dsFitSite(sites, keyOf, kind, chunk, code, info) {
+  const key = dsUncode(kind, chunk, code), F = faustState, tag = info >> 9 & 2047
+  if (!tag || !F) return key
+  const list = sites(dsPlan(Math.floor(chunk / F.S), chunk % F.S))
+  if (list[code] && dsTagOf(list[code].f) === tag) return key
+  const same = list.filter(q => q && dsTagOf(q.f) === tag)
+  return same.length === 1 ? keyOf(chunk, same[0].i) : -1
+}
 function dsRelight(c) {
   if (!c.visual || !worldGroup) return
   worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); c.visual = null; faustSkyCell(c, true)
@@ -38442,6 +38462,8 @@ function dsBreak(kind, key, info) {
   if (!isHost || !dsCheck() || dsState.all.has(key)) return false
   const T = Math.round(tickAt || now()), rec = dsRecord(kind, key, T, info)
   if (!rec) return false
+  const stamp = dsKinds.get(kind)?.stamp
+  if (stamp) rec.info = rec.info & 511 | stamp(rec) << 9
   dsAdd(rec)
   dsState.fresh.push({ rec, n: 0 }); dsState.stats.breaks++
   dsTileTouch(rec.chunk); dsPersistLater()
@@ -39253,8 +39275,8 @@ function dsLoadKind(kind, chunks) {
     let code = 0
     for (let i = 0; i + 1 < nums.length; i += 2) {
       code += nums[i]
-      const key = dsUncode(kind, +chunk, code)
-      if (dsState.all.has(key)) continue
+      const fit = dsKinds.get(kind)?.fit, key = fit ? fit(kind, +chunk, code, nums[i + 1]) : dsUncode(kind, +chunk, code)
+      if (key < 0 || dsState.all.has(key)) continue
       const rec = dsRecord(kind, key, -Infinity, nums[i + 1])
       if (rec && dsAdd(rec)) n++
     }
@@ -40226,8 +40248,8 @@ function dsPropKind() {
     })
   }
 }
-dsKindRegister(DS_PROP, { record: dsPropRecord, apply: dsPropApply, undo: dsPropUndo, fresh: dsPropFresh })
-dsKindRegister(DS_FEAT, { record: dsFeatRecord, apply: dsFeatApply, undo: dsFeatUndo, fresh: dsFeatFresh })
+dsKindRegister(DS_PROP, { record: dsPropRecord, apply: dsPropApply, undo: dsPropUndo, fresh: dsPropFresh, stamp: r => dsTagOf(r.p.f), fit: (k, c, n, i) => dsFitSite(dsPropSites, dsPropKey, k, c, n, i) })
+dsKindRegister(DS_FEAT, { record: dsFeatRecord, apply: dsFeatApply, undo: dsFeatUndo, fresh: dsFeatFresh, stamp: r => dsTagOf(r.p.f), fit: (k, c, n, i) => dsFitSite(dsFeatSites, dsFeatKey, k, c, n, i) })
 dsKindRegister(DS_LOOT, { record: lootRecord, apply() {}, undo() {}, fresh() {} })
 dsKindRegister(DS_LOOT_RING, { record: lootRingRecord, apply() {}, undo() {}, fresh() {} })
 dsKindRegister(DS_LOOT_SITE, { record: lootSiteRecord, apply() {}, undo() {}, fresh() {} })
