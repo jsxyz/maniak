@@ -1314,6 +1314,14 @@ OBJECTS.push(
   { name: 'Bench', half: [1.15, 0.575, 0.36], mass: 3, bounce: 0.1, friction: 0.7, damp: [0.12, 0.4], hit: 1, color: 0x4a3a2c, stripe: 0x2b333d, prop: 'bench', dmg: 32 },
   { name: 'Planter', half: [1.9, 1.95, 1.9], mass: 10, bounce: 0.05, friction: 0.8, damp: [0.2, 0.5], hit: 1, color: 0x6f767f, stripe: 0x2a2a22, prop: 'planter', dmg: 70 },
   { name: 'Phone box', half: [1.0, 1.18, 0.45], mass: 6, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0x2b333d, stripe: 0xffd7a0, prop: 'phone', dmg: 50 })
+OBJECTS.push(
+  { name: 'Chair', half: [0.24, 0.45, 0.24], mass: 0.6, bounce: 0.15, friction: 0.6, damp: [0.1, 0.35], hit: 1, color: 0x5a3a24, stripe: 0x8a6440, loot: 'chair', dmg: 10 },
+  { name: 'Table', half: [0.6, 0.38, 0.4], mass: 2.5, bounce: 0.1, friction: 0.6, damp: [0.1, 0.35], hit: 1, color: 0x8a6440, stripe: 0x5a3a24, loot: 'table', dmg: 22 },
+  { name: 'TV', half: [0.3, 0.27, 0.25], mass: 1.2, bounce: 0.1, friction: 0.6, damp: [0.1, 0.35], hit: 1, color: 0x2a2a2e, stripe: 0x6a8a92, loot: 'tv', dmg: 18 },
+  { name: 'Wooden box', half: [0.3, 0.25, 0.25], mass: 1, bounce: 0.1, friction: 0.6, damp: [0.1, 0.35], hit: 1, color: 0x7a6040, stripe: 0x4a3a22, loot: 'box', dmg: 12 },
+  { name: 'Shelf unit', half: [0.65, 0.95, 0.18], mass: 5, bounce: 0.05, friction: 0.7, damp: [0.15, 0.4], hit: 1, color: 0x5a3a24, stripe: 0x8a6440, loot: 'shelf', dmg: 30 },
+  { name: 'Bottle', half: [0.04, 0.15, 0.04], mass: 0.15, bounce: 0.2, friction: 0.4, damp: [0.05, 0.2], hit: 1, color: 0x2f5c3a, stripe: 0xc9b27a, loot: 'bottle', dmg: 6 },
+  { name: 'Mannequin', half: [0.22, 0.78, 0.18], mass: 1.5, bounce: 0.1, friction: 0.6, damp: [0.1, 0.35], hit: 1, color: 0xd8cdb8, stripe: 0x2b333d, loot: 'mannequin', dmg: 14 })
 const SIT_HIP = 0.29
 const seatFit = (s, C) => { const M = MODELS[C.model || 'man']
   return [s[0] - Math.sign(s[0]) * (M.sitIn || 0), s[1] + SIT_HIP * (C.h + C.r) + (M.sitLift || 0), s[2]] }
@@ -17420,6 +17428,7 @@ function trafficTick(dt, all) {
   const movers = []
   for (const p of objs) if (p.V && !p.traffic && !p.kin && p.body.isActive() && speedOf(p) > 3) movers.push(p)
   parkedTick(dt, people)
+  lootTick(dt, people)
   const cars = [...T.cars.values()], nCars = cars.length, rr = nCars ? (T.rr || 0) % nCars : 0
   let rrNext = -1
   for (let ci = 0; ci < nCars; ci++) {
@@ -25274,7 +25283,7 @@ function objHullPoints(K) {
 }
 function objLook(K) {
   if (K.limb) return limbLook(K)
-  if (K.prop) return propObjLook(K)
+  if (K.prop || K.loot) return propObjLook(K)
   const cv = document.createElement('canvas'), g = cv.getContext('2d')
   cv.width = cv.height = 64
   g.fillStyle = css(K.color); g.fillRect(0, 0, 64, 64); g.fillStyle = css(K.stripe)
@@ -31319,6 +31328,7 @@ const probeApi = Object.freeze({
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   log: () => gameLog.map(line => ({ ...line })),
   shaderCheck,
+  loot: () => lootReport(),
   trace: (name, on = true) => {
     if (name === 'launch') { launchTrace.on = !!on; launchTrace.frozen = false; launchTrace.rows = []; launchTrace.at = 0 }
     return { on: launchTrace.on, frozen: launchTrace.frozen, at: launchTrace.at, rows: launchTrace.rows.slice(), trips: speedLog.slice() }
@@ -39529,7 +39539,28 @@ function propObjLook(K) {
   const box = (w, h, d, x, y, z, col) => add(new T.BoxGeometry(w, h, d), x, y, z, col)
   const cyl = (r0, r1, h, x, y, z, col, n = 8) => add(new T.CylinderGeometry(r0, r1, h, n), x, y, z, col)
   const disc = (r, h, x, y, z, col) => add(new T.CylinderGeometry(r, r, h, 10).rotateZ(Math.PI / 2), x, y, z, col)
-  if (K.prop === 'hydrant') {
+  if (K.loot === 'chair') {
+    box(0.46, 0.06, 0.46, 0, -0.02, 0, 0x8a6440); box(0.46, 0.44, 0.05, 0, 0.23, -0.205, 0x5a3a24)
+    for (const x of [-0.2, 0.2]) for (const z of [-0.2, 0.2]) box(0.04, 0.42, 0.04, x, -0.24, z, 0x5a3a24)
+  } else if (K.loot === 'table') {
+    box(1.2, 0.06, 0.8, 0, 0.37, 0, 0x8a6440)
+    for (const x of [-0.55, 0.55]) for (const z of [-0.35, 0.35]) box(0.07, 0.72, 0.07, x, -0.02, z, 0x5a3a24)
+  } else if (K.loot === 'tv') {
+    box(0.6, 0.46, 0.46, 0, 0, 0, 0x2a2a2e); box(0.46, 0.34, 0.02, 0, 0.01, 0.235, 0x6a8a92); box(0.3, 0.08, 0.3, 0, -0.23, 0, 0x1d1b1a)
+  } else if (K.loot === 'box') {
+    box(0.6, 0.5, 0.5, 0, 0, 0, 0x7a6040); box(0.62, 0.04, 0.52, 0, 0.12, 0, 0x4a3a22); box(0.62, 0.04, 0.52, 0, -0.12, 0, 0x4a3a22)
+  } else if (K.loot === 'shelf') {
+    for (const y of [-0.93, -0.43, 0.07, 0.57, 0.93]) box(1.3, 0.04, 0.36, 0, y, 0, 0x5a3a24)
+    for (const x of [-0.65, 0.65]) box(0.04, 1.9, 0.36, x, 0, 0, 0x5a3a24)
+    box(1.3, 1.9, 0.03, 0, 0, -0.165, 0x3b2616)
+    ;[0x8a2a2a, 0x2f5c3a, 0x8a5a24, 0xc9b27a, 0x3a3f66].forEach((c, i) => box(0.1, 0.26 + (i % 3) * 0.06, 0.22, -0.4 + i * 0.2, -0.43 + 0.15 + (i % 3) * 0.03, 0, c))
+  } else if (K.loot === 'bottle') {
+    cyl(0.04, 0.04, 0.2, 0, -0.05, 0, 0x2f5c3a, 6); cyl(0.015, 0.04, 0.1, 0, 0.1, 0, 0x2f5c3a, 6)
+  } else if (K.loot === 'mannequin') {
+    cyl(0.2, 0.2, 0.04, 0, -0.755, 0, 0x2b333d, 8); cyl(0.02, 0.02, 0.6, 0, -0.435, 0, 0x2b333d, 6)
+    cyl(0.17, 0.12, 0.6, 0, 0.175, 0, 0xd8cdb8, 8); cyl(0.07, 0.07, 0.1, 0, 0.525, 0, 0xd8cdb8, 6); cyl(0.08, 0.07, 0.2, 0, 0.675, 0, 0xd8cdb8, 8)
+    for (const x of [-0.22, 0.22]) box(0.06, 0.45, 0.08, x, 0.225, 0, 0xd8cdb8)
+  } else if (K.prop === 'hydrant') {
     add(new T.LatheGeometry([[0.001, -0.4], [0.19, -0.4], [0.19, -0.2], [0.165, -0.2], [0.165, 0.3], [0.21, 0.3], [0.001, 0.42]].map(([r, y]) => new T.Vector2(r, y)), 12), 0, 0, 0)
     add(new T.CylinderGeometry(0.06, 0.06, 0.62, 8).rotateZ(Math.PI / 2), 0, 0.05, 0)
     add(new T.CylinderGeometry(0.075, 0.075, 0.12, 8).rotateX(Math.PI / 2), 0, 0.05, 0.19)
@@ -39697,6 +39728,103 @@ function dsFeatsNearPt(x, z, r) {
   }
   return out.sort((p, q) => p.d - q.d)
 }
+const DS_LOOT = 22
+const LOOT = { every: 0.5, cap: 40, perTick: 2, near: 28, keep: 140, moved: 0.35, inset: 0.25,
+  menu: { living: [['Chair', 0.8], ['Table', 0.6], ['TV', 0.5], ['Chair', 0.4]], kitchen: [['Chair', 0.8], ['Table', 0.7], ['Bottle', 0.6]], bedroom: [['Chair', 0.5], ['TV', 0.3], ['Wooden box', 0.4]],
+    bar: [['Chair', 0.9], ['Table', 0.8], ['Bottle', 0.9], ['Bottle', 0.7], ['Chair', 0.6], ['TV', 0.4]], diner: [['Chair', 0.9], ['Table', 0.8], ['Chair', 0.7], ['Bottle', 0.5], ['TV', 0.3]],
+    shop: [['Mannequin', 0.6], ['Wooden box', 0.7], ['Shelf unit', 0.5], ['Bottle', 0.6]], conv: [['Shelf unit', 0.6], ['Wooden box', 0.7], ['Bottle', 0.6]], liquor: [['Bottle', 0.9], ['Bottle', 0.8], ['Wooden box', 0.7], ['Shelf unit', 0.5]],
+    pantry: [['Wooden box', 0.9], ['Wooden box', 0.6], ['Bottle', 0.5], ['Shelf unit', 0.4]], lobby: [['Chair', 0.6], ['TV', 0.3], ['Table', 0.3], ['Wooden box', 0.2]], hall: [['Chair', 0.3], ['Wooden box', 0.3]],
+    office: [['Chair', 0.7], ['Table', 0.4], ['Chair', 0.5], ['TV', 0.15]], meeting: [['Chair', 0.9], ['Chair', 0.8], ['Table', 0.8], ['TV', 0.3]], records: [['Wooden box', 0.8], ['Shelf unit', 0.6]],
+    storeroom: [['Wooden box', 0.9], ['Wooden box', 0.7], ['Bottle', 0.5], ['Shelf unit', 0.4]] } }
+const lootState = { t: 0, clock: 0, live: new Map(), seen: new Map() }
+const lootKey = (B, k, i) => DS_LOOT * 4294967296 + B.chunk * 1024 + B.li * 64 + k * 32 + i
+function lootRecord(key) {
+  const F = faustState, local = key - DS_LOOT * 4294967296, chunk = Math.floor(local / 1024), code = local % 1024
+  if (!F || !(local >= 0) || chunk >= F.S * F.S) return null
+  const lot = faustGet(Math.floor(chunk / F.S), chunk % F.S)?.plan?.lots?.[Math.floor(code / 64)]
+  return lot ? { chunk, at: [lot.x, 1, lot.z], p: { code } } : null
+}
+function lootItems(B, k) {
+  B.loot ||= new Map()
+  let L = B.loot.get(k)
+  if (L) return L
+  L = []
+  const S = inStorey(B, k), floor = B.storeys[k]?.y
+  if (!(floor >= 0)) { B.loot.set(k, L); return L }
+  S.rooms.forEach((r, ri) => {
+    const menu = LOOT.menu[r.kind]
+    if (!menu) return
+    menu.forEach(([name, prob], e) => {
+      const h = parkedHash(B.seed, k, ri, e, 0x6c6f6f74), K = OBJECTS.findIndex(Q => Q.name === name), row = OBJECTS[K]
+      if (L.length >= 31 || K < 0 || (h & 0xffff) / 65536 >= prob) return
+      const side = h >>> 16 & 3, along = (h >>> 18 & 1023) / 1023, inset = Math.max(row.half[0], row.half[2]) + LOOT.inset
+      if (r.x1 - r.x0 < 2 * inset + 0.3 || r.z1 - r.z0 < 2 * inset + 0.3) return
+      const x = side === 0 ? r.x0 + inset : side === 1 ? r.x1 - inset : r.x0 + inset + (r.x1 - r.x0 - 2 * inset) * along
+      const z = side === 2 ? r.z0 + inset : side === 3 ? r.z1 - inset : r.z0 + inset + (r.z1 - r.z0 - 2 * inset) * along
+      const dx = side === 0 ? 1 : side === 1 ? -1 : 0, dz = side === 2 ? 1 : side === 3 ? -1 : 0
+      if (k === 0 && B.door && Math.hypot(x - B.door.x, z - B.door.z) < 1.8) return
+      L.push({ i: L.length, K, x, z, floor, yaw: Math.atan2(dx, dz), r: Math.max(row.half[0], row.half[2]), h: row.half[1] })
+    })
+  })
+  B.loot.set(k, L)
+  return L
+}
+function lootRetire(o, key) {
+  if (key !== undefined) lootState.seen.delete(key)
+  const T = trafficState
+  dropObject(o); objs.splice(objs.indexOf(o), 1)
+  T?.departures.push({ id: o.id, until: trafficClock() + 12 }); delete objSeeds[o.id]
+  for (const sent of objSent.values()) sent.delete(o.id)
+  if (key !== undefined) lootState.live.delete(key)
+}
+function lootReport() {
+  const St = lootState, byStorey = new Map()
+  for (const O of faustIn.open.values()) for (const k of O.storeys.keys()) byStorey.set(O.id + ' ' + k, { building: O.id, storey: k, candidates: O.B?.loot?.get(k)?.length ?? 0, rejected: 0, spawned: 0, taken: 0 })
+  for (const v of St.seen.values()) { const q = byStorey.get(v.b + ' ' + v.k); if (q) q[v.state]++ }
+  return { open: [...byStorey.values()], live: [...St.live.entries()].map(([key, o]) => ({ key, name: o.K.name, x: +o.x.toFixed(2), y: +o.y.toFixed(2), z: +o.z.toFixed(2), asleep: !o.body.isActive() })),
+    loose: objs.filter(o => o.K.loot).length, cap: LOOT.cap }
+}
+function lootTick(dt, people) {
+  if (!isHost || !LV.faust || !faustState || !world || !dsCheck()) return
+  const St = lootState
+  St.clock += dt
+  if ((St.t -= dt) > 0) return
+  St.t = LOOT.every
+  const near = (x, z, d) => people.some(p => Math.hypot(p.x - x, p.z - z) < d)
+  for (const [key, o] of [...St.live]) {
+    const it = o.lootAt
+    if (!objs.includes(o) || o.heldBy !== undefined || o.thrownBy !== undefined || Math.hypot(o.x - it.x, o.z - it.z) > LOOT.moved || Math.abs(o.y - it.y) > LOOT.moved + 0.3) {
+      St.live.delete(key); delete o.lootAt; o.lootTaken = true; dsBreak(DS_LOOT, key, 1); { const v = St.seen.get(key); if (v) v.state = 'taken' } continue
+    }
+    if (!near(it.x, it.z, LOOT.near + 12)) lootRetire(o, key)
+  }
+  for (const o of [...objs]) if (o.lootTaken && o.heldBy === undefined && !near(o.x, o.z, LOOT.keep)) lootRetire(o)
+  if (!people.length || objs.length >= OBJ_MAX - 64 || objs.reduce((n, o) => n + (o.K.loot ? 1 : 0), 0) >= LOOT.cap) return
+  let made = 0
+  for (const O of faustIn.open.values()) {
+    const B = O.B
+    if (!B || B.sg !== undefined || !/^\d+ \d+ \d+$/.test(String(O.id)) || !(B.li < 16) || !Number.isInteger(B.chunk)) continue
+    for (const k of O.storeys.keys()) {
+      if (!(k < 2)) continue
+      for (const it of lootItems(B, k)) {
+        if (made >= LOOT.perTick) return
+        const key = lootKey(B, k, it.i)
+        if (St.live.has(key) || dsState.all.has(key) || !near(it.x, it.z, LOOT.near)) continue
+        const seen = St.seen.get(key)
+        if (seen?.state === 'rejected' && St.clock < seen.until) continue
+        const gy = clearGround(it.x, it.z, it.floor, it.r, it.h, 0.3, false)
+        if (gy === null) { St.seen.set(key, { b: O.id, k, state: 'rejected', until: St.clock + 10, name: OBJECTS[it.K].name, x: it.x, z: it.z }); continue }
+        const id = partsFreeId()
+        if (id < 0) return
+        const o = addObject(it.K, [it.x, gy + it.h + 0.03, it.z], id, it.yaw)
+        if (!o) continue
+        o.lootAt = { x: it.x, z: it.z, y: gy + it.h + 0.03 }
+        world.updateSingleAabb(o.body); o.body.setActivationState(CF_SLEEPING)
+        St.live.set(key, o); St.seen.set(key, { b: O.id, k, state: 'spawned', name: OBJECTS[it.K].name, x: it.x, z: it.z }); made++
+      }
+    }
+  }
+}
 let dsPropKindDone = false
 function dsPropKind() {
   if (dsPropKindDone || !GAME.parts?.kind) return
@@ -39715,6 +39843,7 @@ function dsPropKind() {
 }
 dsKindRegister(DS_PROP, { record: dsPropRecord, apply: dsPropApply, undo: dsPropUndo, fresh: dsPropFresh })
 dsKindRegister(DS_FEAT, { record: dsFeatRecord, apply: dsFeatApply, undo: dsFeatUndo, fresh: dsFeatFresh })
+dsKindRegister(DS_LOOT, { record: lootRecord, apply() {}, undo() {}, fresh() {} })
 dsPropKind()
 
 const SL_BABY = {
