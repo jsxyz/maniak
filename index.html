@@ -15946,14 +15946,46 @@ function carUnstack() {
   }
   for (const [o, f] of unstackHeld) if (!unstackNow.has(o)) { if (o.body && objs.includes(o)) o.body.setFriction(f); unstackHeld.delete(o) }
 }
-const SPEED_CAP = 120
+const SPEED_CAP = { run: 80, up: 45, fall: 70, obj: 85 }
+const speedSeen = new Map(), speedLog = []
+const launchTrace = { on: false, frozen: false, rows: [], at: 0 }
+function speedCarrier(c) { const v = c.carryOn && c.carryV; return v ? Math.hypot(v[0], v[2]) : 0 }
+function speedRow(c, v, T) {
+  const st = mcOwn.get(c.id), s = seatOf(c)
+  return { t: T, id: c.id, p: [c.x, c.y, c.z].map(n => Math.round(n * 100) / 100), v: [v.x(), v.y(), v.z()].map(n => Math.round(n * 100) / 100), grounded: !!c.grounded, carrier: c.carryOn || c.carryV ? c.carryId : null,
+    carry: c.carryV ? c.carryV.map(n => Math.round(n * 10) / 10) : null, whistle: st ? [st.mode, Math.round(T - (st.whistled ?? -Infinity))] : null, seat: s ? s[0].id : null, tie: !!c.tie, zip: !!c.zip, win: !!c.winIn }
+}
+function speedTrip(c, why, v, T, from) {
+  const row = c.body ? speedRow(c, v, T) : { t: T, id: c.id, p: [c.x, c.y, c.z].map(n => Math.round(n * 100) / 100), v: [v.x(), v.y(), v.z()].map(n => Math.round(n * 100) / 100), object: true }
+  speedLog.push({ ...row, why, from }); if (speedLog.length > 40) speedLog.shift()
+  if (launchTrace.on && !launchTrace.frozen) { launchTrace.rows.push(row); launchTrace.frozen = true; launchTrace.at = T }
+  console.warn('speed cap', why, JSON.stringify(row))
+}
 function capBody(b) {
   const v = b.getLinearVelocity(), m = Math.hypot(v.x(), v.y(), v.z())
-  if (m > SPEED_CAP) { const k = SPEED_CAP / m; velVec.setValue(v.x() * k, v.y() * k, v.z() * k); b.setLinearVelocity(velVec) }
+  if (m > SPEED_CAP.obj) { const k = SPEED_CAP.obj / m; velVec.setValue(v.x() * k, v.y() * k, v.z() * k); b.setLinearVelocity(velVec); return m }
+  return 0
 }
 function capSpeeds() {
-  for (const c of players.values()) if (c.body) capBody(c.body)
-  for (const o of objs) if (o.body) capBody(o.body)
+  const T = mcClock()
+  for (const c of players.values()) {
+    if (!c.body || seatOf(c) || c.ride) { speedSeen.delete(c.id); continue }
+    const v = c.body.getLinearVelocity(), h = Math.hypot(v.x(), v.z()), lim = SPEED_CAP.run + speedCarrier(c), last = speedSeen.get(c.id)
+    if (launchTrace.on && !launchTrace.frozen) {
+      launchTrace.rows.push(speedRow(c, v, T))
+      while (launchTrace.rows[0].t < T - 5000) launchTrace.rows.shift()
+    }
+    if (v.y() < -SPEED_CAP.fall) { velVec.setValue(v.x(), -SPEED_CAP.fall, v.z()); c.body.setLinearVelocity(velVec) }
+    else if (h > lim || v.y() > SPEED_CAP.up) {
+      speedTrip(c, h > lim ? 'run' : 'up', v, T, last)
+      if (isHost) {
+        if (last && Math.hypot(c.x - last[0], c.z - last[1], c.y - last[2]) > 3) teleportBody(c.body, last[0], last[2], last[1], null, [0, 0, 0])
+        else { velVec.setValue(0, 0, 0); c.body.setLinearVelocity(velVec) }
+      } else { const k = Math.min(h > lim ? lim / h : 1, 1); velVec.setValue(v.x() * k, Math.min(v.y(), SPEED_CAP.up), v.z() * k); c.body.setLinearVelocity(velVec) }
+    }
+    speedSeen.set(c.id, [c.x, c.z, c.y])
+  }
+  for (const o of objs) if (o.body) { const m = capBody(o.body); if (m) speedTrip({ id: o.id, x: o.x, y: o.y, z: o.z }, 'object', o.body.getLinearVelocity(), T) }
 }
 function stepPhysics(dt) {
   let s = realNow()
@@ -31088,6 +31120,10 @@ const probeApi = Object.freeze({
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   log: () => gameLog.map(line => ({ ...line })),
   shaderCheck,
+  trace: (name, on = true) => {
+    if (name === 'launch') { launchTrace.on = !!on; launchTrace.frozen = false; launchTrace.rows = []; launchTrace.at = 0 }
+    return { on: launchTrace.on, frozen: launchTrace.frozen, at: launchTrace.at, rows: launchTrace.rows.slice(), trips: speedLog.slice() }
+  },
   clearTests: () => clearTestSpawns(),
   glassStats: () => FAUST_GLASS_STATS.map(q => ({ ...q })),
   grapple: () => { const c = selfChar(), g = c?.chain
