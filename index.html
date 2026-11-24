@@ -2435,10 +2435,10 @@ function cityChunk(seed, S, ci, cj, B = [], scenery = [], spot = [[], [], [], []
 
 const FAUST = { cell: 96, lid: 3800, world: 16000, navTop: 1200, detail: 2, physics: 1, retain: 3, calls: 220, triangles: 180000,
   airBand: [540, 840], cruiseY: 740, skyFar: 40000, globe: { x: 0, y: 2140, z: -3000, radius: 1400 },
-  head: { position: [0, 2103, -1058], size: [720, 818, 327],
-    model: { file: 'faust_head.33fc019b.glb', position: [0, 2160, -1001], pitch: 0.7, lod: [0, 1000], stop: { centre: [2.1, -34.0, -9.9], radii: [331.2, 412.6, 360.8] } },
+  head: { position: [0, 1560, -1938], size: [1296, 1472, 589],
+    model: { file: 'faust_head.33fc019b.glb', position: [-3.8, 1617.9, -1911.2], pitch: 0.15, scale: 1.8, lod: [0, 1000], stop: { centre: [2.1, -34.0, -9.9], radii: [331.2, 412.6, 360.8] } },
     floods: [{ color: 0xb4ccff, intensity: 1.9, from: [500, -1500, 1300] }, { color: 0xb4ccff, intensity: 0.5, from: [0, -1400, 2400] }],
-    mount: { sides: 48, rings: [[0, 300], [0.3, 310], [0.62, 330], [0.8, 390], [0.9, 470], [0.92, 470], [0.92, 520], [1, 520]], top: -440, centre: [0, -14] } } }
+    neck: { bins: 96, steps: 16, depth: 0.6, bend: 0.25, flare: 0.3, shade: 0.85 } } }
 const faustBox = (cx, cy, cz, ex, ey, ez, more) => ({ cx, cy, cz, ex, ey, ez, ...more })
 const faustKey = (x, z) => x + ' ' + z
 const faustMix = (seed, x, z) => cityHash((seed >>> 0) ^ Math.imul(x, 73856093) ^ Math.imul(z, 19349663))
@@ -4519,7 +4519,7 @@ function faustHeadSource() {
     if (!P || !node) throw new Error('no lod1')
     const pa = J.accessors[P.attributes.POSITION], ia = J.accessors[P.indices]
     const m = new THREE.Matrix4().compose(new THREE.Vector3(...node.translation || [0, 0, 0]), new THREE.Quaternion(...node.rotation || [0, 0, 0, 1]), new THREE.Vector3(...node.scale || [1, 1, 1]))
-    m.premultiply(new THREE.Matrix4().compose(new THREE.Vector3(...M.position), new THREE.Quaternion().setFromEuler(new THREE.Euler(M.pitch, 0, 0)), new THREE.Vector3(1, 1, 1)))
+    m.premultiply(new THREE.Matrix4().compose(new THREE.Vector3(...M.position), new THREE.Quaternion().setFromEuler(new THREE.Euler(M.pitch, 0, 0)), new THREE.Vector3(M.scale, M.scale, M.scale)))
     return { pa, ia, pv: view(pa.bufferView), iv: view(ia.bufferView), stride: J.bufferViews[pa.bufferView].byteStride || 12, m }
   })().catch(e => { faustHeadFetch = null; throw e })
 }
@@ -10457,12 +10457,12 @@ function faustHeadLoad() {
     M.lod.forEach((distance, i) => {
       const mesh = root.getObjectByName('lod' + i)
       mesh.matrix.copy(mesh.matrixWorld); mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale)
-      if (material) { mesh.material = material; material.side = THREE.DoubleSide; material.roughnessMap = null; material.roughness = 0.88 }
+      if (material) { mesh.material = material; material.side = THREE.DoubleSide; material.roughnessMap = null; material.roughness = 0.88; material.color.multiplyScalar(1.3); material.emissiveIntensity = 2 }
       mesh.material.fog = false; mesh.castShadow = mesh.receiveShadow = false
       mesh.material.userData.inkSky = true
       lod.addLevel(mesh, distance)
     })
-    lod.add(faustHeadMount(M)); lod.position.fromArray(M.position); lod.rotation.x = M.pitch; lod.updateMatrixWorld(true)
+    lod.add(faustHeadNeck(lod.levels[0].object, M)); lod.position.fromArray(M.position); lod.rotation.x = M.pitch; lod.scale.setScalar(M.scale); lod.updateMatrixWorld(true)
     await background.run('head', function* () {
       while (!faustState?.skyScene) yield 'frame'
       inkPrepare(lod); yield* uploadTextures(lod); yield* warmSceneSteps(activeLook || 'plain', [lod])
@@ -10470,42 +10470,34 @@ function faustHeadLoad() {
     }, { gpu: true, valid: () => !faustHeadModel || faustHeadModel === lod })
   }).catch(e => console.warn('Faust head: keeping the placeholder,', e?.message || e))
 }
-function faustHeadMount(M) {
-  const K = FAUST.head.mount, G = FAUST.globe, R = G.radius, c = Math.cos(M.pitch), s = Math.sin(M.pitch)
-  const dx = G.x - M.position[0], dy = G.y - M.position[1], dz = G.z - M.position[2], gl = [dx, dy * c + dz * s, -dy * s + dz * c]
-  const A = [K.centre[0], K.top, K.centre[1]], oc = [gl[0] - A[0], gl[1] - A[1], gl[2] - A[2]], len = Math.hypot(...oc), u = oc.map(v => v / len)
-  const h = Math.abs(u[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0], cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]], norm = a => { const l = Math.hypot(...a); return a.map(v => v / l) }
-  const e1 = norm(cross(u, h)), e2 = cross(u, e1), N = K.sides
-  const dir = (a) => [0, 1, 2].map(i => e1[i] * Math.cos(a) + e2[i] * Math.sin(a))
-  const reach = (r, a) => { const d = dir(a), p = [0, 1, 2].map(i => A[i] + d[i] * r), m = [p[0] - gl[0], p[1] - gl[1], p[2] - gl[2]], b = m[0] * u[0] + m[1] * u[1] + m[2] * u[2]
-    return -b - Math.sqrt(Math.max(0, b * b - (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]) + R * R)) }
-  const last = K.rings[K.rings.length - 1][1]; let near = Infinity; for (let i = 0; i < N; i++) near = Math.min(near, reach(last, i / N * Math.PI * 2))
-  const pos = [], nor = [], idx = []
-  const GW = [G.x, G.y, G.z], toWorld = p => [p[0] + M.position[0], p[1] * c - p[2] * s + M.position[1], p[1] * s + p[2] * c + M.position[2]]
-  const unit = a => { const l = Math.hypot(...a); return a.map(v => v / l) }
-  const uvDir = d => { const q = unit(d); return [(Math.atan2(-q[0], -q[2]) / (Math.PI * 2) + 1) % 1, 1 - Math.acos(Math.max(-1, Math.min(1, q[1]))) / Math.PI] }
-  const d0 = unit(toWorld([0, 1, 2].map(i => A[i] + u[i] * near)).map((v, i) => v - GW[i])), uv0 = uvDir(d0), S0 = GW.map((v, i) => v + R * d0[i])
-  const planar = p => { const w = toWorld(p), k = [0, 1, 2].reduce((m, i) => m + (w[i] - S0[i]) * d0[i], 0); return uvDir([0, 1, 2].map(i => w[i] - k * d0[i] - GW[i])) }
-  const uvs = []
-  const vert = (p, n, uv) => { pos.push(p[0], p[1], p[2]); nor.push(n[0], n[1], n[2]); uvs.push(uv[0], uv[1]); return pos.length / 3 - 1 }
-  const at = (t, r, a, ground) => { const d = dir(a), tt = ground ? reach(r, a) + 6 : t; return [0, 1, 2].map(i => A[i] + u[i] * tt + d[i] * r) }
-  const quad = (a, b, c2, d) => idx.push(a, b, c2, a, c2, d)
-  for (let k = 0; k + 1 < K.rings.length; k++) {
-    const [f0, r0] = K.rings[k], [f1, r1] = K.rings[k + 1], t0 = f0 * near, t1 = f1 * near, end = k + 2 === K.rings.length
-    const slope = t1 > t0 ? (r1 - r0) / (t1 - t0) : 0, rows = []
-    for (const [t, r, gnd] of [[t0, r0, false], [t1, r1, end]]) { const row = []
-      for (let i = 0; i <= N; i++) { const a = i / N * Math.PI * 2, d = dir(a)
-        const n = t1 > t0 ? norm([0, 1, 2].map(j => d[j] - u[j] * slope)) : u.map(v => (r1 > r0 ? -v : v))
-        const point = at(t, r, a, gnd), uv = Math.abs(slope) < 0.5 && t1 > t0 ? [uv0[0] + (a - Math.PI) * r / (Math.PI * 2 * R), uv0[1] + (near - t) / (Math.PI * R)] : planar(point)
-        row.push(vert(point, n, uv)) }
-      rows.push(row) }
-    for (let i = 0; i < N; i++) quad(rows[0][i], rows[0][i + 1], rows[1][i + 1], rows[1][i])
+function faustHeadNeck(source, M) {
+  const K = FAUST.head.neck, G = FAUST.globe, F = FAUST.head.position, f = M.stop.centre, c = Math.cos(M.pitch), sn = Math.sin(M.pitch)
+  const p = source.geometry.attributes.position, tc = source.geometry.attributes.uv, v = new THREE.Vector3(), pts = []
+  let low = Infinity
+  for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i).applyMatrix4(source.matrix); pts.push([v.x, v.y, v.z, tc.getX(i), tc.getY(i)]); low = Math.min(low, v.y) }
+  const rim = pts.filter(q => q[1] < low + 12); let cx = 0, cz = 0
+  for (const q of rim) { cx += q[0]; cz += q[2] }
+  cx /= rim.length; cz /= rim.length
+  const bins = Array(K.bins).fill(null)
+  for (const q of rim) { const k = Math.floor((Math.atan2(q[2] - cz, q[0] - cx) + Math.PI) / (2 * Math.PI) * K.bins) % K.bins, r = Math.hypot(q[0] - cx, q[2] - cz); if (!bins[k] || r > bins[k].r) bins[k] = { r, q } }
+  const ring = bins.filter(Boolean).map(o => o.q), n = ring.length, centre = [cx, low, cz]
+  const dx = G.x - F[0], dy = G.y - F[1], dz = G.z - F[2], globe = [f[0] + dx / M.scale, f[1] + (dy * c + dz * sn) / M.scale, f[2] + (-dy * sn + dz * c) / M.scale]
+  const norm = a => { const l = Math.hypot(...a); return a.map(t => t / l) }, cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+  const out = norm(centre.map((t, i) => t - globe[i])), end = globe.map((t, i) => t + out[i] * K.depth * G.radius / M.scale)
+  const reach = Math.hypot(...end.map((t, i) => t - centre[i])), mid = [centre[0], centre[1] - K.bend * reach, centre[2]], d0 = [0, -1, 0]
+  const pos = [], nor = [], uv = [], col = [], idx = []
+  for (let j = 0; j <= K.steps; j++) {
+    const t = j / K.steps, u = 1 - t, at = [0, 1, 2].map(i => u * u * centre[i] + 2 * u * t * mid[i] + t * t * end[i])
+    const tg = norm([0, 1, 2].map(i => 2 * u * (mid[i] - centre[i]) + 2 * t * (end[i] - mid[i]))), cr = cross(d0, tg), sl = Math.hypot(...cr), ang = Math.atan2(sl, dot(d0, tg)), ax = sl > 1e-6 ? cr.map(t2 => t2 / sl) : [1, 0, 0]
+    const rot = w => { const co = Math.cos(ang), si = Math.sin(ang), k = cross(ax, w), d = dot(ax, w); return [0, 1, 2].map(i => w[i] * co + k[i] * si + ax[i] * d * (1 - co)) }
+    const grow = 1 + K.flare * t * t, shade = 1 - K.shade * Math.min(1, Math.max(0, (t - 0.05) / 0.5))
+    for (const q of ring) { const rv = rot([q[0] - cx, 0, q[2] - cz]), m = norm(rv)
+      pos.push(at[0] + rv[0] * grow, at[1] + rv[1] * grow, at[2] + rv[2] * grow); nor.push(m[0], m[1], m[2]); uv.push(q[3], q[4]); col.push(shade, shade, shade) }
   }
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); g.setIndex(idx); g.computeBoundingSphere()
-  const base = faustState?.globeMaterial, material = base ? base.clone() : new THREE.MeshStandardMaterial({ color: 0x5d646f, roughness: 0.9, metalness: 0, fog: false })
-  material.side = THREE.DoubleSide; material.fog = false; material.userData.inkSky = true
-  if (base) { material.onBeforeCompile = faustGlobeShader(false); material.customProgramCacheKey = base.customProgramCacheKey; material.userData.inkGlobe = true }
-  const mesh = new THREE.Mesh(g, material); mesh.castShadow = mesh.receiveShadow = false; mesh.frustumCulled = false; mesh.name = 'faust_mount'
+  for (let j = 0; j < K.steps; j++) for (let i = 0; i < n; i++) { const a = j * n + i, b = j * n + (i + 1) % n, d = (j + 1) * n + i, e = (j + 1) * n + (i + 1) % n; idx.push(a, d, b, b, d, e) }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setIndex(idx); g.computeBoundingSphere()
+  const material = source.material.clone(); material.vertexColors = true; material.needsUpdate = true
+  const mesh = new THREE.Mesh(g, material); mesh.castShadow = mesh.receiveShadow = false; mesh.frustumCulled = false; mesh.name = 'faust_neck'
   return mesh
 }
 function faustHeadInstall() {
@@ -10562,7 +10554,6 @@ function faustMonument() {
   globe.material.onBeforeCompile = faustGlobeShader(false)
   globe.material.customProgramCacheKey = () => 'faust-globe-building-1'
   globe.material.userData.inkGlobe = true
-  F.globeMaterial = globe.material
   far.add(globe)
   faustGlobeUpgrade(globe)
   const eyeStart = batch.count * 3
