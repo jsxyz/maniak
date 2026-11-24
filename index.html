@@ -1310,6 +1310,10 @@ OBJECTS.push(
   { name: 'Bust', half: [0.27, 1.035, 0.27], mass: 3.5, bounce: 0.1, friction: 0.6, damp: [0.1, 0.35], hit: 1, color: 0x5f656d, stripe: 0x2c3733, prop: 'bust', dmg: 40 },
   { name: 'Clock post', half: [0.12, 2.05, 0.41], mass: 4.5, bounce: 0.1, friction: 0.5, damp: [0.1, 0.35], hit: 1, color: 0x252d37, stripe: 0xf2dfb0, prop: 'clockpost', dmg: 38 },
   { name: 'Bus shelter', half: [1.55, 1.2, 0.5], mass: 8, bounce: 0.1, friction: 0.7, damp: [0.15, 0.4], hit: 1, color: 0x2b3a44, stripe: 0x3a424b, prop: 'busstop', dmg: 55 })
+OBJECTS.push(
+  { name: 'Bench', half: [1.15, 0.575, 0.36], mass: 3, bounce: 0.1, friction: 0.7, damp: [0.12, 0.4], hit: 1, color: 0x4a3a2c, stripe: 0x2b333d, prop: 'bench', dmg: 32 },
+  { name: 'Planter', half: [1.9, 1.95, 1.9], mass: 10, bounce: 0.05, friction: 0.8, damp: [0.2, 0.5], hit: 1, color: 0x6f767f, stripe: 0x2a2a22, prop: 'planter', dmg: 70 },
+  { name: 'Phone box', half: [1.0, 1.18, 0.45], mass: 6, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0x2b333d, stripe: 0xffd7a0, prop: 'phone', dmg: 50 })
 const SIT_HIP = 0.29
 const seatFit = (s, C) => { const M = MODELS[C.model || 'man']
   return [s[0] - Math.sign(s[0]) * (M.sitIn || 0), s[1] + SIT_HIP * (C.h + C.r) + (M.sitLift || 0), s[2]] }
@@ -3153,10 +3157,10 @@ function faustFeatDraw(g, f) {
 function faustFeatMesh(P) {
   if (!P.features?.length && !P.sites?.length && !P.alleyFeat?.length) return null
   const g = faustBatch(14336)
-  for (const f of P.features) faustFeatDraw(g, f)
+  P.featV = P.features.map(f => { const a = Math.round(g.count * 3); faustFeatDraw(g, f); return [a, Math.round(g.count * 3)] })
   for (const f of P.sites || []) faustFeatDraw(g, f)
   for (const f of P.alleyFeat || []) faustFeatDraw(g, f)
-  const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true
+  const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true; mesh.userData.feat = 1
   return mesh
 }
 const FAUST_LANDMARKS = { theatre: 2, cathedral: 1, hotel: 2 }
@@ -9837,7 +9841,7 @@ function* faustVisualSteps(c) {
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }
     else { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry) }
   }
-  { const feat = faustFeatMesh(P); if (feat) root.add(feat) }
+  { const feat = faustFeatMesh(P); if (feat) { dsFeatsLook(c, feat.geometry); root.add(feat) } }
   if (cones.p.length) root.add(faustCivicGlowMesh(cones))
   if (faustState.poolMaterial) for (const q of faustLampOffsets(c.plan.diagonal)) {
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
@@ -39425,6 +39429,14 @@ function propObjLook(K) {
   } else if (K.prop === 'clockpost') {
     cyl(0.07, 0.07, 3.2, 0, -0.45, 0, 0x252d37, 6); disc(0.41, 0.22, 0, 1.35, 0, 0x252d37)
     disc(0.34, 0.01, 0.115, 1.35, 0, 0xf2dfb0); disc(0.34, 0.01, -0.115, 1.35, 0, 0xf2dfb0); cyl(0, 0.05, 0.3, 0, 1.9, 0, 0xc9a24a, 6)
+  } else if (K.prop === 'bench') {
+    box(2.2, 0.12, 0.64, 0, -0.125, 0, 0x4a3a2c); box(2.2, 0.6, 0.08, 0, 0.275, -0.3, 0x4a3a2c)
+    for (const x of [-1, 1]) box(0.16, 0.5, 0.6, x, -0.325, 0, 0x2b333d)
+  } else if (K.prop === 'planter') {
+    cyl(1.9, 1.9, 0.7, 0, -1.6, 0, 0x6f767f); cyl(1.7, 1.7, 0.06, 0, -1.23, 0, 0x2a2a22); cyl(0.18, 0.22, 0.76, 0, -0.83, 0, 0x3b332a, 6)
+    cyl(0, 1.2, 1.7, 0, 0.2, 0, 0x1b3324); cyl(0, 0.8, 1.5, 0, 1.2, 0, 0x2c4a37)
+  } else if (K.prop === 'phone') {
+    for (const x of [-0.55, 0.55]) { box(0.9, 2.2, 0.9, x, -0.08, 0, 0x2b333d); box(1.0, 0.16, 1.0, x, 1.1, 0, 0x9aa1a8); box(0.6, 1.2, 0.04, x, 0.12, 0.46, 0xffd7a0) }
   } else if (K.prop === 'busstop') {
     box(3.4, 0.12, 1.24, 0, 1.2, 0, 0x3a424b); box(3.1, 2.2, 0.04, 0, -0.1, -0.45, 0x2b3a44); box(2.2, 0.08, 0.4, 0, -0.75, -0.25, 0x7a5a32)
     for (const x of [-1.5, 1.5]) for (const z of [-0.4, 0.4]) box(0.08, 2.3, 0.08, x, -0.05, z, 0x252d37)
@@ -39501,7 +39513,66 @@ function dsPropsReach(c, kind, reach) {
     const gap = p.d - c.r - Math.max(p.s.boxes[0]?.ex || 0.2, p.s.boxes[0]?.ez || 0.2)
     if (gap <= reach) out.push({ ref: { key: p.key, i: p.i, x: p.x, z: p.z, q: p.s.f.q }, at: [p.x, p.s.top / 2, p.z], gap, R: 0.4, mass: row.mass })
   }
+  for (const p of dsFeatsNearPt(c.x, c.z, reach + 1 + Math.max(row.half[0], row.half[2]))) {
+    if (p.s.f.k !== kind) continue
+    const gap = p.d - c.r - Math.max(p.s.boxes[0]?.ex || 0.2, p.s.boxes[0]?.ez || 0.2)
+    if (gap <= reach) out.push({ ref: { feat: 1, key: p.key, i: p.i, x: p.x, z: p.z, q: p.s.f.q }, at: [p.x, p.s.top / 2, p.z], gap, R: 0.4, mass: row.mass })
+  }
   return out
+}
+const DS_FEAT = 21, DS_FEAT_KINDS = { bench: 1, planter: 1, phone: 1, news: 1 }
+const dsFeatKey = (chunk, i) => DS_FEAT * 4294967296 + chunk * 1024 + i
+const dsFeatCache = new WeakMap()
+function dsFeatSites(P) {
+  let L = dsFeatCache.get(P)
+  if (!L) dsFeatCache.set(P, L = (P.features || []).map((f, i) => { if (!DS_FEAT_KINDS[f.k]) return null; const boxes = faustFeatBoxes([f]); return { f, i, boxes, top: boxes.reduce((m, b) => Math.max(m, b.cy + b.ey), 0.4) } }))
+  return L
+}
+function dsFeatRecord(key) {
+  const F = faustState, local = key - DS_FEAT * 4294967296, chunk = Math.floor(local / 1024), i = local % 1024
+  if (!F || !(local >= 0) || chunk >= F.S * F.S) return null
+  const ci = Math.floor(chunk / F.S), cj = chunk % F.S, s = dsFeatSites(dsPlan(ci, cj))[i]
+  return s ? { chunk, ci, cj, i, s, f: s.f, at: [s.f.x, s.top / 2, s.f.z] } : null
+}
+function dsFeatsLook(c, g) {
+  const st = dsState, F = faustState, V = c.plan?.featV
+  if (!st || !F || !V || !g?.attributes?.position) return
+  const pos = g.attributes.position, A = pos.array
+  let lo = Infinity, hi = -1
+  for (const r of st.chunks.get(c.ci * F.S + c.cj)?.recs.values() || []) {
+    if (r.kind !== DS_FEAT) continue
+    const v = V[r.p.i]
+    if (!v) continue
+    for (let k = v[0]; k < v[1]; k++) { A[k * 3] = r.p.f.x; A[k * 3 + 1] = -50; A[k * 3 + 2] = r.p.f.z }
+    lo = Math.min(lo, v[0]); hi = Math.max(hi, v[1] - 1)
+  }
+  if (hi < 0) return
+  pos.addUpdateRange(lo * 3, (hi - lo + 1) * 3); pos.needsUpdate = true
+}
+function dsFeatApply(rec) {
+  const F = faustState, c = F.chunks.get(faustKey(rec.p.ci, rec.p.cj)), mesh = c?.visual?.children.find(m => m.isMesh && m.userData.feat)
+  if (mesh) dsFeatsLook(c, mesh.geometry)
+  if (world) dsDropSlim(b => rec.p.s.boxes.some(q => dsSameBox(b, q)))
+}
+function dsFeatUndo(rec) { const c = faustState.chunks.get(faustKey(rec.p.ci, rec.p.cj)); if (c?.visual) dsRelight(c) }
+function dsFeatFresh(rec) {
+  const [x, y, z] = rec.p.at
+  try {
+    for (let k = 0; k < 3; k++) burst('chip', x, y, z, 0, 0.8, 1, 0x9a9488, 0.8)
+    burst('dust', x, 0.2, z, 0, 1, 0, 0xc9c0ae, 1)
+    sfxPlay('Door rip', { x, y, z }, 'world', 0.8)
+  } catch (e) {}
+}
+function dsFeatsNearPt(x, z, r) {
+  const F = faustState, out = []
+  if (!F || !dsState) return out
+  const lo = v => Math.max(0, Math.floor((v - r - 3 + ARENA) / 96)), hi = v => Math.min(F.S - 1, Math.floor((v + r + 3 + ARENA) / 96))
+  for (let ci = lo(x); ci <= hi(x); ci++) for (let cj = lo(z); cj <= hi(z); cj++) for (const s of dsFeatSites(dsPlan(ci, cj))) {
+    if (!s) continue
+    const d = Math.hypot(s.f.x - x, s.f.z - z), key = dsFeatKey(ci * F.S + cj, s.i)
+    if (d <= r && !dsState.all.has(key)) out.push({ key, i: s.i, x: s.f.x, z: s.f.z, s, d })
+  }
+  return out.sort((p, q) => p.d - q.d)
 }
 let dsPropKindDone = false
 function dsPropKind() {
@@ -39511,7 +39582,7 @@ function dsPropKind() {
     GAME.parts.kind(K.name + ' on its post', { of: 'attached', mass: K.mass, rip: { pull: 0.45, gives: K.name } }, {
       near: (c, reach) => dsPropsReach(c, K.prop, reach),
       detach: (inst, c) => {
-        if (!isHost || !dsCheck() || !dsBreak(DS_PROP, inst.ref.key, dsPropWay(inst.ref.x - c.x, inst.ref.z - c.z) << 3)) return false
+        if (!isHost || !dsCheck() || !dsBreak(inst.ref.feat ? DS_FEAT : DS_PROP, inst.ref.key, dsPropWay(inst.ref.x - c.x, inst.ref.z - c.z) << 3)) return false
         const at = [inst.ref.x, K.half[1] + 0.1, inst.ref.z]
         at.yaw = (inst.ref.q || 0) * Math.PI / 2
         return at
@@ -39520,6 +39591,7 @@ function dsPropKind() {
   }
 }
 dsKindRegister(DS_PROP, { record: dsPropRecord, apply: dsPropApply, undo: dsPropUndo, fresh: dsPropFresh })
+dsKindRegister(DS_FEAT, { record: dsFeatRecord, apply: dsFeatApply, undo: dsFeatUndo, fresh: dsFeatFresh })
 dsPropKind()
 
 const SL_BABY = {
