@@ -13024,7 +13024,7 @@ function mantleTick(c, inp, wx, wz, m, CX, CZ) {
   const K = MANTLE, busy = c.dead > 0 || seatOf(c) || c.tie || c.zip || c.leap || c.dove || c.knT > 0 || c.vehT > 0 || c.chain?.phase || c.punted || c.wall || c.ceil || c.wallRun || c.water || c.parts?.act || partsHeld(c)
   if (c.mantleFall && (c.grounded || busy)) c.mantleFall = false
   if (c.mantle) { if (busy) c.mantle = null; return }
-  if (busy || c.bot || !c.grounded || !GAME.participantOf(c)?.mantle || c.springT > 0 || c.hop || c.hayT > 0) return
+  if (busy || c.bot || !c.grounded || !GAME.participantOf(c)?.mantle || c.springT > 0 || c.airT > 0 || c.hop || c.hayT > 0) return
   const press = inp.j && !c.jAir && !c.jLock, push = K.auto && m > 0.5
   if (!press && !push) return
   const fx = m > 0.5 ? wx / m : -Math.sin(inp.yaw), fz = m > 0.5 ? wz / m : -Math.cos(inp.yaw), riseAt = dy => K.rise[0] + K.rise[1] * dy
@@ -13099,7 +13099,7 @@ function chainClear(c) {
 function moveReset(c) {
   if (c.winIn) winEnd(c)
   chainClear(c)
-  c.smashCam = c.springT = c.leap = c.leapAir = c.hop = c.hopAir = c.hayT = c.hayReady = c.hayAge = c.water = 0
+  c.smashCam = c.springT = c.airT = c.leap = c.leapAir = c.hop = c.hopAir = c.hayT = c.hayReady = c.hayAge = c.water = 0
   c.chainLock = false; c.blockKills = []; c.mantle = null; c.mantleFall = false
 }
 function leapStart(c, inp, q) {
@@ -13241,6 +13241,7 @@ function chainIntent(c, inp, dt) {
   if (c.dead > 0 || seatOf(c)) { chainClear(c); return }
   if (!isHost) {
     if (c.tie) { c.tie.want = inp.descend ? 1.25 : c.tie.len; c.leap = 0; c.hop = 0; c.dove = false; chainCarFollow(c) }
+    if (c.jEdge && (c.tie || c.chainNet?.[0] >= 2 && c.chainNet[0] <= 4)) c.jUsed = true
     return
   }
   let g = c.chain
@@ -13275,9 +13276,9 @@ function chainIntent(c, inp, dt) {
     if(person) chainStrike(c,g,person)
     else if (hit) chainLodge(c,g,hit.p,hit.ptr)
     else chainPlace(g,to)
-    if (g.travel >= g.range || g.age > 3 || inp.j) { chainClear(c); c.chainLock = !!inp.descend; return }
+    if (g.travel >= g.range || g.age > 3 || c.jEdge) { if (c.jEdge) c.jUsed = true; chainClear(c); c.chainLock = !!inp.descend; return }
   } else if (g.phase === 3) {
-    if (!c.winIn && (inp.j || !c.tie)) { chainRelease(c); c.chainLock = !!inp.descend; return }
+    if (!c.winIn && (c.jEdge || !c.tie)) { if (c.jEdge) c.jUsed = true; chainRelease(c); c.chainLock = !!inp.descend; return }
     if (g.object !== undefined) {
       const o = objs.find(o => o.id === g.object)
       if (!o) { chainClear(c); return }
@@ -13440,7 +13441,7 @@ function chainRelease(c) {
 function chainLoose(c,g,inp,dt) {
   const hand=chainHand(c)
   if(g.phase===4) {
-    if(inp.j){chainRelease(c);return}
+    if(c.jEdge){c.jUsed=true;chainRelease(c);return}
     if(inp.descend)g.len=Math.max(0.5,g.len-chainSpec(c).reel*dt)
     g.v[1]+=GRAV*dt;let p=g.p.map((v,i)=>v+g.v[i]*dt),d=p.map((v,i)=>v-hand[i]),n=Math.hypot(...d)
     if(n>g.len){d=d.map(v=>v/n);p=hand.map((v,i)=>v+d[i]*g.len);const along=g.v.reduce((s,v,i)=>s+v*d[i],0);g.v=g.v.map((v,i)=>(v-d[i]*along)*0.98)}
@@ -13495,7 +13496,7 @@ function winEnter(c, g, k, P) {
   const [x0, x1] = G.panes[i % 3], x = clamp(me[0], x0 + c.r + 0.1, x1 - c.r - 0.1)
   untie(c)
   c.winIn = [carrierIndex(k.id), 0, ...me, x, (G.y[0] + G.y[1]) / 2, s * W, clamp(at[0], x0, x1), K.floor + c.h + c.r + 0.03, s * WIN_IN.inside]
-  c.leap = 0; c.hop = 0; c.dove = false; c.springT = 0; c.mantle = null
+  c.leap = 0; c.hop = 0; c.dove = false; c.springT = c.airT = 0; c.mantle = null
   winMask(c, true)
   return true
 }
@@ -13725,6 +13726,7 @@ function deadWater(c) {
 }
 function applyIntent(c, inp, dt) {
   if (!c.body) attachBody(c)
+  c.jEdge = !!inp.j && !c.jWas; c.jWas = !!inp.j; if (!inp.j) c.jUsed = false
   c.dashing = inp.alt && !(c.dead > 0) && !seatOf(c) && primaryOf(c)?.kind === 'dash' ? primaryId(c) : 0
   if (inp.alt) c.dashRun = 0
   else if (c.dashOn && (c.dashRun = (c.dashRun || 0) + 1) <= DASH_RUN && !(c.dead > 0) && !seatOf(c) && primaryOf(c)?.kind === 'dash' && insideObject(c)) c.dashing = primaryId(c)
@@ -13785,8 +13787,9 @@ function applyIntent(c, inp, dt) {
   const cling = !!c.wall && !inp.j && c.vy <= 1.25 * GAME.participantOf(c).climb
   if (!SW && !J) mantleTick(c, inp, wx, wz, m, CX, CZ)
   else if (c.mantle || c.mantleFall) { c.mantle = null; c.mantleFall = false }
-  if (SW) { vy = c.swVy; c.jLock = !!inp.j; c.zLock = !!inp.descend; c.grounded = false; c.air = false; c.flying = false }
+  if (SW) { vy = c.swVy; c.jLock = !!inp.j; c.zLock = !!inp.descend; c.grounded = false; c.air = false; c.flying = false; c.airT = 0; if (inp.j) c.jUsed = true }
   else if (J) {
+    c.airT = 0
     if (J.flier) {
       if (c.grounded) c.flying = false
       const P = (!c.bot || c.ai?.doCharge) && !seatOf(c) && GAME.participantOf(c)?.spring
@@ -13814,15 +13817,16 @@ function applyIntent(c, inp, dt) {
       if (vy < -J.fall && !c.dove) vy = -J.fall
       if (c.grounded && !thrusting) c.fuel = Math.min(tank, c.fuel + J.refuel * dt)
     }
-  } else if (c.mantle) { c.flying = false; c.springT = 0; c.jAir = c.jLock = !!inp.j
+  } else if (c.mantle) { c.flying = false; c.springT = c.airT = 0; c.jAir = c.jLock = !!inp.j; if (inp.j) c.jUsed = true
   } else {
     if (c.flying) c.flying = false
     const S = !seatOf(c) && !chainSpec(c) && GAME.participantOf(c)?.swing, held = S && inp.j && c.jLock && !c.grounded, fresh = inp.j && !c.jLock
     if (!c.grounded || vy <= 0) c.jLock = false
-    const P = (!c.bot || c.ai?.doCharge) && !seatOf(c) && GAME.participantOf(c)?.spring
-    if (!c.grounded) c.springT = 0
+    const P = (!c.bot || c.ai?.doCharge) && !seatOf(c) && GAME.participantOf(c)?.spring, Q = P && !c.bot && !c.tie
+    if (!c.grounded) { c.airT = Q ? (c.airT || 0) + (c.springT || 0) + (inp.j && !c.jUsed ? dt : 0) : 0; c.springT = 0 }
+    const landed = c.grounded && c.airT > 0
     c.jAir = !!inp.j && (c.jAir || !c.grounded)
-    if (P && !c.tie && c.grounded && inp.j && (!c.jAir || c.ai?.doCharge)) { c.springT = (c.springT || 0) + dt; c.jLock = true }
+    if (P && !c.tie && c.grounded && inp.j && (!c.jAir || c.springT > 0 || c.ai?.doCharge)) { c.springT = (c.springT || 0) + dt; c.jLock = true }
     else if (P && c.springT) { const q = clamp((c.springT - SPRING_TAP) / (P.full - SPRING_TAP), 0, 1)
       if (c.springT > SPRING_TAP || !P.hop) vy = (1 + (P.k - 1) * q) * stat(c, 'jump', c.jump)
       else { vy = stat(c, 'jump', P.hop); c.hop = 1; c.hopAir = false }
@@ -13837,6 +13841,7 @@ function applyIntent(c, inp, dt) {
     else if (S && fresh && !c.grounded && !c.wall) { c.jLock = true; if (!c.tie) webShot(c, inp, S.range) }
     if (S && inp.descend && !c.zLock) zipShot(c, inp, S.range)
     c.zLock = !!inp.descend
+    if (landed) { if (Q) c.springT = c.airT + (inp.j && !c.jUsed ? dt : 0); c.airT = 0 }
   }
 
   if (padTouching(c.body)) { vy = Math.max(vy, JUMP_V); if (J) c.jLock = false }
@@ -43491,11 +43496,11 @@ const OWN_PREDICTION = (F => {
   const S = GAME.schema.step, fuelEps = S.fuel + S.fuel / 10
   if (REWIND_EPS < Math.hypot(S.x, S.y, S.z)) throw Error('REWIND_EPS is under the wire step')
   return {
-    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.face ??= c.face; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.wt = c.water | 0; e.sp = c.springT || 0; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ml = c.mantle ? [...c.mantle] : null; e.mf = !!c.mantleFall; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
+    take: (c, e = {}) => { e.x = c.x; e.y = c.y; e.z = c.z; e.face ??= c.face; e.fuel = c.fuel; e.jl = !!c.jLock; e.fl = !!c.flying; e.wt = c.water | 0; e.sp = c.springT || 0; e.ja = [c.airT || 0, !!c.jAir, !!c.jWas, !!c.jUsed]; e.smashCam = c.smashCam || 0; e.leap = [c.leap || 0, !!c.leapAir, c.leapVX || 0, c.leapVZ || 0, c.dove || 0, c.leapPace || 0]; e.hop = [c.hop || 0, !!c.hopAir]; e.ml = c.mantle ? [...c.mantle] : null; e.mf = !!c.mantleFall; e.ft = !!c.flyTurn; e.kn = [c.knT || 0, c.knx || 0, c.knz || 0, c.knUp || 0]; e.wh = !!c.wallHeld; e.wy = c.wallRun ? c.wy : undefined; c.faceAck = undefined; const f = c.freshBody; c.freshBody = false; e.fc = c.body ? faceTouched(c) : undefined; c.freshBody = f; e.sl = !!c.slide; e.web = c.web || 0; e.rope = c.tie && [c.web, c.tie.want]; e.vh = c.vehT > 0 && [c.vehT, c.vehO.id, ...c.vehN]
       const bh = c.body?.getBroadphaseHandle(); e.dsh = [!!c.dashOn, c.dashRun || 0, c.dashHit && [...c.dashHit], bh && A.getPointer(bh) ? bh.get_m_collisionFilterMask() : null]; e.cv = c.carryV ? [...c.carryV] : null; e.cvId = c.carryId; e.wi = c.winIn ? [...c.winIn] : null; return e },
     err: (e, a) => Math.hypot(e.x - a[F.x], e.y - a[F.y], e.z - a[F.z]),
     agrees: (e, a, web) => (e.web || 0) === web && Math.abs(e.fuel - a[F.fuel]) <= fuelEps && e.jl === !!a[F.jLock],
-    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.water = e.wt | 0; c.springT = e.sp; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace] = e.leap; [c.hop, c.hopAir] = e.hop; c.mantle = e.ml ? [...e.ml] : null; c.mantleFall = !!e.mf; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
+    carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.water = e.wt | 0; c.springT = e.sp; [c.airT, c.jAir, c.jWas, c.jUsed] = e.ja || [0, false, false, false]; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace] = e.leap; [c.hop, c.hopAir] = e.hop; c.mantle = e.ml ? [...e.ml] : null; c.mantleFall = !!e.mf; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
       c.dashOn = e.dsh[0]; c.dashRun = e.dsh[1]; c.dashMask = e.dsh[3]; c.dashHit = e.dsh[2] && new Set(e.dsh[2]); c.carryV = e.cv ? [...e.cv] : null; c.carryId = e.cvId; c.winIn = e.wi ? [...e.wi] : null },
     restore: (c, a, web) => { const [x, y, z, vx, vy, vz] = ownExact || [a[F.x], a[F.y], a[F.z], a[F.vx], a[F.vy], a[F.vz]]; restoreChar(c, x, y, z, vx, vy, vz, a[F.fuel])
       const bh = c.body?.getBroadphaseHandle(), m = c.dashMask; c.dashMask = null
