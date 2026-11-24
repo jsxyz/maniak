@@ -15890,15 +15890,27 @@ const objGap = (c, o) => {
   const t = clamp((o.y - (c.y - c.h)) / (2 * c.h), 0, 1)
   return Math.hypot(o.x - c.x, o.y - (c.y - c.h + t * 2 * c.h), o.z - c.z) - c.r - o.R
 }
+const CARRY_OFF = { fwd: 0.9, up: 0.4, from: 0.5, span: 1.3, lift: 0.35 }
+function carryOff(c, o) {
+  const g = clamp(((o.R || objR(o.K)) - CARRY_OFF.from) / CARRY_OFF.span, 0, 1)
+  if (!(g > 0)) return null
+  let e = o.holdT0 === undefined ? 1 : clamp((now() - o.holdT0) / (CARRY_OFF.lift * 1000), 0, 1)
+  e = e * e * (3 - 2 * e)
+  const a = partsActOf(c.id)
+  if (a[0] === 2) e *= 1 - clamp(a[1] / 0.12, 0, 1)
+  return e > 0 ? [CARRY_OFF.up * g * e, CARRY_OFF.fwd * g * e] : null
+}
 function handOf(c, o, out) {
   const H = !out && hullOf(o.K), under = !out && o.low !== undefined ? -o.low : H ? -Math.min(...H.pts.map(p => p[1])) : o.K.r || o.K.half?.[1]
-  const h = o.K.carry ? o.K.carry.hold || [0, 0, 0] : out ? [0, 0, 0] : [0, c.h * 0.8 + c.r + under, -c.r - o.R - 0.1], s = Math.sin(c.yaw), k = Math.cos(c.yaw), f = c.r + o.R + 0.1 + h[2]
+  const co = !out && !o.K.carry && (o.K.prop || o.K.loot) ? carryOff(c, o) : null
+  const h = o.K.carry ? o.K.carry.hold || [0, 0, 0] : out ? [0, 0, 0] : [0, c.h * 0.8 + c.r + under + (co ? co[0] : 0), -c.r - o.R - 0.1 + (co ? co[1] : 0)], s = Math.sin(c.yaw), k = Math.cos(c.yaw), f = c.r + o.R + 0.1 + h[2]
   return [c.x - s * f + k * h[0], Math.max(c.y + c.h * 0.2 + h[1], c.y - c.h - c.r + (under || 0) + 0.02), c.z - k * f - s * h[0]]
 }
 function holdBy(o, c) {
   inWorld(o)
   if (c && o.heldBy === undefined) world.removeRigidBody(o.body)
   if (!c && o.heldBy !== undefined) world.addRigidBody(o.body, ...collideFor(o.K))
+  o.holdT0 = c ? o.heldBy === undefined ? now() : o.holdT0 : undefined
   o.heldBy = c ? c.id : undefined
 }
 function liftUp(o, c) {
