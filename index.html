@@ -991,7 +991,7 @@ const CHARS = [
     role: 'Tony\'s muscle · bats, pipes and pistols' },
   { name: 'Tony', side: 'freaks', hidden: true, atk: 'Bat', far: 'Scatter', farAt: 6, model: 'tony', r: 0.5, h: 0.56, rig: { girth: 1.22, acc: [...RIG_MOB] }, speed: 6.4, jump: 7.6, hp: 340,
     color: 0x30323a, role: 'One of Faust\'s men · a bat, and a shotgun past arm\'s length' },
-  { name: 'Pacifier', side: 'freaks', hidden: true, atk: 'Rifle', model: 'pacifier', r: 0.4, h: 0.55, rig: { girth: 1.04, acc: [['box', 'Head', [0, 0.1, 0.11], [0.2, 0.06, 0.04], 0x39ff14, 1],
+  { name: 'Pacifier', side: 'freaks', hidden: true, atk: 'Rifle', model: 'pacifier', r: 0.43, h: 0.61, rig: { girth: 1.04, acc: [['box', 'Head', [0, 0.1, 0.11], [0.2, 0.06, 0.04], 0x39ff14, 1],
       ['sphere', 'upperarm_{s}', [0.02, 0.06, 0], [0.12, 0.08, 0.12], 0x9aaa88]] }, speed: 6.2, jump: 8, hp: 150, color: 0x2c2f2a,
     role: 'A mercenary paid to kill superheroes · a rifle, in a squad' },
   { name: 'Street performer', side: 'freaks', hidden: true, atk: 'Shank', model: 'street_performer', r: 0.35, rig: { acc: [['torus', 'neck_01', [0, -0.03, 0], [0.095, 0.095, 0.04], 0xff2bd6, 1]] }, h: 0.55, speed: 6.8, jump: 8.2, hp: 80,
@@ -24668,6 +24668,7 @@ function dropAvatar(id) {
   if (a.mixer) a.mixer.stopAllAction()
   if (a.rig) a.rig.mixer.stopAllAction()
   clearHeld(a)
+  if (a.flash) { a.flash.removeFromParent(); a.flash = null }
   perfDrop(a); dealDrop(a)
   if (a.runTrail) {
     const m = a.runTrail.mesh
@@ -24859,15 +24860,47 @@ function offHand(a, held, G) {
   lower.getWorldPosition(el); handAt(a, fist, 1)
   rotate(lower, from.subVectors(fist, el), to.multiplyScalar(d).add(sh).sub(el))
 }
+const FLASH_MS = 90, FLASH_SIZE = 0.8, flashPoint = new THREE.Vector3(), flashBox = new THREE.Box3(), flashSize = new THREE.Vector3(), flashAt = new Map()
+let flashMat = null
+function flashSprite() {
+  if (!flashMat) {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 64
+    const g = cv.getContext('2d'), r = g.createRadialGradient(32, 32, 0, 32, 32, 32)
+    r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.18, 'rgba(255,244,200,1)'); r.addColorStop(0.45, 'rgba(255,170,70,0.55)'); r.addColorStop(1, 'rgba(255,120,30,0)')
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64)
+    flashMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false, fog: false, toneMapped: false, blending: THREE.AdditiveBlending })
+  }
+  const s = new THREE.Sprite(flashMat)
+  s.renderOrder = 6; s.visible = false; s.frustumCulled = false
+  avatarGroup.add(s)
+  return s
+}
+function flashMuzzle(gun) {
+  let m = flashAt.get(gun)
+  if (!m) {
+    flashBox.setFromObject(propModel('gun', gun)); flashBox.getSize(flashSize)
+    flashAt.set(gun, m = new THREE.Vector3((flashBox.min.x + flashBox.max.x) / 2, flashBox.max.y - 0.25 * flashSize.y, flashBox.min.z))
+  }
+  return m
+}
+function drawFlash(a, held, G, gun, age, view) {
+  if (G.melee || G.tether || view || a.shotGun !== gun || !(age >= 0 && age < FLASH_MS)) { if (a.flash) a.flash.visible = false; return }
+  const s = a.flash ||= flashSprite(), k = 1 - age / FLASH_MS
+  held.updateMatrixWorld(true)
+  s.position.copy(flashMuzzle(gun)).applyMatrix4(held.matrixWorld)
+  s.scale.setScalar(FLASH_SIZE * (0.55 + 0.45 * k) * (0.85 + 0.3 * Math.random()))
+  s.visible = true
+}
 function drawHeld(id, state, t, view = null, fade = 1) {
   const a = avatars.get(id)
   if (!a) return
-  if (!state || state.dead > 0) { if (a.held) a.held.visible = false; return }
+  if (!state || state.dead > 0) { if (a.held) a.held.visible = false; if (a.flash) a.flash.visible = false; return }
   const gun = heldGun(id, state, t), age = a.shotAt === undefined ? Infinity : t - a.shotAt
   if (a.chargeAt !== undefined && a.chargeGun !== gun) a.chargeAt = undefined
   const G = GUNS[gun]
   if (G.held === false) {
     clearHeld(a); a.heldGun = gun
+    if (a.flash) a.flash.visible = false
     return
   }
   if (!a.held || a.heldGun !== gun) {
@@ -24918,6 +24951,7 @@ function drawHeld(id, state, t, view = null, fade = 1) {
     handAt(a, other.position, 1)
     held.worldToLocal(other.position)
   }
+  drawFlash(a, held, G, gun, age, view)
   ghost(held, state.prot || 0, (view ? 1 : fade) * (G.glow !== undefined ? GLOW_OP : 1))
   const fore = view && !G.tether
   held.traverse(n => {
