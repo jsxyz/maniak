@@ -16208,7 +16208,7 @@ function parkedStandPack(S, C) {
 }
 const TRAFFIC = { cap: 160, fleet: ['Car','Sports car','Van','Truck','Bus'], density: {core:108,civic:64,tenement:56,industrial:27}, quality: {low:0.5,medium:0.5,high:1}, radius: 420, retire: 520, think: 0.1, cruise: [7, 11], trim: 15, stop: 21 }
 let trafficState = null
-TRAFFIC.far = 250; TRAFFIC.thinkFar = 0.3; TRAFFIC.thinkBudget = 16; TRAFFIC.spawnMin = 120
+TRAFFIC.far = 250; TRAFFIC.thinkFar = 0.3; TRAFFIC.thinkBudget = 16; TRAFFIC.thinkMs = 2.5; TRAFFIC.holdS = 0.25; TRAFFIC.spawnMin = 120
 TRAFFIC.kinOut = 130; TRAFFIC.kinIn = 100; TRAFFIC.kinMax = 2; TRAFFIC.kinCool = 10
 const trafficFar = (o, a, people) => o.trafficAmbient && !a.urgent && !a.follow && people.length > 0 && people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.far)
 const trafficScale = () => Math.max(0.1, Math.min(1, GAME.perfScale?.() ?? 1, IS_TOUCH ? 0.4 : 1))
@@ -17111,7 +17111,10 @@ function trafficTick(dt, all) {
   const movers = []
   for (const p of objs) if (p.V && !p.traffic && !p.kin && p.body.isActive() && speedOf(p) > 3) movers.push(p)
   parkedTick(dt, people)
-  for (const o of [...T.cars.values()]) {
+  const cars = [...T.cars.values()], nCars = cars.length, rr = nCars ? (T.rr || 0) % nCars : 0
+  let rrNext = -1
+  for (let ci = 0; ci < nCars; ci++) {
+    const o = cars[(rr + ci) % nCars]
     if (!objs.includes(o)) { T.cars.delete(o.id); continue }
     const a = o.traffic
     if (a) {
@@ -17128,7 +17131,11 @@ function trafficTick(dt, all) {
         const due = (a.think -= dt) <= 0
         if (due || a.far) {
           const far = o.kin || trafficFar(o, a, people)
-          if ((due || !far) && (a.urgent || thinks < (far ? budget * 0.6 : budget) || !due)) {
+          if ((due || !far) && (a.urgent || thinks < (far ? budget * 0.6 : budget) || !due) && thinkMs >= TRAFFIC.thinkMs) {
+            if (rrNext < 0) rrNext = (rr + ci) % nCars
+            if ((a.held = (a.held || 0) + dt) > TRAFFIC.holdS && !o.kin && a.input?.f) a.input = { ...a.input, f: 0, j: true }
+          } else if ((due || !far) && (a.urgent || thinks < (far ? budget * 0.6 : budget) || !due)) {
+            a.held = 0
             const step = far ? TRAFFIC.thinkFar * (1 + 0.3 * ((o.id * 0.6180339) % 1)) : thinkStep; thinks++
             a.far = far; const t0 = performance.now(), r = trafficThink(o, step, all); thinkMs += performance.now() - t0; if (o.kin) a.kd = r.d; else a.input = r; a.think = (a.think <= 0 ? a.think : 0) + step
           }
@@ -17146,6 +17153,7 @@ function trafficTick(dt, all) {
     }
     if (o.trafficExit && clock - o.trafficExit[0] > 8) o.trafficExit = null
   }
+  T.rr = rrNext >= 0 ? rrNext : rr
   kinNew.sort((p, q) => q[2] - p[2])
   for (const [o, a] of kinNew.slice(0, TRAFFIC.kinMax)) if (objs.includes(o) && o.traffic === a && !o.kin) kinOn(o, a)
   { const t0 = performance.now(); trafficHwTick(T, dt, people, clock); background.simAdd('traffic highway', performance.now() - t0) }
