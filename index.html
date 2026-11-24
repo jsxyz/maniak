@@ -5500,14 +5500,19 @@ function faustChanTick(points) {
   if (sig !== Ch.sig) {
     Ch.sig = sig
     const dist = (ch, k) => { let best = Infinity
-      for (const [x, z] of points) { const s = ch.axis ? z : x, u = ch.axis ? x - ch.c : z - ch.c; best = Math.min(best, Math.hypot(Math.max(0, Math.abs(s - k * 96) - 48), Math.max(0, Math.abs(u) - K.cut))) }
+      for (let i = 0; i < points.length; i++) { const x = points[i][0], z = points[i][1], s = ch.axis ? z : x, u = ch.axis ? x - ch.c : z - ch.c; best = Math.min(best, Math.hypot(Math.max(0, Math.abs(s - k * 96) - 48), Math.max(0, Math.abs(u) - K.cut))) }
       return best }
     Ch.queue = []
-    for (const ch of plan.list) for (let k = ch.kLo; k <= ch.kHi; k++) {
+    const held = new Set(); for (const key of Ch.pieces.keys()) held.add(key.slice(0, key.indexOf(':')))
+    for (const ch of plan.list) {
+      let u0 = Infinity
+      for (let i = 0; i < points.length; i++) u0 = Math.min(u0, Math.abs(ch.axis ? points[i][0] - ch.c : points[i][1] - ch.c))
+      if (u0 - K.cut >= K.reach && !held.has(String(ch.n))) continue
+      for (let k = ch.kLo; k <= ch.kHi; k++) {
       const key = ch.n + ':' + k, d = dist(ch, k), have = Ch.pieces.get(key)
       if (have && d > K.reach + 120) { for (const c of have) try { dropChunk(c) } catch (e) { frameFailed('channels', e) } Ch.pieces.delete(key) }
       else if (!have && d < K.reach) Ch.queue.push([d, ch, k, key])
-    }
+    } }
     Ch.queue.sort((p, q) => p[0] - q[0])
   }
   for (let n = 0; n < 2 && Ch.queue.length; n++) {
@@ -15477,7 +15482,7 @@ function stepObjects() {
       continue
     }
     Object.assign(o, { x, y, z, q: [q.x(), q.y(), q.z(), q.w()] })
-    o.row = [o.k, o.id, r2(x), r2(y), r2(z), ...o.q.map(v => Math.round(v * OBJ_Q))].join()
+    o.row = (o.k ?? '') + ',' + (o.id ?? '') + ',' + r2(x) + ',' + r2(y) + ',' + r2(z) + ',' + Math.round(o.q[0] * OBJ_Q) + ',' + Math.round(o.q[1] * OBJ_Q) + ',' + Math.round(o.q[2] * OBJ_Q) + ',' + Math.round(o.q[3] * OBJ_Q)
   }
 }
 
@@ -20405,9 +20410,11 @@ function lookRender(render, s, cam) {
   Object.assign(lookStats, { look: activeLook, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
     passes: activeLook === 'realistic' ? realStats.passes : activeLook === 'ink' && inkPost ? inkPost.outlines ? inkPost.field ? 3 : 2 : 1 : 0, targetBytes: activeLook === 'realistic' ? realStats.targetMB * 1048576 : activeLook === 'ink' && inkPost ? inkPost.target.width * inkPost.target.height * (inkPost.outlines ? inkPost.field ? 20 : inkPost.separateNormals ? 12 : 16 : 8) + (inkPost.separateNormals ? inkPost.normalTarget.width * inkPost.normalTarget.height * 8 : 0) : 0 })
 }
+const inkOne = [null]
 function inkPrepare(root) {
   root?.traverse(o => {
-    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+    if (!o.material) return
+    for (const m of Array.isArray(o.material) ? o.material : (inkOne[0] = o.material, inkOne)) {
       if (!m || inkPatched.has(m)) continue
       if (m.onBeforeCompile?.inkHook) { inkPatched.add(m); continue }
       if (!(m.isMeshStandardMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial || m.isMeshBasicMaterial || m.isSpriteMaterial)) {
