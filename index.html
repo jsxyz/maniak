@@ -30870,12 +30870,79 @@ function shaderCheck() {
   }
   return failures.length ? { ok: false, programs: programs.length, failed: failures.length, failures } : { ok: true, programs: programs.length }
 }
+const probeSt = { cb: null, ghost: null, tr: null, vec: null, shapes: new Map(), worst: 0, ny: 9, mask: 0 }
+function probeInit() {
+  const S = probeSt
+  if (S.cb) return
+  S.cb = new A.ConcreteContactResultCallback(); S.ghost = new A.btGhostObject(); S.tr = new A.btTransform(); S.vec = new A.btVector3(0, 0, 0)
+  S.cb.addSingleResult = cp => { const m = A.wrapPointer(cp, A.btManifoldPoint), d = m.getDistance(); if (d < S.worst) { S.worst = d; try { S.ny = m.get_m_normalWorldOnB().y() } catch (e) { S.ny = 9 } } return 0 }
+  S.cb.needsCollision = p => (A.wrapPointer(p, A.btBroadphaseProxy).get_m_collisionFilterGroup() & S.mask) !== 0
+}
+function probeContact(obj, mask) {
+  const S = probeSt
+  probeInit(); S.worst = 0; S.ny = 9; S.mask = mask; world.contactTest(obj, S.cb)
+  return { depth: Math.round(-S.worst * 1000) / 1000, ny: S.ny === 9 ? null : Math.round(S.ny * 100) / 100 }
+}
+function probeBoth(obj) { return { static: probeContact(obj, G_STATIC), object: probeContact(obj, G_OBJ) } }
+function probeRay(ox, oy, oz, dx, dy, dz, range) {
+  const hit = [], t = staticRay(ox, oy, oz, dx, dy, dz, range, hit, RAY_GROUP), r3 = v => Math.round(v * 1000) / 1000
+  return hit.length ? { t: r3(t), at: hit.slice(0, 3).map(r3), normal: hit.slice(3, 6).map(r3) } : null
+}
+const probeApi = Object.freeze({
+  capsule(x, y, z, r = 0.3, h = 0.55) {
+    hookCheck(world && [x, y, z, r, h].every(Number.isFinite) && r > 0 && r <= 3 && h >= 0 && h <= 5, 'capsule(x, y, z, r, h) needs numbers and a loaded world')
+    const key = r + ':' + h, S = probeSt
+    probeInit()
+    let shape = S.shapes.get(key)
+    if (!shape) { if (S.shapes.size > 16) { for (const q of S.shapes.values()) A.destroy(q); S.shapes.clear() } shape = new A.btCapsuleShape(r, h * 2); S.shapes.set(key, shape) }
+    S.vec.setValue(x, y, z); S.tr.setIdentity(); S.tr.setOrigin(S.vec)
+    S.ghost.setCollisionShape(shape); S.ghost.setWorldTransform(S.tr)
+    return probeBoth(S.ghost)
+  },
+  body(id) {
+    const c = players.get(id)
+    return c && c.body && !(c.dead > 0) ? probeBoth(c.body) : null
+  },
+  ray(ox, oy, oz, dx, dy, dz, range = 20) {
+    hookCheck(world && [ox, oy, oz, dx, dy, dz, range].every(Number.isFinite) && range > 0 && range <= 500, 'ray(ox, oy, oz, dx, dy, dz, range <= 500) needs numbers and a loaded world')
+    return probeRay(ox, oy, oz, dx, dy, dz, range)
+  },
+  ground(x, z, fromY = 60, range = 120) {
+    hookCheck(world && [x, z, fromY, range].every(Number.isFinite), 'ground(x, z, fromY, range) needs numbers and a loaded world')
+    const h = probeRay(x, fromY, z, 0, -1, 0, range)
+    return h ? Math.round((fromY - h.t) * 1000) / 1000 : null
+  },
+  sight() {
+    const me = selfChar(), e = camera.matrixWorld.elements
+    if (!me || !world) return null
+    const hx = me.x, hy = me.y + me.h * 0.6, hz = me.z, L = Math.hypot(e[12] - hx, e[13] - hy, e[14] - hz)
+    if (!(L > 0.05)) return { dist: 0, blocked: null }
+    const h = probeRay(hx, hy, hz, (e[12] - hx) / L, (e[13] - hy) / L, (e[14] - hz) / L, L)
+    return { dist: Math.round(L * 1000) / 1000, blocked: h && h.t < L - 0.1 ? h : null }
+  },
+  lookAhead(range = 1.5) {
+    const e = camera.matrixWorld.elements
+    return world ? probeRay(e[12], e[13], e[14], -e[8], -e[9], -e[10], range) : null
+  },
+  bones(id) {
+    const a = avatars.get(id ?? myId), R = a?.rig
+    if (!R?.bones) return null
+    const out = {}, p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3(), r4 = v => Math.round(v * 10000) / 10000
+    for (const n of MOVE_BONES) {
+      const b = R.bones.get(n); if (!b) continue
+      b.matrixWorld.decompose(p, q, s)
+      out[n] = { local: [r4(b.quaternion.x), r4(b.quaternion.y), r4(b.quaternion.z), r4(b.quaternion.w)], world: [r4(q.x), r4(q.y), r4(q.z), r4(q.w)], at: [r4(p.x), r4(p.y), r4(p.z)] }
+    }
+    return out
+  },
+})
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   log: () => gameLog.map(line => ({ ...line })),
   shaderCheck,
   clearTests: () => clearTestSpawns(),
   glassStats: () => FAUST_GLASS_STATS.map(q => ({ ...q })),
   capture: captureFrames,
+  probe: probeApi,
   camera: () => { const d = camera.getWorldDirection(new THREE.Vector3()), p = camera.position; return { position: [p.x, p.y, p.z], target: [p.x + d.x, p.y + d.y, p.z + d.z], fov: camera.fov } },
   haunts: () => ({ log: JSON.parse(JSON.stringify(hauntLog)), crews: [...hauntCrews.values()].map(K => ({ key: K.key, owner: K.owner, env: K.env, ids: [...K.ids], help: K.help,
       bots: K.ids.map(id => players.get(id)).filter(Boolean).map(c => ({ id: c.id, kind: c.bot.haunt, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100), hp: Math.round(c.hp), dead: c.dead > 0,
