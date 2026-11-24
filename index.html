@@ -16245,7 +16245,9 @@ function rayObject(ox, oy, oz, dx, dy, dz, o) {
 }
 
 function preTick(list, inputFor, dt) {
-  for (const c of list) { syncFromBody(c); applyIntent(c, inputFor(c), dt) }
+  let a = 0, b = 0
+  for (const c of list) { const t0 = realNow(); syncFromBody(c); const t1 = realNow(); applyIntent(c, inputFor(c), dt); const t2 = realNow(); a += t1 - t0; b += t2 - t1 }
+  background.simAdd('pre sync', a); background.simAdd('pre intent', b)
 }
 function postTick(list) {
   for (const c of list) syncFromBody(c)
@@ -17700,10 +17702,15 @@ function trafficTick(dt, all) {
   const movers = []
   trafficGridBuild()
   for (const p of objs) if (p.V && !p.traffic && !p.kin && p.body.isActive() && speedOf(p) > 3) movers.push(p)
+  const tp0 = performance.now()
   parkedTick(dt, people)
+  const tp1 = performance.now()
   lootTick(dt, people)
+  const tp2 = performance.now()
+  background.simAdd('traffic park', tp1 - tp0); background.simAdd('traffic loot', tp2 - tp1)
   const cars = [...T.cars.values()], nCars = cars.length, rr = nCars ? (T.rr || 0) % nCars : 0
   let rrNext = -1
+  const tl0 = performance.now()
   for (let ci = 0; ci < nCars; ci++) {
     const o = cars[(rr + ci) % nCars]
     if (!objs.includes(o)) { T.cars.delete(o.id); continue }
@@ -17744,6 +17751,7 @@ function trafficTick(dt, all) {
     }
     if (o.trafficExit && clock - o.trafficExit[0] > 8) o.trafficExit = null
   }
+  const tl1 = performance.now()
   trafficGrid = null
   T.rr = rrNext >= 0 ? rrNext : rr
   kinNew.sort((p, q) => q[2] - p[2])
@@ -17757,6 +17765,7 @@ function trafficTick(dt, all) {
   if ((T.spawn -= dt) <= 0) { T.spawn += T.cars.size < TRAFFIC.cap * trafficK() * 0.7 ? 0.2 : 0.35; const t0 = performance.now(); trafficSpawn(people); background.simAdd('traffic spawn', performance.now() - t0) }
   const ms = performance.now() - t; T.stats.ticks++; T.stats.ms += ms; T.stats.maxMs = Math.max(T.stats.maxMs, ms)
   background.simAdd('traffic', ms)
+  background.simAdd('traffic loop', Math.max(0, tl1 - tl0 - thinkMs - kinMs - driveMs))
   background.simAdd('traffic think', thinkMs); background.simAdd('traffic kin', kinMs); background.simAdd('traffic drive', driveMs)
   background.simAdd('traffic rays', trafficPart.rays); background.simAdd('traffic round', trafficPart.round); background.simAdd('traffic scan', trafficPart.scan); background.simAdd('traffic sl', trafficPart.sl)
   trafficPart.rays = 0; trafficPart.round = 0; trafficPart.scan = 0; trafficPart.sl = 0; T.kinN = kinN
