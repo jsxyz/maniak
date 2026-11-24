@@ -5253,7 +5253,7 @@ const FAUST_CHAN = { version: 2, depth: 8, top: 28, floor: 18, lip: 2, wall: 0.9
     ramp: 0x838890, drain: 0x07090c, collar: 0x8a8f95, stain: 0x2c3a38, paint: [0xa8505f, 0x4f8f94, 0xb09a4f, 0x7a5ea3, 0x5f9a68, 0xbdbdb5, 0xb27a52] },
   sec: { foot: 18, h: 8, land: 4, kinds: ['floor', 'gutter', 'gutter'], inner: [[18, 0], [2.5, 0], [1.2, -0.25]] },
   glow: { bank: 0.3, floor: 0.17, wall: 0.25, under: 0.3, paint: 0.04, water: 0.1 } }
-const FAUST_QUAY = { at: 31, len: 26, gap: 1, pct: 40, works: 85, face: 19, back: 36, top: 0.15, ladder: 6, bay: 27, house: 7 }
+const FAUST_QUAY = { box: [0x8a4b32, 0x3f5568, 0x4d6048, 0x6d7075, 0xb5ad9c, 0x7a3a2e, 0x5b4a39, 0x7f8a8c], at: 31, len: 26, gap: 1, pct: 40, works: 85, face: 19, back: 36, top: 0.15, ladder: 6, bay: 27, house: 7 }
 const faustChanSec = ch => ch.kind === 'river' ? FAUST_WATER.river.sec : FAUST_CHAN.sec
 function faustChanBed(sec, u) {
   const p = sec.inner
@@ -5453,8 +5453,13 @@ function* faustChanPiece(ch, k, emit, look) {
       for (const o of [-3.75, 3.75]) { qb(S0 + o, 1.2, Q.bay - 4.6, Q.bay - 3.8, qy, qy + 0.55, T.stoneDark, G.wall, true); qb(S0 + o, 1.2, Q.bay - 5.4, Q.bay - 4.6, qy, qy + 0.28, T.stoneDark, G.wall, true) }
     } else {
       for (const row of [0, 1]) for (let i = 0; i < 3; i++) {
-        const hh = faustMix(0x51434e54 ^ q.h, row * 3 + i, ch.u), n = 1 + hh % 3, u0 = Q.face + 3 + row * 3.4, col = T.paint[(hh >>> 4) % T.paint.length]
-        for (let j = 0; j < n; j++) qb(S0 + (i - 1) * 6.6, 3.05, u0, u0 + 2.44, qy + j * 2.6, qy + (j + 1) * 2.6, col, G.paint, true)
+        if (row && i === 1) continue
+        const hh = faustMix(0x51434e54 ^ q.h, row * 3 + i, ch.u), n = 1 + hh % 3, u0 = Q.face + 3.2 + row * 3.4
+        for (let j = 0; j < n; j++) {
+          const col = FAUST_QUAY.box[(hh >>> (4 + j * 3)) % FAUST_QUAY.box.length], y0 = qy + j * 2.6, sc = S0 + (i - 1) * 7.2
+          qb(sc, 3.05, u0, u0 + 2.44, y0, y0 + 2.6, col, 0, true)
+          if (look) { qb(sc, 3.0, u0 - 0.02, u0 + 2.46, y0, y0 + 0.18, 0x24272b, 0, false); qb(sc, 3.0, u0 - 0.02, u0 + 2.46, y0 + 2.42, y0 + 2.6, 0x24272b, 0, false) }
+        }
       }
       if (q.kind === 'port') {
         const cr = 0xc4562a, gy = qy + 14
