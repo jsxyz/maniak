@@ -6688,7 +6688,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
           const w = Math.sqrt(R_ * R_ - Math.max(Math.abs(k), Math.abs(k + 1)) ** 2)
           flat(xc - w, cz + k, xc + w, cz + k + 1, 0.05, T.street); flat(xc + k, cz - w, xc + k + 1, cz + w, 0.05, T.street) }
         flat(Math.min(ex0, ex0 + dir * 2), cz - W, Math.max(ex0, ex0 + dir * 2), cz + W, 0.095, T.street)
-        for (let k = -2; k < 2; k++) { const w = Math.sqrt(2.6 * 2.6 - Math.max(Math.abs(k), Math.abs(k + 1)) ** 2); flat(xc - w, cz + k, xc + w, cz + k + 1, 0.075, T.pave); flat(xc + k, cz - w, xc + k + 1, cz + w, 0.075, T.pave) }
+        for (let k = -3; k < 3; k++) { const w = Math.sqrt(3.2 * 3.2 - Math.max(Math.abs(k), Math.abs(k + 1)) ** 2); flat(xc - w, cz + k, xc + w, cz + k + 1, 0.075, T.picket); flat(xc + k, cz - w, xc + k + 1, cz + w, 0.075, T.picket) }
         yield
         const lp = [xc + dir * 12.5, cz]
         body(lp[0], 3.2, lp[1], 0.09, 3.2, 0.09, T.pole)
@@ -6711,7 +6711,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
           if (variant === 1) for (let u = 0; u < 5; u++) {
             const hh = H(0x5b74, bi * 16 + u * 2 + (s > 0), bj), hx = 3.8, hz = 6, y = U.storeys[1], x = ex0 + dir * (13.8 + hx + u * 2 * hx), z = cz + s * (11.5 + hz)
             const sd = (hh >>> 29) & 1 ? -1 : 1, fy = fz > 0 ? 0 : 2 * HALF, pz = z + fz * (hz + 0.03), dx = x + sd * 0.4 * hx
-            body(x, y / 2, z, hx, y / 2, hz, pick(T.house, hh >>> 20))
+            body(x, y / 2, z, hx, y / 2, hz, T.house[(u + (hq >>> 4)) % T.house.length])
             out.buildings.push({ id: 'ring ' + i + ' ' + j + ' ' + out.buildings.length, kind: 'house', box: out.solid[out.solid.length - 1], storeys: 2, seed: hh >>> 0,
               door: { x: faustCm(dx), z: faustCm(z + fz * hz), face: [0, fz] }, kit: 'townhouse' })
             out.roof.push([faustCm(x), y, faustCm(z), faustCm(hx + 0.05), faustCm(U.roof[0] + ((hh >>> 23) % 8) / 7 * (U.roof[1] - U.roof[0])), faustCm(hz + 0.4), 0, pick(T.roof, hh >>> 26)])
@@ -6719,13 +6719,23 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
             near('body', 0.08, 1.14, 0.06, dx - 0.58, 1.14, z + fz * (hz + 0.06), 0, 0, T.trim); near('body', 0.08, 1.14, 0.06, dx + 0.58, 1.14, z + fz * (hz + 0.06), 0, 0, T.trim)
             near('body', 0.66, 0.08, 0.06, dx, 2.22, z + fz * (hz + 0.06), 0, 0, T.trim)
             near('light', 0.09, 0.12, 0.09, dx + sd * 0.92, 1.95, z + fz * (hz + 0.1), 0, 0, 0xffffff)
-            part((hh >>> 28) & 1 ? 'lit' : 'pane', 0.6, 0.6, 1, x - sd * 0.5 * hx, 1.55, pz, fy, 0, T.glass)
-            for (const u2 of [-0.5, 0.5]) part((hh >>> 27) & 1 && u2 > 0 ? 'lit' : 'pane', 0.55, 0.55, 1, x + u2 * hx, 4.3, pz, fy, 0, T.glass)
+            part((hh >>> 28) % 3 ? 'lit' : 'pane', 0.6, 0.6, 1, x - sd * 0.5 * hx, 1.55, pz, fy, 0, T.glass)
+            for (const u2 of [-0.5, 0.5]) part((hh >>> (u2 > 0 ? 27 : 25)) % 3 ? 'lit' : 'pane', 0.55, 0.55, 1, x + u2 * hx, 4.3, pz, fy, 0, T.glass)
+            { const oz = d => z + fz * (hz + d)
+              near('body', 1.2, 0.09, 0.8, dx, 0.09, oz(0.8), 0, 0, T.porch); near('body', 1.3, 0.06, 0.85, dx, 2.62, oz(0.85), 0, 0, pick(T.roof, hh >>> 26))
+              for (const u2 of [-1.12, 1.12]) near('body', 0.06, 1.19, 0.06, dx + u2, 1.37, oz(1.5), 0, 0, T.trim)
+              for (const [a, b] of [[x - hx + 0.2, dx - 1.6], [dx + 1.6, x + hx - 0.2]]) if (b - a > 0.6) near('hedge', (b - a) / 2, 0.45, 0.3, (a + b) / 2, 0.45, oz(2.4), 0, 0, pick(T.hedge, hh >>> 11)) }
           } else {
             const sh = 2 + (hq >>> 5) % 3, ay = sh * R.storey, hh = hq >>> 0
             const fb = faustBox(faustCm(ex0 + dir * 34), ay / 2, faustCm(cz + s * 23.5), faustCm(16), ay / 2, faustCm(12))
-            out.far.push([fb, pick(T.urban, hh >>> 8)]); out.solid.push(fb)
+            out.far.push([fb, pick(T.house, hh >>> 8)]); out.solid.push(fb)
             out.buildings.push({ id: 'ring ' + i + ' ' + j + ' ' + out.buildings.length, kind: 'urban', box: fb, storeys: sh, seed: hh, door: { x: fb.cx, z: faustCm(fb.cz + fz * fb.ez), face: [0, fz] } })
+            { const fy = fz > 0 ? 0 : 2 * HALF, ax = ex0 + dir * 34, az = cz + s * 23.5, face = az + fz * 12, oz = d => face + fz * d
+              part('lit', 1.1, ay / 2 - 0.4, 1, ax, ay / 2, face + fz * 0.03, fy, 0, T.glass)
+              near('body', 2.4, 0.1, 1.3, ax, 3.2, oz(1.3), 0, 0, T.trim)
+              near('body', 16.3, 0.2, 12.3, ax, ay + 0.2, az, 0, 0, T.trim)
+              for (let k = 1; k < sh; k++) for (const off of [-11, -6, 6, 11]) { near('body', 1.3, 0.07, 0.8, ax + off, k * R.storey, oz(0.8), 0, 0, T.trim); near('body', 1.3, 0.35, 0.03, ax + off, k * R.storey + 0.4, oz(1.6), 0, 0, T.trim) }
+              for (let k = 0; k < sh; k++) for (let c = 0; c < 6; c++) if ((hh >>> (c * 3 + k)) % 5 < 3) part('lit', 0.9, 0.9, 1, ax + (c - 2.5) * 5.2, k * R.storey + 1.8, face + fz * 0.03, fy, 0, T.glass) }
           }
         }
       }
