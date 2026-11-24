@@ -36884,21 +36884,23 @@ function slAvoidSeparate(frame, dt) {
   const a = slAv, D = a.drawn, g = a.grid, R = 0.55, map = slState.nudge || (slState.nudge = new Map())
   for (const arr of g.values()) arr.length = 0
   for (const e of D) {
-    if (e.ag.companion || e.f !== frame) continue
+    if (e.f !== frame) continue
     const k = slAvKey(Math.floor(e.p.x), Math.floor(e.p.z)); let arr = g.get(k)
     if (!arr) g.set(k, arr = [])
     arr.push(e)
   }
   for (const e of D) {
-    const ag = e.ag, p = e.p; if (ag.companion || e.f !== frame) continue
+    const ag = e.ag, p = e.p; if (e.f !== frame) continue
     const bi = Math.floor(p.x), bj = Math.floor(p.z)
     for (let i = bi - 1; i <= bi + 1; i++) for (let j = bj - 1; j <= bj + 1; j++) {
       const arr = g.get(slAvKey(i, j)); if (!arr) continue
       for (const o of arr) {
         if (o.ag.id <= ag.id || o.pt.grp === e.pt.grp) continue
         const q = o.p, dx = p.x - q.x, dz = p.z - q.z, d = Math.hypot(dx, dz); if (d >= R) continue
-        const ux = d < 1e-3 ? Math.cos(p.yaw || 0) : dx / d, uz = d < 1e-3 ? -Math.sin(p.yaw || 0) : dz / d, h = Math.min((R - d) / 2, 3 * Math.min(dt || 0.017, 0.1))
+        const dg = ag.companion ? 1 : o.ag.companion ? 2 : 0; if (dg && ag.companion && o.ag.companion) continue
+        const ux = d < 1e-3 ? Math.cos(p.yaw || 0) : dx / d, uz = d < 1e-3 ? -Math.sin(p.yaw || 0) : dz / d, h = Math.min(dg ? R - d : (R - d) / 2, 3 * Math.min(dt || 0.017, 0.1))
         for (const [m, s] of [[e, 1], [o, -1]]) {
+          if (dg === 1 && m === e || dg === 2 && m === o) continue
           const n = map.get(m.ag.id) || (map.set(m.ag.id, { x: 0, z: 0, f: frame, vx: 0, vz: 0 }), map.get(m.ag.id))
           n.x += ux * h * s; n.z += uz * h * s; n.f = frame; m.p.x += ux * h * s; m.p.z += uz * h * s; m.nd = n
         }
@@ -36964,6 +36966,7 @@ function slNudge(ag, p, pushers, cell, dt) {
   let n = map.get(ag.id)
   if (off) return slNudgeFade(map, ag.id, n, p, N.outCar * h)
   const fresh = !(st.frame - ag._nf <= 2); ag._nf = st.frame
+  if (fresh && n && !ag.companion) { map.delete(ag.id); n = undefined }
   if (n && st.frame - n.f > N.offFrames) n.x = n.z = n.vx = n.vz = 0
   let ox = n ? n.x : 0, oz = n ? n.z : 0
   const qx = p.x + ox, qz = p.z + oz
