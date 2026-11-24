@@ -26,15 +26,13 @@ jobs:
         with:
           ref: main
           path: site
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        continue-on-error: true
-        with:
-          ref: test
-          path: test-branch
-      - name: Assemble
+      - name: Add the test branch
         run: |
-          if [ -d test-branch/test ]; then cp -r test-branch/test site/test; fi
-          if [ -d test-branch/assets ]; then cp -r --update=none test-branch/assets/. site/assets/; fi
+          if git -C site fetch --depth 1 origin test; then
+            mkdir tb && git -C site archive FETCH_HEAD | tar -x -C tb
+            if [ -d tb/test ]; then cp -r tb/test site/test; fi
+            if [ -d tb/assets ]; then cp -r --update=none tb/assets/. site/assets/; fi
+          fi
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
         with:
           path: site
