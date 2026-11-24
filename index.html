@@ -6347,7 +6347,7 @@ function faustSubInfill(seed, bi, bj) {
 }
 const FAUST_SWIM = { level: 1.55, deck: 1.7, ring: 2.5 }
 let faustSwimMemo = null
-function faustSubSwim(seed, S, bi, bj) {
+function faustSubSwim(seed, S, bi, bj, segsIn) {
   let M = faustSwimMemo
   if (!M || M.seed !== seed || M.S !== S) M = faustSwimMemo = { seed, S, map: new Map() }
   const key = bi * 131072 + bj
@@ -6358,7 +6358,7 @@ function faustSubSwim(seed, S, bi, bj) {
   const inf = faustSubInfill(seed, bi, bj), yard = !inf && (h >>> 4) % 6 === 0, comm = inf?.kind === 'court' && faustSubVariant(seed, bi, bj) === 2
   if ((yard || comm) && faustRingBand(seed, S, i, j) === 'suburb') {
     const x0 = i * C, z0 = j * C, e = P / 2 - R.sub.street, sg = h & 1 ? 1 : -1
-    const segs = faustRingRoads(faustRoadsPlan(seed, S), x0, z0, x0 + C, z0 + C).concat(faustChanSegs(seed, S, x0, z0, x0 + C, z0 + C)).concat(faustWaterSegs(seed, S, x0, z0, x0 + C, z0 + C))
+    const segs = segsIn || faustRingRoads(faustRoadsPlan(seed, S), x0, z0, x0 + C, z0 + C).concat(faustChanSegs(seed, S, x0, z0, x0 + C, z0 + C)).concat(faustWaterSegs(seed, S, x0, z0, x0 + C, z0 + C))
     if (yard) { const x = cx + ((h >>> 8) % 81 - 40), z = cz + sg * 45; if (faustRingClear(segs, x, z, 12, 12)) r = { kind: 'yard', x, z, hx: 3, hz: 1.75, sg } }
     else if (faustRingClear(segs, cx + inf.side * e - inf.side * 40, cz, 42, 8) && faustRingClear(segs, cx - inf.side * (e - 64), cz, 14, 14)) r = { kind: 'court', x: cx + inf.side * e - inf.side * 34, z: cz + sg * 48, hx: 6, hz: 3, sg }
   }
@@ -6636,7 +6636,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
       }
     }
     const rowOf = function* ({ bi, bj, sg, cx, cz, ex, ez, court }) {
-      const swS = court ? null : faustSubSwim(seed, S, bi, bj)
+      const swS = court ? null : faustSubSwim(seed, S, bi, bj, segs)
       for (let n = 0; n * U.front < 2 * ex - U.front / 2; n++) {
         yield
         const hh = H(0x5b0b, bi * 64 + n * 2 + (sg > 0), bj)
@@ -6842,7 +6842,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
         near('light', 0.3, 0.07, 0.3, x_a + 2.5, 6.2, cz + 2.6, 0, 0, 0xffffff); near('pool', 3.2, 1, 3.2, x_a + 2.5, 0.115, cz, 0, 0, T.pave)
         out.walks.push([[x_a + 1, cz], [x_b - 1, cz]])
       }
-      const swm = faustSubSwim(seed, S, bi, bj)
+      const swm = faustSubSwim(seed, S, bi, bj, segs)
       if (swm) {
         yield
         const { x: px, z: pz, hx: wx, hz: wz, sg: ssg } = swm, D = FAUST_SWIM, th = D.ring, f = D.deck, dz = -ssg
@@ -40089,8 +40089,13 @@ function lootSiteItems(ci, cj, si, f) {
       const lx = (h >>> 16) / 65536 * 2 * E - E, lz = (Math.imul(h, 2654435761) >>> 16) / 65536 * 2 * E - E, rr = Math.max(row.half[0], row.half[2])
       const [x, z] = faustFeatAt(f, lx, lz)
       if (boxes.some(b => Math.abs(b.cx - x) < b.ex + rr + 0.05 && Math.abs(b.cz - z) < b.ez + rr + 0.05 && b.cy + b.ey > 0.1 && b.cy - b.ey < 2 * row.half[1] + 0.1)) return
-      if (L.some(q => Math.hypot(q.x - x, q.z - z) < (q.r + rr) * 0.5 + 0.3)) return
-      L.push({ i: e, K, x, z, floor: 0, yaw: (h >>> 8 & 1023) / 1024 * 6.2832, r: rr, h: row.half[1] })
+      let px = x, pz = z
+      const hit = (a, b) => L.some(q => Math.hypot(q.x - a, q.z - b) < (q.r + rr) * 0.5 + 0.3)
+      for (let a = 1; hit(px, pz) && a <= 6; a++) {
+        const g = parkedHash(ci, cj, si, e, 0x73697465 + a), [x2, z2] = faustFeatAt(f, (g >>> 16) / 65536 * 2 * E - E, (Math.imul(g, 2654435761) >>> 16) / 65536 * 2 * E - E)
+        if (!boxes.some(b => Math.abs(b.cx - x2) < b.ex + rr + 0.05 && Math.abs(b.cz - z2) < b.ez + rr + 0.05 && b.cy + b.ey > 0.1 && b.cy - b.ey < 2 * row.half[1] + 0.1) && !hit(x2, z2)) { px = x2; pz = z2 }
+      }
+      L.push({ i: L.length, K, x: px, z: pz, floor: 0, yaw: (h >>> 8 & 1023) / 1024 * 6.2832, r: rr, h: row.half[1] })
     })
   }
   lootSiteCache.set(f, L)
