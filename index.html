@@ -17687,13 +17687,13 @@ function trafficTick(dt, all) {
         const due = (a.think -= dt) <= 0
         if (due || a.far) {
           const far = o.kin || trafficFar(o, a, people)
-          if ((due || !far) && (a.urgent || thinks < (far ? budget * 0.6 : budget) || !due) && thinkMs >= TRAFFIC.thinkMs) {
+          if ((due || !far) && (a.urgent || thinks < (far ? budget * 0.6 : budget) || !due) && thinkMs > 0 && thinkMs + (a.tms ?? T.tmsAvg ?? 0) > TRAFFIC.thinkMs) {
             if (rrNext < 0) rrNext = (rr + ci) % nCars
             if ((a.held = (a.held || 0) + dt) > TRAFFIC.holdS && !o.kin && a.input?.f) a.input = { ...a.input, f: 0, j: true }
           } else if ((due || !far) && (a.urgent || thinks < (far ? budget * 0.6 : budget) || !due)) {
             a.held = 0
             const step = far ? TRAFFIC.thinkFar * (1 + 0.3 * ((o.id * 0.6180339) % 1)) : thinkStep; thinks++
-            a.far = far; const t0 = performance.now(), r = trafficThink(o, step, all); thinkMs += performance.now() - t0; if (o.kin) a.kd = r.d; else a.input = r; a.think = (a.think <= 0 ? a.think : 0) + step
+            a.far = far; const t0 = performance.now(), r = trafficThink(o, step, all), tm = performance.now() - t0; thinkMs += tm; a.tms = Math.max(tm, (a.tms ?? 0) * 0.7); T.tmsAvg = (T.tmsAvg ?? tm) * 0.95 + tm * 0.05; if (o.kin) a.kd = r.d; else a.input = r; a.think = (a.think <= 0 ? a.think : 0) + step
           }
         }
         if (o.kin) { const t0 = performance.now(); trafficKinStep(o, a, dt, lane ||= trafficKinLane(T)); kinMs += performance.now() - t0; kinN++ }
@@ -34136,7 +34136,7 @@ function partsRecParse(r, a) {
 const partsGore = new Map(), partsGoreAt = new Map()
 const partsGoreOf = id => partsGore.get(id) | 0
 function partsGoreSet(id, m, T) { partsGore.delete(id); partsGore.set(id, m | 0); partsGoreAt.set(id, T); if (partsGore.size > 64) { const k = partsGore.keys().next().value; partsGore.delete(k); partsGoreAt.delete(k) } }
-const partsGoreWord = id => { const m = (slNow() - (partsGoreAt.get(id) ?? 0)) / 1000 > STREET.deadS + 5 ? 0 : partsGoreOf(id); if ((m & 12) !== 12) return m; const age = (slNow() - (partsGoreAt.get(id) ?? 0)) / 1000; return m + clamp(1 - age / 0.6, 0, 1) * 0.49 }
+const partsGoreWord = id => { const m = (slNow() - (partsGoreAt.get(id) ?? 0)) / 1000 > STREET.deadS + 5 && !slDeathOf(id, slNow()) ? 0 : partsGoreOf(id); if ((m & 12) !== 12) return m; const age = (slNow() - (partsGoreAt.get(id) ?? 0)) / 1000; return m + clamp(1 - age / 0.6, 0, 1) * 0.49 }
 const partsRecOk = a => (a[0] === 12 && a.length === 5 && a[3] >= 0 && a[3] < 32 || a[0] === 8 && (a.length === 8 || a.length === 10) || a[0] === 9 && (a.length === 18 || a.length === 19)) && a.every(Number.isFinite)
 const partsGrabbed = new Map()
 function partsStreetHeldBy(id) {
@@ -37114,7 +37114,9 @@ function slForget(st) {
 const slNow = () => isHost ? tickAt || now() : renderT
 function slHostTick() {
   const st = slState; if (!st || !isHost) return
-  slWarmStep()
+  let lp = performance.now()
+  const lap = n => { const q = performance.now(); background.simAdd(n, q - lp); lp = q }
+  slWarmStep(); lap('sl warm')
   const t0 = performance.now(), T = tickAt || now()
   for (const c of players.values()) {
     const g = c.chain
@@ -37138,13 +37140,15 @@ function slHostTick() {
       if (hit) slKnock(ag, p, g.v[0], g.v[2], sw * 0.22, c, T, undefined, undefined, undefined, dmg, gunNamed('Cinderblock'), 4)
     })
   }
+  lap('sl chain')
   if ((st.tick = (st.tick || 0) + 1) % 3) return
-  slPrune(T); slForget(st)
+  slPrune(T); slForget(st); lap('sl prune')
   for (const f of tracers) if (!st.tracerSeen.has(f)) { st.tracerSeen.add(f); if (Number.isFinite(f[0]) && Number.isFinite(f[2])) slPanic(f[0], f[2], T) }
   for (const c of players.values()) {
     if (c.dead > 0 || seatOf(c)) continue
     slFlocksNear(c.x, c.z, STREET.pigeonR, f => slScatter(f, c.x, c.z, T))
   }
+  lap('sl birds')
   const who = [...players.values()]
   for (const o of objs) {
     if (!o.V || !o.body) continue
@@ -37189,6 +37193,7 @@ function slHostTick() {
       slKnock(ag, p, fx * A + -fz * side * Ls, fz * A + fx * side * Ls, sp * 0.45, players.get(o.riders?.[0]), T, d, undefined, undefined, 12 * (sp - 2), -1, 2)
     })
   }
+  lap('sl cars')
   for (const c of who) {
     const prev = c.slAt; c.slAt = [c.x, c.z, T, c.warp || 0]
     if (!prev || prev[3] !== (c.warp || 0) || c.dead > 0 || seatOf(c) || !(T > prev[2]) || T - prev[2] > 400 || c.y - (c.h || 0.5) - (c.r || 0.4) > 1.2) continue
@@ -37212,6 +37217,7 @@ function slHostTick() {
       slKnock(ag, p, fx * 0.4 + -fz * side, fz * 0.4 + fx * side, rel * 0.3, c, T, Math.max(1.3, slFling(rel)), undefined, undefined, Math.min(15, 2 * (rel - 2)), -1, 1, true)
     })
   }
+  lap('sl feet')
   st.stats.hostMs = st.stats.hostMs * 0.9 + (performance.now() - t0) * 0.1
 }
 function slAim(shooter, list, viewT, G) {
