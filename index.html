@@ -6804,7 +6804,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
         flat(x_a, cz - 3.2, x_b, cz + 3.2, 0.06, T.lot)
         const hl = H(0x5b61, bi, bj)
         for (let q = 0; q < 3; q++) { const bx = cx - e + 14 + ((hl >>> (q * 6)) % 64) / 64 * (2 * e - 28), side = (hl >>> (20 + q)) & 1 ? 1 : -1, bz = cz + side * 2.5
-          near('body', 0.3, 0.55, 0.25, bx, 0.55, bz, 0, 0, T.pole); out.solid.push(faustBox(faustCm(bx), 0.6, faustCm(bz), 0.3, 0.6, 0.25)) }
+          near('body', 0.3, 0.55, 0.25, bx, 0.55, bz, 0, 0, T.kerb); out.solid.push(faustBox(faustCm(bx), 0.6, faustCm(bz), 0.3, 0.6, 0.25)) }
         body(x_a + 2.5, 3.2, cz + 2.6, 0.09, 3.2, 0.09, T.pole)
         near('light', 0.3, 0.07, 0.3, x_a + 2.5, 6.2, cz + 2.6, 0, 0, 0xffffff); near('pool', 3.2, 1, 3.2, x_a + 2.5, 0.115, cz, 0, 0, T.pave)
         out.walks.push([[x_a + 1, cz], [x_b - 1, cz]])
@@ -7133,6 +7133,28 @@ function faustRingsTick(points) {
     }, { priority: 2, valid: () => faustState === F && F.rings === Rg && Rg.cells.get(k) === cell && world === w }).catch(e => frameFailed('rings', e))
   }
 }
+let faustMapMemo = null
+function faustMapCell(F, plan, i, j) {
+  if (!faustMapMemo || faustMapMemo.seed !== F.seed || faustMapMemo.S !== F.S) faustMapMemo = { seed: F.seed, S: F.S, cells: new Map() }
+  const key = i * 8192 + j, hit = faustMapMemo.cells.get(key)
+  if (hit) return hit
+  const R = FAUST_RINGS, C = R.cell, P = R.sub.pitch, seed = F.seed, S = F.S, x0 = i * C, z0 = j * C, x1 = x0 + C, z1 = z0 + C, e = P / 2 - R.sub.street
+  const segs = faustRingRoads(plan, x0, z0, x1, z1).concat(faustChanSegs(seed, S, x0, z0, x1, z1)).concat(faustWaterSegs(seed, S, x0, z0, x1, z1))
+  const out = { streets: [], courts: [], alleys: [], pools: [] }
+  for (const s of faustRingStreetsIn(x0, z0, x1, z1, segs)) {
+    const alongZ = s.a[0] === s.b[0], c = alongZ ? s.a[0] : s.a[1], t = alongZ ? (s.a[1] + s.b[1]) / 2 : (s.a[0] + s.b[0]) / 2
+    out.streets.push([s.a[0], s.a[1], s.b[0], s.b[1], faustSubStyle(seed, c, alongZ ? 1 : 0, Math.floor(t / P))])
+  }
+  for (let bi = Math.floor(x0 / P); bi < x1 / P; bi++) for (let bj = Math.floor(z0 / P); bj < z1 / P; bj++) {
+    const inf = faustSubInfill(seed, bi, bj), cx = (bi + 0.5) * P, cz = (bj + 0.5) * P
+    if (inf?.kind === 'court' && faustRingClear(segs, cx + inf.side * e - inf.side * 40, cz, 42, 8) && faustRingClear(segs, cx - inf.side * (e - 64), cz, 14, 14)) out.courts.push([cx + inf.side * e, cz, -inf.side])
+    else if (inf?.kind === 'lane' && faustRingClear(segs, cx, cz, e, 3)) out.alleys.push([cx - e, cz, cx + e, cz])
+    const sw = typeof faustSubSwim === 'function' ? faustSubSwim(seed, S, bi, bj) : null
+    if (sw) out.pools.push([sw.x, sw.z, sw.hx, sw.hz])
+  }
+  faustMapMemo.cells.set(key, out)
+  return out
+}
 function faustRingsMapLayer() {
   GAME.map?.layer?.('rings', { static(g, c) {
     const F = faustState
@@ -7144,6 +7166,28 @@ function faustRingsMapLayer() {
       else if (band === 'shanty' && faustFrac(faustMix(F.seed ^ 0x5a47, i, j)) < FAUST_RINGS.shanty.odds[0]) {
         const t = faustRingCell(F.seed, F.S, { cells: new Map(), roads: [] }, i, j)
         if (t.body.length) { const b = t.body[0][0], [px, py] = c.xy(b.cx, b.cz); g.fillStyle = '#6b5a44'; g.fillRect(px - 1.5, py - 1.5, 3, 3) }
+      }
+    }
+    if (c.k >= 0.12) {
+      const plan = faustRoadsPlan(F.seed, F.S), [ox, oy] = c.xy(0, 0), k = c.k, W = c.W, H = c.H
+      const ia = Math.max(-n, Math.floor(-ox / k / C)), ib = Math.min(n - 1, Math.floor((W - ox) / k / C)), ja = Math.max(-n, Math.floor(-oy / k / C)), jb = Math.min(n - 1, Math.floor((H - oy) / k / C))
+      const COL = { plain: '#555a61', boulevard: '#8d9b7c', lane: '#7a6544' }
+      g.lineCap = 'butt'
+      for (let i = ia; i <= ib; i++) for (let j = ja; j <= jb; j++) {
+        if (faustRingBand(F.seed, F.S, i, j) !== 'suburb') continue
+        const m = faustMapCell(F, plan, i, j)
+        for (const [ax, az, bx, bz, st] of m.streets) { const [x0, y0] = c.xy(ax, az), [x1, y1] = c.xy(bx, bz)
+          g.strokeStyle = COL[st]; g.lineWidth = Math.max(st === 'boulevard' ? 1.6 : 0.9, (st === 'boulevard' ? 14 : 10) * k); g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke() }
+        if (k < 0.2) continue
+        g.fillStyle = COL.plain; g.strokeStyle = COL.plain
+        for (const [ex, ez, dir] of m.courts) { const [x0, y0] = c.xy(ex, ez), [x1, y1] = c.xy(ex + dir * 64, ez)
+          g.lineWidth = Math.max(0.9, 9 * k); g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); g.beginPath(); g.arc(x1, y1, Math.max(1.4, 10.5 * k), 0, 2 * Math.PI); g.fill() }
+        if (k < 0.25) continue
+        g.strokeStyle = '#44474d'; g.lineWidth = Math.max(0.6, 5 * k)
+        for (const [ax, az, bx, bz] of m.alleys) { const [x0, y0] = c.xy(ax, az), [x1, y1] = c.xy(bx, bz); g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke() }
+        if (k < 0.5) continue
+        g.fillStyle = '#2b86b0'
+        for (const [px, pz, hx, hz] of m.pools) { const [a, b] = c.xy(px, pz); g.fillRect(a - hx * k, b - hz * k, Math.max(2, 2 * hx * k), Math.max(2, 2 * hz * k)) }
       }
     }
   } })
