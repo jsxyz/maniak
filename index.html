@@ -5215,13 +5215,14 @@ function faustRoadsMapLayer() {
       g.stroke() }
   } })
 }
-const FAUST_CHAN = { version: 1, depth: 8, top: 28, floor: 18, lip: 2, wall: 0.9, gutter: [1.2, 2.5, 0.25], water: 0.12, cut: 30, deck: 14.4, thick: 1.4,
+const FAUST_CHAN = { version: 2, depth: 8, top: 28, floor: 18, lip: 2, wall: 0.9, gutter: [1.2, 2.5, 0.25], water: 0.12, cut: 30, deck: 14.4, thick: 1.4,
   span: 33, foot: 2.6, ramp: { w: 7, land: 4 }, keep: 8, reach: 240, look: 900, ground: -0.02, part: 1000,
   tint: { bed: 0x4b4a43, bank: 0x6c7078, floor: 0x45494f, gutter: 0x2b2f35, lip: 0x76797e, wall: 0x7a7872, cap: 0x97948b, joint: 0x1f2226, damp: 0x30353a, stainTop: 0x39413f, stainMid: 0x2b3534, stainToe: 0x1c2524, sheen: 0x5b7a88, deckTop: 0x242a33, walk: 0x737983,
     under: 0x5c6168, fascia: 0x7c7f84, stone: 0x8d8a82, stoneDark: 0x6e6c66, pier: 0x827f78, flute: 0x5f5d57, water: 0x0a1820, mark: 0xb4a77d, lamp: 0xffb35a, pole: 0x30353c,
     ramp: 0x838890, drain: 0x07090c, collar: 0x8a8f95, stain: 0x2c3a38, paint: [0xa8505f, 0x4f8f94, 0xb09a4f, 0x7a5ea3, 0x5f9a68, 0xbdbdb5, 0xb27a52] },
   sec: { foot: 18, h: 8, land: 4, kinds: ['floor', 'gutter', 'gutter'], inner: [[18, 0], [2.5, 0], [1.2, -0.25]] },
   glow: { bank: 0.3, floor: 0.17, wall: 0.25, under: 0.3, paint: 0.04, water: 0.1 } }
+const FAUST_QUAY = { at: 31, len: 26, gap: 1, pct: 40, face: 19, back: 36, top: 0.15, ladder: 6, bay: 27, house: 7 }
 const faustChanSec = ch => ch.kind === 'river' ? FAUST_WATER.river.sec : FAUST_CHAN.sec
 function faustChanBed(sec, u) {
   const p = sec.inner
@@ -5302,6 +5303,18 @@ function faustChannels(seed, S) {
       const p = P2(s, 0)
       chan.outfalls.push({ id: id + ':' + name, kind: name, s, out, r: 2.5, x: cm(p[0]), y: cm(FAUST_CHAN.ground - K.depth + 2.5), z: cm(p[1]), face: axis ? [0, -out] : [-out, 0] })
     }
+    if (river) {
+      chan.quays = []
+      const Q = FAUST_QUAY
+      for (let k = kLo; k <= kHi; k++) for (const e of [-1, 1]) {
+        const h = faustMix(seed ^ 0x51554159, k * 2 + (e > 0 ? 1 : 0), u), s = k * 96 + e * Q.at, side = (h >>> 8) & 1 ? 1 : -1, hl = Q.len / 2 + Q.gap
+        if (h % 100 >= Q.pct || s - hl < lo + 40 || s + hl > hi - 40) continue
+        const hit = chan.bridges.some(b => b.kind === 'diag' ? Math.abs(s - (b.s + side * 16.6)) < 25 + hl : Math.abs(s - b.s) < b.half + hl)
+          || chan.ramps.some(r => r.side === side && Math.abs(r.s - s) < r.w / 2 + hl) || chan.outfalls.some(o => o.kind === 'wall' && o.side === side && Math.abs(o.s - s) < o.r + hl)
+        if (hit) continue
+        chan.quays.push({ id: id + ':q:' + k + (e > 0 ? 'b' : 'a'), side, s, len: Q.len, kind: (h >>> 9) % 3 ? 'dock' : 'yard', h: h >>> 12, ladders: [s - Q.ladder, s + Q.ladder] })
+      }
+    }
     chan.rect = axis ? { a0: c - K.cut, a1: c + K.cut, b0: lo, b1: hi } : { a0: lo, a1: hi, b0: c - K.cut, b1: c + K.cut }
     rects.push(chan.rect); list.push(chan)
   }
@@ -5371,6 +5384,7 @@ function* faustChanPiece(ch, k, emit, look) {
     const g = []
     for (const b of ch.bridges) { const w = b.kind === 'diag' ? 15 * 1.4142 + 0.6 : b.half + 0.3, at = b.kind === 'diag' ? b.s + side * K.top : b.s; g.push([at - w, at + w]) }
     for (const r of ch.ramps) if (r.side === side) g.push([r.s - r.w / 2 - 0.25, r.s + r.w / 2 + 0.25])
+    for (const q of ch.quays || []) if (q.side === side) g.push([q.s - q.len / 2 - 0.3, q.s + q.len / 2 + 0.3])
     if (river) for (let q = Math.ceil((s0 - 4) / 16) * 16 + (side > 0 ? 8 : 0); q < s1 + 4; q += 16) g.push([q - 4, q + 4])
     return g.sort((p, q) => p[0] - q[0])
   }
@@ -5395,6 +5409,34 @@ function* faustChanPiece(ch, k, emit, look) {
         for (let q = -2; q <= 2; q++) f(P(s + face * 1.3, m + q * 1.0 - 0.06, fl), P(s + face * 1.3, m + q * 1.0 + 0.06, fl), P(s + face * 1.3, m + q * 1.0 + 0.06, fl + 4.4), P(s + face * 1.3, m + q * 1.0 - 0.06, fl + 4.4), ax ? [0, 0, -out] : [-out, 0, 0], T.under, false, G.under)
       }
     }
+  }
+  for (const q of ch.quays || []) if (q.s >= k * 96 - 48 && q.s < k * 96 + 48) {
+    const Q = FAUST_QUAY, sg = q.side, qy = Y + Q.top, hl = q.len / 2, S0 = q.s
+    const qb = (sc, sh, u0, u1, y0, y1, tint, g, solid) => ob(ax ? c + sg * (u0 + u1) / 2 : sc, ax ? sc : c + sg * (u0 + u1) / 2, dA, sh, (u1 - u0) / 2, y0, y1, tint, g, solid, 2)
+    qb(S0, hl, Q.face, Q.back, fl, qy, T.stone, G.wall, true)
+    if (q.kind === 'dock') {
+      qb(S0, hl - 1, Q.bay - 0.5, Q.back, qy, qy + Q.house, T.fascia, G.wall, true)
+      qb(S0, hl - 1, Q.bay - 3.8, Q.bay - 0.5, qy, qy + 1.1, T.stoneDark, G.wall, true)
+    } else {
+      for (const row of [0, 1]) for (let i = 0; i < 3; i++) {
+        const hh = faustMix(0x51434e54 ^ q.h, row * 3 + i, ch.u), n = 1 + hh % 3, u0 = Q.face + 3 + row * 3.4, col = T.paint[(hh >>> 4) % T.paint.length]
+        for (let j = 0; j < n; j++) qb(S0 + (i - 1) * 6.6, 3.05, u0, u0 + 2.44, qy + j * 2.6, qy + (j + 1) * 2.6, col, G.paint, true)
+      }
+    }
+    if (look) {
+      const rust = 0x6b5a45
+      qb(S0, hl, Q.face, Q.face + 0.45, qy, qy + 0.1, T.cap, G.wall, false)
+      for (const o of q.ladders) {
+        for (const e of [-0.28, 0.28]) qb(o + e, 0.04, Q.face - 0.1, Q.face, Y - 3.6, qy + 0.9, rust, 0, false)
+        for (let y = Y - 3.3; y < qy + 0.6; y += 0.5) qb(o, 0.28, Q.face - 0.09, Q.face - 0.03, y, y + 0.05, rust, 0, false)
+      }
+      if (q.kind === 'dock') for (const o of [-7.5, 0, 7.5]) {
+        qb(S0 + o, 2.3, Q.bay - 0.58, Q.bay - 0.5, qy + 1.1, qy + 5.1, T.drain, 0, false)
+        qb(S0 + o, 2.1, Q.bay - 0.62, Q.bay - 0.58, qy + 1.1, qy + 5, 0x4f6f7a, 0, false)
+        qb(S0 + o, 0.2, Q.bay - 0.6, Q.bay - 0.5, qy + 5.3, qy + 5.6, T.lamp, -1, false)
+      }
+    }
+    for (const o of [-9, -3, 3, 9]) qb(S0 + o, 0.2, Q.face + 0.7, Q.face + 1.1, qy, qy + 0.55, T.pole, 0, true)
   }
   if (!look) return
   const sl = (t, side) => [side * (K.top - t * (K.top - sec.foot) / hs), Y - t * D / hs]
@@ -5848,6 +5890,7 @@ function faustWaterAt(seed, S, x, z, out) {
     const r = c.rect
     if (x >= r.a0 && x <= r.a1 && z >= r.b0 && z <= r.b1) {
       const s = c.axis ? z : x, u = Math.abs((c.axis ? x : z) - c.c), sec = faustChanSec(c), river = c.kind === 'river'
+      if (river && u > FAUST_QUAY.face && c.quays) { const sd = (c.axis ? x : z) - c.c > 0 ? 1 : -1; for (const q of c.quays) if (q.side === sd && Math.abs(q.s - s) < q.len / 2) return null }
       const bed = K.ground - sec.h + faustChanBed(sec, u), lvl = river ? FAUST_WATER.river.level : K.ground - K.depth - K.gutter[2] + K.water
       if (u < K.top && bed < lvl - 0.02) {
         const o = out || { flow: [0, 0] }; o.id = c.id; o.kind = river ? 'river' : 'channel'; o.level = o.y = lvl; o.floor = bed; o.depth = lvl - bed
@@ -5878,10 +5921,13 @@ function faustWaterExit(seed, S, x, z) {
   const u = (ch.axis ? x : z) - ch.c, s = ch.axis ? z : x, side = u < 0 ? -1 : 1, top = FAUST_CHAN.top
   let best = null
   for (const r of ch.ramps) if (r.side === side && Math.abs(r.s - s) < 14) { const dist = Math.hypot(Math.abs(u) - 16, r.s - s); if (!best || dist < best[0]) best = [dist, r.s] }
-  const reach = ch.kind === 'river' ? faustChanWet(faustChanSec(ch), FAUST_WATER.river.level - FAUST_CHAN.ground) + 1.5 : top + 1.5
-  const lip = best ? best[1] : s, ex = ch.axis ? ch.c + side * reach : lip, ez = ch.axis ? lip : ch.c + side * reach
+  let lad = null
+  for (const q of ch.quays || []) if (q.side === side && Math.abs(q.s - s) < q.len / 2 + 10) for (const l of q.ladders) { const d = Math.abs(l - s); if (!lad || d < lad[0]) lad = [d, l] }
+  if (lad && best && best[0] < lad[0]) lad = null
+  const reach = lad ? FAUST_QUAY.face - 0.6 : ch.kind === 'river' ? faustChanWet(faustChanSec(ch), FAUST_WATER.river.level - FAUST_CHAN.ground) + 1.5 : top + 1.5
+  const lip = lad ? lad[1] : best ? best[1] : s, ex = ch.axis ? ch.c + side * reach : lip, ez = ch.axis ? lip : ch.c + side * reach
   if (Math.hypot(ex - x, ez - z) > (ch.kind === 'river' ? 24 : 12) + (best ? 14 : 0) && Math.abs(Math.abs(u) - top) > 12) return null
-  return { id: ch.id, kind: ch.kind === 'river' ? 'river' : 'channel', y: 0, x: ex, z: ez, nx: ch.axis ? side : 0, nz: ch.axis ? 0 : side, bank: best ? 'stairs' : ch.kind === 'river' ? 'low' : 'high' }
+  return { id: ch.id, kind: ch.kind === 'river' ? 'river' : 'channel', y: lad ? FAUST_QUAY.top : 0, x: ex, z: ez, nx: ch.axis ? side : 0, nz: ch.axis ? 0 : side, bank: lad ? 'ladder' : best ? 'stairs' : ch.kind === 'river' ? 'low' : 'high' }
 }
 function faustWaveAt(x, z, t, kind) {
   const W = FAUST_WATER.waves, amp = W.amp[kind] || 0
