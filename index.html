@@ -13728,7 +13728,8 @@ function deadWater(c) {
   return true
 }
 function applyIntent(c, inp, dt) {
-  if (!c.body) attachBody(c)
+  apT = realNow()
+  if (!c.body) { attachBody(c); apLap('ai attach') }
   c.jEdge = !!inp.j && !c.jWas; c.jWas = !!inp.j; if (!inp.j) c.jUsed = false
   c.dashing = inp.alt && !(c.dead > 0) && !seatOf(c) && primaryOf(c)?.kind === 'dash' ? primaryId(c) : 0
   if (inp.alt) c.dashRun = 0
@@ -13754,6 +13755,7 @@ function applyIntent(c, inp, dt) {
   if (partsHeldIntent(c, inp, dt)) return
   groundCheck(c)
   c.air = !c.grounded
+  apLap('ai ground')
   const CV = carrierCarry(c, dt), CX = CV ? CV[0] : 0, CZ = CV ? CV[2] : 0
   c.smashCam = Math.max(0, (c.smashCam || 0) - dt)
   if (c.leap && c.air) c.leapAir = true
@@ -13761,7 +13763,7 @@ function applyIntent(c, inp, dt) {
   c.leapT = c.leap ? (c.leapT || 0) + dt : 0
   if (c.leap && (c.leapT > LEAP_LAND.max || (c.leapAir ? c.grounded && (c.vy <= LEAP_LAND.vy || c.leapG > 1) : c.leapG > LEAP_LAND.stuck))) c.leap = 0
   if (c.hop) { if (c.air) c.hopAir = true; else if (c.hopAir || ++c.hop > 6) c.hop = c.hopAir = 0 }
-  chainIntent(c, inp, dt)
+  chainIntent(c, inp, dt); apLap('ai chain')
   if (!c.winIn && c.winMasked) winMask(c, false)
   if (c.winIn && winStep(c, dt)) { c.yaw = inp.yaw; c.body.activate(); return }
   if (c.dove && c.grounded) { const L = smashDiving(c); c.slam = L ? Math.max(GUNS[c.dove].dive.speed, -c.fallVy) : -c.fallVy; c.slamGun = c.dove; if (L) { c.smashCam = 0.7; c.spCool = Math.max(c.spCool || 0, SMASH_RECOVER); c.hayT = c.hayAge = 0; c.hayReady = false } c.dove = false }
@@ -13777,7 +13779,7 @@ function applyIntent(c, inp, dt) {
   if (c.dove && !smashDiving(c) && !c.leap && !c.bot && !(c.dove === primaryId(c) ? inp.alt : inp.fire && c.gun === c.dove)) c.dove = false
   let vy = c.vy
   const tank = tankOf(c), J = tank > 0 && jetOf(c)
-  const SW = swimTick(c, inp, wx, wz, dt, J)
+  const SW = swimTick(c, inp, wx, wz, dt, J); apLap('ai swim')
   if (SW && c.swWx !== undefined) { wx = c.swWx; wz = c.swWz }
   const wasWall = c.wall
   c.wall = !J && !SW && GAME.participantOf(c)?.climb && m > 0.5 ? wallPush(c, wx, wz) : 0
@@ -13790,6 +13792,7 @@ function applyIntent(c, inp, dt) {
   if (c.ceil) c.wall = 0
   const up = c.wall && !inp.j ? -GAME.participantOf(c).climb * (wx * c.wnx + wz * c.wnz) : 0
   const cling = !!c.wall && !inp.j && c.vy <= 1.25 * GAME.participantOf(c).climb
+  apLap('ai wall')
   if (!SW && !J) mantleTick(c, inp, wx, wz, m, CX, CZ)
   else if (c.mantle || c.mantleFall) { c.mantle = null; c.mantleFall = false }
   if (SW) { vy = c.swVy; c.jLock = !!inp.j; c.zLock = !!inp.descend; c.grounded = false; c.air = false; c.flying = false; c.airT = 0; if (inp.j) c.jUsed = true }
@@ -13849,6 +13852,7 @@ function applyIntent(c, inp, dt) {
     if (landed) { if (Q) c.springT = c.airT + (inp.j && !c.jUsed ? dt : 0); c.airT = 0 }
   }
 
+  apLap('ai jump')
   if (padTouching(c.body)) { vy = Math.max(vy, JUMP_V); if (J) c.jLock = false }
   const D = [inp.alt && primaryOf(c), inp.fire && !objs.some(o => o.heldBy === c.id) && GUNS[c.gun]].find(G => G?.dive && !holdsFire(c, G))
   if (D && c.air && (vy < 0 || J)) c.dove = GUNS.indexOf(D)
@@ -13896,6 +13900,7 @@ function applyIntent(c, inp, dt) {
   if (c.springT > SPRING_TAP && c.grounded) {
     const e = clamp((c.springT - SPRING_TAP) / CHARGE_EASE, 0, 1), k = 1 - (1 - CHARGE_RUN) * e * e * (3 - 2 * e); mx *= k; mz *= k
   }
+  apLap('ai move')
   const fly = flyFast(c, inp.yaw) && (c.flyTurn || tiltFits(c, inp.yaw))
   if (fly || c.flyTurn) { c.flyTurn = fly; teleportBody(c.body, c.x, c.y, c.z, turnOf(c, inp.yaw)) }
   const runner = GAME.participantOf(c)?.wallRun && !J && !c.tie && !seatOf(c), R = runner && runUpWall(c, inp, spd, wx, wz, dt)
@@ -13928,6 +13933,7 @@ function applyIntent(c, inp, dt) {
     if (d < 0) { mx -= d * x; vy -= d * y; mz -= d * z }
     c.vehT = o.V && d < 0 && pressesOn(c, o, x, z) ? 0.3 : c.vehT - dt
   }
+  apLap('ai head')
   c.body.setCcdSweptSphereRadius(!c.wallRun && Math.abs(vy) > Math.hypot(mx, mz) && c.zip?.[3] !== 'wall' ? c.h + c.r : c.r)
   reel(c, dt)
   if (c.zip) {
@@ -13946,8 +13952,10 @@ function applyIntent(c, inp, dt) {
   if (CV && !c.zip && !ML) { mx += CX; mz += CZ; if (c.carryOn) vy = vy === c.vy ? CV[1] : vy + CV[1] }
   if (faustIn.ramps.length && !c.tie && !c.leap && !ML) vy = faustInStairs(c, mx, vy, mz)
   if (faustIn.broken.size && c.grounded && !ML) vy = faustInVault(c, mx, vy, mz)
+  apLap('ai parts')
   if (vy < 0 && !c.zip && !c.tie && !c.flyTurn && !ML) { const fall = -vy * dt, feet = c.y - c.h - c.r, d = staticRay(c.x, feet + 0.1, c.z, 0, -1, 0, fall + 0.1, null, RAY_GROUP | G_OBJ) - 0.1
     if (d >= 0 && d < fall) vy = -d / dt }
+  apLap('ai ray')
   if (!c.tie && !c.zip && !c.bot && !(c.knT > 0) && !(c.vehT > 0) && c.body && !ML) { const wx = mx, wz = mz; [mx, mz] = wallSlide(c, mx, mz, dt); c.slideFrom = mx !== wx || mz !== wz ? [wx, wz] : null }
   else c.slideFrom = null
   if (!c.tie) {
@@ -13961,7 +13969,8 @@ function applyIntent(c, inp, dt) {
   if (c.ceil || c.wallRun && !c.slide || SW || ML) { forceVec.setValue(0, -GRAV * M, 0); c.body.applyCentralForce(forceVec) }
   c.body.activate()
   c.yaw = inp.yaw
-  if (!(c.y >= VOID_Y)) rescue(c)
+  apLap('ai tail')
+  if (!(c.y >= VOID_Y)) { rescue(c); apLap('ai rescue') }
 }
 
 const HEAD_SLIDE = 5, HEAD_FALL = 0.7
@@ -16259,6 +16268,8 @@ function rayObject(ox, oy, oz, dx, dy, dz, o) {
   return rayBox(...O, ...D, { cx: 0, cy: 0, cz: 0, ex: K.half[0], ey: K.half[1], ez: K.half[2] })
 }
 
+let apT = 0
+const apLap = n => { const t = realNow(); background.simAdd(n, t - apT); apT = t }
 function preTick(list, inputFor, dt) {
   let a = 0, b = 0
   for (const c of list) { const t0 = realNow(); syncFromBody(c); const t1 = realNow(); applyIntent(c, inputFor(c), dt); const t2 = realNow(); a += t1 - t0; b += t2 - t1 }
@@ -16417,7 +16428,9 @@ function capSpeeds() {
 function stepPhysics(dt) {
   let s = realNow()
   padLaunch()
+  s = simLap('pp pad', s)
   for (const o of objs) if (o.V && o.body.isActive()) { const v = o.body.getLinearVelocity(); o.v0 = [v.x(), v.y(), v.z()] }
+  s = simLap('pp v0', s)
   const swept = carsAtSpeed()
   s = simLap('physics pre', s)
   world.stepSimulation(dt, 0)
@@ -17712,7 +17725,7 @@ function trafficTick(dt, all) {
   }
   const thinkStep = TRAFFIC.think / Math.max(0.4, scale)
   const budget = Math.min(Math.max(3, Math.round(TRAFFIC.thinkBudget * scale)), Math.ceil(Math.max(1, T.cars.size - (T.kinN || 0)) * dt / thinkStep * 1.5) + 2)
-  let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0, kinN = 0
+  let thinks = 0, thinkMs = 0, kinMs = 0, driveMs = 0, kinN = 0, repMs = 0, detMs = 0, retMs = 0
   let lane = null, kinNew = []
   const movers = []
   trafficGridBuild()
@@ -17731,10 +17744,10 @@ function trafficTick(dt, all) {
     if (!objs.includes(o)) { T.cars.delete(o.id); continue }
     const a = o.traffic
     if (a) {
-      if (!o.V || o.heldBy !== undefined || o.riders.some(v => v !== undefined) || upOf(o) < 0.4 || o.fuse !== undefined) trafficDetach(o, !!o.V)
+      if (!o.V || o.heldBy !== undefined || o.riders.some(v => v !== undefined) || upOf(o) < 0.4 || o.fuse !== undefined) { const d0 = performance.now(); trafficDetach(o, !!o.V); detMs += performance.now() - d0 }
       else {
         const distance = Math.hypot(o.x - a.x, o.z - a.z); a.distance += distance; T.stats.distance += distance; a.x = o.x; a.z = o.z
-        if (a.follow && (a.replan -= dt) <= 0) { a.replan = 2; trafficDriveTo(o,a.follow,{follow:true,driver:a.driver,speed:a.cruise,urgent:a.urgent}) }
+        if (a.follow && (a.replan -= dt) <= 0) { a.replan = 2; const r0 = performance.now(); trafficDriveTo(o,a.follow,{follow:true,driver:a.driver,speed:a.cruise,urgent:a.urgent}); repMs += performance.now() - r0 }
         if (o.hp < a.hp - 0.1) a.flee = 12
         a.hp = o.hp; a.flee = Math.max(0, a.flee - dt)
         let dMin = Infinity; for (const p of people) dMin = Math.min(dMin, Math.hypot(o.x - p.x, o.z - p.z))
@@ -17761,8 +17774,9 @@ function trafficTick(dt, all) {
       }
     }
     if (!o.riders?.some(v => v !== undefined) && o.heldBy === undefined && people.length && (people.every(p => Math.hypot(o.x - p.x, o.z - p.z) > TRAFFIC.retire) || (o.traffic?.stuck || 0) > ROUND.stuck) && trafficHidden(o.x, o.z, people) && o.trafficAmbient) {
-      trafficDetach(o, false); dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({id:o.id,until:clock+12}); T.stats.retired++
+      const q0 = performance.now(); trafficDetach(o, false); dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({id:o.id,until:clock+12}); T.stats.retired++
       for (const sent of objSent.values()) sent.delete(o.id)
+      retMs += performance.now() - q0
     }
     if (o.trafficExit && clock - o.trafficExit[0] > 8) o.trafficExit = null
   }
@@ -17780,7 +17794,7 @@ function trafficTick(dt, all) {
   if ((T.spawn -= dt) <= 0) { T.spawn += T.cars.size < TRAFFIC.cap * trafficK() * 0.7 ? 0.2 : 0.35; const t0 = performance.now(); trafficSpawn(people); background.simAdd('traffic spawn', performance.now() - t0) }
   const ms = performance.now() - t; T.stats.ticks++; T.stats.ms += ms; T.stats.maxMs = Math.max(T.stats.maxMs, ms)
   background.simAdd('traffic', ms)
-  background.simAdd('traffic loop', Math.max(0, tl1 - tl0 - thinkMs - kinMs - driveMs))
+  background.simAdd('traffic loop', Math.max(0, tl1 - tl0 - thinkMs - kinMs - driveMs - repMs - detMs - retMs)); background.simAdd('tl replan', repMs); background.simAdd('tl detach', detMs); background.simAdd('tl retire', retMs)
   background.simAdd('traffic think', thinkMs); background.simAdd('traffic kin', kinMs); background.simAdd('traffic drive', driveMs)
   background.simAdd('traffic rays', trafficPart.rays); background.simAdd('traffic round', trafficPart.round); background.simAdd('traffic scan', trafficPart.scan); background.simAdd('traffic sl', trafficPart.sl)
   trafficPart.rays = 0; trafficPart.round = 0; trafficPart.scan = 0; trafficPart.sl = 0; T.kinN = kinN
@@ -22551,6 +22565,7 @@ function buildWorld() {
   skipStill(worldGroup); skipStill(objGroup)
   scene.onBeforeRender = (r, s, cam) => { cullView(cam); inkPrepare(s) }
   const render = renderer.render.bind(renderer)
+  for (const k of ['intersectsObject', 'intersectsSprite']) { const f = THREE.Frustum.prototype[k]; THREE.Frustum.prototype[k] = function (o) { gpuView.who = o; return f.call(this, o) } }
   if (renderer.renderBufferDirect) { const rbd = renderer.renderBufferDirect; renderer.renderBufferDirect = function (c, s, g, m, o, gr) { gpuView.who = o; return rbd.call(this, c, s, g, m, o, gr) } }
   renderer.render = (s, cam) => {
     if (renderer.getContext().isContextLost()) { graphicsLost(); return }
@@ -25775,7 +25790,7 @@ function periodSetup(gltf) {
   F.ready = true
   if (typeof objGroup !== 'undefined' && objGroup) for (const m of Object.values(F.wheels)) if (m.parent !== objGroup) objGroup.add(m)
   if (renderer?.compileAsync && scene) {
-    const probe = new THREE.Group(), body = new THREE.Mesh(geo.sedan_lod2, base); body.castShadow = body.receiveShadow = true; probe.add(body)
+    const probe = new THREE.Group(), body = new THREE.Mesh(geo.sedan_lod2, base); body.castShadow = body.receiveShadow = true; periodDepth(body); probe.add(body)
     background.run('period warm', function* () { yield* warmSceneSteps(activeLook || 'plain', [probe, ...Object.values(F.wheels)]) }, { gpu: true })
       .catch(e => frameFailed('vehicle preparation', e))
   }
@@ -33611,11 +33626,17 @@ const HOST_PHASES = {
   trafficTick(dt, all)
   },
   afterPhysics: t => { const { dt, all, credit } = t
+  let s = realNow()
   for (const c of all) chainAfter(c)
+  s = simLap('ap chainAfter', s)
   dashStrikes(all, credit)
+  s = simLap('ap dash', s)
   const touch = touchOf(all)
+  s = simLap('ap touch', s)
   strikeObjects(all, dt, touch, credit)
+  s = simLap('ap strike', s)
   vehicleTick(all, credit, touch, dt)
+  simLap('ap vehicle', s)
   },
 }
 GAME.host = HOST_PHASES
@@ -35094,7 +35115,7 @@ MODELS.maniak.clips.swimUp = MODELS.maniak.clips.climb
   const P = HOST_PHASES, bi = P.beforeIntent, bp = P.beforePhysics, ap = P.afterPhysics
   P.beforeIntent = t => { partsMask(t.cur); bi(t) }
   P.beforePhysics = t => { bp(t); partsHostRelease(t.all, t.credit) }
-  P.afterPhysics = t => { partsSweep(t.all, t.credit); ap(t); partsAfter(t.all, t.dt, t.credit); goreAfter(t.all, t.dt, t.credit); goreCovers(t.all, t.credit) }
+  P.afterPhysics = t => { let s = realNow(); partsSweep(t.all, t.credit); s = simLap('ap sweep', s); ap(t); s = simLap('ap chain', s); partsAfter(t.all, t.dt, t.credit); s = simLap('ap parts', s); goreAfter(t.all, t.dt, t.credit); s = simLap('ap gore', s); goreCovers(t.all, t.credit); simLap('ap covers', s) }
   const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems
   L.snapshot = () => ({ ...snap(), ...partsWireOut() })
   L.takeItems = function (d) { take.call(this, d); partsWireIn(d) }
@@ -39871,7 +39892,7 @@ function dsWorldImport(file) {
   L.sessionEnd = function () { dsPersistNow(); return end.apply(this, arguments) }
   const bp = HOST_PHASES.beforePhysics, ap = HOST_PHASES.afterPhysics
   HOST_PHASES.beforePhysics = t => { bp(t); if (LV.faust) dsBodiesBefore(t.all || []) }
-  HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust) { const t0 = performance.now(); dsBodiesAfter(t.all || [], t.dt); if (dsState) { dsPersistStart(); dsTilesTick(); dsPostsTick(t.all || [], t.dt); dsObjectsTick(t.dt); dsNotify(); dsState.stats.hostMs = +(performance.now() - t0).toFixed(3) } } }
+  HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust) { const t0 = performance.now(), s = realNow(); dsBodiesAfter(t.all || [], t.dt); if (dsState) { dsPersistStart(); dsTilesTick(); dsPostsTick(t.all || [], t.dt); dsObjectsTick(t.dt); dsNotify(); dsState.stats.hostMs = +(performance.now() - t0).toFixed(3) } simLap('ap ds', s) } }
 }
 setTimeout(() => { if (GAME.commands && !Object.hasOwn(GAME.commands, 'saveworld')) GAME.commands.saveworld = { args: '', help: 'host only: save the city\'s changes now, and say how it went', run: () => {
   if (!isHost) return commandReply('§cOnly the host keeps the city\'s changes.')
@@ -40824,7 +40845,7 @@ function slBabyFrame(dt) {
 }
 {
   const ap = HOST_PHASES.afterPhysics
-  HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust && slState) slBabyHost(t) }
+  HOST_PHASES.afterPhysics = t => { ap(t); if (LV.faust && slState) { const s = realNow(); slBabyHost(t); simLap('ap baby', s) } }
   const fr = slFrameSafe
   slFrameSafe = (t, dt, ...more) => { fr(t, dt, ...more); try { slBabyFrame(Math.min(0.1, dt || 0.016)) } catch (e) { frameFailed('street', e) } }
   Object.assign(GAME.streetLife, {
@@ -41016,7 +41037,7 @@ function enforcerDown(c) { enforcerDrop(c); if (conns.size) pushRoster() }
   }
   L.matchStart = function () { ms.call(this); if (isHost) { heat.clear(); for (const e of enforcerList()) dropBot(e); dealerPurge(); hauntPurge(); if (conns.size) pushRoster() } }
   L.left = function (id) { heat.delete(id); return left.call(this, id) }
-  HOST_PHASES.afterPhysics = t => { ap(t); heatTick(t.dt, t.all); dealerTick(t.dt, t.all); hauntTick(t.dt, t.all) }
+  HOST_PHASES.afterPhysics = t => { ap(t); let s = realNow(); heatTick(t.dt, t.all); s = simLap('ap heat', s); dealerTick(t.dt, t.all); s = simLap('ap dealer', s); hauntTick(t.dt, t.all); simLap('ap haunt', s) }
 }
 function heatHud() {
   const off = isHost && !enforcersEnabled()
