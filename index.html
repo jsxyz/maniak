@@ -6178,7 +6178,7 @@ const faustWaterBodies = (seed, S) => {
   return w.listed ||= [...w.bodies.map(b => ({ id: b.id, kind: b.kind, level: b.level, bounds: b.bounds, ...b.centre && { centre: b.centre }, ...b.docks && { docks: b.docks.map(k => ({ id: k.id, x: k.x, z: k.z, yaw: k.yaw })) }, ...b.dam && { dam: b.dam }, ...b.channel && { channel: b.channel } })),
     ...faustChannels(seed, S).list.filter(c => c.kind !== 'river').map(c => ({ id: c.id, kind: 'channel', level: FAUST_CHAN.ground - FAUST_CHAN.depth - FAUST_CHAN.gutter[2] + FAUST_CHAN.water, bounds: [c.rect.a0, c.rect.b0, c.rect.a1, c.rect.b1] }))]
 }
-const FAUST_RINGS = { version: 9, near: 700, close: 220, tree: 40, cell: 480, city: 14, jitter: 300, urban: 6000, suburb: 10000, edge: 15500, clear: 14,
+const FAUST_RINGS = { version: 10, near: 700, close: 220, tree: 40, cell: 480, city: 14, jitter: 300, urban: 6000, suburb: 10000, edge: 15500, clear: 14,
   block: 96, street: 7, inset: 3, gap: 2.5, high: [20, 48], low: [9, 16], storey: 3.5,
   sub: { pitch: 160, street: 5, front: 25, house: [4.5, 6], depth: [4, 5.5], storeys: [3, 5.8], roof: [2.2, 3.2] },
   shanty: { odds: [0.2, 0.07], radius: [16, 36], count: [26, 70], alley: 0.7, bulbs: 22 },
@@ -6200,6 +6200,24 @@ function faustRingBand(seed, S, i, j) {
   if (far > R.edge) return 'edge'
   const r = Math.max(Math.abs(x0 + C / 2), Math.abs(z0 + C / 2)) + (faustMix(seed ^ 0x7a11, i, j) % (2 * R.jitter + 1)) - R.jitter
   return r < R.urban ? 'urban' : r < R.suburb ? 'suburb' : 'shanty'
+}
+function faustSubStyle(seed, c, dir, k) {
+  const R = FAUST_RINGS, P = R.sub.pitch, s = Math.floor(k / 3), r = Math.max(Math.abs(c), Math.abs((s * 3 + 1.5) * P))
+  const t = Math.max(0, Math.min(1, (r - R.urban) / (R.suburb - R.urban))), h = faustMix(seed ^ 0x5b21, Math.round(c / P) * 2 + dir, s) % 100
+  return h < 22 * (1 - 0.7 * t) ? 'boulevard' : h >= 88 - 28 * t ? 'lane' : 'plain'
+}
+function faustSubMouth(seed, c, t) {
+  const P = FAUST_RINGS.sub.pitch, k = Math.round(c / P), bj = Math.floor(t / P)
+  if (Math.abs(t - (bj + 0.5) * P) > 8) return false
+  const w = faustSubInfill(seed, k - 1, bj), e = faustSubInfill(seed, k, bj)
+  return !!(w && (w.kind === 'lane' || w.side > 0) || e && (e.kind === 'lane' || e.side < 0))
+}
+function faustSubInfill(seed, bi, bj) {
+  const R = FAUST_RINGS, P = R.sub.pitch, h = faustMix(seed ^ 0x5b31, bi, bj) % 100
+  if (h >= 34) return null
+  const W = faustSubStyle(seed, bi * P, 1, bj) !== 'boulevard', E = faustSubStyle(seed, (bi + 1) * P, 1, bj) !== 'boulevard'
+  if (h < 16) { const side = faustMix(seed ^ 0x5b32, bi, bj) & 1 ? 1 : -1; return (side < 0 ? W : E) ? { kind: 'court', side } : null }
+  return W && E ? { kind: 'lane' } : null
 }
 function faustRingRoads(plan, x0, z0, x1, z1) {
   const out = [], RC = FAUST_ROADS.cell, M = 60
@@ -6249,7 +6267,8 @@ function faustSubBlock(seed, S, plan, bi, bj) {
   return { exists: true, rect: [cx - e, cz - e, cx + e, cz + e], streets: faustRingStreets(seed, S, plan, i, j),
     pavements: c.pavements.filter(q => inB((q[0] + q[2]) / 2, (q[1] + q[3]) / 2, 8)), lots: c.lots.filter(l => inB(l.house.cx, l.house.cz)),
     fences: c.fences.filter(q => inB(q[0], q[1])), trees: c.trees.filter(q => inB(q[0], q[1])),
-    parked: (c.parked || []).filter(q => inB(q.x, q.z, 8)), posts: (c.posts || []).filter(q => inB(q.x, q.z, 8)) }
+    parked: (c.parked || []).filter(q => inB(q.x, q.z, 8)), posts: (c.posts || []).filter(q => inB(q.x, q.z, 8)),
+    walks: (c.walks || []).filter(w => inB(w[0][0], w[0][1], 8) || inB(w[1][0], w[1][1], 8)) }
 }
 const FAUST_SUB_STREET = {
   lampStep: 40, lampAt: 10, poleAt: 20, hydrantStep: 80, hydrantAt: 66, shelterStep: 160, shelterAt: 80, carStep: 26, off: 6.6, poleOff: 6.7, carOff: 4.15, carHL: 2.3, carHW: 0.85,
@@ -6315,7 +6334,7 @@ function* faustSubStreetsideSteps(seed, i, j, ctx) {
     for (let n = Math.floor((lo - F.shelterAt) / F.shelterStep); n <= Math.floor((hi - F.shelterAt) / F.shelterStep); n++) {
       yield
       const t = n * F.shelterStep + F.shelterAt, h = H(0x5b05, key(n), dir), side = h >>> 12 & 1 ? 1 : -1, mid = 6.925, [px, pz] = at(t, side * mid)
-      if (!here(t) || h % 100 >= 20 || !clear(px, pz, 2) || !offDrives(t, 2.4, side, mid, 0.6) || !noTree(px, pz, 2.4)) continue
+      if (!here(t) || h % 100 >= 20 || (ctx.style?.(alongZ, c, t) ?? 'plain') !== 'plain' || alongZ && faustSubMouth(seed, c, t) || !clear(px, pz, 2) || !offDrives(t, 2.4, side, mid, 0.6) || !noTree(px, pz, 2.4)) continue
       if (fences.some(q => Math.abs(q[1] - (c + side * 7.4)) < 1.2 && q[2] > t - 2.6 && q[0] < t + 2.6)) continue
       box(1.5, 1.1, 0.03, t, 1.2, side * 7.3, F.glass)
       box(1.6, 0.07, 0.45, t, 2.5, side * mid, F.shelter)
@@ -6411,6 +6430,8 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
     return out
   }
   if (band === 'suburb') {
+    out.walks = []
+    const courtParked = [], courtPosts = []
     const U = R.sub, P = U.pitch, r = Math.max(Math.abs(x0 + C / 2), Math.abs(z0 + C / 2)), thin = 0.04 + 0.16 * (r - R.urban) / (R.suburb - R.urban)
     const streets = faustRingStreetsIn(x0, z0, x1, z1, segs)
     for (const st of streets) st.a[0] === st.b[0] ? flat(st.a[0] - st.half, z0, st.a[0] + st.half, z1, 0.05, T.street) : flat(x0, st.a[1] - st.half, x1, st.a[1] + st.half, 0.05, T.street)
@@ -6421,31 +6442,48 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
       if (from < hi) runs.push([from, hi])
       const ms = mouths('suburb', alongZ ? 'x' : 'z', c)
       for (const m of ms) apron(alongZ ? 'x' : 'z', c, m, lo, hi)
-      for (const [a0, b0] of runs) for (const sg of [-1, 1]) for (const [a, b] of ms.filter(m => m[0] === sg).reduce((ps, m) => ps.flatMap(([u, v]) => m[2] <= u || m[1] >= v ? [[u, v]] : [[u, m[1]], [m[2], v]].filter(([p, q]) => q - p > 0.5)), [[a0, b0]])) {
+      for (const [a0, b0] of runs) {
+        const style = faustSubStyle(seed, c, alongZ ? 1 : 0, Math.floor((a0 + b0) / 2 / P))
+        if (style === 'boulevard') {
+          let spans = [[a0 + 5, b0 - 5]]
+          for (const m of ms) spans = spans.flatMap(([p, q]) => m[2] <= p || m[1] >= q ? [[p, q]] : [[p, m[1] - 1], [m[2] + 1, q]]).filter(([p, q]) => q - p > 6)
+          for (const [p, q] of spans) {
+            yield
+            const mm = (p + q) / 2, hh = (q - p) / 2
+            alongZ ? flat(c - 0.9, p, c + 0.9, q, 0.09, T.park) : flat(p, c - 0.9, q, c + 0.9, 0.09, T.park)
+            for (const o of [-0.98, 0.98]) alongZ ? near('body', 0.08, 0.07, hh, c + o, 0.07, mm, 0, 0, T.kerb) : near('body', hh, 0.07, 0.08, mm, 0.07, c + o, 0, 0, T.kerb)
+            for (let t = p + 6; t <= q - 4; t += 16) {
+              const tx = alongZ ? c : t, tz = alongZ ? t : c, tt = H(0x5b41, Math.round(tx * 4), Math.round(tz * 4))
+              part('body', 0.14, 1.7, 0.14, tx, 1.7, tz, 0, 0, T.trunk)
+              part('crown', 2, 2, 2, tx, 4.9, tz, ((tt >>> 9) % 8) * 0.39, 0, pick(T.crown, tt >>> 13))
+              out.solid.push(faustBox(faustCm(tx), 1.7, faustCm(tz), 0.2, 1.7, 0.2))
+            }
+          }
+        }
+        for (const sg of [-1, 1]) for (const [a, b] of ms.filter(m => m[0] === sg).reduce((ps, m) => ps.flatMap(([u, v]) => m[2] <= u || m[1] >= v ? [[u, v]] : [[u, m[1]], [m[2], v]].filter(([p, q]) => q - p > 0.5)), [[a0, b0]])) {
         const p0 = c + sg * 5, p1 = c + sg * 7
+        if (style === 'lane') { const q0 = c + sg * 5, q1 = c + sg * 6.4; alongZ ? flat(Math.min(q0, q1), a, Math.max(q0, q1), b, 0.06, T.dirt) : flat(a, Math.min(q0, q1), b, Math.max(q0, q1), 0.06, T.dirt); continue }
         alongZ ? flat(Math.min(p0, p1), a, Math.max(p0, p1), b, 0.09, T.pave) : flat(a, Math.min(p0, p1), b, Math.max(p0, p1), 0.09, T.pave)
         out.pavements.push(alongZ ? [Math.min(p0, p1), a, Math.max(p0, p1), b] : [a, Math.min(p0, p1), b, Math.max(p0, p1)])
         const k0 = c + sg * 5.08, m = (a + b) / 2, h = (b - a) / 2
         alongZ ? near('body', 0.08, 0.07, h, k0, 0.07, m, 0, 0, T.kerb) : near('body', h, 0.07, 0.08, m, 0.07, k0, 0, 0, T.kerb)
       }
+      }
     }
-    for (let bi = Math.floor(x0 / P); bi < x1 / P; bi++) for (let bj = Math.floor(z0 / P); bj < z1 / P; bj++) {
-      yield
-      const cx = (bi + 0.5) * P, cz = (bj + 0.5) * P, e = P / 2 - U.street
-      if (cx < x0 || cx >= x1 || cz < z0 || cz >= z1) continue
-      for (const sg of [-1, 1]) for (let n = 0; n * U.front < 2 * e - U.front / 2; n++) {
+    const rowOf = function* ({ bi, bj, sg, cx, cz, ex, ez, court }) {
+      for (let n = 0; n * U.front < 2 * ex - U.front / 2; n++) {
         yield
         const hh = H(0x5b0b, bi * 64 + n * 2 + (sg > 0), bj)
         if (faustFrac(hh) < thin) continue
         const hk = H(0x5b0d, bi * 64 + n * 2 + (sg > 0), bj), kit = hk % 10 < 4 ? 'classic' : hk % 10 < 7 ? 'bungalow' : hk % 10 < 9 ? 'frame' : 'duplex'
-        const store = (n === 0 || (n + 1) * U.front >= 2 * e - U.front / 2) && (hk >>> 8) % 100 < 20
+        const store = !court && (n === 0 || (n + 1) * U.front >= 2 * ex - U.front / 2) && (hk >>> 8) % 100 < 20
         let hx = U.house[0] + faustFrac(hh >>> 4 ^ hh << 7) * (U.house[1] - U.house[0]), hz = U.depth[0] + ((hh >>> 12) % 16) / 15 * (U.depth[1] - U.depth[0]), y = (hh >>> 17) % 3 ? U.storeys[0] : U.storeys[1]
         if (store) { hx = 6; hz = 5; y = 3.9 }
         else if (kit === 'bungalow') { hx = 6 + ((hk >>> 4) % 13) / 10; hz = 4.5 + ((hk >>> 12) % 11) / 10; y = U.storeys[0] }
         else if (kit === 'frame') { hx = 5 + ((hk >>> 4) % 11) / 10; y = U.storeys[1] }
         else if (kit === 'duplex') { hx = 7.5 + ((hk >>> 4) % 11) / 10; hz = 5; y = U.storeys[1] }
-        const x = cx - e + U.front / 2 + n * U.front, z = cz + sg * (e - 9 - hz)
-        if (x + hx > cx + e - 2 || !faustRingClear(segs, x, z, hx, hz) || inCity(x, z, hx)) continue
+        const x = cx - ex + U.front / 2 + n * U.front, z = cz + sg * (ez - 9 - hz)
+        if (x + hx > cx + ex - 2 || !faustRingClear(segs, x, z, hx, hz) || inCity(x, z, hx)) continue
         body(x, y / 2, z, hx, y / 2, hz, pick(T.house, hh >>> 20))
         out.buildings.push({ id: 'ring ' + i + ' ' + j + ' ' + out.buildings.length, kind: 'house', box: out.solid[out.solid.length - 1], storeys: y > 4 ? 2 : 1, seed: hh >>> 0,
           door: { x: faustCm(x + ((hh >>> 29) & 1 ? -0.4 : 0.4) * hx), z: faustCm(z + sg * hz), face: [0, sg] }, kit: store ? 'store' : kit, ...(store ? { venue: 'conv' } : {}) })
@@ -6481,9 +6519,9 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
         if (y > 4) for (const u of [-0.5, 0.5]) part((hh >>> 27) & 1 && u > 0 ? 'lit' : 'pane', 0.55, 0.55, 1, x + u * hx, 4.3, fz, fy, 0, glass)
         for (const e2 of [-1, 1]) part('pane', 0.55, 0.6, 1, x + e2 * (hx + 0.03), wy, z, e2 * HALF, 0, glass)
         part('pane', 0.6, 0.6, 1, x, wy, z - sg * (hz + 0.03), fy + 2 * HALF, 0, glass)
-        { const hq = H(0x5b0c, bi * 64 + n * 2 + (sg > 0), bj), gs = -sd, gx = x + gs * (hx + 2.2), front = z + sg * hz, edge = cz + sg * e, fl = cz + sg * (e - 2.4)
+        { const hq = H(0x5b0c, bi * 64 + n * 2 + (sg > 0), bj), gs = -sd, gx = x + gs * (hx + 2.2), front = z + sg * hz, edge = cz + sg * ez, fl = cz + sg * (ez - 2.4)
           const lot = { id: out.buildings[out.buildings.length - 1].id, x0: faustCm(x - U.front / 2), x1: faustCm(x + U.front / 2), front: faustCm(edge), house: out.solid[out.solid.length - 1], door: out.buildings[out.buildings.length - 1].door }
-          if (faustFrac(hq) < 0.6 && kit !== 'duplex' && !store && gx - 1.6 >= cx - e + 2.4 && gx + 1.6 <= cx + e - 2.4) {
+          if (faustFrac(hq) < 0.6 && kit !== 'duplex' && !store && gx - 1.6 >= cx - ex + 2.4 && gx + 1.6 <= cx + ex - 2.4) {
             const gzc = front - sg * 3, gt = pick(T.house, hh >>> 20)
             body(gx, 1.3, gzc, 1.6, 1.3, 3, gt)
             part('body', 1.75, 0.08, 3.15, gx, 2.68, gzc, 0, 0, pick(T.roof, hh >>> 26))
@@ -6504,7 +6542,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
           const kind = (hq >>> 6) % 20 < 9 ? 'picket' : (hq >>> 6) % 20 < 16 ? 'hedge' : null
           lot.fence = []
           if (kind) {
-            const gaps = [[dx - 0.9, dx + 0.9], [gx - 1.7, gx + 1.7]].sort((a, b) => a[0] - b[0]), lx0 = Math.max(x - U.front / 2 + 0.3, cx - e + 2.4), lx1 = Math.min(x + U.front / 2 - 0.3, cx + e - 2.4)
+            const gaps = [[dx - 0.9, dx + 0.9], [gx - 1.7, gx + 1.7]].sort((a, b) => a[0] - b[0]), lx0 = Math.max(x - U.front / 2 + 0.3, cx - ex + 2.4), lx1 = Math.min(x + U.front / 2 - 0.3, cx + ex - 2.4)
             let from = lx0
             for (const [g0, g1] of [...gaps, [lx1, lx1]]) {
               const a = from, b = Math.min(g0, lx1)
@@ -6526,7 +6564,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
             for (let q = 0; q < 2; q++) { const a = (((tt >>> (17 + q * 4)) % 16) / 16) * 6.283185307179586, f = 0.55 + ((tt >>> (25 + q)) % 4) * 0.06
               near('crown', r * f, r * f * 0.95, r * f, tx + Math.cos(a) * r * 0.55, h + r * (0.55 + 0.35 * q), tz + Math.sin(a) * r * 0.55, 0, 0, pick(T.crown, tt >>> (13 + q + 1))) }
             const t = [faustCm(tx), faustCm(tz), faustCm(r)]; lot.trees.push(t); out.trees.push(t) }
-          if ((hq >>> 12) % 10 < 6 && Math.abs(x - gs * (hx + 3.5) - cx) <= e - 3) tree(x - gs * (hx + 3.5), cz + sg * (e - 6), hq)
+          if ((hq >>> 12) % 10 < 6 && Math.abs(x - gs * (hx + 3.5) - cx) <= ex - 3) tree(x - gs * (hx + 3.5), cz + sg * (ez - 6), hq)
           if ((hq >>> 16) % 10 < 5) tree(x + ((hq >>> 20) % 9 - 4), z - sg * (hz + 9 + (hq >>> 24) % 8), hq)
           const bz = z - sg * (hz + 6)
           if ((hq >>> 27) % 2) { const sx_ = x + gs * (hx - 0.5), sz_ = z - sg * (hz + 3.2)
@@ -6537,17 +6575,62 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
             for (let k = 0; k < 3; k++) near('pane', 0.35, 0.3, 1, x - sd * 1 - 2 + k * 1.9, 1.5, bz, 0, 0, pick(T.cloth, hq >>> (k * 3))) }
           flat(x - U.front / 2, Math.min(edge, cz), x + U.front / 2, Math.max(edge, cz), 0.03, pick(T.lawn, hq >>> 14))
           { const b0 = z - sg * hz, b1 = z - sg * (hz + 4); near('flat', hx + 1, 1, 2, x, 0.04, (b0 + b1) / 2, 0, 0, T.earth) }
-          { const fz0 = fl, fz1 = cz + sg * 0.05, mz = (fz0 + fz1) / 2, hzf = Math.abs(fz0 - fz1) / 2, bx0 = Math.max(x - U.front / 2, cx - e + 2.4), bx1 = Math.min(x + U.front / 2, cx + e - 2.4)
+          { const fz0 = fl, fz1 = cz + sg * 0.05, mz = (fz0 + fz1) / 2, hzf = Math.abs(fz0 - fz1) / 2, bx0 = Math.max(x - U.front / 2, cx - ex + 2.4), bx1 = Math.min(x + U.front / 2, cx + ex - 2.4)
             near('body', 0.04, 0.6, hzf, bx0, 0.6, mz, 0, 0, T.board)
-            if ((n + 1) * U.front >= 2 * e - U.front / 2) near('body', 0.04, 0.6, hzf, bx1, 0.6, mz, 0, 0, T.board)
+            if ((n + 1) * U.front >= 2 * ex - U.front / 2) near('body', 0.04, 0.6, hzf, bx1, 0.6, mz, 0, 0, T.board)
             near('body', (bx1 - bx0) / 2, 0.6, 0.04, (bx0 + bx1) / 2, 0.6, fz1, 0, 0, T.board) }
           out.lots.push(lot) }
       }
     }
+    const later = []
+    for (let bi = Math.floor(x0 / P); bi < x1 / P; bi++) for (let bj = Math.floor(z0 / P); bj < z1 / P; bj++) {
+      yield
+      const cx = (bi + 0.5) * P, cz = (bj + 0.5) * P, e = P / 2 - U.street
+      if (cx < x0 || cx >= x1 || cz < z0 || cz >= z1) continue
+      const inf = faustSubInfill(seed, bi, bj)
+      const court = inf?.kind === 'court' && faustRingClear(segs, cx + inf.side * e + -inf.side * 40, cz, 42, 8) && faustRingClear(segs, cx - inf.side * (e - 64), cz, 14, 14) ? inf : null
+      const lane = inf?.kind === 'lane' && faustRingClear(segs, cx, cz, e, 3) ? inf : null
+      const back = court ? 38 : lane ? 2.6 : 0
+      for (const sg of [-1, 1]) yield* rowOf({ bi, bj, sg, cx, cz: cz + sg * back, ex: e, ez: e - back, court: false })
+      if (court) {
+        const ex0 = cx + court.side * e, dir = -court.side, xc = ex0 + dir * 64, W = 4.5, R_ = 10.5
+        yield
+        flat(Math.min(ex0, xc), cz - W, Math.max(ex0, xc), cz + W, 0.05, T.street)
+        for (let k = -R_; k < R_; k += 1) { if (k % 4 === 0) yield
+          const w = Math.sqrt(R_ * R_ - Math.max(Math.abs(k), Math.abs(k + 1)) ** 2)
+          flat(xc - w, cz + k, xc + w, cz + k + 1, 0.05, T.street); flat(xc + k, cz - w, xc + k + 1, cz + w, 0.05, T.street) }
+        flat(Math.min(ex0, ex0 + dir * 2), cz - W, Math.max(ex0, ex0 + dir * 2), cz + W, 0.095, T.street)
+        yield
+        const lp = [xc + dir * 12.5, cz]
+        body(lp[0], 3.2, lp[1], 0.09, 3.2, 0.09, T.pole)
+        near('light', 0.3, 0.07, 0.3, lp[0], 6.2, lp[1], 0, 0, 0xffffff); near('pool', 4.2, 1, 4.2, lp[0], 0.115, lp[1], 0, 0, T.pave)
+        courtPosts.push({ x: faustCm(lp[0]), z: faustCm(lp[1]), hx: 0.09, hz: 0.09 })
+        const hc = H(0x5b51, bi, bj), FS = FAUST_SUB_STREET
+        for (let q = 0; q < 2; q++) { if ((hc >>> (q * 4)) % 10 < 4) continue
+          const tx = ex0 + dir * (4.6 + q * 5.6 + ((hc >>> (8 + q * 5)) % 8) / 10), tz = cz + (q ? -1 : 1) * 3.0, tint = FS.car[(hc >>> (12 + q * 3)) & 7]
+          near('body', 2.25, 0.3, 0.84, tx, 0.62, tz, 0, 0, tint); near('body', 1.2, 0.3, 0.78, tx - 0.15, 1.2, tz, 0, 0, tint); near('body', 1.22, 0.2, 0.8, tx - 0.15, 1.24, tz, 0, 0, FS.glass)
+          for (const u of [-1.35, 1.35]) for (const v of [-0.77, 0.77]) near('body', 0.36, 0.32, 0.1, tx + u, 0.32, tz + v, 0, 0, FS.tyre)
+          near('body', 2.27, 0.05, 0.86, tx, 0.34, tz, 0, 0, FS.tyre)
+          out.solid.push(faustBox(faustCm(tx), 0.95, faustCm(tz), FS.carHL, 0.95, FS.carHW)); courtParked.push({ x: faustCm(tx), z: faustCm(tz), yaw: 0, hl: FS.carHL, hw: FS.carHW, tint }) }
+        out.walks.push([[ex0 + dir * 3, cz], [xc, cz]])
+        for (const sg of [-1, 1]) later.push({ bi, bj: bj + 5003, sg, cx: ex0 + dir * 37, cz: cz - sg * 38, ex: 25, ez: 33.5, court: true })
+      }
+      if (lane) {
+        yield
+        const x_a = cx - e, x_b = cx + e
+        flat(x_a, cz - 2.4, x_b, cz + 2.4, 0.06, T.lot)
+        const hl = H(0x5b61, bi, bj)
+        for (let q = 0; q < 3; q++) { const bx = cx - e + 14 + ((hl >>> (q * 6)) % 64) / 64 * (2 * e - 28), side = (hl >>> (20 + q)) & 1 ? 1 : -1, bz = cz + side * 1.85
+          near('body', 0.3, 0.55, 0.25, bx, 0.55, bz, 0, 0, T.pole); out.solid.push(faustBox(faustCm(bx), 0.6, faustCm(bz), 0.3, 0.6, 0.25)) }
+        out.walks.push([[x_a + 1, cz], [x_b - 1, cz]])
+      }
+    }
+    for (const fr of later) yield* rowOf(fr)
     if (typeof faustSubStreetside === 'function') {
-      const add = yield* faustSubStreetsideSteps(seed, i, j, { streets, pavements: out.pavements, lots: out.lots, segs })
+      const add = yield* faustSubStreetsideSteps(seed, i, j, { streets, pavements: out.pavements, lots: out.lots, segs, style: (alongZ, c, t) => faustSubStyle(seed, c, alongZ ? 1 : 0, Math.floor(t / P)) })
       if (add) { out.part.push(...(add.part || [])); out.near.push(...(add.near || [])); out.solid.push(...(add.solid || [])); out.light.push(...(add.light || [])); out.parked = add.parked || []; out.posts = add.posts || [] }
     }
+    if (courtParked.length || courtPosts.length) { out.parked = (out.parked || []).concat(courtParked); out.posts = (out.posts || []).concat(courtPosts) }
     return out
   }
   const Sh = R.shanty, r = Math.max(Math.abs(x0 + C / 2), Math.abs(z0 + C / 2)), t = Math.max(0, Math.min(1, (r - R.suburb) / (R.edge - R.suburb)))
@@ -35811,7 +35894,13 @@ function slSubRideRoute(B, parked, v, t0) {
   }
   return slRoute(keys, t, t0)
 }
-function slSubPave(B) {
+function slSubWalkLine(pts) {
+  const cum = [0]
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
+  return { pts, closed: false, cum, len: cum[cum.length - 1] }
+}
+function slSubPave(B) { return slSubPaveRect(B).concat((B.walks || []).map(slSubWalkLine)) }
+function slSubPaveRect(B) {
   const [x0, z0, x1, z1] = B.rect, S = {}, I = SL_SUB.inset
   for (const q of B.pavements) {
     const alongX = q[2] - q[0] >= q[3] - q[1], c = alongX ? (q[1] + q[3]) / 2 : (q[0] + q[2]) / 2, a = alongX ? q[0] : q[1], b = alongX ? q[2] : q[3]
