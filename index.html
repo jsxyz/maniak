@@ -3155,14 +3155,36 @@ function faustFeatDraw(g, f) {
     else if (p.v) { const [a, b, c] = p.v.map(v => at(v, v[1])); g.tri(a, b, c, p.t); g.tri(a, c, b, p.t) }
   }
 }
+const FAUST_SITE_SURFACE = {
+  kinds: { site_market: 'paint', site_construction: 'concrete', site_yard: 'tin', site_rubble: 'concrete', site_freight: 'tin', site_scrap: 'tin' },
+  tints: {
+    tin: [0x8a3a2a, 0x2a6a6a, 0xb8872a, 0x4a5058, 0x5a3a6a, 0x2a5a6a, 0xa8782a, 0x6a4a2a, 0x6a3a2a, 0x3a4a5a, 0x7a6a4a, 0x4a4a4a, 0x5a2a2a, 0x2f5a4a, 0x3a424b],
+    wood: [0x5a4632, 0x7a6a52, 0x3a2a1f, 0x4a3a2a, 0xb89a6a],
+    metal: [0x252d37, 0x14181d, 0x4a525c, 0x5b636d, 0x3f464f, 0x4a4f55, 0x1c1c20, 0x6a6560, 0x6a7078],
+    asphalt: [0x3a3631, 0x2f2c28, 0x2a2f36, 0x28262a],
+    brick: [0x6b4a3a, 0x7a5a4a],
+    concrete: [0x8a8f94, 0x7a7f84, 0x303840, 0x3a4048, 0x4e545c, 0x5a6068, 0x474d55],
+    paint: [0xd8a91e, 0x7a2a22, 0xa8321f, 0xc8372d, 0xe0b52a, 0x3f9a4a, 0xb83a2a, 0x4f8a3a, 0x7a4a9a]
+  }
+}
+function faustSitePicker(kind) {
+  const S = FAUST_SITE_SURFACE, L = FAUST_SURFACE.layers, m = new Map()
+  for (const [name, list] of Object.entries(S.tints)) for (const h of list) if (!m.has(h)) m.set(h, L.indexOf(name))
+  const d = L.indexOf(S.kinds[kind] || 'metal')
+  return tint => m.get(tint) ?? d
+}
 function faustFeatMesh(P) {
-  if (!P.features?.length && !P.sites?.length && !P.alleyFeat?.length) return null
+  if (!P.features?.length && !P.sites?.length && !P.alleyFeat?.length) return []
   const g = faustBatch(14336)
   P.featV = P.features.map(f => { const a = Math.round(g.count * 3); faustFeatDraw(g, f); return [a, Math.round(g.count * 3)] })
-  for (const f of P.sites || []) faustFeatDraw(g, f)
   for (const f of P.alleyFeat || []) faustFeatDraw(g, f)
-  const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true; mesh.userData.feat = 1
-  return mesh
+  const meshes = []
+  if (g.count) { const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true; mesh.userData.feat = 1; meshes.push(mesh) }
+  for (const f of P.sites || []) {
+    const s = faustBatch(14336, faustSitePicker(f.k)); faustFeatDraw(s, f)
+    if (s.count) { const mesh = new THREE.Mesh(s.geometry(), faustSurfaceMaterial(faustState, 'body')); mesh.receiveShadow = true; meshes.push(mesh) }
+  }
+  return meshes
 }
 const FAUST_LANDMARKS = { theatre: 2, cathedral: 1, hotel: 2 }
 let faustLandmarkMemo = null
@@ -7854,6 +7876,7 @@ const FAUST_CUBE = [0, 1, 2].flatMap(axis => [-1, 1].flatMap(sign => {
   return [0, 1, 2, 0, 2, 3].map(i => corners[i])
 }))
 function faustBatch(capacity = 12288, layered = false) {
+  const pick = typeof layered === 'function' ? layered : faustTintLayer
   let cur = Math.min(capacity, 8192), ly = -1
   let p = new Float32Array(cur * 3), n = new Float32Array(cur * 3), uv = new Float32Array(cur * 2), colors = new Float32Array(cur * 3)
   let glow = new Float32Array(cur), lay = layered ? new Float32Array(cur) : null; const col = new THREE.Color(); let count = 0, lit = 0
@@ -7871,13 +7894,13 @@ function faustBatch(capacity = 12288, layered = false) {
   const tri = (a, b, c, tint, coords, gl) => {
     const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, length = Math.hypot(nx, ny, nz) || 1
-    col.setHex(tint); if (lay) ly = faustTintLayer(tint)
+    col.setHex(tint); if (lay) ly = pick(tint)
     for (let i = 0; i < 3; i++) { const q = [a, b, c][i]; if (gl) lit = gl[i]; vertex(q[0], q[1], q[2], nx / length, ny / length, nz / length, coords?.[i]?.[0] || 0, coords?.[i]?.[1] || 0) }
     if (gl) lit = 0
   }
   const glowTri = (a, b, c, tint, light) => { lit = light; tri(a, b, c, tint); lit = 0 }
   const box = (b, tint = 0x70757c, light = 0, skip = 0) => {
-    col.setHex(tint); lit = light; if (lay) ly = faustTintLayer(tint)
+    col.setHex(tint); lit = light; if (lay) ly = pick(tint)
     const flat = b.ey < 0.015
     for (const v of FAUST_CUBE) {
       if (flat && !(v[6] === 1 && v[4] > 0)) continue
@@ -9888,7 +9911,7 @@ function* faustVisualSteps(c) {
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }
     else { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry) }
   }
-  { const feat = faustFeatMesh(P); if (feat) { dsFeatsLook(c, feat.geometry); root.add(feat) } }
+  for (const feat of faustFeatMesh(P)) { if (feat.userData.feat) dsFeatsLook(c, feat.geometry); root.add(feat) }
   if (cones.p.length) root.add(faustCivicGlowMesh(cones))
   if (faustState.poolMaterial) for (const q of faustLampOffsets(c.plan.diagonal)) {
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
