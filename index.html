@@ -14613,8 +14613,7 @@ function rayCapsule(ox, oy, oz, dx, dy, dz, c) {
 }
 
 const CAM = { back: 4.3, up: 0.3, aim: 40, pad: 0.28, far: 320,
-              fadeNear: 1.9, fadeFar: 2.8, bodyFade: [0.9, 1.5],
-              lift: { from: 2.8, full: 1.2, up: 1.6, pull: 0.6 } }
+              fadeNear: 1.9, fadeFar: 2.8, bodyFade: [0.9, 1.5] }
 const PITCH_MAX = 1.54
 
 function heldR(c) {
@@ -14630,170 +14629,44 @@ function heldFade(r, me, o) {
   const near = clamp((Math.hypot(r.x - o.x, r.y - o.y, r.z - o.z) - 0.6 * R) / (0.4 * R), 0.15, 1)
   return Math.min(near, hides(me.x, me.y + me.h * 0.55, me.z) || hides(...r.aim) ? 0.3 : 1)
 }
-function leapCamTerms(me) {
-  const settle = clamp((me.smashCam || 0) / 0.5, 0, 1), landing = settle * settle * (3 - 2 * settle), move = GAME.participantOf(me)?.leapSmash ? me.leap ? 1 : me.smashCam > 0 ? landing : Math.min(0.3, Math.max(0, (me.springT || 0) - SPRING_TAP) / (1.15 - SPRING_TAP) * 0.3) : 0
-  return [move, landing]
-}
-const LEAP_CAM = { w: 12, hold: 0.5 }, leapCam = { m: 0, mv: 0, l: 0, lv: 0, t: NaN }
 const landDepth = () => clamp(0.06 * Math.abs(selfChar()?.fallVy || 8.9) / 8.9, 0.03, 0.14)
-function leapCamEase(me, tf = frameT || now()) {
-  const [m, l0] = leapCamTerms(me), l = (me.smashCam || 0) > LEAP_CAM.hold ? 0 : l0, C = leapCam, dt = C.t === C.t ? clamp((tf - C.t) / 1000, 0, 0.25) : -1
-  C.t = tf
-  if (dt < 0) { C.m = m; C.l = l; C.mv = C.lv = 0; return C }
-  const w = LEAP_CAM.w, k = Math.exp(-w * dt), ease = (x, v, to) => { const e = x - to, g = v + w * e; return [to + (e + g * dt) * k, (v - w * g * dt) * k] }
-  ;[C.m, C.mv] = ease(C.m, C.mv, m); [C.l, C.lv] = ease(C.l, C.lv, l)
-  return C
-}
-const CAM_ROOM = { radius: 0.32, margin: 0.04, recover: 0.5, pull: 0.045, settle: 0.14, shoulder: 0.48, side: 1.2, fade: [0.8, 2.8], ahead: [0.1, 0.2, 0.3, 0.45], aheadTurn: 0.6, aheadMax: 1.6, probe: 0.3, roofAhead: [0.25, 0.5], roofRise: 0.8, moveMin: 0.5, speed: 24, moving: 0.5 }
-const CAM_RIDE = [0.45, 0.85]
-const followCam = { at: NaN, id: null, warp: null, x: 0, y: 0, z: 0, distance: 0, pivot: 0, side: 0, sign: 1, active: false, yaw: 0, rate: 0, cy: NaN, foe: 0, foeSign: 0, foeAt: NaN }
-const TRAIN_CAM = { back: 2.1, chest: 0.35, up: 0.25, wall: 0.25, roof: 0.18, fov: 12, out: 0.4, entry: 3.4, entryUp: 0.8, near: [3.5, 3, 2], ease: 0.35 }
-const trainCamEase = { on: 0, at: NaN, blend: 0, p: null }
-function trainCar(me) {
-  const k = me.winIn ? carrierNumbered(me.winIn[0]) : me.carryOn && carriers.get(me.carryId)?.rail ? carriers.get(me.carryId)
-    : me.chain?.phase === 3 && me.chain.carrier ? carriers.get(me.chain.carrier.id) : me.chainCarNet && me.web ? carrierNumbered(me.chainCarNet[0]) : null
-  return k?.rail ? k : null
-}
-function trainRay(me, yaw, pitch, k) {
-  const C = TRAIN_CAM, K = RAIL.car, W = K.width - 0.05, P = carrierPose(k, isHost ? drawnT() : renderT), p = [me.x, me.y + C.chest, me.z], mb = winBox(P, ...p)
-  const inside = (!me.winIn || me.winIn[1] > 0.8) && Math.abs(mb[2]) < W && mb[1] > K.floor - 0.3 && mb[1] < K.ceiling + 0.3 && Math.abs(mb[0]) < K.half
-  if (!inside && !(Math.abs(mb[2]) < W + C.near[0] && Math.abs(mb[0]) < K.half + C.near[1] && mb[1] > -1.1 - C.near[2] && mb[1] < K.roof + C.near[2])) return null
-  const [dx, dy, dz] = aimDir(yaw, clamp(pitch, -0.6, 0.5)), b = winBox(P, p[0] - dx * C.back, p[1] - dy * C.back + C.up, p[2] - dz * C.back)
-  if (me.winIn && me.winIn[1] <= 0.8) { const o = Math.sign(me.winIn[4]) || 1; b[0] = mb[0]; b[1] = Math.max(mb[1], (RAIL_GLASS.y[0] + RAIL_GLASS.y[1]) / 2) + C.entryUp; b[2] = o * (W + C.entry) }
-  else if (inside) { const z = clamp(b[2], -(W - C.wall), W - C.wall), dz = z - mb[2], dx = b[0] - mb[0], flat = Math.hypot(dx, b[2] - mb[2])
-    if (z !== b[2] && flat > Math.abs(dz)) b[0] = mb[0] + (Math.sign(dx) || 1) * Math.sqrt(flat * flat - dz * dz)
-    b[2] = z; b[1] = clamp(b[1], K.floor + 0.6, K.ceiling - C.roof); b[0] = clamp(b[0], -(K.half - 0.35), K.half - 0.35) }
-  else if (Math.abs(b[2]) < W + C.out && Math.abs(b[0]) < K.half + 0.5 && b[1] > -1.4 && b[1] < K.roof + 0.4) b[2] = (Math.sign(mb[2]) || 1) * (W + C.out)
-  const c = winWorld(P, b), t = Math.hypot(c[0] - p[0], c[1] - p[1], c[2] - p[2]) || 0.01, [ex, ey, ez] = aimDir(yaw, pitch), eyeY = eyeOf(me)
-  const target = [me.x + ex * CAM.aim, eyeY + ey * CAM.aim, me.z + ez * CAM.aim], a = target.map((v, i) => v - c[i]), n = Math.hypot(...a) || 1, f = a.map(v => v / n)
-  return { x: c[0], y: c[1], z: c[2], dx: f[0], dy: f[1], dz: f[2], t, aim: target, confined: true, blocked: false, ceiling: Infinity, pivot: p, side: 0, limit: t, train: inside ? 2 : 1,
-    near: Math.max(0, (me.x - c[0]) * f[0] + (eyeY - c[1]) * f[1] + (me.z - c[2]) * f[2]) }
-}
-function camRay(me, yaw, pitch, R = heldR(me), eased = null, follow = null, shoulder = 0, camLift = 0) {
-  { const k = trainCar(me), tr = k && trainRay(me, yaw, pitch, k); if (tr) return tr }
-  const [dx, dy, dz] = aimDir(yaw, pitch)
-  const raw = eased ? null : leapCamTerms(me), move = eased ? eased.m : raw[0], landing = eased ? eased.l : raw[1]
-  const back = CAM.back + 3.2 * move + 3.5 * landing, up = CAM.up + 2.1 * move + 2.4 * landing, aim = CAM.aim - 22 * move - 14 * landing
-  const eyeY = eyeOf(me), floor = Math.min(FLOOR_TOP, me.y - me.h - me.r)
-  const px = me.x, py0 = Math.max(me.y + me.h * 1.25, me.y - me.h - me.r + 1), pz = me.z, k = clamp((me.h + me.r) / 0.45, 0.5, 1)
-  const e = 1.6 * R, top = me.y + me.h + me.r, mask = RAY_GROUP | G_OBJ
-  let py = py0, ox = (-dx * back + Math.sin(yaw) * e) * k + Math.cos(yaw) * shoulder
-  let oy = Math.min((-dy * back + top + up - py) * k, R && pitch > 0 ? top - 0.3 - py : Infinity)
-  let oz = (-dz * back + Math.cos(yaw) * e) * k - Math.sin(yaw) * shoulder
-  const len0 = Math.hypot(ox, oy, oz) || 1
-  const blocked0 = camBlock(px, py, pz, ox / len0, oy / len0, oz / len0, len0, mask)
-  const baseY = Math.max(Math.min(me.y, py), top), rise = Math.max(3.8, py + oy + CAM.pad - baseY)
-  const roofHit = camBlock(px, baseY, pz, 0, 1, 0, rise + CAM.pad, mask)
-  const roofNow = roofHit < rise - 0.001 ? baseY + roofHit - CAM_ROOM.margin : Infinity
-  let ceiling = roofNow
-  if (follow && Math.hypot(me.vx || 0, me.vz || 0) > CAM_ROOM.moveMin) for (const h of CAM_ROOM.roofAhead) {
-    const sx = me.vx * h, sz = me.vz * h, sl = Math.hypot(sx, CAM_ROOM.roofRise, sz), rc = camBlock(px, baseY, pz, sx / sl, CAM_ROOM.roofRise / sl, sz / sl, sl + CAM.pad, mask)
-    if (rc < sl - 0.001) ceiling = Math.min(ceiling, baseY + rc * CAM_ROOM.roofRise / sl - CAM_ROOM.margin)
-  }
-  const low = clamp((top + 1.4 - ceiling) / 1.4, 0, 1), blocked = blocked0 < len0 - CAM.pad - 0.001
-  const tf = frameT || now(), fresh = !follow || !Number.isFinite(follow.at) || follow.id !== me.id || follow.warp !== (me.warp || 0) || tf - follow.at > 500 || tf < follow.at || Math.hypot(me.x - follow.x, me.y - follow.y, me.z - follow.z) > 5
-  const dt = fresh ? 0 : Math.min(0.1, (tf - follow.at) / 1000), blend = fresh ? 1 : -Math.expm1(-dt / CAM_ROOM.settle)
-  const confined = blocked || Number.isFinite(ceiling) || !!follow && (Math.abs(follow.pivot) > 0.001 || Math.abs(follow.side) > 0.001)
-  let side = 0, sign = fresh ? 1 : follow.sign, pivot = 0
-  if (confined) {
-    const wantPivot = Math.min(-0.3 * low, ceiling - CAM_ROOM.margin - py0)
-    pivot = fresh ? wantPivot : follow.pivot + (wantPivot - follow.pivot) * blend
-    py = Math.min(py0 + pivot, ceiling - CAM_ROOM.margin)
-    pivot = py - py0
-    oy = Math.min(oy - pivot, ceiling - py, (top + up - py) * (1 - low) + 0.28 * low - dy * back * k)
-    oy = Math.max(floor + 0.35 - py, oy)
-    const roomLen = Math.hypot(ox, oy, oz) || 1, roomClear = camBlock(px, py, pz, ox / roomLen, oy / roomLen, oz / roomLen, roomLen, mask)
-    const rx = Math.cos(yaw), rz = -Math.sin(yaw), reach = CAM_ROOM.side
-    const right = camBlock(px, py, pz, rx, 0, rz, reach + CAM.pad, mask)
-    const left = camBlock(px, py, pz, -rx, 0, -rz, reach + CAM.pad, mask)
-    if (fresh) sign = left > right + 0.2 ? -1 : 1
-    else if ((sign > 0 ? left - right : right - left) > 0.35) sign = -sign
-    const tight = Math.max(clamp((2.4 - roomClear) / 1.2, 0, 1), right < reach - 0.01 && left < reach - 0.01 ? 1 : 0)
-    const wantSide = sign * Math.min(CAM_ROOM.shoulder * tight, Math.max(0, (sign > 0 ? right : left) - 0.08))
-    side = fresh ? wantSide : follow.side + (wantSide - follow.side) * blend
-    side = clamp(side, -Math.max(0, left - 0.04), Math.max(0, right - 0.04))
-    const shoulderScale = Math.min(4, roomLen / Math.max(0.7, roomClear))
-    ox += rx * side * shoulderScale; oz += rz * side * shoulderScale
-  } else if (blocked0 < CAM.lift.from) {
-    const w = clamp((CAM.lift.from - blocked0) / (CAM.lift.from - CAM.lift.full), 0, 1), u = w * w * (3 - 2 * w), pull = 1 - CAM.lift.pull * u
-    ox *= pull; oz *= pull; oy += CAM.lift.up * u * k
-  }
-  if (confined) oy = Math.max(floor + 0.35 - py, oy)
+const CAM_EASE = 0.1
+const followCam = { at: NaN, t: NaN, x: NaN, z: NaN }
+function camRay(me, yaw, pitch, R = heldR(me), follow = null) {
+  const [dx, dy, dz] = aimDir(yaw, pitch), eyeY = eyeOf(me)
+  const px = me.x, py = Math.max(me.y + me.h * 1.25, me.y - me.h - me.r + 1), pz = me.z, k = clamp((me.h + me.r) / 0.45, 0.5, 1)
+  const e = 1.6 * R, top = me.y + me.h + me.r, floor = Math.min(FLOOR_TOP, me.y - me.h - me.r)
+  const ox = (-dx * CAM.back + Math.sin(yaw) * e) * k
+  const oy = Math.min((-dy * CAM.back + top + CAM.up - py) * k, R && pitch > 0 ? top - 0.3 - py : Infinity)
+  const oz = (-dz * CAM.back + Math.cos(yaw) * e) * k
   const len = Math.hypot(ox, oy, oz) || 1, ux = ox / len, uy = oy / len, uz = oz / len
-  const clear = camBlock(px, py, pz, ux, uy, uz, len, mask), hit = clear < len - CAM.pad - 0.001
-  const limit = Math.max(0, clear - (hit ? CAM_ROOM.margin : 0)), wanted = Math.max(0, limit - (hit ? 0.08 : 0))
-  const turn = fresh ? 0 : follow.rate
-  let look = Infinity
-  const swings = Math.abs(turn) > CAM_ROOM.aheadTurn ? CAM_ROOM.ahead.map(h => [clamp(turn * h, -CAM_ROOM.aheadMax, CAM_ROOM.aheadMax), 0]) : []
-  if (confined && !fresh) swings.push([-CAM_ROOM.probe, 0], [CAM_ROOM.probe, 0], [0, CAM_ROOM.probe])
-  for (const [sw, up] of swings) {
-    const ya = yaw + sw, [ax, ay, az] = aimDir(ya, pitch)
-    const lx = (-ax * back + Math.sin(ya) * e) * k, lz = (-az * back + Math.cos(ya) * e) * k, ll = Math.hypot(lx, oy + up, lz) || 1
-    const lc = camBlock(px, py, pz, lx / ll, (oy + up) / ll, lz / ll, ll, mask)
-    if (lc < ll - CAM.pad - 0.001) look = Math.min(look, Math.max(0, lc - CAM_ROOM.margin - 0.08))
-  }
-  const goal = Math.min(wanted, look)
-  let t = goal
-  if (follow && !fresh && (confined || follow.active || hit || look < Infinity)) {
-    const rate = goal < follow.distance ? CAM_ROOM.pull : CAM_ROOM.recover
-    t = follow.distance + (goal - follow.distance) * -Math.expm1(-dt / rate)
-    t = Math.min(limit, Math.max(follow.distance - CAM_ROOM.speed * dt, Math.min(t, follow.distance + CAM_ROOM.speed * dt)))
-    if (Math.abs(t - goal) < 0.001) t = goal
-  }
+  const limit = camBlock(px, py, pz, ux, uy, uz, len)
+  let t = limit
   if (follow) {
-    let w = yaw - follow.yaw
-    w -= Math.round(w / (2 * Math.PI)) * 2 * Math.PI
-    const inst = fresh || dt < 0.004 ? follow.rate : w / dt
-    Object.assign(follow, { at: tf, id: me.id, warp: me.warp || 0, x: me.x, y: me.y, z: me.z, distance: t, pivot, side, sign, active: confined || t < limit - 0.001 || look < Infinity, yaw, rate: fresh ? 0 : follow.rate + (inst - follow.rate) * 0.5 })
+    const tf = frameT || now(), fresh = !Number.isFinite(follow.at) || !Number.isFinite(follow.t) || tf < follow.at || Math.hypot(px - follow.x, pz - follow.z) > 5
+    if (!fresh && limit > follow.t) t = follow.t + (limit - follow.t) * -Math.expm1(-clamp((tf - follow.at) / 1000, 1 / 240, 0.1) / CAM_EASE)
+    if (!Number.isFinite(t)) t = limit
+    Object.assign(follow, { at: tf, t, x: px, z: pz })
   }
-  let cy = Math.max(floor + 0.35, py + uy * t)
-  if (follow && !fresh && confined && Number.isFinite(follow.cy)) cy = Math.min(Math.max(cy, follow.cy - CAM_ROOM.speed * dt), Math.max(cy, roofNow - CAM_ROOM.margin))
-  if (follow) follow.cy = cy
-  if (follow) { const free = !confined && !hit && !Number.isFinite(ceiling) && look === Infinity && t >= limit - 0.001, want = free ? camLift : 0, step = 1.5 * dt; follow.lift = fresh || !Number.isFinite(follow.lift) ? want : follow.lift + clamp(want - follow.lift, -step, step); cy += follow.lift } else cy += camLift
-  const x = px + ux * t, z = pz + uz * t
-  const target = [me.x + dx * aim, (confined ? Math.min(eyeY, py + 0.1) : eyeY) + dy * aim, me.z + dz * aim]
+  const x = px + ux * t, z = pz + uz * t, cy = Math.max(floor + 0.35, py + uy * t)
+  const target = [me.x + dx * CAM.aim, eyeY + dy * CAM.aim, me.z + dz * CAM.aim]
   const ax = target[0] - x, ay = target[1] - cy, az = target[2] - z, n = Math.hypot(ax, ay, az) || 1
   const fx = ax / n, fy = ay / n, fz = az / n
-  return { x, y: cy, z, dx: fx, dy: fy, dz: fz, t, aim: target, confined: confined || t < limit - 0.001, blocked: hit, ceiling, pivot: [px, py, pz], side, limit,
-           near: Math.max(0, (me.x - x) * fx + (eyeY - cy) * fy + (me.z - z) * fz) }
+  return { x, y: cy, z, dx: fx, dy: fy, dz: fz, t, aim: target, near: Math.max(0, (me.x - x) * fx + (eyeY - cy) * fy + (me.z - z) * fz) }
 }
 
-function camShakeClamp(cam, ray) {
-  if (!ray?.confined) return
-  const [x, y, z] = ray.pivot, dx = cam.position.x - x, dy = cam.position.y - y, dz = cam.position.z - z, len = Math.hypot(dx, dy, dz)
-  if (len < 0.001) return
-  const t = camBlock(x, y, z, dx / len, dy / len, dz / len, len + CAM.pad, RAY_GROUP | G_OBJ)
-  if (t < len) cam.position.set(x + dx / len * Math.max(0, t - CAM_ROOM.margin), y + dy / len * Math.max(0, t - CAM_ROOM.margin), z + dz / len * Math.max(0, t - CAM_ROOM.margin))
-}
-
-let camBall = null, camRoomBall = null, camCb = null
-function camBlock(px, py, pz, nx, ny, nz, len, mask = RAY_GROUP) {
+let camBall = null, camCb = null
+function camBlock(px, py, pz, nx, ny, nz, len) {
   if (!camCb) {
     camBall = new A.btSphereShape(CAM.pad); camCb = new A.ClosestConvexResultCallback(rayFrom, rayTo)
     camCb.set_m_collisionFilterGroup(RAY_CAST); camCb.set_m_collisionFilterMask(RAY_GROUP)
   }
-  camCb.set_m_collisionFilterMask(mask)
   const far = Math.max(0, len - CAM.pad)
   tmpTrans.setIdentity(); posVec.setValue(px, py, pz); tmpTrans.setOrigin(posVec)
   scratchTr.setIdentity(); posVec.setValue(px + nx * far, py + ny * far, pz + nz * far); scratchTr.setOrigin(posVec)
-  const ball = mask === RAY_GROUP ? camBall : camRoomBall ||= new A.btSphereShape(CAM_ROOM.radius)
-  let frac = 1
-  for (let i = 0; i < 4; i++) {
-    camCb.set_m_closestHitFraction(1)
-    world.convexSweepTest(ball, tmpTrans, scratchTr, camCb, 0)
-    frac = camCb.get_m_closestHitFraction()
-    if (frac >= 1) break
-    const body = camCb.get_m_hitCollisionObject(), bh = body.getBroadphaseHandle()
-    if (!(bh.get_m_collisionFilterGroup() & G_OBJ) || !camMoving(body)) break
-    camHide.push([bh, bh.get_m_collisionFilterGroup()]); bh.set_m_collisionFilterGroup(0)
-  }
-  while (camHide.length) { const [bh, g] = camHide.pop(); bh.set_m_collisionFilterGroup(g) }
-  return far * frac
-}
-const camHide = []
-function camMoving(obj) {
-  const v = A.castObject(obj, A.btRigidBody).getLinearVelocity(), p = A.getPointer(obj)
-  return Math.hypot(v.x(), v.y(), v.z()) > CAM_ROOM.moving || objs.some(o => o.V && o.body && A.getPointer(o.body) === p)
+  camCb.set_m_closestHitFraction(1)
+  world.convexSweepTest(camBall, tmpTrans, scratchTr, camCb, 0)
+  return far * camCb.get_m_closestHitFraction()
 }
 
 const chase = { yaw: NaN, yaw0: NaN, t: 0, look: 0, inYaw: NaN, inPitch: NaN, idle: 0, x: NaN, z: NaN, v: 0, vb: 0, vFilt: 0, vF2: 0, lag: 0, camB: NaN, camBV: 0, camT: NaN }
@@ -14895,31 +14768,8 @@ function sprintKick(me, first) {
   return sprintCam.k * (first ? SPRINT_FOV.first : SPRINT_FOV.third)
 }
 const camHold = { r: 0, from: 0, to: 0, at: 0 }
-const CAM_FOE = { range: 6, ramp: 2.5, side: 2, lift: 0.6, flip: 0.5, in: 0.18, out: 0.3, speed: 5 }
 let heldF = 1
-function foeShoulder(me, yaw, foes) {
-  const f = followCam, t = now(), dt = Number.isFinite(f.foeAt) ? Math.min(0.1, Math.max(0, (t - f.foeAt) / 1000)) : 0
-  f.foeAt = t
-  let want = 0, lat = 0
-  const rx = Math.cos(yaw), rz = -Math.sin(yaw), fx = -Math.sin(yaw), fz = -Math.cos(yaw)
-  let best = CAM_FOE.range
-  if (foes && !(me.dead > 0)) for (const o of foes) {
-    if (!o || o.dead > 0 || o.id === me.id) continue
-    const dx = o.x - me.x, dz = o.z - me.z, d = Math.hypot(dx, dz)
-    if (d >= best || dx * fx + dz * fz < -0.3) continue
-    best = d; lat = dx * rx + dz * rz
-  }
-  if (best < CAM_FOE.range) {
-    if (Math.abs(lat) > CAM_FOE.flip || !f.foeSign) f.foeSign = lat < 0 ? -1 : 1
-    want = f.foeSign * CAM_FOE.side * clamp((CAM_FOE.range - best) / CAM_FOE.ramp, 0, 1)
-  }
-  const rate = want === 0 ? CAM_FOE.out : CAM_FOE.in
-  const step = (want - (f.foe || 0)) * -Math.expm1(-dt / rate)
-  f.foe = (f.foe || 0) + clamp(step, -CAM_FOE.speed * dt, CAM_FOE.speed * dt)
-  if (Math.abs(f.foe) < 0.002) f.foe = 0
-  return f.foe
-}
-function updateCamera(me, inp, cam, firstPerson, foes) {
+function updateCamera(me, inp, cam, firstPerson) {
   const seat = !(me.dead > 0) && seatOf(me)
   if (seat) { followCam.at = NaN; return vehicleCamera(seat[0], me, inp, cam, firstPerson) }
   const rd = !(me.dead > 0) && rideOf(me)
@@ -14936,18 +14786,9 @@ function updateCamera(me, inp, cam, firstPerson, foes) {
   const R = heldR(me), e = camHold
   if (R !== e.to) Object.assign(e, { from: e.r, to: R, at: now() })
   e.r = e.from + (e.to - e.from) * Math.min(1, (now() - e.at) / 150)
-  const slide = foeShoulder(me, inp.yaw, foes), part = Math.abs(slide) / CAM_FOE.side
-  const r = camRay(me, inp.yaw, inp.pitch, e.r, leapCamEase(me), followCam, slide, CAM_FOE.lift * part)
-  const tf = frameT || now(), E = trainCamEase, dt = Number.isFinite(E.at) ? clamp((tf - E.at) / 1000, 0, 0.1) : 0
-  if ((r.train || 0) !== E.on && Number.isFinite(E.at)) E.blend = 1
-  E.on = r.train || 0; E.at = tf; E.blend = Math.max(0, E.blend - dt / TRAIN_CAM.ease)
-  const k = E.blend > 0 && E.p ? 1 - Math.exp(-dt / 0.06) : 1, p = E.p ||= [r.x, r.y, r.z]
-  p[0] += (r.x - p[0]) * k; p[1] += (r.y - p[1]) * k; p[2] += (r.z - p[2]) * k
-  if (r.train) { const f = Math.min(FOV_MAX, wantFov + TRAIN_CAM.fov); if (cam.fov !== f) { cam.fov = f; cam.updateProjectionMatrix?.() } }
-  cam.position.set(...p)
-  cam.lookAt(...r.aim)
-  const fade = THREE.MathUtils.smoothstep(r.t, ...(r.train || me.carryOn || me.winIn ? CAM_RIDE : r.confined ? CAM_ROOM.fade : CAM.bodyFade))
-  return { dist: r.t, hideSelf: false, fade, ray: r }
+  const r = camRay(me, inp.yaw, inp.pitch, e.r, followCam)
+  if ([r.x, r.y, r.z, ...r.aim].every(Number.isFinite)) { cam.position.set(r.x, r.y, r.z); cam.lookAt(...r.aim) } else followCam.at = NaN
+  return { dist: r.t, hideSelf: false, fade: THREE.MathUtils.smoothstep(r.t, ...CAM.bodyFade), ray: r }
 }
 
 function reticleAt(me, r, bodies, objects, reach) {
@@ -43746,13 +43587,12 @@ function draw(dt, t) {
   drawSafe('audio', () => { GAME.audio.frame(me, others, t, obl); GAME.audio.radio() })
 
   background.sec('audio')
-  const cam = drawSafe('camera', () => updateCamera(meD, input, camera, firstPerson, others)) || { dist: 0, hideSelf: false, fade: 1 }
+  const cam = drawSafe('camera', () => updateCamera(meD, input, camera, firstPerson)) || { dist: 0, hideSelf: false, fade: 1 }
   drawSafe('radar', () => GAME.view.radar(meD, others, t))
   const held = cam.ray && obl.find(o => !o.K.carry && (o.heldBy ?? objHeld.get(o.id)) === myId)
   heldF += ((held ? heldFade(cam.ray, me, held) : 1) - heldF) * timeShare(dt, TICK / 0.15)
   for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP))
   shake(camera, t)
-  camShakeClamp(camera, cam.ray)
   followSun()
   background.sec('camera')
   weatherFrame(dt)
@@ -43774,12 +43614,12 @@ function draw(dt, t) {
     const d = reticleAt(me, view, bodies, obl, CAM.far)
     if (cam.ray) input.d = d
     shotSkip = null
-    input.view = { at: [meD.x, meD.y, meD.z], d, cam: !!cam.ray, moved: meD !== me, P: (cam.seatRay || cam.ray?.confined) && [view.x + view.dx * d, view.y + view.dy * d, view.z + view.dz * d] }
+    input.view = { at: [meD.x, meD.y, meD.z], d, cam: !!cam.ray, moved: meD !== me, P: cam.seatRay && [view.x + view.dx * d, view.y + view.dy * d, view.z + view.dz * d] }
   }
   background.sec('aim')
   moveCameraFade(me, cam)
   meMesh.visible = meMesh.visible && !cam.hideSelf && cam.fade > 0.001
-  ghost(meMesh, me.prot || 0, cam.fade, !cam.ray?.confined)
+  ghost(meMesh, me.prot || 0, cam.fade, true)
   drawAura(myId, animOf(me), dt)
   drawEffect(myId, me.markT > 0 ? me.mark : 0)
   drawStruck(myId, t)
