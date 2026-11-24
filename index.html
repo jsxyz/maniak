@@ -39764,7 +39764,7 @@ const DS_LOOSE_MAX = 48
 const dsLooseFull = () => objs.reduce((n, o) => n + (o.K.prop ? 1 : 0), 0) >= DS_LOOSE_MAX
 function dsPropsReach(c, kind, reach) {
   const F = faustState, out = [], row = OBJECTS.find(K => K.prop === kind)
-  if (!F || !LV.faust || !row || !dsCheck() || Math.abs(c.y - c.h - c.r) > 1.4 || !(row.mass <= liftOf(c)) || dsLooseFull()) return out
+  if (!F || !LV.faust || !row || !dsCheck() || Math.abs(c.y - c.h - c.r) > 1.4 || !(row.mass <= liftOf(c))) return out
   for (const p of dsPropsNearPt(c.x, c.z, reach + 1 + Math.max(row.half[0], row.half[2]), 3)) {
     if (p.s.f.k !== kind) continue
     const gap = p.d - c.r - Math.max(p.s.boxes[0]?.ex || 0.2, p.s.boxes[0]?.ez || 0.2)
@@ -39774,6 +39774,10 @@ function dsPropsReach(c, kind, reach) {
     if (p.s.f.k !== kind) continue
     const gap = p.d - c.r - Math.max(p.s.boxes[0]?.ex || 0.2, p.s.boxes[0]?.ez || 0.2)
     if (gap <= reach) out.push({ ref: { feat: 1, key: p.key, i: p.i, x: p.x, z: p.z, q: p.s.f.q }, at: [p.x, p.s.top / 2, p.z], gap, R: 0.4, mass: row.mass })
+  }
+  if (out.length && dsLooseFull()) {
+    if (!(now() - (c.looseMsg || 0) < 3000)) { c.looseMsg = now(); try { tell(c.id, '§7Too many loose objects nearby', 'a') } catch (e) {} }
+    return []
   }
   return out
 }
