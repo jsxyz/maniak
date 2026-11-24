@@ -36625,12 +36625,14 @@ function slStruck(c, h, G, ux, uy, uz) {
 const slRoadFuture = SL_POSE()
 function slRoadList(warm = false) {
   const st = slState, T = slNow(), key = warm ? 'roadWarm' : 'road'
-  if (st[key] && Math.abs(T - st[key].T) < 50) return st[key].list
+  if (st[key] && Math.abs(T - st[key].T) < 100) return st[key].list
   const list = [], seen = new Set(), back = STREET.backS * 1000
+  const live = st.panics.filter(q => q.t <= T && T - q.t < back)
   const quiet = ag => { if (ag.cr || ag.kind === SL_K.cyclist || st.byId.has(ag.id)) return false
-    for (const q of st.panics) if (q.t <= T && T - q.t < back && ag.pan?.get(q.key) !== false) return false
+    for (const q of live) if (ag.pan?.get(q.key) !== false) return false
     return true }
-  for (const c of players.values()) slAround(c.x, c.z, 160, T, (ag, p) => {
+  const humans = [...players.values()].filter(c => !c.bot)
+  for (const c of players.values()) if (!c.bot || !humans.some(h => Math.abs(h.x - c.x) < 160 && Math.abs(h.z - c.z) < 160)) slAround(c.x, c.z, 160, T, (ag, p) => {
     if (!(p.mode === 2 || ag.kind === SL_K.cyclist || p.rec) || p.hidden || seen.has(ag.id)) return
     seen.add(ag.id)
     let ahead
@@ -36641,7 +36643,7 @@ function slRoadList(warm = false) {
     list.push({ id: ag.id, x: p.x, y: p.y, z: p.z, ahead, radius: ag.kind === SL_K.cyclist ? (ag.route ? 0.45 : 0.9) : ag.kind === SL_K.pram ? 0.8 : 0.45,
      
       vx: Math.sin(p.yaw) * p.v, vz: Math.cos(p.yaw) * p.v, kind: ag.kind === SL_K.cyclist ? 'cyclist' : ag.kind === SL_K.pram ? 'pram' : ag.kind === SL_K.stray ? 'dog' : 'ped' })
-  }, quiet, warm)
+  }, ag => seen.has(ag.id) || quiet(ag), warm)
   st[key] = { T, list }
   return list
 }
