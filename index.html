@@ -34895,6 +34895,11 @@ const HAUNT_CREWS = {
   suburb: [['blue', 'freak_throw'], ['freak', 'brute_rush']],
   shanty: [['freak', 'freak', 'freak_throw', 'brute_rush'], ['blue', 'freak', 'freak_throw', 'freak']],
   fields: [['brute_rush', 'freak_throw', 'freak'], ['freak', 'freak', 'brute_guard']],
+  works: [['brute_guard', 'thug_rush', 'thug_guard'], ['brute_rush', 'thug_guard', 'thug'], ['thug_rush', 'brute_rush', 'thug_throw']],
+  foundry: [['brute_rush', 'brute_guard', 'thug'], ['thug_guard', 'brute_rush', 'thug_rush'], ['brute_guard', 'thug_rush', 'thug_throw']],
+  scrapyard: [['thug_rush', 'thug_throw', 'freak_throw'], ['freak_throw', 'thug_rush', 'freak'], ['thug_throw', 'brute_rush', 'freak_throw']],
+  railyard: [['thug_guard', 'thug', 'shooter'], ['shooter', 'thug_guard', 'thug_throw'], ['thug_guard', 'thug_guard', 'shooter']],
+  marshalling: [['thug_guard', 'shooter', 'thug'], ['shooter', 'thug_guard', 'freak'], ['thug_guard', 'thug', 'shooter', 'thug_throw']],
 }
 const hauntCrews = new Map(), hauntNext = new Map(), hauntLog = []
 let hauntAcc = 0, hauntSerial = 0, hauntHw = null
@@ -34919,6 +34924,11 @@ function hauntStation(x, z) {
   if (hauntRail?.F !== F) { let st = []; try { st = (GAME.monorail.plan(F.seed, F.S)?.stations || []).flatMap(t => t.pavilions.map(q => [q.x, q.z])) } catch (e) {} hauntRail = { F, st } }
   return hauntRail.st.some(([px, pz]) => Math.hypot(px - x, pz - z) < 22)
 }
+const HAUNT_INDUSTRY = { river: 'works', north: 'foundry', scrap: 'scrapyard', yard: 'railyard', marsh: 'marshalling' }
+function hauntIndustry(x, z) {
+  const F = faustState, k = F ? faustIndustryAt(F.seed, Math.floor(x / 96), Math.floor(z / 96)) : -1
+  return k < 0 ? null : HAUNT_INDUSTRY[faustIndustry(F.seed).shapes[k]?.id] || 'yards'
+}
 function hauntWater(x, z) {
   for (const B of GAME.faustland.water?.bodies || []) for (const d of B.docks || []) if (Math.hypot(d.x - x, d.z - z) < 40) return true
   for (const [dx, dz] of [[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12]]) { const W = waterOf(x + dx, z + dz); if (W && W.y - W.floor > 1) return true }
@@ -34927,6 +34937,8 @@ function hauntWater(x, z) {
 function hauntEnv(p) {
   const F = faustState, foot = p.y - p.h - p.r, at = inAt(p.x, foot, p.z)
   if (at) { if (at.k === -1) return at.B.stop ? 'zeppelin' : 'roof'; if (at.inside) return at.B.venue === 'club' ? 'club' : at.B.venue ? 'store' : 'interior' }
+  const ind = hauntIndustry(p.x, p.z)
+  if (ind && !hauntStation(p.x, p.z)) return ind
   if (hauntWater(p.x, p.z)) return 'water'
   if (hauntStation(p.x, p.z)) return 'monorail'
   if (hauntHighway(p.x, foot, p.z)) return 'highway'
