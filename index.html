@@ -9469,10 +9469,10 @@ function faustDecoCathedral(g, lot) {
 }
 let rawRender = null, geoWarmScene = null, geoWarmMat = null, geoWarmCam = null, geoWarmTarget = null
 const GEO_WARM = { on: true, meshes: 0, ms: 0 }
-function* geometryWarm(root) {
+function* geometryWarm(root, only = null) {
   if (!GEO_WARM.on || renderHeadless || !renderer || !rawRender || graphics.state === 'lost') return
   geoWarmScene ||= new THREE.Scene(); geoWarmMat ||= new THREE.MeshBasicMaterial(); geoWarmCam ||= new THREE.PerspectiveCamera(); geoWarmTarget ||= new THREE.WebGLRenderTarget(1, 1)
-  const meshes = []; root.traverse(o => { if (o.isMesh && !o.isInstancedMesh && o.geometry?.attributes.position) meshes.push(o) })
+  const meshes = only || []; if (!only) root.traverse(o => { if (o.isMesh && !o.isInstancedMesh && o.geometry?.attributes.position) meshes.push(o) })
   for (const o of meshes) {
     const bytes = geometryBytes({ traverse: fn => fn(o) })
     for (let t = 0; t < 30 && !background.uploadSlot(bytes); t++) yield 'frame'
@@ -10143,7 +10143,7 @@ function* faustVisualSteps(c) {
   for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
     const mesh = new THREE.Mesh(data.geometry(), mat); mesh.castShadow = data === facade; mesh.receiveShadow = true; root.add(mesh)
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }
-    else { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry) }
+    else { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry); if (activeLook === 'realistic') realBoxes(mesh.geometry) }
   }
   for (const feat of faustFeatMesh(P)) { if (feat.userData.feat) dsFeatsLook(c, feat.geometry); root.add(feat) }
   if (cones.p.length) root.add(faustCivicGlowMesh(cones))
@@ -20815,6 +20815,18 @@ function* lookWatchSteps() {
     yield* warmSceneSteps(activeLook || 'plain')
   }
 }
+function* realBoxesWarm(root) {
+  const M = faustState?.materials
+  if (!M || !GEO_WARM.on) return
+  for (const o of yield* sceneNodes(root)) {
+    const m = o.material, g = o.geometry, pos = g?.attributes.position
+    if (!o.isMesh || o.isInstancedMesh || !pos || !m || Array.isArray(m)) continue
+    if (m !== M.facade && m !== M.stone && m.userData.faustSurface !== 'world') continue
+    if (g.userData.realBoxes === pos && g.userData.realBoxesVersion === pos.version) continue
+    realBoxes(g)
+    yield* geometryWarm(root, [o])
+  }
+}
 function* warmSceneSteps(name, roots = null) {
   if (renderHeadless || !renderer || !camera || !scene.fog) return
   const all = roots || [scene, faustState?.skyScene, fxWarmed, interiorWarmProbe(), rigWarmProbe()].filter(Boolean), R = realState
@@ -20822,6 +20834,7 @@ function* warmSceneSteps(name, roots = null) {
   for (const root of all) {
     const part = 'warm ' + name + ' ' + (root === scene ? 'scene' : root === faustState?.skyScene ? 'sky' : root.name || 'part')
     background.mark(part + ' upload')
+    if (name === 'realistic' && R?.env) yield* realBoxesWarm(root)
     inkPrepare(root)
     yield* uploadTextures(root)
     background.mark(part + ' compile')
