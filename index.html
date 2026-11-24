@@ -9467,6 +9467,26 @@ function faustDecoCathedral(g, lot) {
   g.box(faustBox(x, tip + 1.2, z, 0.1, 1.2, 0.1), D.steel); g.box(faustBox(x, tip + 1.7, z, 0.6, 0.08, 0.08), D.steel)
   g.box(faustBox(x, tip + 2.6, z, 0.2, 0.3, 0.2), D.brass, 0.9)
 }
+let rawRender = null, geoWarmScene = null, geoWarmMat = null, geoWarmCam = null, geoWarmTarget = null
+const GEO_WARM = { on: true, meshes: 0, ms: 0 }
+function* geometryWarm(root) {
+  if (!GEO_WARM.on || renderHeadless || !renderer || !rawRender || graphics.state === 'lost') return
+  geoWarmScene ||= new THREE.Scene(); geoWarmMat ||= new THREE.MeshBasicMaterial(); geoWarmCam ||= new THREE.PerspectiveCamera(); geoWarmTarget ||= new THREE.WebGLRenderTarget(1, 1)
+  const meshes = []; root.traverse(o => { if (o.isMesh && !o.isInstancedMesh && o.geometry?.attributes.position) meshes.push(o) })
+  for (const o of meshes) {
+    const bytes = geometryBytes({ traverse: fn => fn(o) })
+    for (let t = 0; t < 30 && !background.uploadSlot(bytes); t++) yield 'frame'
+    const t0 = realNow(), out = renderer.getRenderTarget(), reset = renderer.info.autoReset, r = renderer.info.render, keep = { calls: r.calls, triangles: r.triangles, points: r.points, lines: r.lines }
+    const proxy = new THREE.Mesh(o.geometry, geoWarmMat); proxy.frustumCulled = false
+    geoWarmScene.add(proxy)
+    renderer.info.autoReset = false; renderer.setRenderTarget(geoWarmTarget)
+    try { rawRender(geoWarmScene, geoWarmCam) } finally {
+      geoWarmScene.remove(proxy); renderer.setRenderTarget(out); renderer.info.autoReset = reset; Object.assign(r, keep)
+    }
+    GEO_WARM.meshes++; GEO_WARM.ms += realNow() - t0
+    yield
+  }
+}
 function geometryBytes(root) {
   const seen = new Set(); let n = 0
   root.traverse(o => { const g = o.geometry; if (!g || seen.has(g)) return; seen.add(g)
@@ -10131,7 +10151,7 @@ function* faustVisualSteps(c) {
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
     pool.rotation.x = -Math.PI / 2; pool.position.set(X + 8.6, 0.065, Z + q); root.add(pool)
   }
-  { const bytes = geometryBytes(root); while (!background.uploadSlot(bytes)) yield 'frame' }
+  if (GEO_WARM.on && !renderHeadless && rawRender) yield* geometryWarm(root); else { const bytes = geometryBytes(root); while (!background.uploadSlot(bytes)) yield 'frame' }
   background.gpu('cell')
   if (teles.length) { root.userData.screens = teles; root.add(screenMeshes(teles)) }
   root.userData.cell = [c.ci, c.cj]; c.visual = root; worldGroup.add(root); placed = true; still(root)
@@ -12616,27 +12636,39 @@ const background = (() => {
   }
 })()
 GAME.background = background
+GAME.geoWarm = window.__geoWarm = GEO_WARM
 let worldPreparing = false, startingGame = false, worldPreparation = Promise.resolve(true), loadingScene = null
 const landingBusy = () => worldPreparing && phase === 'menu'
 function loadingText(text) {
   document.body.dataset.loading = text
   const label = el('#loading-message'); if (label) label.textContent = text
 }
+function* sceneNodes(root) {
+  const out = [], stack = root ? [root] : []
+  let t0 = realNow(), n = 0
+  while (stack.length) {
+    const o = stack.pop(); out.push(o)
+    for (let i = o.children.length; i--;) stack.push(o.children[i])
+    if (++n % 256 === 0 && realNow() - t0 > 1.5) { yield; t0 = realNow() }
+  }
+  return out
+}
 function* uploadTextures(root) {
-  const seen = new Set(), textures = []
-  root?.traverse(o => {
-    for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m) {
+  const seen = new Set(), textures = [], mats = new Set()
+  for (const o of yield* sceneNodes(root)) {
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m && !mats.has(m)) {
+      mats.add(m)
       for (const v of [...Object.values(m), ...Object.values(m.uniforms || {}).map(u => u.value)])
         if (v?.isTexture && !v.isRenderTargetTexture && !seen.has(v)) { seen.add(v); textures.push(v) }
     }
-  })
+  }
   for (const texture of textures) if (!renderer.properties.get(texture).__webglInit) { renderer.initTexture(texture); yield }
 }
 const sceneLights = target => { const lights = []; target.traverseVisible(o => { if (o.isLight) lights.push(o) }); return lights }
 const warmedPrograms = new Set()
 function* compileObjects(root, cam = camera, target = scene, setup = null, lit = null) {
   if (!root || renderHeadless) return
-  const objects = []; root.traverse(o => { if (o.material) objects.push(o) })
+  const objects = (yield* sceneNodes(root)).filter(o => o.material)
   const seen = new Set(), epoch = graphics.lost
   const lights = lit || sceneLights(target)
   const ownWalk = Object.hasOwn(target, 'traverseVisible'), walk = target.traverseVisible
@@ -20799,15 +20831,19 @@ function* warmSceneSteps(name, roots = null) {
       yield* compileObjects(root, cam, targetScene, warmSetup(name, inkPost?.separateNormals ? inkPost.normalTarget : (inkWarmTarget ||= new THREE.WebGLRenderTarget(1, 1, { depthBuffer: true })), R, true))
     if (renderer.shadowMap.enabled) {
       background.mark(part + ' shadows')
-      const shadows = []; root.traverse(o => { if (o.isMesh && o.castShadow) shadows.push(o) })
+      const shadows = (yield* sceneNodes(root)).filter(o => o.isMesh && o.castShadow)
       const depth = warmDepth ||= new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.BackSide })
       const seen = new Set(), lights = sceneLights(scene)
       let t0 = realNow()
       const shadowTarget = sunLight?.shadow?.map || (warmShadowTarget ||= new THREE.WebGLRenderTarget(1, 1))
+      const variants = []
       for (const o of shadows) {
         const m = Array.isArray(o.material) ? o.material[0] : o.material
         if (!m) continue
         const mat = o.customDepthMaterial || depth, side = m.shadowSide ?? DEPTH_SIDE[m.side]
+        for (const s of mat.userData.periodDepth ? new Set([side, THREE.FrontSide, THREE.BackSide, THREE.DoubleSide]) : [side]) variants.push([o, m, mat, s])
+      }
+      for (const [o, m, mat, side] of variants) {
         const key = [mat.uuid, o.type, side, !!m.map, !!m.alphaMap, m.alphaTest > 0, !!(m.displacementMap && m.displacementScale !== 0)].join('/')
         if (seen.has(key)) continue
         seen.add(key)
@@ -22565,7 +22601,7 @@ function buildWorld() {
   objGroup = new THREE.Group(); scene.add(objGroup)
   skipStill(worldGroup); skipStill(objGroup)
   scene.onBeforeRender = (r, s, cam) => { cullView(cam); inkPrepare(s) }
-  const render = renderer.render.bind(renderer)
+  const render = rawRender = renderer.render.bind(renderer)
   for (const k of ['intersectsObject', 'intersectsSprite']) { const f = THREE.Frustum.prototype[k]; THREE.Frustum.prototype[k] = function (o) { gpuView.who = o; return f.call(this, o) } }
   if (renderer.renderBufferDirect) { const rbd = renderer.renderBufferDirect; renderer.renderBufferDirect = function (c, s, g, m, o, gr) { gpuView.who = o; return rbd.call(this, c, s, g, m, o, gr) } }
   renderer.render = (s, cam) => {
