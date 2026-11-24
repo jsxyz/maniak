@@ -1443,7 +1443,7 @@ const MODELS = {
     pace: { walk: 0.62, run: 2.265, sprint: 5.867, crouch: 0.41 },
     gaits: { runAt: 1.35, sprintAt: 3.016, band: 0.06, rates: { walk: [0.55, 2.2], run: [0.55, 1.45], sprint: [0.48, 1.6] } }, plants: [0, 0.5],
     gaitSets: MANIAK_GAITS, gaitSet: MANIAK_GAITS.first, gaitPick: 'first',
-    gaitFeel: { lean: 0.012, fwd: 0.21, back: -0.16, sit: 0.035, bank: 0.45, bankMax: 0.26, ease: 0.12, accT: 0.1, turnT: 0.08, head: 0.5, free: 0.08, reach: 0.6, settle: 0.22, lift: 0.09, land: 0.6, stepGw: 0.5, overlap: 0.95, dropMax: 0.05, dropT: 0.06 },
+    gaitFeel: { lean: 0.012, fwd: 0.21, back: -0.16, sit: 0.035, bank: 0.45, bankMax: 0.26, ease: 0.12, accT: 0.1, turnT: 0.08, head: 0.5, free: 0.08, reach: 0.6, settle: 0.18, lift: 0.09, land: 0.6, stepGw: 0.5, overlap: 0.95, dropMax: 0.05, dropT: 0.06 },
     punches: { jab: [['maniak_jab', 0, 1], ['maniak_cross', 0, 1], ['maniak_hook', 0, 1]], rise: [['maniak_haymaker', 0.434, 1]], slam: [['smash_land', 0]] },
     strikes: /^maniak_(jab|cross|hook|haymaker)$/, hay: { clip: 'maniak_haymaker', rate: 1, free: 0.76 },
     strikeAt: { maniak_jab: 0.075, maniak_cross: 0.09, maniak_hook: 0.1, maniak_haymaker: 0.434 },
@@ -23637,7 +23637,7 @@ function rigGaitBlend(a, R, M, v, step, dt) {
   if (on || !w.some(x => x > 0)) { w.fill(0); w[i] = 1 - u; if (n > 1) w[i + 1] += u }
   let Vb = 0, Db = 0
   for (let j = 0; j < n; j++) { Vb += w[j] * sp[j]; Db += w[j] * R.gaitAct[j].getClip().duration }
-  const k = Math.max(on ? 0 : 0.35, v / Vb), was = R.gph ?? 0
+  const k = on ? v / Vb : 0, was = R.gph ?? 0
   R.gaitRate = k / Db; R.gph = (was + step * R.gaitRate) % 1
   for (let j = 0; j < n; j++) { const x = R.gaitAct[j], d = x.getClip().duration; x.time = (R.gph + G[j].ph) % 1 * d; x.setEffectiveWeight(w[j] * R.gw) }
   const sprintV = (M.gaits?.sprintAt ?? sp[n - 1] / H / 2) * H
@@ -23704,7 +23704,8 @@ function rigGait(a, R, M, dt, air) {
   if (S.drop > 1e-4) { R.inst.position.y -= S.drop; R.inst.updateMatrixWorld(true) }
   let stepping = false
   const gap = {}
-  for (const s of ['l', 'r']) { const b = R.bones.get('ball_' + s), f = L[s]; gap[s] = 0; if (b && f.stand && f.u < 0) { b.getWorldPosition(sh); gap[s] = Math.hypot(f.p.x - sh.x, f.p.z - sh.z) } }
+  const low = {}
+  for (const s of ['l', 'r']) { const b = R.bones.get('ball_' + s), f = L[s]; gap[s] = 0; if (!b) continue; b.getWorldPosition(sh); low[s] = sh.y < floor + 0.045; if (f.stand && f.u < 0) gap[s] = Math.hypot(f.p.x - sh.x, f.p.z - sh.z) }
   for (const s of ['l', 'r']) {
     const f = L[s], th = R.bones.get('thigh_' + s), ca = R.bones.get('calf_' + s), fo = R.bones.get('foot_' + s), bb = R.bones.get('ball_' + s)
     if (!th || !ca || !fo || !bb) continue
@@ -23719,7 +23720,7 @@ function rigGait(a, R, M, dt, air) {
     if (!stand) f.stand = false
     if (f.stand) {
       const o = s === 'l' ? 'r' : 'l'
-      if (f.u < 0 && !(R.gw > F.stepGw) && L[o].stand && !(L[o].stepping && L[o].u < F.overlap) && gap[s] + 0.02 >= gap[o] && Math.hypot(f.p.x - ball.x, f.p.z - ball.z) > 0.04) { f.u = 0; f.from = (f.from || new THREE.Vector3()).copy(f.p) }
+      if (f.u < 0 && !(R.gw > F.stepGw) && L[o].stand && low[o] && !(L[o].stepping && L[o].u < F.overlap) && gap[s] + 0.02 >= gap[o] && Math.hypot(f.p.x - ball.x, f.p.z - ball.z) > 0.04) { f.u = 0; f.from = (f.from || new THREE.Vector3()).copy(f.p) }
       if (f.u >= 0) { f.u += dt / F.settle; const e = THREE.MathUtils.smoothstep(Math.min(1, f.u), 0, 1)
         if (f.u < F.land || !f.to) { const o = a.mesh.position, turn = clamp(S.om * Math.max(0, 1 - f.u) * F.settle, -1.2, 1.2), cs = Math.cos(turn), sn = Math.sin(turn), dx = ball.x - o.x, dz = ball.z - o.z
           f.to = (f.to || new THREE.Vector3()).set(o.x + dx * cs + dz * sn, ball.y, o.z - dx * sn + dz * cs) }
