@@ -27666,6 +27666,26 @@ function periodSurfaceMatch(low, high) {
   for (const [g] of parts) g.dispose()
   return matched
 }
+function carWarmProbe() {
+  const F = periodFleet, grp = new THREE.Group(), seen = new Set(), depth = new PeriodCarDepthMaterial()
+  grp.name = 'car probe'
+  depth.userData.periodDepth = true; depth.userData.periodFade = { value: [0, 1] }
+  const add = P => {
+    try {
+      const look = periodModel(P, false).clone()
+      ownMaterials(look)
+      look.traverse(c => { if (c.isMesh) { c.castShadow = c.receiveShadow = true; c.customDepthMaterial = depth; c.visible = true } })
+      grp.add(look)
+    } catch (e) { failN[24]++ }
+  }
+  for (const V of VEHICLES) for (const v of VEHICLE_STYLES[V.name] || []) for (const taxi of v.taxi ? [false, true] : [false]) {
+    const style = taxi ? 'taxi' : v.style, paint = (taxi ? v.taxiPaints : v.paints)[0]
+    if (!paint || seen.has(style) || !F.geo[style + '_lod0']) continue
+    seen.add(style); add({ key: style + ':' + paint.join(','), style, paint, wheels: v.wheels, shape: V.name })
+  }
+  for (const style of new Set(Object.values(PERIOD.wreck))) if (F.geo[style + '_wreck']) add({ key: 'wreck:' + style, style, wreck: true })
+  return grp
+}
 function periodSetup(gltf) {
   const F = periodFleet, geo = {}
   let base = null
@@ -27714,7 +27734,7 @@ function periodSetup(gltf) {
   if (typeof objGroup !== 'undefined' && objGroup) for (const m of Object.values(F.wheels)) if (m.parent !== objGroup) objGroup.add(m)
   if (renderer?.compileAsync && scene) {
     const probe = new THREE.Group(), body = new THREE.Mesh(geo.sedan_lod2, base); body.castShadow = body.receiveShadow = true; periodDepth(body); probe.add(body)
-    background.run('period warm', function* () { yield* warmSceneSteps(activeLook || 'plain', [probe, ...Object.values(F.wheels)]) }, { gpu: true })
+    background.run('period warm', function* () { yield* warmSceneSteps(activeLook || 'plain', [probe, ...Object.values(F.wheels), carWarmProbe()]) }, { gpu: true })
       .catch(e => frameFailed('vehicle preparation', e))
   }
 }
