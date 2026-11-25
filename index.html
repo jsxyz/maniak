@@ -11112,6 +11112,12 @@ function inAt(x, y, z) {
   return null
 }
 const inPlate = (B, k, x, z) => { const P = B.storeys[k].plate; return x > P.x0 - 0.05 && x < P.x1 + 0.05 && z > P.z0 - 0.05 && z < P.z1 + 0.05 }
+function inNearBack(l, x, z, r) {
+  const r2 = r * r, b = l.backDoors
+  if (b) for (let i = 0; i < b.length; i++) { const q = b[i]; if ((q.x - x) * (q.x - x) + (q.z - z) * (q.z - z) < r2) return true }
+  const k = l.club?.back
+  return !!k && (k[0] - x) * (k[0] - x) + (k[1] - z) * (k[1] - z) < r2
+}
 function inDoorsNear(x, z, r) {
   const out = [], F = faustState
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
@@ -11119,7 +11125,7 @@ function inDoorsNear(x, z, r) {
     if (!c || ci < 0 || cj < 0 || ci >= LV.grow.S || cj >= LV.grow.S) continue
     c.plan.lots.forEach((l, li) => {
       const dx = (l.district === 'industrial' ? l.x - 0.6 * l.w : l.x) - x, dz = l.z + l.d - z
-      const nearBack = (l.backDoors || []).concat(l.club?.back ? [{ x: l.club.back[0], z: l.club.back[1] }] : []).some(q => (q.x - x) * (q.x - x) + (q.z - z) * (q.z - z) < r * r)
+      const nearBack = inNearBack(l, x, z, r)
       if ((dx * dx + dz * dz < r * r || nearBack) && (faustIn.open.has(ci + ' ' + cj + ' ' + li) || !c.physics || inCanOpen(c, inBuilding(ci + ' ' + cj + ' ' + li)))) out.push(ci + ' ' + cj + ' ' + li)
     })
   }
@@ -16366,7 +16372,7 @@ const qmulTo = (o, p, q) => {
   return o
 }
 const seatedIn = id => { for (let i = 0; i < 8; i++) if (objSeats.has(id * 8 + i)) return true; return false }
-const seatAt = (o, p) => rotq(o.q, p.map((v, i) => v - o.at0[i])).map((v, i) => v + [o.x, o.y, o.z][i])
+const seatAt = (o, p) => { const a = o.at0, r = rotqTo([0, 0, 0], o.q, p[0] - a[0], p[1] - a[1], p[2] - a[2]); r[0] += o.x; r[1] += o.y; r[2] += o.z; return r }
 const seatOf = c => { const s = c.seat; return s && s[0].V && s[0].riders[s[1]] === c.id ? s : null }
 const onSeat = (s, c) => seatFit(s, c.id !== undefined ? GAME.participant(c.id, c.cid) : c)
 const WHEELS_NEAR = 40
@@ -32294,7 +32300,7 @@ const probeApi = Object.freeze({
   },
 })
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
-  mapPerf: { trace: on => (mapTrace = on ? [] : null), log: () => mapTrace, low: on => { mapLow = !!on; mapCache = null }, get isLow() { return mapLowOn() }, worker: on => { if (on === undefined) return !!(mapWorker && mapWReady); if (on) mapWorkerStart(); else mapWorkerKill() } },
+  mapPerf: { trace: on => (mapTrace = on ? [] : null), log: () => mapTrace, low: on => { mapLow = !!on; mapCache = null }, get isLow() { return mapLowOn() }, get fails() { return mapWFails }, worker: on => { if (on === undefined) return !!(mapWorker && mapWReady); if (on) mapWorkerStart(); else mapWorkerKill() } },
   log: () => gameLog.map(line => ({ ...line })),
   look: name => GAME.look.set(name),
   shaderCheck,
@@ -38750,7 +38756,7 @@ function slNudge(ag, p, pushers, cell, dt) {
     if (!bk(p.x + nx, p.z + oz)) nz = oz
     else if (!bk(p.x + ox, p.z + nz)) nx = ox
     else if (!bk(p.x + ox, p.z + oz)) { nx = ox; nz = oz }
-    else { const g = Math.hypot(ox, oz), f = g > step ? 1 - step / g : 0; nx = ox * f; nz = oz * f }
+    else { const g = Math.hypot(ox, oz), rs = Math.max(step, 3 * h), f = g > rs ? 1 - rs / g : 0; nx = ox * f; nz = oz * f }
   }
   if (!near && Math.abs(nx) < 1e-3 && Math.abs(nz) < 1e-3) { if (n) map.delete(ag.id); return null }
   if (!n) map.set(ag.id, n = { x: 0, z: 0, f: 0, vx: 0, vz: 0 })
@@ -48096,6 +48102,8 @@ function mapWorkerSource() {
   }
   return 'let mapSize = { W: 0, H: 0, dpr: 1 }, mapMe = null, mapPlaces = new Map(), D = null\nconst mapLayers = [], FAUST = { world: 0 }\n' + parts.join('\n') + '\n;(' + mapWorkerMain.toString() + ')()\n'
 }
+const mapWFails = []
+function mapWorkerFail(why) { mapWFails.push({ why: String(why).slice(0, 200), at: Math.round(performance.now()) }); mapWorkerKill() }
 function mapWorkerKill() {
   if (mapWorker) { mapWorker.terminate(); mapWorker = null }
   mapWReady = false; mapWJob = null
@@ -48103,16 +48111,17 @@ function mapWorkerKill() {
 }
 function mapWorkerStart() {
   mapWorkerKill()
-  if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || !mapData) return
+  if (!mapData) return
+  if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') { mapWFails.push({ why: 'unsupported', at: Math.round(performance.now()) }); return }
   try {
     const url = URL.createObjectURL(new Blob([mapWorkerSource()], { type: 'text/javascript' })), w = new Worker(url), key = mapData.key
     URL.revokeObjectURL(url); mapWorker = w
-    w.onerror = e => { console.warn('map worker:', e.message || e); if (mapWorker === w) mapWorkerKill() }
+    w.onerror = e => { console.warn('map worker:', e.message || e); if (mapWorker === w) mapWorkerFail('error ' + (e.message || '')) }
     w.onmessage = e => {
       const m = e.data
       if (mapWorker !== w) { if (m.bmp) m.bmp.close(); return }
       if (m.t === 'ready') { mapWReady = true; mapPaintJob = null; mapPrewarm() }
-      else if (m.t === 'err') { console.warn('map worker:', m.e); mapWorkerKill() }
+      else if (m.t === 'err') { console.warn('map worker:', m.e); mapWorkerFail(m.e) }
       else if (m.t === 'done') {
         const j = mapWJob; mapWJob = null
         if (!j || mapData?.key !== key) { m.bmp.close(); return }
@@ -48123,7 +48132,7 @@ function mapWorkerStart() {
     }
     const D0 = { ...mapData }; delete D0.str; for (const n in D0) if (typeof D0[n] === 'function') delete D0[n]; D0.band = { nr: D0.band.nr, C: D0.band.C, bands: D0.band.bands }
     createImageBitmap(mapData.band.cv).then(bmp => { if (mapWorker === w) w.postMessage({ t: 'init', D: D0, bandBmp: bmp, world: mapWorld() }, [bmp]) })
-  } catch (e) { console.warn('map worker:', e?.message || e); mapWorkerKill() }
+  } catch (e) { console.warn('map worker:', e?.message || e); mapWorkerFail(e?.message || e) }
 }
 function mapWorkerPost(v, CW, CH, W0, H0, dpr) {
   const sc = Math.min(dpr, Math.sqrt((mapLowOn() ? 1.7e6 : 4.2e6) / (CW * CH))) || 1, C = mapCache
