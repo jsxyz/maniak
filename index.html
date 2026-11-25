@@ -35730,8 +35730,9 @@ function dashStrikes(list, credit) {
 function objectStrikes(o, c, credit) {
   const W = o.K.weakens, e = W && weakFx(c, o.K)
   if (e) { c.mark = e; c.markT = Math.max(c.markT, W.struck) }
-  const by = players.get(o.thrownBy), D = by && (o.puntDmg !== undefined ? partsImpact(o.K.mass, Math.max(o.partsV || 0, PARTS_HIT.min)) : (o.K.dmg ?? hurlOf(by)?.dmg))
+  const by = players.get(o.thrownBy), D = by && (o.puntDmg !== undefined ? partsImpact(o.K.mass, Math.max(o.partsV || 0, PARTS_HIT.min), o.K) : (o.K.dmg ?? hurlOf(by)?.dmg))
   if (!D || c.prot > 0) return
+  pieceHit(o)
   const was = hookHitOn && [c.hp, c.mark, c.markT]
   c.hp -= stat(c, 'take', stat(by, 'give', D))
   if (was && !hookHit(by, c, o.puntDmg ? 'Punt' : 'Hurl', was)) return
@@ -36017,6 +36018,56 @@ function partsHeld(c) {
   return null
 }
 
+const PIECE_MAX = 24
+const dsAtRest = o => {
+  if (o.heldBy !== undefined || o.thrownBy !== undefined || o.fuse !== undefined) return false
+  const v = o.body?.getLinearVelocity?.()
+  return !v || Math.hypot(v.x(), v.y(), v.z()) <= 0.5
+}
+function dsPoolVictim(pred, keep) {
+  let best = null, far = -1
+  for (const o of objs) {
+    if (o === keep || !pred(o) || !dsAtRest(o)) continue
+    let d = Infinity
+    for (const c of players.values()) if (c.dead <= 0) d = Math.min(d, Math.hypot(c.x - o.x, c.z - o.z))
+    if (d > far) { far = d; best = o }
+  }
+  return best
+}
+const dsPoolCount = pred => objs.reduce((n, o) => n + (pred(o) ? 1 : 0), 0)
+const dsPoolFull = (pred, max) => dsPoolCount(pred) >= max && !objs.some(o => pred(o) && dsAtRest(o))
+function dsPoolRoom(pred, max, keep) {
+  if (!isHost) return true
+  for (let n = dsPoolCount(pred); n >= max + (keep ? 1 : 0); n--) {
+    const v = dsPoolVictim(pred, keep)
+    if (!v) return false
+    lootRetire(v)
+  }
+  return true
+}
+const dsPieceBudget = keep => dsPoolRoom(o => !!o.K.piece, PIECE_MAX, keep)
+function pieceHit(o) {
+  if (!isHost || !o.K.hp) return
+  o.pieceHp = (o.pieceHp ?? o.K.hp) - 1
+  if (o.pieceHp <= 0 && typeof o.K.breaks === 'function') try { o.K.breaks(o) } catch (e) { console.warn('piece breaks', e) }
+}
+function partsPick(c, out) {
+  out.sort((a, b) => a.gap - b.gap)
+  if (out.length < 2) return out
+  const lim = out[0].gap + 0.15, tied = out.filter(g => g.gap <= lim)
+  if (tied.length < 2) return out
+  let r = null
+  try { r = camRay(c, c.yaw, c.pitch || 0) } catch (e) { return out }
+  const off = g => {
+    const p = g.src === 'object' ? g.ref : g.src === 'street' ? g.ref?.pose : g.at ? { x: g.at[0], y: g.at[1], z: g.at[2] } : g.ref
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.z)) return 9
+    const dx = p.x - r.x, dy = (Number.isFinite(p.y) ? p.y : r.y) - r.y, dz = p.z - r.z, n = Math.hypot(dx, dy, dz) || 1
+    return Math.acos(clamp((dx * r.dx + dy * r.dy + dz * r.dz) / n, -1, 1))
+  }
+  const key = new Map(tied.map(g => [g, off(g)]))
+  tied.sort((a, b) => key.get(a) - key.get(b))
+  return [...tied, ...out.filter(g => g.gap > lim)]
+}
 function partsNear(c, verb, reach = GRAB.reach) {
   const out = []
   for (const o of objs) {
@@ -36025,7 +36076,7 @@ function partsNear(c, verb, reach = GRAB.reach) {
     if (!partsAllows(P, verb)) continue
     if (o.V && o.riders.some(r => r !== undefined)) continue
     const gap = objGap(c, o)
-    if (gap <= (o.K.carry?.reach ?? reach) + (o.V ? 0.6 : 0) && inSight(c, o)) out.push({ kind: verb === 'pull' ? 'vehicle' : kind, src: 'object', ref: o, gap, R: o.R || objR(o.K), mass: o.K.mass })
+    if (gap <= (o.K.reach ?? (o.K.carry?.reach ?? reach) + (o.V ? 0.6 : 0)) && inSight(c, o)) out.push({ kind: verb === 'pull' ? o.K.pullAs ?? 'vehicle' : kind, src: 'object', ref: o, gap, R: o.R || objR(o.K), mass: o.K.mass })
   }
   if (isHost && verb === 'grab') {
     for (const h of players.values()) {
@@ -36049,10 +36100,10 @@ function partsNear(c, verb, reach = GRAB.reach) {
   }
   if (verb === 'pull') for (const [kind, A] of Object.entries(PART_ADAPTERS)) if (A.near && partsAllows(PARTS[kind], 'pull')) {
     let list = []; try { list = A.near(c, reach) || [] } catch (e) { console.warn('parts near', kind, e) }
-    for (const inst of list) out.push({ kind, src: 'attached', ...inst, gap: inst.gap ?? 0 })
+    for (const inst of list.slice().sort((a, b) => (a.gap ?? 0) - (b.gap ?? 0)).slice(0, 4)) out.push({ kind, src: 'attached', ...inst, gap: inst.gap ?? 0 })
   }
   if (verb === 'pull') { const door = out.filter(g => g.src === 'attached' && g.kind.endsWith(' on its car') && g.gap + c.r + 0.3 <= JACK.flank).sort((a, b) => a.gap - b.gap)[0]; if (door) return [door] }
-  return out.sort((a, b) => a.gap - b.gap)
+  return partsPick(c, out)
 }
 const partsAllows = (P, verb) => !!P && (verb === 'grab' ? !!P.grab && !P.grab.pull : verb === 'pull' ? !!(P.grab?.pull || P.rip) : !!P[verb])
 const partsUnit = (x, y, z) => { const n = Math.hypot(x, y, z) || 1; return [x / n, y / n, z / n] }
@@ -36617,7 +36668,7 @@ function partsAfter(all, dt, credit) {
   for (const o of objs) if (o.thrownBy === undefined && o.puntDmg !== undefined) o.puntDmg = undefined
 }
 const PARTS_HIT = { k: 2.2, max: 260, knock: 0.3, knockMax: 22, min: 6, self: 1 / 3 }
-const partsImpact = (m, v) => Math.min(PARTS_HIT.max, PARTS_HIT.k * m * v)
+const partsImpact = (m, v, K) => Math.min(PARTS_HIT.max, K?.thrown ? K.thrown * clamp(v / GRAB.throw.speed, 0.4, 1.5) : PARTS_HIT.k * m * v)
 function partsSegDist(a, b, c, d) {
   const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], v = [d[0] - c[0], d[1] - c[1], d[2] - c[2]], w = [a[0] - c[0], a[1] - c[1], a[2] - c[2]]
   const dot = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2], A = dot(u, u), B = dot(u, v), C = dot(v, v), D = dot(u, w), E = dot(v, w), den = A * C - B * B
@@ -36632,15 +36683,17 @@ function partsSweep(all, credit) {
     if (o.thrownBy === undefined || o.heldBy !== undefined) { o.partsAt = null; continue }
     const by = players.get(o.thrownBy), v = o.body.getLinearVelocity(), now3 = [o.x, o.y, o.z], was = o.partsAt || now3
     const sp = Math.max(Math.hypot(v.x(), v.y(), v.z()), o.partsV || 0)
+    const pv = o.partsV || 0
     o.partsAt = now3; o.partsV = Math.hypot(v.x(), v.y(), v.z())
+    if (o.K.hp && pv >= 8 && o.partsV < pv * 0.5) pieceHit(o)
     if (!by || sp < PARTS_HIT.min || o.K.cover) continue
-    const m = o.K.mass, D = partsImpact(m, sp), dir = partsUnit(now3[0] - was[0], now3[1] - was[1], now3[2] - was[2]), R = (o.R || objR(o.K)) * 0.8
+    const m = o.K.mass, D = partsImpact(m, sp, o.K), dir = partsUnit(now3[0] - was[0], now3[1] - was[1], now3[2] - was[2]), R = (o.R || objR(o.K)) * 0.8
     const G = { ...GUNS[gunNamed('Punt')], name: o.K.name, dmg: D, knock: clamp(PARTS_HIT.knock * m * sp, 4, PARTS_HIT.knockMax), special: true }
     o.struck ||= new Set([o.thrownBy])
     for (const c of all) {
       if (o.struck.has(c.id) || c.dead > 0 || c.prot > 0 || seatOf(c) || c.grabBy !== undefined) continue
       if (partsSegDist(was, now3, [c.x, c.y - c.h, c.z], [c.x, c.y + c.h, c.z]) > c.r + R) continue
-      o.struck.add(c.id)
+      o.struck.add(c.id); pieceHit(o)
       strike(by, c, G, dir[0], Math.max(dir[1], 0.2), dir[2])
       if (downed(c) && credit) credit(by.id, by)(c, G)
     }
@@ -37432,7 +37485,7 @@ function goreCovers(all, credit) {
       if (partsSegDist(was, here, [c.x, c.y - c.h, c.z], [c.x, c.y + c.h, c.z]) > c.r + HAMMER.r) continue
       o.struck.add(c.id)
       const waist = Math.abs((was[1] + here[1]) / 2 - (c.y + 0.1 * (c.h + c.r))) <= HAMMER.cut
-      const G = { ...GUNS[gunNamed('Punt')], name: o.K.name, dmg: waist ? 9999 : partsImpact(o.K.mass, sp), knock: clamp(sp * 0.6, 6, 22), special: true, lethal: waist }
+      const G = { ...GUNS[gunNamed('Punt')], name: o.K.name, dmg: waist ? 9999 : partsImpact(o.K.mass, sp, o.K), knock: clamp(sp * 0.6, 6, 22), special: true, lethal: waist }
       strike(by, c, G, dir[0], 0.3, dir[2])
       if (waist) { goreCut(c, o, dir, by); cutN++; if (!(c.dead > 0)) { c.hp = 0; downed(c) } }
       else goreFx(0, c.x, c.y + 0.3, c.z, dir[0], 0.2, dir[2], 2)
@@ -37443,7 +37496,7 @@ function goreCovers(all, credit) {
       if (partsSegDist([was[0], 0, was[2]], [here[0], 0, here[2]], [p.x, 0, p.z], [p.x, 0, p.z]) > 0.3 + HAMMER.r) return
       o.struck.add('s' + ag.id)
       const waist = Math.abs((was[1] + here[1]) / 2 - 0.9) <= HAMMER.cut + 0.1
-      slKnock(ag, p, dir[0], dir[2], Math.max(2, sp * 0.15), by, T, undefined, undefined, undefined, waist ? 9999 : partsImpact(o.K.mass, sp), gunNamed('Punt'), 3)
+      slKnock(ag, p, dir[0], dir[2], Math.max(2, sp * 0.15), by, T, undefined, undefined, undefined, waist ? 9999 : partsImpact(o.K.mass, sp, o.K), gunNamed('Punt'), 3)
       if (waist) { if (typeof partsGoreOf === 'function') slAddRec([12, ag.id, Math.round(T), partsGoreOf(ag.id) | 12, 0]); goreHalf(p.x, 0, p.z, dir, sp, by, -1 - (ag.body | 0)); goreUpper(p.x, 0.9, p.z, (p.yaw || 0) + Math.PI, dir, sp, -1 - (ag.body | 0), ag.id); goreFx(0, p.x, 0.9, p.z, dir[0], 0.2, dir[2], 5); goreFx(1, p.x, 0.1, p.z, 0, 1, 0, 3); cutN++ }
       else goreFx(0, p.x, 0.9, p.z, dir[0], 0.2, dir[2], 2)
     })
@@ -37451,7 +37504,7 @@ function goreCovers(all, credit) {
       if (q === o || !q.V || o.struck.has('o' + q.id) || q.heldBy !== undefined) continue
       if (partsSegDist(was, here, [q.x, q.y, q.z], [q.x, q.y, q.z]) > (q.R || objR(q.K)) * 0.7 + HAMMER.r) continue
       o.struck.add('o' + q.id)
-      if (by) { q.hp -= partsImpact(o.K.mass, sp) * 0.5; q.by = by.id; try { GAME.cars?.blow?.(by, q, { ...GUNS[gunNamed('Punt')], name: 'Haymaker' }, here, dir) } catch (e) { failN[130]++ } }
+      if (by) { q.hp -= partsImpact(o.K.mass, sp, o.K) * 0.5; q.by = by.id; try { GAME.cars?.blow?.(by, q, { ...GUNS[gunNamed('Punt')], name: 'Haymaker' }, here, dir) } catch (e) { failN[130]++ } }
     }
     if (cutN) { const k = Math.pow(HAMMER.loss, cutN); posVec.setValue(v[0] * k, v[1] * k, v[2] * k); o.body.setLinearVelocity(posVec) }
     if (psp > HAMMER.min) {
@@ -43344,12 +43397,13 @@ const dsPropWay = (dx, dz) => Math.round((Math.atan2(dz, dx) / (2 * Math.PI) % 1
 function dsPropKnock(p, power, dx, dz) {
   if (!isHost || !dsCheck() || p.s.hard > power) return false
   if (!dsBreak(DS_PROP, p.key, (power & 3) | dsPropWay(dx, dz) << 3)) return false
-  dsPropLoose(p.s, dx, dz, power)
+  const o = dsPropLoose(p.s, dx, dz, power)
+  if (o) o.propKey = p.key
   return true
 }
 function dsPropLoose(s, dx, dz, power) {
   const k = OBJECTS.findIndex(K => K.prop === s.f.k), n = Math.hypot(dx, dz) || 1
-  if (k < 0 || !world || dsLooseFull()) return null
+  if (k < 0 || !world || !dsPoolRoom(o => !!o.K.prop, DS_LOOSE_MAX, null)) return null
   const id = partsFreeId()
   if (id < 0) return null
   const o = addObject(k, [s.f.x, OBJECTS[k].half[1] + 0.1, s.f.z], id, s.f.q * Math.PI / 2), sp = [2.5, 4.5, 7][Math.max(0, Math.min(2, power - 1))] * Math.min(1, 1.6 / Math.sqrt(OBJECTS[k].mass))
@@ -43357,7 +43411,7 @@ function dsPropLoose(s, dx, dz, power) {
   return o
 }
 const DS_LOOSE_MAX = 48
-const dsLooseFull = () => objs.reduce((n, o) => n + (o.K.prop ? 1 : 0), 0) >= DS_LOOSE_MAX
+const dsLooseFull = () => dsPoolFull(o => !!o.K.prop, DS_LOOSE_MAX)
 function dsPropsReach(c, kind, reach) {
   const F = faustState, out = [], row = OBJECTS.find(K => K.prop === kind)
   if (!F || !LV.faust || !row || !dsCheck() || Math.abs(c.y - c.h - c.r) > 1.4 || !(row.mass <= liftOf(c))) return out
@@ -43567,7 +43621,16 @@ function lootRingPoint(O, x, z) {
   const r = O.P.rect, cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2, cs = Math.cos(O.yaw), sn = Math.sin(O.yaw), dx = x - cx, dz = z - cz
   return [cx + dx * cs + dz * sn, cz - dx * sn + dz * cs]
 }
+function dsPropBack(o) {
+  const rec = isHost && dsState?.all.get(o.propKey)
+  if (!rec) return
+  dsRemove(rec.key)
+  if (rec.kind === DS_PROP) try { dsPropRestore(rec) } catch (e) { console.warn('prop back', e) }
+  dsTileTouch(rec.chunk); dsPersistLater()
+}
 function lootRetire(o, key) {
+  if (o.propKey !== undefined) dsPropBack(o)
+  else if (typeof o.K.retire === 'function') try { o.K.retire(o) } catch (e) { console.warn('piece retire', e) }
   if (key !== undefined) lootState.seen.delete(key)
   const T = trafficState
   dropObject(o); objs.splice(objs.indexOf(o), 1)
@@ -43680,6 +43743,7 @@ function dsPropKind() {
     })
   }
 }
+GAME.parts.on('rip', (o, p) => { if (p.src === 'attached' && o.K.prop && Number.isInteger(p.ref?.key)) o.propKey = p.ref.key })
 dsKindRegister(DS_PROP, { record: dsPropRecord, apply: dsPropApply, undo: dsPropUndo, fresh: dsPropFresh, stamp: r => dsTagOf(r.p.f), fit: (k, c, n, i) => dsFitSite(dsPropSites, dsPropKey, k, c, n, i) })
 dsKindRegister(DS_FEAT, { record: dsFeatRecord, apply: dsFeatApply, undo: dsFeatUndo, fresh: dsFeatFresh, stamp: r => dsTagOf(r.p.f), fit: (k, c, n, i) => dsFitSite(dsFeatSites, dsFeatKey, k, c, n, i) })
 dsKindRegister(DS_LOOT, { record: lootRecord, apply() {}, undo() {}, fresh() {} })
