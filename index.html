@@ -8264,7 +8264,7 @@ function faustStream(points, viewPoint) {
       if (!keep.has(c.key) && !drawn.has(c.key)) { if (!c.dropQueued) { c.dropQueued = true; (F.dropQueue ||= []).push(c) } }
       else {
         c.dropQueued = false
-        if (c.visual && !drawn.has(c.key)) { worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); c.visual = null; faustSkyCell(c, true) }
+        if (c.visual && !drawn.has(c.key)) { scarChunkDrop(c); worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); c.visual = null; faustSkyCell(c, true) }
       }
     }
     faustDropQueue(F)
@@ -10375,7 +10375,7 @@ function* faustVisualSteps(c) {
   if (GEO_WARM.on && !renderHeadless && rawRender) yield* geometryWarm(root); else { const bytes = geometryBytes(root); while (!background.uploadSlot(bytes)) yield 'frame' }
   background.gpu('cell')
   if (teles.length) { root.userData.screens = teles; root.add(screenMeshes(teles)) }
-  root.userData.cell = [c.ci, c.cj]; c.visual = root; worldGroup.add(root); placed = true; still(root)
+  root.userData.cell = [c.ci, c.cj]; c.visual = root; c.scarOn = false; worldGroup.add(root); placed = true; still(root)
   if (dsLookV(c) !== lookV) dsLookAgain(c, root)
   faustSkyCell(c, false)
   craterRegrow({ a0: X, a1: X + 96, b0: Z, b1: Z + 96 })
@@ -26980,6 +26980,54 @@ function decalOp({ level, meshes: rows = [], jobs = [], clear, drop = [], hole }
 
 let scarAtlas, scarMesh, scarBusy = true, scarsLater = false
 const scarQueue = [], scarSurfaces = []
+function scarChunkPatch(c, hit, r) {
+  const ids = c.scarIds ||= [], keys = c.scarKeys ||= new Set(), R = r + 0.6, rows = []
+  if (ids.length >= 48) return
+  const x0 = hit[0] - R, x1 = hit[0] + R, y0 = hit[1] - R, y1 = hit[1] + R, z0 = hit[2] - R, z1 = hit[2] + R, P = new THREE.Vector3()
+  c.visual.traverse(m => {
+    const g = m.geometry
+    if (!m.isMesh || m.isInstancedMesh || !g?.attributes.position || !g.attributes.normal) return
+    const key = m.id + ':' + Math.round(hit[0] / 2) + ':' + Math.round(hit[2] / 2)
+    if (keys.has(key)) return
+    m.updateWorldMatrix(true, false)
+    const A = g.attributes.position, N = g.attributes.normal, I = g.index, n = I ? I.count : Math.min(A.count, g.drawRange.count || A.count), pos = [], nrm = []
+    const e = m.matrixWorld.elements, w = (i, o) => { P.fromBufferAttribute(A, i).applyMatrix4(m.matrixWorld); o.push(P.x, P.y, P.z) }
+    for (let t = 0; t + 2 < n; t += 3) {
+      const a = I ? I.getX(t) : t, b = I ? I.getX(t + 1) : t + 1, d = I ? I.getX(t + 2) : t + 2
+      let lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9]
+      for (const i of [a, b, d]) { P.fromBufferAttribute(A, i).applyMatrix4(m.matrixWorld); lo = [Math.min(lo[0], P.x), Math.min(lo[1], P.y), Math.min(lo[2], P.z)]; hi = [Math.max(hi[0], P.x), Math.max(hi[1], P.y), Math.max(hi[2], P.z)] }
+      if (hi[0] < x0 || lo[0] > x1 || hi[1] < y0 || lo[1] > y1 || hi[2] < z0 || lo[2] > z1) continue
+      for (const i of [a, b, d]) { w(i, pos); nrm.push(N.getX(i), N.getY(i), N.getZ(i)) }
+    }
+    keys.add(key)
+    if (!pos.length) return
+    const id = 'sp' + m.id + ':' + keys.size
+    ids.push(id)
+    rows.push({ id, pos: new Float32Array(pos), nrm: new Float32Array(nrm), idx: undefined, matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] })
+  })
+  if (!rows.length) return
+  const epoch = geoLevel
+  geoEnsure(() => {
+    if (epoch !== geoLevel) return
+    geoAsk('decal', { meshes: rows, clear: false }, rows.flatMap(m => [m.pos.buffer, m.nrm.buffer]), data => { if (epoch === geoLevel) { scarBusy = !!data.fail; scarTake(data) } })
+  })
+}
+function scarChunkNeed(hit, r) {
+  const F = faustState
+  if (!F?.chunks || !Number.isFinite(hit[0]) || !Number.isFinite(hit[1]) || !Number.isFinite(hit[2])) return
+  const seen = new Set()
+  for (const dx of [-r, r]) for (const dz of [-r, r]) {
+    const c = F.chunks.get(faustKey(Math.floor((hit[0] + dx + ARENA) / 96), Math.floor((hit[2] + dz + ARENA) / 96)))
+    if (c?.visual && !seen.has(c)) { seen.add(c); c.scarOn = true; scarChunkPatch(c, hit, r) }
+  }
+}
+function scarChunkDrop(c) {
+  if (!c.scarOn) return
+  c.scarOn = false
+  const drop = c.scarIds || []
+  c.scarIds = []; c.scarKeys = new Set()
+  if (drop.length) scarSend([], false, { drop })
+}
 function clearScars() {
   clearChainCracks()
   goreClear()
@@ -27032,6 +27080,7 @@ function drawScars() {
       if (!hit.length || Math.abs(t - len) > .04) continue
       seed = f.slice(0, 6).reduce((s, v) => Math.imul(s ^ Math.round(v * 100), 16777619), 0)
     }
+    scarChunkNeed(hit, SCARS[kind].r)
     jobs.push({ hit, seed, r: SCARS[kind].r, tile: keys.indexOf(kind), tiles: keys.length })
   }
   scarBusy = true
@@ -32360,6 +32409,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
         if (Math.max(...xs) > x - h && Math.min(...xs) < x + h && Math.max(...zs) > z - h && Math.min(...zs) < z + h && ys.every(v => v > -.01 && v < .05)) { tris++; area += Math.abs((xs[1] - xs[0]) * (zs[2] - zs[0]) - (xs[2] - xs[0]) * (zs[1] - zs[0])) / 2; if (C && !col) col = [C.getX(i / 3), C.getY(i / 3), C.getZ(i / 3)].map(r3) } }
       if (tris || why) slots.push({ id: m.id, why, tris, area: Math.round(area), mat: m.material?.type, matColor: hex(m.material?.color), vertexColors: !!m.material?.vertexColors, colorAttr: !!C, glowAttr: !!g.attributes.faustGlow, colour: col, visible: m.visible }) })
     return { slots, crater, renderer: { quality: settings.quality, pixelRatio: renderer?.getPixelRatio(), shadows: !!renderer?.shadowMap?.enabled, shadowType: renderer?.shadowMap?.type, gpu: gpuName(), toneMapping: renderer?.toneMapping } } },
+  scarStats: () => ({ surfaces: scarSurfaces.length, patches: faustState ? [...faustState.chunks.values()].reduce((n, c) => n + (c.scarIds?.length || 0), 0) : 0, chunks: faustState ? [...faustState.chunks.values()].filter(c => c.scarOn).length : 0, queued: scarQueue.length, busy: scarBusy }),
   scar(kind = 'hole', range = 60) { if (!world || !camera || !SCARS[kind] || !(range > 0)) return null
     const p = camera.getWorldPosition(new THREE.Vector3()), d = camera.getWorldDirection(new THREE.Vector3()), h = []
     if (staticRay(p.x, p.y, p.z, d.x, d.y, d.z, range, h, RAY_GROUP) >= range || h.length < 6) return null
@@ -39551,7 +39601,7 @@ function dsFitSite(sites, keyOf, kind, chunk, code, info) {
 }
 function dsRelight(c) {
   if (!c.visual || !worldGroup) return
-  worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); c.visual = null; faustSkyCell(c, true)
+  scarChunkDrop(c); worldGroup.remove(c.visual); c.visual.traverse(n => n.geometry?.dispose()); c.visual = null; faustSkyCell(c, true)
   faustState.selection = null
 }
 
