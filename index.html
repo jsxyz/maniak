@@ -44290,6 +44290,7 @@ const airWorld = (p, x, y, z) => { const s = Math.sin(p.yaw), c = Math.cos(p.yaw
 const airPointV = (p, x, z) => [p.vx + p.w * (z - p.z), p.vy, p.vz - p.w * (x - p.x)]
 let airTrisRows = null
 const airTrisList = () => airTrisRows ||= Array.from({ length: airTris().length / 9 }, (_, i) => [0, 1, 2].map(k => Array.from(airTris().subarray(9 * i + 3 * k, 9 * i + 3 * k + 3))))
+const BOAT_LOCK = { gain: 14, max: 2.5 }
 const CARRIER = { near: 450, every: 20, inherit: 4, ease: 5, relTau: 0.06 }
 const carriers = new Map(), carrierBodies = new Map()
 let carrierKeys = null
@@ -44384,7 +44385,17 @@ function carrierCarry(c, dt) {
         c.carryRel = o ? [o[0] + (r[0] - o[0]) * k, o[1] + (r[2] - o[1]) * k] : [r[0], r[2]]
       }
       c.carryLoc = { id: hit.c.id, x: L[0], z: L[2] }
-    } else { c.carryLoc = null; c.carryRel = null }
+      if (hit.c.boat !== undefined && dt > 0) {
+        const rel = c.carryRel, sp = rel ? Math.hypot(rel[0], rel[1]) : 9
+        c.deckStill = sp < 0.35 ? (c.deckStill || 0) + dt : 0
+        if (c.deckLock && (c.deckLock.id !== hit.c.id || sp > 0.6)) c.deckLock = null
+        if (!c.deckLock && c.deckStill > 0.15) c.deckLock = { id: hit.c.id, x: L[0], z: L[2] }
+        if (c.deckLock) {
+          const w = carrierWorld(hit.p, c.deckLock.x, 0, c.deckLock.z), g = BOAT_LOCK.gain, ex = clamp((w[0] - c.x) * g, -BOAT_LOCK.max, BOAT_LOCK.max), ez = clamp((w[2] - c.z) * g, -BOAT_LOCK.max, BOAT_LOCK.max)
+          return [c.carryV[0] + ex, c.carryV[1], c.carryV[2] + ez]
+        }
+      }
+    } else { c.carryLoc = null; c.carryRel = null; c.deckLock = null; c.deckStill = 0 }
     return c.carryV
   }
   c.carryLoc = null; c.carryRel = null
@@ -44945,14 +44956,33 @@ function floatOf(K) {
   return K.floatRow = !H ? null : S && (V?.sail || K.sail) ? boatFloat(S, H.at, K.mass, V?.sail || K.sail)
     : K.float || car ? hullFloat(H.pts, K.mass, K.float || CAR_FLOAT) : null
 }
+function boatDeckPose(o) {
+  const b = o.body, p = b.getWorldTransform().getOrigin(), v = b.getLinearVelocity(), w = b.getAngularVelocity(), q = b.getWorldTransform().getRotation()
+  const fw = rotq([q.x(), q.y(), q.z(), q.w()], [0, 0, -1])
+  return { x: p.x(), y: p.y(), z: p.z(), yaw: Math.atan2(-fw[0], -fw[2]), vx: v.x(), vy: v.y(), vz: v.z(), w: w.y() }
+}
+function boatCarry(o) {
+  const id = 'zboat:' + o.id
+  if (carriers.has(id)) return
+  const S = BOAT_SHAPES[o.K.model || o.K.name]
+  if (!S) return
+  const top = Math.max(S.d, ...S.deck.map(d => Math.max(d[1], d[4]))), hy = (top + 3.5) / 2
+  carrierAdd({ id, pose: () => boatDeckPose(o), volume: [[0, hy - 1, 0, S.b / 2 + 0.4, hy, S.l / 2 + 0.4]], parts: [], radius: S.l / 2 + 6, boat: o.id })
+}
+function boatCarrySweep() {
+  const live = new Set(objs.filter(o => o.body && o.K.boat && o.K.drive).map(o => 'zboat:' + o.id))
+  for (const [id, k] of [...carriers]) if (k.boat !== undefined && !live.has(id)) carrierDel(id)
+}
 function waterTick(list, inputFor, dt) {
   const W = floatWater()
   if (!W?.at || !objs.length) return
   const t = carrierT
+  if (carrierTick % 60 === 7) boatCarrySweep()
   for (const o of objs) {
     if (!o.body || o.heldBy !== undefined || o.away) continue
     const F = floatOf(o.K)
     if (!F) continue
+    if (o.K.boat && o.K.drive) boatCarry(o)
     const p = o.body.getWorldTransform().getOrigin(), at = W.at(p.x(), p.z(), floatRec)
     if (!at || p.y() - o.R > at.level + 2) { if (isHost && F.wet && o.floodT !== undefined) o.floodT = undefined; continue }
     if (isHost && o.floodT === undefined && o.K.boat && o.K.model && !o.K.drive) o.floodT = t
@@ -47774,7 +47804,7 @@ function mcBlock(c) {
   for (const k of carriers.values()) {
     const p = carrierPose(k), [lx, ly, lz] = carrierLocal(p, c.x, c.y, c.z)
     if (k.volume.some(v => Math.abs(lx - v[0]) <= v[3] && Math.abs(ly - v[1]) <= v[4] + 0.3 && Math.abs(lz - v[2]) <= v[5]))
-      return k.id.startsWith('air:') ? "Your car can't come while you ride a zeppelin." : "Your car can't come while you ride a train."
+      return k.id.startsWith('air:') ? "Your car can't come while you ride a zeppelin." : k.boat !== undefined ? "Your car can't come while you ride a boat." : "Your car can't come while you ride a train."
   }
   if (c.water) return "Your car can't come while you are in the water."
   const at = faustState && inAt(c.x, c.y - (c.h || 0) - (c.r || 0), c.z)
