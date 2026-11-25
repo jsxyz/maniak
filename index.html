@@ -855,7 +855,6 @@ const TEXT = {
   achHidden: '???',
   achBack: 'Back',
   achUnlocked: 'Achievement unlocked',
-  enforcersAfter: "§cFaust's enforcers are after you",
   enforcersOn: "§7Faust's enforcers are §fon§7: crimes in public bring heat again.",
   enforcersOff: "§7Faust's enforcers are §foff§7: no heat builds and none are out.",
   enforcersUsage: '§cUsage: §f/enforcers off|on §7(now {state})',
@@ -873,14 +872,11 @@ const TEXT = {
   enforcersNoWanted: "§7Faust's enforcers are off (§f/enforcers on§7).",
   disguisePill: 'IN DISGUISE',
   safePill: 'SAFE {s}s',
-  tornado: '§e{who} §7kicked up a tornado.',
-  somebody: 'Something',
   joined: '§e{name} §7joined', left: '§e{name} §7left', kicked: '§e{name} §7was kicked',
   matchEnd: '§e{why} §f{who} §7wins with §f{kills}',
   endWhy: { 'Time.': 'Time.', 'Frag limit.': 'Frag limit.' },
   newRound: '§7New round.',
   balance: '§e{name} §7moves to the §f{side}§7 to balance the teams.',
-  nowPlaying: '§7Now playing §f{name}',
   demands: ['Spare change for the arts?', 'Tip the talent!', 'Faust taxes the sun. I tax you.', 'Applause is free. Coins aren\'t.',
     'You watched. You pay.', 'Pay the performer, citizen!', 'Coins in the cup, or a hole in the gut.', 'Support the arts. Or bleed.',
     'That dance cost you a dollar.', 'A coin for the show, friend?', 'The cup is hungry!', 'Nobody walks past my show for free.'],
@@ -13010,7 +13006,6 @@ function faustSewFalls(plan, Z, participants) {
     const m = faustSewNear(plan, c.x, c.z, 0.42)
     if (!m || !Z.open.has(m.id)) continue
     faustSewDown(c, true)
-    if (isHost && !c.bot) tell(c.id, '§7You fell down a manhole.', 'a')
   }
 }
 Object.assign(FAUSTLAND_API.sewers, {
@@ -16471,7 +16466,6 @@ function windTornado(b, tgt) {
   if (!t && TORS.length < TOR_MAX) {
     t = { on: 0, x: tgt.x, z: tgt.z, by: b.id, k: rowOf(b).spins, turn: Math.random() * 6.28, pull: 0, life: 0 }
     TORS.push(t)
-    announce(gameText('tornado', { who: (roster.get(b.id) || {}).name || TEXT.somebody }), 'b')
   }
   if (!t) t = TORS.reduce((a, c) =>
     Math.hypot(tgt.x - c.x, tgt.z - c.z) < Math.hypot(tgt.x - a.x, tgt.z - a.z) ? c : a)
@@ -19864,7 +19858,6 @@ function stepPickups(dt, list) {
         if (hooked.pickup) hookEmit('pickup', { player: hookWho(c), item: got, kind: H ? 'heal' : pk.pow > 0 ? 'power' : 'gun' })
         if (pk.dropped) { pickups.splice(pickups.indexOf(pk), 1) }
         else { pk.respawn = 9 + Math.random() * 6; rollPad(pk) }
-        if (c === selfChar()) sysMsg('§ePicked up §f' + got, 'a')
         break
       }
     }
@@ -32748,7 +32741,6 @@ function requestChar(idx) {
   }
   myCid = settings.cid = idx
   saveSettings()
-  if (!swap) sysMsg(gameText('nowPlaying', { name: enemyName(CHARS[idx].name) }), 'b')
 }
 
 function cmdCap(a) {
@@ -37633,10 +37625,6 @@ function ringSend(B, T, force) {
   const d = { k: 'bout', ph, n: B ? B.n : 0, who: B ? B.who : 0, hide: RING.hidden.slice(0, 16) }
   ringHeard(d)
   if (conns.size) broadcast(d)
-}
-function ringMsg(S, raw) {
-  const room = S.room || S.ring.rope
-  for (const c of players.values()) if (!c.bot && c.id < BOT_ID0 && ringIn(room, c.x, c.z, 6)) tell(c.id, raw, 'b')
 }
 function ringSpawn(i, x, y, z, yaw) {
   const id = BOT_ID0 + i, old = players.get(id)
@@ -43609,7 +43597,6 @@ function heatCrime(c, kind, x = c?.x, z = c?.z, n = 1, sure = false, who = null)
   H.pts = Math.min(HEAT.cap, H.pts + (HEAT.crime[kind] ?? 1) * n)
   H.stars = heatStars(H.pts)
   if (H.stars) { H.state = 1; H.seenAt = T; H.last = { x: c.x, y: c.y, z: c.z }; H.left = HEAT.hide + HEAT.hideStar * H.stars }
-  if (!was && H.stars) tell(c.id, TEXT.enforcersAfter, 'a')
   return heatNote(c, kind, n, T, '', who)
 }
 function heatClear(id) {
