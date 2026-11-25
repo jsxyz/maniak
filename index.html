@@ -39658,7 +39658,7 @@ function dsTakeDue() {
   st.due = keep
 }
 
-const dsUniforms = { dsTable: { value: null }, dsCity: { value: new THREE.Vector4() }, dsHashU: { value: new THREE.Vector4() }, dsInd: { value: Array.from({ length: 22 }, () => new THREE.Vector4()) } }
+const dsUniforms = { dsRoomQ: { value: 1 }, dsInk: { value: 0 }, dsTable: { value: null }, dsCity: { value: new THREE.Vector4() }, dsHashU: { value: new THREE.Vector4() }, dsInd: { value: Array.from({ length: 22 }, () => new THREE.Vector4()) } }
 const DS_DISTRICT_CODE = { core: 0, civic: 1, tenement: 2, industrial: 3 }
 function dsIndFill() {
   const F = faustState, v = dsUniforms.dsInd.value, w = new Array(88).fill(0)
@@ -39687,6 +39687,8 @@ function dsTableClear() {
 }
 function dsTableBuild() {
   const st = dsState, F = faustState
+  dsUniforms.dsRoomQ.value = settings.quality === 'high' ? 1 : settings.quality === 'medium' ? 0.5 : 0
+  dsUniforms.dsInk.value = activeLook === 'ink' ? 1 : 0
   if (!camera || !F) return
   const ci = Math.floor((camera.position.x + ARENA) / 96), cj = Math.floor((camera.position.z + ARENA) / 96), key = ci + ' ' + cj
   if (!st.tableDirty && st.tableKey === key) return
@@ -39729,7 +39731,9 @@ int dsDist(vec2 g) {
   return (int(dsInd[w >> 2][w & 3]) >> sh) & 3;
 }
 int dsDistrict(vec2 c) { return dsDist(floor(c / 96.0)); }
+float dsQSign = 1.0;
 bool dsWindow(vec3 w, vec3 N, vec4 box, vec2 boxY, out uint key, out vec2 q, out vec2 size, out float share) {
+  dsQSign = 1.0;
   bool alongX = abs(N.z) >= abs(N.x);
   uint face = alongX ? (N.z > 0.0 ? 0u : 1u) : (N.x > 0.0 ? 2u : 3u);
   float hw = alongX ? box.z : box.w, a = alongX ? w.x - box.x : w.z - box.y, y0 = boxY.x - boxY.y, y1 = boxY.x + boxY.y;
@@ -39739,7 +39743,7 @@ bool dsWindow(vec3 w, vec3 N, vec4 box, vec2 boxY, out uint key, out vec2 q, out
   if (deco && base) {
     float e = 0.86 * hw - 0.6, n = max(1.0, floor((e - 0.6) / 2.9 + 0.5)); bw = (e - 0.6) / n;
     float fb = (abs(a) - 0.6) / bw;
-    if (bw > 0.0 && fb >= 0.0 && fb < n) { j = a < 0.0 ? n - 1.0 - floor(fb) : n + floor(fb); f = a < 0.0 ? 1.0 - fract(fb) : fract(fb); }
+    if (bw > 0.0 && fb >= 0.0 && fb < n) { j = a < 0.0 ? n - 1.0 - floor(fb) : n + floor(fb); f = a < 0.0 ? 1.0 - fract(fb) : fract(fb); dsQSign = a < 0.0 ? -1.0 : 1.0; }
   } else if (deco) {
     float e = 0.7 * hw - 0.55, n = max(1.0, floor(2.0 * e / 2.9 + 0.5)); bw = 2.0 * e / n;
     float fb = (a + e) / bw;
@@ -39785,6 +39789,37 @@ float dsHole(uint key, vec2 q, vec2 size, float aa) {
 }
 `
 const DS_FACADE_GLSL = () => `
+uniform float dsRoomQ, dsInk;
+float dsFeat = 0.0;
+vec3 dsRoomPal(float r) {
+  return r < 0.2 ? vec3(0.78, 0.72, 0.58) : r < 0.4 ? vec3(0.55, 0.62, 0.55) : r < 0.6 ? vec3(0.68, 0.55, 0.38) : r < 0.8 ? vec3(0.52, 0.6, 0.7) : vec3(0.72, 0.5, 0.5);
+}
+vec3 dsRoom(vec2 q, vec2 size, uint key, vec3 rd, float lit, float full, out float amb) {
+  amb = 1.0; dsFeat = 0.0;
+  float rA = dsRand(key ^ 0xa511e9b3u), rB = dsRand(key ^ 0x63d83595u), rC = dsRand(key ^ 0x2c1b3c6du), rD = dsRand(key ^ 0x3c6ef372u);
+  if (lit < 0.5 && rD < 0.12) { amb = 0.0; return mix(vec3(0.05, 0.07, 0.1), vec3(0.3, 0.36, 0.45), q.y) * (0.7 + 0.5 * rA); }
+  vec3 sz = vec3(size, 3.0 + 3.5 * rB), p = vec3(q * size, 0.0);
+  rd.x = abs(rd.x) < 1e-3 ? 1e-3 : rd.x; rd.y = abs(rd.y) < 1e-3 ? 1e-3 : rd.y;
+  vec3 tt = (step(0.0, rd) * sz - p) / rd;
+  float t = min(min(tt.x, tt.y), tt.z);
+  vec3 h = p + rd * t, wall = dsRoomPal(rA);
+  vec3 c = t == tt.z ? wall : t == tt.x ? wall * 0.78 : rd.y < 0.0 ? vec3(0.2, 0.14, 0.09) : wall * 1.05;
+  if (full > 0.5 && t == tt.z) {
+    if (h.y < 2.0 && abs(h.x - sz.x * (0.25 + 0.5 * rC)) < 0.5) c *= 0.25;
+    else if (rB > 0.5 && abs(h.x - sz.x * 0.5) < 0.5 && abs(h.y - 1.5) < 0.35) c = vec3(0.35, 0.3, 0.22);
+    else if (lit < 0.5 && rC > 0.7 && abs(h.x - sz.x * 0.5) < 0.45 && abs(h.y - 1.0) < 0.3) { c = vec3(0.55, 0.75, 1.0); amb = 7.0; dsFeat = 1.0; }
+    else if (rC > 0.45 && h.y < 0.9 && abs(h.x - sz.x * 0.5) < sz.x * 0.3) c *= 0.4;
+  }
+  vec3 lp = h - vec3(sz.x * 0.5, sz.y - 0.2, sz.z * 0.4);
+  float shade = lit > 0.5 ? 0.22 + 1.5 / (1.0 + 0.25 * dot(lp, lp)) : 0.2 / (1.0 + 0.04 * t * t);
+  vec3 r = c * shade;
+  if (full > 0.5) {
+    float dress = dsRand(key ^ 0x7f4a7c15u), k = lit > 0.5 ? 0.9 : 0.55; vec3 bl = mix(vec3(0.62, 0.6, 0.52), dsRoomPal(rD), 0.5);
+    if (dress < 0.35) { float drop = 0.25 + 0.6 * rC; if (q.y > 1.0 - drop) { float sl = step(0.3 + 0.5 * rB, fract(q.y * size.y / (0.09 + 0.08 * rA))); r = mix(bl, bl * 0.2, sl) * k; dsFeat = 1.0 - sl; } }
+    else if (dress < 0.55) { float cw = 0.2 + 0.2 * rC; if (min(q.x, 1.0 - q.x) < cw) r = dsRoomPal(rB) * (0.7 + 0.3 * sin(q.x * size.x * 14.0)) * k * 0.8; dsFeat = 1.0; }
+  }
+  return r;
+}
 varying vec3 vDsW, vDsN;
 flat varying vec4 vDsBox;
 flat varying vec2 vDsBoxY;
@@ -39803,7 +39838,7 @@ vec3 dsFacade() {
   vec3 glass = lit > 0.5 ? ${dsLin(0xb7bac0)} : ${dsLin(0x1b2636)}, frameC = ${dsLin(0x171e28)}, bar = ${dsLin(0x888c92)};
   bool broken = dsBroken(key);
   vec3 avg = broken ? mix(${dsLin(0x07090c)}, frameC, 0.4) : frameC * 0.36 + bar * 0.09 + glass * 0.55;
-  vec3 avgEmit = glow * lit * (broken ? 0.18 : 0.55);
+  vec3 avgEmit = glow * lit * (broken ? 0.18 : 0.55) + (broken || lit > 0.5 ? vec3(0.0) : vec3(0.008, 0.01, 0.014) * step(0.25, dsRoomQ) * (1.0 - dsInk));
   vec3 win = c, emit = vec3(0.0);
   float inX = step(0.0, q.x) * step(q.x, 1.0), inY = step(0.0, q.y) * step(q.y, 1.0);
   if (q.y < 0.0 && q.y > -0.091 && q.x > -0.056 && q.x < 1.056) win = bar;
@@ -39811,7 +39846,16 @@ vec3 dsFacade() {
     bool frame = q.x < 0.111 || q.x > 0.889 || q.y < 0.091 || q.y > 0.909;
     bool mullion = abs(q.x - 0.5) < 0.056;
     if (frame) win = frameC;
-    else if (!broken) { win = mullion ? bar : glass; emit = mullion ? vec3(0.0) : glow * lit; }
+    else if (!broken) {
+      win = mullion ? (dsRoomQ > 0.25 && lod < 0.98 ? frameC * 1.6 : bar) : glass; emit = mullion ? vec3(0.0) : glow * lit;
+      if (!mullion && dsRoomQ > 0.25 && lod < 0.98) {
+        vec3 V = normalize(vDsW - cameraPosition);
+        vec3 rd = vec3((abs(N.z) >= abs(N.x) ? V.x : V.z) * dsQSign, V.y, max(dot(V, -N), 0.03));
+        float amb; vec3 rc = dsRoom(q, size, key, rd, lit, dsRoomQ > 0.75 ? 1.0 : 0.0, amb);
+        if (dsInk > 0.5 && lit < 0.5) rc *= 0.4 + 0.6 * dsFeat;
+        win = lit > 0.5 ? rc * 0.12 : rc; emit = lit > 0.5 ? mix(glow, vec3(0.9, 0.93, 1.0), step(0.8, dsRand(key ^ 0x3c6ef372u)) * 0.6) * rc * 1.8 : vec3(0.5, 0.62, 0.85) * rc * 0.12 * amb * (1.0 + dsInk * 2.0);
+      }
+    }
     else {
       float hole = dsHole(key, q, size, px);
       win = mix(${dsLin(0x8fa3b5)}, ${dsLin(0x05070a)}, hole);
@@ -39856,7 +39900,7 @@ function dsFacadeMaterial() {
   dsTableTexture()
   const m = new THREE.MeshStandardMaterial({ emissive: 0xffffff, emissiveIntensity: 1.4, vertexColors: true, roughness: 0.94 })
   m.onBeforeCompile = function (shader, r) { THREE.Material.prototype.onBeforeCompile.call(this, shader, r); dsFacadePatch(shader) }
-  m.customProgramCacheKey = () => 'ds-facade-1'
+  m.customProgramCacheKey = () => 'ds-facade-3'
   return m
 }
 function dsFarMaterial() {
@@ -39864,7 +39908,7 @@ function dsFarMaterial() {
   const m = new THREE.MeshLambertMaterial({ emissive: 0xffffff, emissiveIntensity: 0.8 })
   m.onBeforeCompile = function (shader, r) { THREE.Material.prototype.onBeforeCompile.call(this, shader, r); dsFacadePatch(shader); faustSpireShader(shader) }
   m.defaultAttributeValues = { ...m.defaultAttributeValues, faustSpire: [0] }
-  m.customProgramCacheKey = () => 'ds-far-2'
+  m.customProgramCacheKey = () => 'ds-far-4'
   return m
 }
 
