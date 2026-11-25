@@ -1038,7 +1038,8 @@ CHARS[0].disguise = DISGUISE_CID; CHARS[0].pipe = true
 CHARS.push({ ...CHARS[1], name: 'Blue freak', rig: null, model: 'blue_freak', color: 0x574cff, role: 'A blue puppet with a red scarf and a shiv' })
 const SCARS = { hole: { r:.13, color:0x17191a, edge:0x706a5e, mix: [.48, .58], fade: [.86, 1] }, scorch: { r:.6, color:0x080706, edge:0x151310 },
   dent: { r:2.6, color:0x2b2722, edge:0x4d463c }, blast: { r:2.2, color:0x0b0908, edge:0x1d1a16 },
-  chip: { r:0.7, color:0x1c1a18, edge:0x8f897d, mix: [.3, .62], fade: [.82, 1] } }
+  chip: { r:0.7, color:0x1c1a18, edge:0x8f897d, mix: [.3, .62], fade: [.82, 1] },
+  pram: { r:2.4, color:0x050403, edge:0x1a1612, mix: [.1, .75], fade: [.25, 1] } }
 const GEO_LIBS = [
   { name: 'engine', url: 'https://cdn.jsdelivr.net/gh/enable3d/enable3d@v0.26.1/bundles/enable3d.framework.0.26.1.min.js',
     sri: 'sha384-QTy5CYAjKg5FzOXYy6T6GnYx+oRXjOEzFBQMao+DqJBLX+e5Z1uR65+H9sQNHpvH', expose: "THREE", global: "ENABLE3D.THREE" },
@@ -20329,6 +20330,30 @@ const boomParts = (f, T, tier = 2, full = true, paint = 0x777777) => {
   kitDust(P, rng, x, gy, z, R, s, 0.45, cnt('dust'), 0xa8977c)
   return P
 }
+const BOOM_SMALL = 4
+const pramBoomParts = (f, T, tier = 2, full = true) => {
+  const [x, y, z, R0, gy] = f, P = []
+  if (!kitSane(f, 5, T, BOOM_MS) || y < gy || y - gy > 10) return P
+  const s = T / 1000, R = Math.max(2, R0), rng = genRng(f[11] | 0), nr = tier > 0 ? 22 : 12
+  if (s < 0.6) kitGround(P, x, gy, z, 3 + s * 5, 0xff9a3c, 0.85 * (1 - s / 0.6))
+  const e = 1 - (1 - Math.min(1, s / 0.5)) ** 2
+    if (s < 0.7) { const jr = genRng((f[11] | 0) + 7); for (let i = 0; i < nr; i++) { const a = (i + (jr() - 0.5) * 0.7) / nr * 6.283, d = R * e * (0.85 + jr() * 0.3); kitGround(P, x + Math.cos(a) * d, gy, z + Math.sin(a) * d, (0.5 + jr() * 0.7) * (0.8 + 0.9 * e), 0xfff0c8, (0.55 + jr() * 0.4) * (1 - s / 0.7)) } }
+  if (T < 120) kitGlow(P, x, gy + 0.8, z, (1.5 + s * 14) * 2, 0xfffbe8, 0.85 * (1 - T / 120))
+  if (s < 0.8) { const r = (0.8 + s * 1.5) * (1 - Math.max(0, s - 0.45) / 0.35)
+    kitGlow(P, x, gy + 0.7 + s * 1.4, z, r * 3.6, boomMix(0xfff1b8, 0xff6a1a, Math.min(1, s / 0.5)), 0.9)
+    if (tier > 0) kitGlow(P, x, gy + 0.7 + s * 1.4, z, r * 5, 0xff5a12, 0.3 * (1 - s / 0.8)) }
+  if (!full) return P
+  const n = tier > 0 ? 7 : 4
+  kitThrow(P, rng, x, y, gy, z, s, n, i => [[0x1b1b1d, 0.22, 0, 1], [0x1b1b1d, 0.22, 0, 1], [0x56698a, 0.38, 0, 1], [0x9aa0a6, 0.85, 0.05], [0x3c4c68, 0.55, 0.3], [0x77797c, 0.45, 0.04], [0x77797c, 0.35, 0.04]][i], 2.5, 6, 4.5, 8, 2.5, 0xff7a1a)
+  return P
+}
+const pramBoomBurst = f => {
+  const [x, , z, , gy] = f
+  for (let i = 0; i < 6; i++) burst('smoke', x, gy + 0.5, z, Math.cos(i * 1.047) * 0.3, 1, Math.sin(i * 1.047) * 0.3, 0x6b6761, 2.4)
+  for (let i = 0; i < 6; i++) burst('dust', x, gy + 0.3, z, Math.cos(i * 1.047), 0.15, Math.sin(i * 1.047), 0xc9c0ae, 2.2)
+  burst('puff', x, gy + 0.6, z, 0, 1, 0, 0x8a8378, 2.5)
+  burst('spark', x, gy + 0.5, z, 0, 1, 0, 0xffc36a, 1.6)
+}
 const slamParts = (f, T) => {
   const [x, gy, z, R0] = f, P = []
   if (!kitSane(f, 4, T, SLAM_MS)) return P
@@ -27212,7 +27237,7 @@ function addTracers(list, t) {
   list = goreIntake(list, t)
   if (list.some(f => f[7] === 6 || f[7] === 7)) list = boomTake(list, liveTracers)
   queueScars(list)
-  for (const f of list) if (f[7] === 6 && [0, 2, 4].every(i => Number.isFinite(f[i]))) scarAt([f[0], f[4], f[2], 0, 1, 0], 'blast', f[11] | 0)
+  for (const f of list) if (f[7] === 6 && [0, 2, 4].every(i => Number.isFinite(f[i]))) scarAt([f[0], f[4], f[2], 0, 1, 0], f[3] <= BOOM_SMALL ? 'pram' : 'blast', f[11] | 0)
     else if (f[7] === 7 && [0, 1, 2].every(i => Number.isFinite(f[i]))) scarAt([f[0], f[1], f[2], 0, 1, 0], 'dent', f[4] | 0)
 
   const stride = fxStride
@@ -28364,7 +28389,7 @@ function drawTracers(t, me, others, viewId) {
   smashDustReset()
   if (camera) camera.updateMatrixWorld()
   if (fxQ) { fxQ.R.update(fxQ.t === null ? 0 : Math.min(0.1, Math.max(0, t - fxQ.t) / 1000)); fxQ.t = t }
-  else if (renderer && !renderHeadless && typeof self !== 'undefined') fxQLoad ||= (self.THREE = THREE, geoLoad(FX_LIBS)).then(env => { fxQ = particlesOf(env.Q); renderer.compileAsync(fxQ.R, camera, scene).catch(() => {}) }, () => {})
+  else if (renderer && !renderHeadless && typeof self !== 'undefined') fxQLoad ||= (self.THREE = THREE, geoLoad(FX_LIBS)).then(env => { fxQ = particlesOf(env.Q); renderer.compileAsync(fxQ.R, camera, scene).catch(() => {}); setTimeout(() => { if (!camera) return; const c = camera.position, d = camera.getWorldDirection(new THREE.Vector3()); for (const k of ['smoke', 'dust', 'puff', 'spark']) burst(k, c.x + d.x * 2, c.y + d.y * 2, c.z + d.z * 2, 0, 1, 0, 0x000000, 0.001) }, 4000) }, () => {})
   drawScars()
   try { goreFrame(t) } catch (e) { goreFaults++ }
   drawTornado(t)
@@ -28386,7 +28411,8 @@ function drawTracers(t, me, others, viewId) {
     if (f[7] === 6 || f[7] === 7) { const e = camera ? camera.position : { x: 1e9, y: 0, z: 0 }
       if (f[7] === 6) fxKey = 'boom'
       if(f[7]===7)drawSmashDust(f,(t-o.born)/1000)
-      for (const p of (f[7] === 6 ? boomParts(f, t - o.born, boomLevel, o.full !== false, o.paint ??= boomPaint(f)) : slamParts(f, t - o.born))) { if(f[7]===7&&p[0]){if(activeLook==='ink'||!smashDustVisible(p,f,e))continue;p[6]*=.5} const k = p[0] === 3 ? 1 : kitNear(p, e); if (!k) continue
+      if (f[7] === 6 && f[3] <= BOOM_SMALL && o.full !== false && !o.fxBurst && t - o.born < 500) { o.fxBurst = 1; pramBoomBurst(f) }
+      for (const p of (f[7] === 6 ? f[3] <= BOOM_SMALL ? pramBoomParts(f, t - o.born, boomLevel, o.full !== false) : boomParts(f, t - o.born, boomLevel, o.full !== false, o.paint ??= boomPaint(f)) : slamParts(f, t - o.born))) { if(f[7]===7&&p[0]){if(activeLook==='ink'||!smashDustVisible(p,f,e))continue;p[6]*=.5} const k = p[0] === 3 ? 1 : kitNear(p, e); if (!k) continue
         if (p[0] === 3) { if (activeLook !== 'ink') { const g = glowMesh(p[5], p[6], 0); if (g) { g.position.set(p[1], p[2], p[3]); g.scale.set(p[4] * 2, p[4] * 2, 1); g.quaternion.set(-0.7071068, 0, 0, 0.7071068) } } continue }
         if (p[0] === 2) activeLook === 'ink' ? fxOrb(p[1], p[2], p[3], p[4] * 0.8, p[5], p[6] * k, 1) : fxGlow(p[1], p[2], p[3], p[4] * 2, p[5], p[6] * k, 0)
         else p[0] ? fxOrb(p[1], p[2], p[3], p[4], p[5], p[6] * k, p[7]) : fxBox(p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9] * k) } continue }
