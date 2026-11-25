@@ -22287,6 +22287,15 @@ function interiorWarmProbe() {
   for (const [k, n] of [['position', 3], ['normal', 3], ['color', 3], ['inLight', 3], ['uv', 2]]) g.setAttribute(k, new THREE.Float32BufferAttribute(new Float32Array(3 * n), n))
   for (const m of inMaterials()) interiorProbe.add(new THREE.Mesh(g, m))
   if (typeof faustSewMats === 'function') interiorProbe.add(new THREE.Mesh(g, faustSewMats().brick))
+  const plug = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x07090c }), 1)
+  plug.frustumCulled = false; interiorProbe.add(plug)
+  const stone = faustState?.materials?.stone
+  if (stone) {
+    const c = new THREE.CylinderGeometry(1, 1, 1, 16), n = c.attributes.position.count
+    c.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(n * 3).fill(1), 3)); c.setAttribute('faustGlow', new THREE.Float32BufferAttribute(new Float32Array(n), 1))
+    const cover = new THREE.InstancedMesh(c, stone, 1)
+    cover.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(3), 3); cover.receiveShadow = true; cover.frustumCulled = false; interiorProbe.add(cover)
+  }
   return interiorProbe
 }
 const lookKey = name => (name === 'plain' ? [name, settings.quality, settings.shadows, graphics.lost] : [name, settings.quality, settings.shadows, innerWidth, innerHeight, devicePixelRatio, GOV_LEVELS[govLevel].d, graphics.lost]).join('/')
@@ -22414,7 +22423,7 @@ function* realBoxesWarm(root) {
 }
 function* warmSceneSteps(name, roots = null) {
   if (renderHeadless || !renderer || !camera || !scene.fog) return
-  const all = roots || [scene, faustState?.skyScene, fxWarmed, interiorWarmProbe(), rigWarmProbe()].filter(Boolean), R = realState
+  const all = roots || [interiorWarmProbe(), scene, faustState?.skyScene, fxWarmed, rigWarmProbe()].filter(Boolean), R = realState
   const target = name === 'realistic' ? R?.t?.hdr || null : name === 'ink' ? inkPost?.target || null : null
   for (const root of all) {
     const part = 'warm ' + name + ' ' + (root === scene ? 'scene' : root === faustState?.skyScene ? 'sky' : root.name || 'part')
@@ -36320,7 +36329,7 @@ function jackThrow(c, o, J) {
   partsFlights.push({ ag: e.ag, rec: r, by: c.id, struck: new Set([c.id]), how: 'throw', wall: r.wall })
   slPanic(at[0], at[2], T)
 }
-const DOOR_CLUB = { limb: { len: 0.9 } }, DOOR_SWING = { dmg: 30, reach: 0.55 }
+const DOOR_CLUB = { limb: { len: 0.9 } }, DOOR_SWING = { dmg: 20, reach: 0.55 }
 function doorSwingTick(all, dt, credit) {
   if (!isHost) return
   const T = tickAt || now()
