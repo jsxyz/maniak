@@ -10357,11 +10357,13 @@ function* faustVisualSteps(c) {
     for (const [lot, B] of decoLots) faustDecoFacades(ornament, lot, B, tier, budget)
   }
   c.street = faustStreetDraw(ornament, P)
+  const doors = faustBatch(4096)
+  for (let i = 0; i < glassLots.length; i += 2) { if (doors.room < FAUST_DOOR.cost) break; faustDoorDress(doors, glassLots[i], glassLots[i + 1]) }
   const root = new THREE.Group()
   let placed = false
   try {
   const lookV = dsLookV(c)
-  for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone]]) if (data.count) {
+  for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone], [doors, faustState.materials.stone]]) if (data.count) {
     const mesh = new THREE.Mesh(data.geometry(), mat); mesh.castShadow = data === facade; mesh.receiveShadow = true; root.add(mesh)
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }
     else { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry); if (activeLook === 'realistic') realBoxes(mesh.geometry) }
@@ -10395,6 +10397,30 @@ function faustRing(g, b, tint, t, door, inside = false, backs = null) {
   part(x0, x1, z0, z0 + t, 16); side(x0, x0 + t, 1, -1); side(x1 - t, x1, 2, 1)
   if (door) faustGap(g, faustBox(b.cx, b.cy, z1 - t / 2, b.ex, b.ey, t / 2), tint, door, 32 * k)
   else part(x0, x1, z1 - t, z1, 32)
+}
+const FAUST_DOOR = { cost: 900, plate: 0x2f3944, brass: 0xf2e6bd, lamp: 0xffd9a0, warm: 0xffd7a0, steel: 0x4a5058, dark: 0x252d37, light: 0xcfd3d6, pool: 0x3e444d }
+function faustDoorDress(g, lot, B) {
+  const K = FAUST_DOOR, D = B.door, w = D.w / 2, h = D.h, x = D.x, f = lot.z + lot.d + 0.33, hs = cityHash(lot.seed ^ 0x646f6f72)
+  const wall = faustWall(lot), lum = (wall >> 16 & 255) * 0.3 + (wall >> 8 & 255) * 0.59 + (wall & 255) * 0.11, trim = lum < 110 ? K.light : K.dark
+  const own = !!lot.club || lot.venue === 'club' || !!lot.landmark || !!lot.gothic || faustArtDeco(lot) || ((lot.district === 'core' || lot.district === 'civic') && lot.mass.length >= 3)
+  const lit = lot.venue === 'liquor' || lot.venue === 'conv' ? true : lot.venue === 'club' ? false : faustPieceLit(lot.seed, lot.venue, 0, 0)
+  for (const s of [-1, 1]) g.box(faustBox(x + s * (w + 0.07), (h + 0.12) / 2, f + 0.06, 0.07, (h + 0.12) / 2, 0.06), trim)
+  g.box(faustBox(x, h + 0.06, f + 0.06, w + 0.14, 0.06, 0.06), trim)
+  if (!own) {
+    const awn = lot.district === 'industrial' ? K.steel : lot.venue || lot.district === 'tenement' ? FAUST_VAR.awnings[hs % FAUST_VAR.awnings.length][0] : K.dark
+    g.box(faustBox(x, 3.42, f + 0.5, w + 0.5, 0.05, 0.5), awn)
+    g.box(faustBox(x, 3.31, f + 1.0, w + 0.5, 0.1, 0.02), awn)
+    g.box(faustBox(x, 3.3, f + 0.5, 0.05, 0.04, 0.05), K.dark)
+    g.box(faustBox(x, 3.25, f + 0.5, 0.03, 0.03, 0.03), K.lamp, 2.6)
+  }
+  if (lit) {
+    g.box(faustBox(x, h - 0.04, D.z + 0.1, w, 0.03, 0.2), K.warm, 1.8)
+    const mixc = (a, b, t) => { const c = s => Math.round((a >> s & 255) * (1 - t) + (b >> s & 255) * t); return c(16) << 16 | c(8) << 8 | c(0) }
+    for (let i = 0; i < 6; i++) { const t = (i + 1) / 6; g.box(faustBox(x, 0.03 + i * 0.004, f + 1.2 - i * 0.07, w + 0.7 - i * 0.1, 0.006, 1.4 - i * 0.2), mixc(K.pool, K.warm, t * t), 0.04 + 0.46 * t * t) }
+  }
+  const side = hs & 1 ? 1 : -1, shed = lot.district === 'industrial', word = shed ? 'OFFICE' : String(2 + (hs >>> 4) % 198), ex = shed ? 0.6 : 0.14 + word.length * 0.1, px = x + side * (w + 0.4 + ex)
+  g.box(faustBox(px, 1.5, f + 0.02, ex, 0.21, 0.02), K.plate)
+  faustLetters(g, 'cond', word, [px, 1.5, f + 0.045], [1, 0, 0], [0, 1, 0], ex * 2 - 0.1, 0.2, K.brass, 0.5)
 }
 function faustGap(g, b, tint, door, skip = 0) {
   const x0 = b.cx - b.ex, x1 = b.cx + b.ex, y0 = b.cy - b.ey, y1 = b.cy + b.ey
