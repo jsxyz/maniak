@@ -43427,21 +43427,55 @@ function airInput(t) {
     for (const k of carriers.values()) {
       if (!k.id.startsWith('air:') || !k.line || !airHelmNear(c, k)) continue
       c.airUseT = T; c.useT = USE_S
+      const R = airCrews.get(k.id)
       if (airPilots.has(k.id)) tell(c.id, '§7Someone else has the helm.', 'a')
+      else if (R && airCrewLive(R).length) { R.hot = true; tell(c.id, "§7The crew won't let go of the helm.", 'a') }
       else airPilotTake(c, k, T)
       break
     }
   }
 }
-function airAhead(P, dir, reach) {
+function airAhead(k, P, dir, reach) {
   let dist = reach
   const hx = dir * airHeading(P.yaw)[0], hz = dir * airHeading(P.yaw)[1], ca = Math.cos(P.yaw), sa = Math.sin(P.yaw)
   for (const zl of [-48, -24, 0, 24, 48]) {
     const r = airRadius(zl), ox = P.x + sa * zl, oz = P.z + ca * zl
-    const f = castRay(ox, P.y, oz, hx, 0, hz, reach + r, RAY_GROUP)
-    if (f < 1) dist = Math.min(dist, f * (reach + r) - r)
+    const t = airRay(k, ox, P.y, oz, hx, 0, hz, reach + r)
+    if (t < reach + r) dist = Math.min(dist, t - r)
   }
   return dist
+}
+
+const AIRK0 = 0
+const AIRK = { zs: [-57, -38, -19, 0, 19, 38, 57], dirs: 12, pad: 1, margin: 0.6, reach: 4 }
+function airRay(k, ox, oy, oz, dx, dy, dz, range) {
+  let used = 0
+  for (let n = 0; n < 8; n++) {
+    const t = staticRay(ox + dx * used, oy + dy * used, oz + dz * used, dx, dy, dz, range - used, null, RAY_GROUP)
+    if (used + t >= range - 1e-3) return range
+    const B = carrierBodies.get(A.getPointer(rayCb.get_m_collisionObject()))
+    if (!(B && B.c === k)) return used + t
+    used += t + 0.05
+  }
+  return range
+}
+function airClearance(k, x, y, z, yaw) {
+  const sa = Math.sin(yaw), ca = Math.cos(yaw), hit = []
+  let best = AIRK.reach
+  for (const zl of AIRK.zs) {
+    const cx = x + sa * zl, cz = z + ca * zl
+    for (let i = 0; i < AIRK.dirs; i++) {
+      const a = Math.PI * 2 * i / AIRK.dirs, lx = Math.cos(a), ly = Math.sin(a)
+      const r = Math.max(airRadius(zl), ly < 0 && zl > -46 && zl < 26 ? 16 * Math.abs(lx) + 16.3 * Math.abs(ly) : 0) + AIRK.pad
+      const t = airRay(k, cx, y, cz, ca * lx, ly, -sa * lx, r + AIRK.reach)
+      if (t - r < best) best = t - r
+    }
+  }
+  for (const [zl, dz] of [[-60, -1], [60, 1]]) {
+    const t = airRay(k, x + sa * zl, y, z + ca * zl, sa * dz, 0, ca * dz, AIRK.reach)
+    if (t < best) best = t
+  }
+  return best
 }
 function airPilotTick(dt, T) {
   for (const P of [...airPilots.values()]) {
@@ -43459,7 +43493,7 @@ function airPilotTick(dt, T) {
     const vt = ((I.up ? 1 : 0) - (I.dn ? 1 : 0)) * AIRP.climb
     P.vy += (vt - P.vy) * (1 - Math.exp(-dt / AIRP.climbT))
     if (Math.abs(P.s) > 0.05) {
-      const dir = Math.sign(P.s), room = airAhead(P, dir, Math.min(500, P.s * P.s / (2 * AIRP.stop) + 60)) - AIRP.gap
+      const dir = Math.sign(P.s), room = airAhead(k, P, dir, Math.min(500, P.s * P.s / (2 * AIRP.stop) + 60)) - AIRP.gap
       const allow = Math.sqrt(2 * AIRP.stop * Math.max(0, room))
       if (Math.abs(P.s) > allow) P.s = dir * Math.max(allow, Math.abs(P.s) - AIRP.panic * dt)
     }
@@ -43472,11 +43506,15 @@ function airPilotTick(dt, T) {
         if (dc < 150 && Math.abs(dy) < 40) P.vy += Math.sign(P.y - q.y || 1) * 0.5 * dt
       }
     }
-    if (P.vy < 0 && castRay(P.x, P.y - 12, P.z, 0, -1, 0, 6 - P.vy * 3, RAY_GROUP) * (6 - P.vy * 3) < 6 + -P.vy * 3) P.vy = Math.max(P.vy, 0)
-    if (P.vy > 0 && castRay(P.x, P.y + 12, P.z, 0, 1, 0, 6 + P.vy * 3, RAY_GROUP) * (6 + P.vy * 3) < 6 + P.vy * 3) P.vy = Math.min(P.vy, 0)
-    P.yaw += P.w * dt
-    const fw = airHeading(P.yaw)
-    P.x += fw[0] * P.s * dt; P.z += fw[1] * P.s * dt; P.y += P.vy * dt
+    if (P.vy < 0 && airRay(k, P.x, P.y - 12, P.z, 0, -1, 0, 6 - P.vy * 3) < 6 - P.vy * 3) P.vy = Math.max(P.vy, 0)
+    if (P.vy > 0 && airRay(k, P.x, P.y + 12, P.z, 0, 1, 0, 6 + P.vy * 3) < 6 + P.vy * 3) P.vy = Math.min(P.vy, 0)
+    const here = airClearance(k, P.x, P.y, P.z, P.yaw), ok = c2 => c2 > AIRK.margin || c2 >= here
+    const yaw2 = P.yaw + P.w * dt
+    if (ok(airClearance(k, P.x, P.y, P.z, yaw2))) P.yaw = yaw2; else P.w = 0
+    const fw = airHeading(P.yaw), x2 = P.x + fw[0] * P.s * dt, z2 = P.z + fw[1] * P.s * dt
+    if (ok(airClearance(k, x2, P.y, z2, P.yaw))) { P.x = x2; P.z = z2 } else P.s = 0
+    const y2 = P.y + P.vy * dt
+    if (ok(airClearance(k, P.x, y2, P.z, P.yaw))) P.y = y2; else P.vy = 0
     if (P.y < P.ymin) { P.y = P.ymin; P.vy = Math.max(0, P.vy) }
     if (P.y > AIRP.maxY) { P.y = AIRP.maxY; P.vy = Math.min(0, P.vy) }
     const lim = WORLD - AIRP.edge
@@ -43485,6 +43523,63 @@ function airPilotTick(dt, T) {
     airPilotPush(P, T)
   }
 }
+const AIRC = { kinds: ['thug_guard', 'tear_flank'], posts: [[0, -35.4], [3.4, -33.2]], wake: 6, away: 700, rest: 600, gone: 8, fall: 120 }
+const airCrews = new Map(), airCrewOff = new Map()
+const airCrewLive = R => R.ids.map(id => players.get(id)).filter(c => c && !(c.dead > 0))
+function airCrewSpawn(k, T) {
+  const p = carrierPose(k), psi = p.yaw + Math.PI, R = { ids: [], hot: false, dead: new Map() }
+  AIRC.kinds.forEach((kind, n) => {
+    const row = HAUNT_ROWS[kind]?.find(r => !players.has(BOT_ID0 + r))
+    if (row === undefined) return
+    const w = carrierWorld(p, AIRC.posts[n][0], AIR.deck, AIRC.posts[n][1])
+    ENFORCER_AT = [w[0], w[1] + 0.6, w[2], psi]
+    const ok = addBot(row)
+    ENFORCER_AT = null
+    if (!ok) return
+    const c = players.get(BOT_ID0 + row)
+    c.prot = 0
+    Object.assign(c.ai, { pin: true, passive: true, lurk: 0, yaw: psi, airCrew: k.id })
+    R.ids.push(c.id)
+  })
+  if (!R.ids.length) return false
+  airCrews.set(k.id, R)
+  if (conns.size) pushRoster()
+  return true
+}
+function airCrewDrop(R) {
+  for (const id of R.ids) { const c = players.get(id); if (c) dropBot(c) }
+  R.ids = []
+  if (conns.size) pushRoster()
+}
+function airCrewTick(T) {
+  if (!isHost || !LV.faust || !faustState || !carriers.size) return
+  const humans = [...players.values()].filter(c => !c.bot && c.id < BOT_ID0 && !(c.dead > 0) && c.body)
+  for (const k of carriers.values()) {
+    if (!k.id.startsWith('air:') || !k.line) continue
+    const R = airCrews.get(k.id), aboard = humans.filter(h => airAboard(h, k))
+    if (!R) {
+      if (aboard.length && !airPilots.has(k.id) && T > (airCrewOff.get(k.id) ?? 0)) airCrewSpawn(k, T)
+      continue
+    }
+    const p = carrierPose(k)
+    if (!humans.some(h => Math.hypot(h.x - p.x, h.z - p.z) < AIRC.away) || airPilots.has(k.id)) { airCrewDrop(R); airCrews.delete(k.id); continue }
+    for (const id of [...R.ids]) {
+      const c = players.get(id)
+      if (!c) { R.ids.splice(R.ids.indexOf(id), 1); continue }
+      if (c.dead > 0) { if (!R.dead.has(id)) R.dead.set(id, T); if (T - R.dead.get(id) > AIRC.gone * 1000) { dropBot(c); R.ids.splice(R.ids.indexOf(id), 1); if (conns.size) pushRoster() } continue }
+      if (c.y < p.y - AIRC.fall) { dropBot(c); R.ids.splice(R.ids.indexOf(id), 1); if (conns.size) pushRoster() }
+    }
+    const live = airCrewLive(R)
+    if (!R.ids.length) { airCrews.delete(k.id); airCrewOff.set(k.id, T + AIRC.rest * 1000); continue }
+    if (!live.length) { airCrewOff.set(k.id, T + AIRC.rest * 1000); continue }
+    if (!R.hot && (live.some(c => c.hp < (c.bot?.hp ?? CHARS[c.cid].hp)) || aboard.some(h => { const [lx, , lz] = carrierLocal(p, h.x, h.y, h.z); return Math.hypot(lx - AIRP.helm[0], lz - AIRP.helm[1]) < AIRC.wake }))) R.hot = true
+    if (R.hot && aboard.length) for (const c of live) {
+      const h = aboard.reduce((a, b) => Math.hypot(b.x - c.x, b.z - c.z) < Math.hypot(a.x - c.x, a.z - c.z) ? b : a)
+      Object.assign(c.ai, { pin: false, passive: false, lurk: 0, tgt: h.id, hunt: h.id })
+    }
+  }
+}
+
 function airWireOut() {
   if (!airPilots.size) return {}
   const r2 = v => Math.round(v * 100) / 100, r4 = v => Math.round(v * 10000) / 10000
@@ -47052,7 +47147,7 @@ function mcSeatFly(v, age) {
 {
   const H = HOST_PHASES, bi = H.beforeIntent, bp = H.beforePhysics
   H.beforeIntent = t => { bi(t); mcInput(t); airInput(t) }
-  H.beforePhysics = t => { bp(t); mcHostTick(t); airPilotTick(t.dt, tickAt || now()) }
+  H.beforePhysics = t => { bp(t); mcHostTick(t); airPilotTick(t.dt, tickAt || now()); airCrewTick(tickAt || now()) }
   const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems
   L.snapshot = () => ({ ...snap(), ...mcWireOut(), ...airWireOut() })
   L.takeItems = function (d) { take.call(this, d); mcWireIn(d); airWireIn(d) }
