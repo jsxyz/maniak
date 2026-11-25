@@ -24764,6 +24764,25 @@ function rigReachAim(b, u, v) {
 }
 const REACH = { chest: 0.4, depth: 1.0, lead: 0.6, ramp: 60, release: 100, slack: 1.8 }
 const LUNGE = { stop: 0.9, max: 0.65, ease: 80, bound: 0.5, hold: 0.65 }
+function holdTouch(a, t) {
+  if (!(a.holdN > 0) || !(t >= (a.holdFrom ?? Infinity))) return
+  a.holdN--
+  if (t >= (a.holdTo || 0)) a.holdTo = t + 1
+  if (a.reach && t >= a.reach.until) a.reach.until = t + 1
+}
+function restoreSnap(R) {
+  if (R.snapSave) { R.snapSave[0].quaternion.copy(R.snapSave[1]); R.snapSave = null }
+}
+function rigSnap(a, R) {
+  if (!a.snapPend) return
+  a.snapPend = false
+  const b = R.lod > 1 || a.dying >= 0 ? null : R.bones.get('Head')
+  if (!b) return
+  R.snapSave = [b, b.quaternion.clone()]
+  b.rotateX(-0.5)
+  b.rotateZ(0.22)
+  a.mesh.updateMatrixWorld(true)
+}
 function reachSeen(r, t) {
   if (r && !r.seen) { r.seen = true; if (t > r.until) r.until = t }
 }
@@ -24932,10 +24951,12 @@ function seatPose(a, R) {
 }
 function rigAnimate(a, want, dt, t) {
   const R = a.rig, M = R.M, K = M.clips, H = 2 * (a.spec.h + a.spec.r), hold = a.hold, v = a.v || 0
+  holdTouch(a, t)
   restoreGaitPose(R)
   restoreMovePose(R)
   restoreSeatPose(R)
   restoreReachPose(R)
+  restoreSnap(R)
   const launch = rigLaunch(a, t), lunge = rigLunge(a, t), P = a.mesh.position
   if (a.drawOff && P.x === a.drawOff[2] && P.y === a.drawOff[3] && P.z === a.drawOff[4]) { P.x -= a.drawOff[0]; P.y -= a.drawOff[5]; P.z -= a.drawOff[1] }
   let ox = 0, oy = 0, oz = 0
@@ -25100,6 +25121,7 @@ function rigAnimate(a, want, dt, t) {
   rigMovePose(a, R, want, t)
   rigGait(a, R, M, dt, airborne)
   rigReach(a, R, t)
+  rigSnap(a, R)
   if (R.lod < 2 && a.dying < 0 && !airborne && !a.swimming && !SOLE.holds.has(hold) && !(a.chainState?.[0] >= 3) && bodyOf(a.spec.model) === 'maniak') rigSoleFloor(a, R, a.mesh.position.y - a.spec.h - a.spec.r, dt)
   else R.soleLift = 0
   if (a.dealId !== undefined) dealRig(a, R, dt, t)
@@ -27891,8 +27913,8 @@ function strikeWeight(arc, t) {
       if (e < best) { best = e; hit = b }
     }
   }
-  if (a) { a.holdTo = hold; a.holdFrom = hs }
-  if (hit) { hit.holdTo = hold; hit.holdFrom = hs; hit.struckAt = hs; hit.struckFrom = [f[0], f[2]]; hit.struckKnock = gun?.knock || 0; hit.holdPos = [hit.mesh.position.x, hit.mesh.position.z] }
+  if (a) { a.holdTo = hold; a.holdFrom = hs; a.holdN = 2 }
+  if (hit) { hit.holdTo = hold; hit.holdFrom = hs; hit.holdN = 2; hit.snapPend = true; hit.struckAt = hs; hit.struckFrom = [f[0], f[2]]; hit.struckKnock = gun?.knock || 0; hit.holdPos = [hit.mesh.position.x, hit.mesh.position.z] }
   if (a && hit && gun?.melee && !gun.grip && (gun.punch === 'jab' || gun.punch === 'rise')) a.reach = { to: hit, at: hs, until: hold }
   return hit
 }
@@ -27936,11 +27958,12 @@ function fxWord(o, age, words) {
   }
   const m = fxMesh(wordPool, () => new THREE.Sprite(new THREE.SpriteMaterial({ ...FX, map: impactTexOf(word), fog: false, toneMapped: false, depthTest: false })), 0xffffff, age < 0.6 ? 1 : 1 - (age - 0.6) / 0.4)
   m.material.map = impactTexOf(word); m.renderOrder = 10
-  m.material.rotation = (Math.abs(Math.round(o.born)) % 7 - 3) * 0.06
+  m.material.rotation = (Math.abs(Math.round(o.born)) % 7 - 3) * 0.09
   m.position.copy(o.wordAt); m.position.y += age * 0.3
   const pop = age < 0.12 ? 0.5 + 0.9 * age / 0.12 : 1.4 - 0.4 * Math.min(1, (age - 0.12) / 0.3)
   const k = camera ? clamp(camera.position.distanceTo(o.wordAt) / 3.5, 0.3, 1.2) : 1
-  m.scale.set(1.25 * pop * k, 0.78 * pop * k, 1)
+  const dm = clamp(0.7 + (GUNS[o.arc[0][6]]?.dmg || 20) / 55, 0.8, 1.7)
+  m.scale.set(1.25 * pop * k * dm, 0.78 * pop * k * dm, 1)
 }
 function fxRing(a, age, hex) {
   const m = fxMesh(ringPool, () => fxSolid(new THREE.RingGeometry(0.8, 1, 24)), hex, (1 - age) * (1 - age))
