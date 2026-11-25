@@ -11464,7 +11464,7 @@ function faustRoofBeams() {
   const F = faustState, seen = new Set(), stops = []
   for (const line of airLinesMemo.lines) for (const m of line.stops) if (!seen.has(m.id)) { seen.add(m.id); stops.push(m) }
   stops.sort((a, b) => (a.id < b.id ? -1 : 1))
-  const geometry = new THREE.CylinderGeometry(1.2, 26, 800, 12, 1, true); geometry.translate(0, -400, 0)
+  const geometry = new THREE.CylinderGeometry(1.2, 100, 3200, 12, 1, true); geometry.translate(0, -1600, 0); geometry.setAttribute('faustBeamFade', new THREE.BufferAttribute(new Float32Array(geometry.attributes.position.count).fill(1), 1))
   F.roofBeams = []
   const step = Math.max(1, Math.ceil(stops.length / 6))
   for (let i = 0; i < stops.length && F.roofBeams.length < 6; i += step) {
@@ -11632,16 +11632,16 @@ function faustSkyWeather(far) {
   faustBeamBlend(beamMaterial)
   beamMaterial.onBeforeCompile = shader => {
     shader.uniforms.faustBeamInk = beamInk
-    shader.vertexShader = 'varying float faustBeamV; varying float faustBeamFace;\n' + shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
- faustBeamV = uv.y; faustBeamFace = abs(dot(normalize(normalMatrix * normal), normalize(mvPosition.xyz)));`)
-    shader.fragmentShader = 'varying float faustBeamV; varying float faustBeamFace; uniform float faustBeamInk;\n' + shader.fragmentShader.replace('#include <alphamap_fragment>', `#include <alphamap_fragment>
+    shader.vertexShader = 'attribute float faustBeamFade; varying float faustBeamFadeV; varying float faustBeamV; varying float faustBeamFace;\n' + shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+ faustBeamFadeV = faustBeamFade; faustBeamV = uv.y; faustBeamFace = abs(dot(normalize(normalMatrix * normal), normalize(mvPosition.xyz)));`)
+    shader.fragmentShader = 'varying float faustBeamFadeV; varying float faustBeamV; varying float faustBeamFace; uniform float faustBeamInk;\n' + shader.fragmentShader.replace('#include <alphamap_fragment>', `#include <alphamap_fragment>
  float faustBeamCore = smoothstep(0.0, 0.9, faustBeamFace);
- float faustBeamLen = 0.18 + 0.82 * faustBeamV;
+ float faustBeamLen = mix(0.18 + 0.82 * faustBeamV, faustBeamV, faustBeamFadeV);
  if (faustBeamInk > 0.5) { float inkCore = smoothstep(0.7, 0.97, faustBeamFace);
    diffuseColor.rgb = vec3(1.0); diffuseColor.a = inkCore * inkCore * smoothstep(0.0, 0.3, faustBeamV); }
  else diffuseColor.a *= (faustBeamCore * faustBeamCore) * faustBeamLen;`)
   }
-  beamMaterial.customProgramCacheKey = () => 'faust-downlight-5'
+  beamMaterial.customProgramCacheKey = () => 'faust-downlight-6'
   F.beamInk = beamInk; F.beamMaterial = beamMaterial
   const poolInk = beamInk
   const poolMaterial = new THREE.MeshBasicMaterial({ color: 0xdcecff, opacity: 0.2, transparent: true, fog: false,
@@ -11662,7 +11662,7 @@ function faustSkyWeather(far) {
   F.beamPools = []
   F.skyBeams = []
   for (const [x, y, z] of [[-880,1120,-2630],[-420,910,-2510],[420,910,-2510],[880,1120,-2630],[-1120,1490,-2440],[1120,1490,-2440]]) {
-    const length = y + 350, geometry = new THREE.CylinderGeometry(3, 220, length, 12, 1, true); geometry.translate(0, -length / 2, 0)
+    const length = y + 350, geometry = new THREE.CylinderGeometry(3, 220, length, 12, 1, true); geometry.translate(0, -length / 2, 0); geometry.setAttribute('faustBeamFade', new THREE.BufferAttribute(new Float32Array(geometry.attributes.position.count), 1))
     const beam = new THREE.Mesh(geometry, beamMaterial); beam.position.set(x, y, z); beam.userData.phase = F.skyBeams.length * 1.7; beam.userData.length = length
     F.skyBeams.push(beam); far.add(beam)
     for (const [list, parent] of [['far', far], ['near', scene]]) { const pool = new THREE.Mesh(poolGeometry, poolMaterial); pool.frustumCulled = false; pool.renderOrder = 3; pool.visible = false; parent.add(pool); beam.userData[list] = pool; F.beamPools.push(pool) }
