@@ -1468,7 +1468,7 @@ const MANIAK_CAR = { row: 'Maniak car', file: 'maniak_car.25b5725c.glb', lods: [
 const ASSETS =
   'https://cdn.jsdelivr.net/gh/enable3d/enable3d.github.io@1dd9baa5328249fe19b48507a880de9b11f4b4a0/src/assets/glb/'
 const RIG_BASE = 'assets/', RIG_SITE = 'https://jsxyz.github.io/maniak/assets/'
-const RIG_FILES = { blue_freak: 'blue_freak.d6c045c6.glb', blue_freak_anims: 'blue_freak_anims.df906d78.glb', enforcer_heavy: 'enforcer_heavy.e08a042c.glb', enforcer: 'enforcer.1fea935d.glb', performer_anims: 'performer_anims.672d8111.glb', dancer: 'civ_dancer.4787137a.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.70529d66.glb', pacifier: 'pacifier.20ff7af3.glb', teardrop: 'teardrop.a8a9ed76.glb', thug: 'thug.89b5651d.glb', tony: 'tony.5c4c369e.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.138004e9.glb', civ_f_coat: 'civ_f_coat.6b28a0eb.glb', civ_f_dress: 'civ_f_dress.993f5d40.glb', civ_freak: 'civ_freak.9c1a831c.glb', civ_m_coat: 'civ_m_coat.ecaf0498.glb', civ_m_suit: 'civ_m_suit.b39f20cf.glb', civ_m_worker: 'civ_m_worker.0aea4326.glb', maniak: 'maniak.7d7354b0.glb', maniak_moves: 'maniak_moves.3bfc97da.glb', alistair: 'maniak_alistair.b880c43b.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
+const RIG_FILES = { blue_freak: 'blue_freak.d6c045c6.glb', blue_freak_anims: 'blue_freak_anims.df906d78.glb', enforcer_heavy: 'enforcer_heavy.e08a042c.glb', enforcer: 'enforcer.1fea935d.glb', performer_anims: 'performer_anims.672d8111.glb', strip_anims: 'strip_anims.5dc56a0b.glb', dancer: 'civ_dancer.4787137a.glb', street_performer: 'street_performer.d0e8d157.glb', freak_anims: 'freak_anims.d8963861.glb', misery_master: 'misery_master.70529d66.glb', pacifier: 'pacifier.20ff7af3.glb', teardrop: 'teardrop.a8a9ed76.glb', thug: 'thug.89b5651d.glb', tony: 'tony.5c4c369e.glb', anims: 'anims.4491f331.glb', civ_brute: 'civ_brute.138004e9.glb', civ_f_coat: 'civ_f_coat.6b28a0eb.glb', civ_f_dress: 'civ_f_dress.993f5d40.glb', civ_freak: 'civ_freak.9c1a831c.glb', civ_m_coat: 'civ_m_coat.ecaf0498.glb', civ_m_suit: 'civ_m_suit.b39f20cf.glb', civ_m_worker: 'civ_m_worker.0aea4326.glb', maniak: 'maniak.7d7354b0.glb', maniak_moves: 'maniak_moves.3bfc97da.glb', alistair: 'maniak_alistair.b880c43b.glb', props: 'props.c509eb59.glb', maniak_strikes: 'maniak_strikes.2f5d5f8b.glb' }
 const RIG_LIBS = [
   { name: 'bgu', url: 'https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/utils/BufferGeometryUtils.js',
     sri: 'sha384-wOjwauvHlJO7K6APr7FmMGH2nupQa3Ndzas9bJZhsAMOK055efJud8ns4aYmASKv' },
@@ -32235,6 +32235,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     if (conns.size) pushRoster()
     return { id: c.id, kind, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100) }
   },
+  hauntsOff() { let n = 0; for (const c of players.values()) if (!c.bot) { hauntNext.set(c.id, Infinity); n++ } return n },
+  clipAt(stage, pole) { SL_ROUTINE.force = stage || pole ? { stage, pole, t0: slNow() } : null; return SL_ROUTINE.force },
   stripAt(u) { SL_STRIP.force = Number.isFinite(u) ? Math.min(0.999, Math.max(0, u)) : null; return SL_STRIP.force },
   clubs: () => {
     const F = faustState, me = selfChar()
@@ -36888,13 +36890,15 @@ function slVenue(cell, P, ci, cj) {
         if (d < 2 || d > 6 || spots.some(q => q.kind !== 'stage' && Math.hypot(q.x - c[0], q.z - c[1]) < 1.4)) continue
         if (!slVenuePath(S0, plate, inn, c, true)) continue
         const n = 10 + extra
-        if (n > 12 || !stand(n, { x: c[0], z: c[1], face: [stage.x - c[0], stage.z - c[1]] }, { body: slHash(base + n, 1) % 5, clip: ['idle', 'talk', 'arms_folded'][slHash(base + n, 2) % 3], role: 'patron' })) continue
+        const pa = n > 12 ? null : stand(n, { x: c[0], z: c[1], face: [stage.x - c[0], stage.z - c[1]] }, { body: slHash(base + n, 1) % 5, clip: ['idle', 'talk', 'arms_folded'][slHash(base + n, 2) % 3], role: 'patron' })
+        if (!pa) continue
+        pa.patron = true; pa.pOff = slHash(base + n, 9) % SL_PATRON.period
         np_++; extra++
       }
       const croom = S0.rooms.find(q => q.kind === 'club'), dances = ['dance_charleston', 'dance_charleston_fancy', 'dance_lindy'], dress = [[0.25, 1.5, 1.0], [1.9, 1.5, 0.3], [1.9, 1.95, 2.2]]
       ;[stage, ...spots.filter(s => s.kind === 'pole')].filter(Boolean).slice(0, 3).forEach((s, k) => {
         const ag = stand(13 + k, s, { face: [croom ? Math.sign((croom.x0 + croom.x1) / 2 - s.x) || 1 : 1, 0], body: 5, tint: dress[k % dress.length], clip: dances[slHash(base + 13 + k, 6) % 3], role: 'dancer' })
-        if (ag) { ag.y = Math.max(0, s.y - 0.06); ag.plume = true; ag.shimmer = true; ag.dancer = true; ag.dk = slHash(base + 13 + k, 8) % 6; ag.sOff = slHash(base + 13 + k, 7) % SL_STRIP.period }
+        if (ag) { ag.y = Math.max(0, s.y - 0.06); ag.plume = true; ag.shimmer = true; ag.dancer = true; ag.dpole = s.kind === 'pole'; ag.dk = slHash(base + 13 + k, 8) % 6; ag.sOff = slHash(base + 13 + k, 7) % SL_STRIP.period }
       })
       continue
     }
@@ -37439,7 +37443,7 @@ function slFreeze(ag, r, t, o) {
 function slClip(ag, o, t) {
   const H = ag.body >= 3 ? 1.66 : 1.78
   switch (ag.kind) {
-    case SL_K.idle: o.clip = ag.clip; o.ct = t / 1000 + ag.ph * 3; break
+    case SL_K.idle: if (ag.dancer && slKit?.dancer?.clips.has('floor_work') && slDancerClip(ag, o, t)) break; if (ag.patron && slKit?.bodies?.[ag.body]?.clips.has('patron_cheer') && slPatronClip(ag, o, t)) break; o.clip = ag.clip; o.ct = t / 1000 + ag.ph * 3; break
     case SL_K.cyclist: {
       const crank = o.s / (STREET.bike.wheelR * 2.6)
       o.crank = o.mode === 4 ? 1.5 * Math.PI + 0.5 : crank
@@ -38052,8 +38056,9 @@ function slWireIn(d) {
 
 const SL_CLIPS = {
   civ: [['idle', 15, 1], ['walk', 30, 1], ['phone', 15, 1], ['talk', 15, 1], ['arms_folded', 15, 1], ['knockback', 30, 0], ['getup', 30, 0], ['death', 20, 0],
-    ['flee', 30, 1], ['cower', 15, 1], ['hit_chest', 30, 0], ['stagger', 30, 0], ['sit', 15, 1], ['leash_walk', 30, 1], ['leash_idle', 15, 1], ['cycle_', 30, 1], ['cyclestop_', 15, 1], ['push_', 30, 1], ['pushidle_', 15, 1]],
+    ['flee', 30, 1], ['cower', 15, 1], ['hit_chest', 30, 0], ['stagger', 30, 0], ['sit', 15, 1], ['leash_walk', 30, 1], ['leash_idle', 15, 1], ['cycle_', 30, 1], ['cyclestop_', 15, 1], ['push_', 30, 1], ['pushidle_', 15, 1], ['patron_cheer', 20, 1], ['patron_throw', 20, 1]],
   dance: [['dance_charleston', 30, 1], ['dance_charleston_fancy', 30, 1], ['dance_lindy', 30, 1]],
+  dancer: [['idle', 15, 1], ['walk', 30, 1], ['sit', 15, 1], ['stage_sway', 20, 1], ['pole_spin', 20, 1], ['pole_climb', 20, 1], ['floor_work', 20, 1], ['private_dance', 20, 1]],
   dog: [['idle', 15, 1], ['walk', 30, 1], ['run', 30, 1], ['sit', 15, 1], ['sniff', 15, 1], ['eat', 15, 1], ['flinch', 30, 0]],
   pigeon: [['idle', 15, 1], ['peck', 30, 1], ['walk', 30, 1], ['fly', 30, 1], ['glide', 15, 1]],
 }
@@ -38121,7 +38126,7 @@ function* slSkinnedSteps(g, clipSrc, want, cap, tag, out, mapImage) {
   for (const l of list) {
     mixer.stopAllAction(); const act = mixer.clipAction(l.c); act.play()
     clips.set(l.name, { row, n: l.n, dur: l.c.duration, loop: !!l.loop })
-    const CH = hb >= 0 && l.name.startsWith('dance') ? (clips.get(l.name).head = new Float32Array(l.n * 6)) : null
+    const CH = hb >= 0 && /^(dance|stage_|pole_|floor_)/.test(l.name) ? (clips.get(l.name).head = new Float32Array(l.n * 6)) : null
     for (let f = 0; f < l.n; f++) {
       act.time = l.loop ? f / l.n * l.c.duration : f / (l.n - 1) * l.c.duration; mixer.update(0)
       root.updateMatrixWorld(true); skel.update()
@@ -38195,8 +38200,8 @@ function slLoadKit() {
   if (slKitJob || renderHeadless || serving || !scene) return
   slKitJob = { steps: null, failed: false }
   rigLoader()
-  const files = [RIG_FILES.anims, STREET_FILES.anims, ...STREET.bodies.map(b => RIG_FILES[b]), STREET_FILES.bike, STREET_FILES.pram, STREET_FILES.dog, STREET_FILES.pigeon, STREET_FILES.stagger, RIG_FILES.performer_anims, RIG_FILES.dancer]
-  Promise.all([...files.map(f => rigFetch(f).catch(e => { if (f === STREET_FILES.stagger || f === RIG_FILES.dancer) return null; throw e })), slDancerMap()]).then(gs => {
+  const files = [RIG_FILES.anims, STREET_FILES.anims, ...STREET.bodies.map(b => RIG_FILES[b]), STREET_FILES.bike, STREET_FILES.pram, STREET_FILES.dog, STREET_FILES.pigeon, STREET_FILES.stagger, RIG_FILES.performer_anims, RIG_FILES.dancer, RIG_FILES.strip_anims]
+  Promise.all([...files.map(f => rigFetch(f).catch(e => { if (f === STREET_FILES.stagger || f === RIG_FILES.dancer || f === RIG_FILES.strip_anims) return null; throw e })), slDancerMap()]).then(gs => {
     slKitJob.steps = slKitSteps(gs)
     return background.run('street-kit', slKitJob.steps, { gpu: true, priority: 2 }).then(() => { slKitJob.steps = null; slKitJob.done = true })
   })
@@ -38213,16 +38218,16 @@ function slDancerMap() {
     img.onerror = () => ok(null); img.src = RIG_BASE + SL_DANCER_MAP })
 }
 function* slKitSteps([anims, street, ...rest]) {
-  const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon, stag, perf, dancerG, dmap] = rest.slice(STREET.bodies.length)
+  const bodies = rest.slice(0, STREET.bodies.length), [bike, pram, dog, pigeon, stag, perf, dancerG, stripA, dmap] = rest.slice(STREET.bodies.length)
   const root = new THREE.Group(); root.name = 'street life'
   const kit = { root, bodies: [], parts: {} }
-  const clips = [...anims.animations, ...street.animations, ...(stag ? stag.animations : []), ...(perf ? perf.animations : [])]
+  const clips = [...anims.animations, ...street.animations, ...(stag ? stag.animations : []), ...(perf ? perf.animations : []), ...(stripA ? stripA.animations : [])]
   for (const [i, g] of bodies.entries()) {
     const b = {}; yield* slSkinnedSteps(g, clips, dmap ? SL_CLIPS.civ : i < 3 ? SL_CLIPS.civ : SL_CLIPS.civ.concat(SL_CLIPS.dance), i < 3 ? 500 : 400, STREET.bodies[i].replace('civ_', ''), b)
     kit.bodies.push(b); for (const im of b.ims) root.add(im)
   }
   if (dmap) { const b = {}; yield* slSkinnedSteps(bodies[3], clips, SL_CLIPS.civ.concat(SL_CLIPS.dance), 400, 'f_dress', b, dmap); kit.bodies.push(b); for (const im of b.ims) root.add(im) }
-  if (dancerG) { const b = {}; yield* slSkinnedSteps(dancerG, clips, SL_CLIPS.civ.concat(SL_CLIPS.dance), 80, 'dancer', b); kit.dancer = b; for (const im of b.ims) root.add(im) }
+  if (dancerG) { const b = {}; yield* slSkinnedSteps(dancerG, clips, stripA ? SL_CLIPS.dancer : SL_CLIPS.civ.concat(SL_CLIPS.dance), 80, 'dancer', b); kit.dancer = b; for (const im of b.ims) root.add(im) }
   kit.dog = {}; yield* slSkinnedSteps(dog, dog.animations, SL_CLIPS.dog, 160, '', kit.dog); for (const im of kit.dog.ims) root.add(im)
   kit.pigeon = {}; yield* slSkinnedSteps(pigeon, pigeon.animations, SL_CLIPS.pigeon, 320, '', kit.pigeon); for (const im of kit.pigeon.ims) root.add(im)
   for (const [name, cap] of [['bike_frame', 40], ['bike_wheel', 80], ['bike_crank', 40], ['bike_pedal', 80], ['pram_body', 48], ['pram_wheel_f', 96], ['pram_wheel_r', 96]])
@@ -38240,6 +38245,11 @@ function* slKitSteps([anims, street, ...rest]) {
     mp.count = 0; mp.frustumCulled = false; mp.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mp.userData.tris = idx.length / 3
     kit.plume = mp; root.add(mp)
   }
+  {
+    const bg = new THREE.PlaneGeometry(0.16, 0.07); bg.rotateX(-Math.PI / 2)
+    const mm = new THREE.InstancedMesh(bg, new THREE.MeshBasicMaterial({ color: 0x8fb67a, side: THREE.DoubleSide, toneMapped: false }), SL_PATRON.cap)
+    mm.count = 0; mm.frustumCulled = false; mm.instanceMatrix.setUsage(THREE.DynamicDrawUsage); kit.money = mm; root.add(mm)
+  }
   const lg = new THREE.BufferGeometry(), lp = new THREE.BufferAttribute(new Float32Array(48 * 8 * 3), 3); lp.setUsage(THREE.DynamicDrawUsage); lg.setAttribute('position', lp)
   kit.leash = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x2b2118 })); kit.leash.frustumCulled = false; root.add(kit.leash)
   inkPrepare(root)
@@ -38248,6 +38258,39 @@ function* slKitSteps([anims, street, ...rest]) {
   scene.add(root); slKit = kit
 }
 const SL_STRIP = { period: 150, at: [0.22, 0.5, 0.78], sets: [[0.2, 1.45, 1.0], [1.5, 1.2, 0.25], [1.5, 1.45, 1.55], [0.25, 0.5, 1.5], [1.5, 0.4, 0.4], [0.2, 1.45, 1.55]] }
+const SL_DUR = { stage_sway: 6, floor_work: 16, pole_spin: 3.6, pole_climb: 7 }
+const SL_PATRON = { period: 26, cheer: [16, 19, 21, 24], throw: [19, 21], release: 0.8, bills: 3, life: 2.4, cap: 64, flight: 1.1 }
+function slPatronClip(ag, o, t) {
+  const x = ((t / 1000 + ag.pOff) % SL_PATRON.period + SL_PATRON.period) % SL_PATRON.period, c = SL_PATRON.cheer, h = SL_PATRON.throw
+  if (x >= h[0] && x < h[1]) { o.clip = 'patron_throw'; o.ct = x - h[0]; return true }
+  if (x >= c[0] && x < c[1]) { o.clip = 'patron_cheer'; o.ct = x - c[0]; return true }
+  if (x >= c[2] && x < c[3]) { o.clip = 'patron_cheer'; o.ct = x - c[2]; return true }
+  return false
+}
+const slBillQ = new THREE.Quaternion(), slBillE = new THREE.Euler()
+function slMoney(kit, ag, p, T) {
+  const mm = kit.money, S = SL_PATRON; if (!mm) return
+  const x = ((T / 1000 + ag.pOff) % S.period + S.period) % S.period, a = x - S.throw[0] - S.release; if (a < 0 || a > S.life) return
+  const turn = Math.floor((T / 1000 + ag.pOff) / S.period), c = Math.cos(p.yaw), sn = Math.sin(p.yaw)
+  for (let k = 0; k < S.bills && mm.count < S.cap; k++) {
+    const h = slHash(ag.id, turn, k, 5), r1 = (h & 255) / 255, r2 = (h >> 8 & 255) / 255, r3 = (h >> 16 & 255) / 255
+    const fa = Math.min(a, S.flight), vx = (r1 - 0.5) * 1.4, vz = 2.4 + r2 * 1.6, vy = 1.6 + r3 * 1.2, lx = -0.12 + vx * fa, lz = 0.55 + vz * fa
+    const wy = p.y + 1.75 + vy * fa - 3.2 * fa * fa, y = Math.max(p.y + 0.03, wy), land = wy <= p.y + 0.03
+    const sc = a > S.life - 0.4 ? Math.max(0, (S.life - a) / 0.4) : 1
+    slBillE.set(land ? 0 : a * (6 + r1 * 6), r2 * 6.28 + (land ? 0 : a * 5), land ? 0 : a * (4 + r3 * 5), 'YXZ'); slBillQ.setFromEuler(slBillE)
+    slV.set(p.x + lx * c + lz * sn, y, p.z - lx * sn + lz * c); slS.set(sc, sc, sc); slM4.compose(slV, slBillQ, slS)
+    slM4.toArray(mm.instanceMatrix.array, mm.count * 16); mm.count++
+  }
+}
+const SL_ROUTINE = { stage: [['stage_sway', 6, 3], ['floor_work', 16, 1], ['stage_sway', 6, 2]], pole: [['pole_spin', 3.6, 2], ['pole_climb', 7, 1], ['pole_spin', 3.6, 3], ['pole_climb', 7, 1]] }
+for (const R of Object.values(SL_ROUTINE)) { let t0 = 0; R.seg = R.map(([name, dur, n]) => { const g = { name, t0, len: dur * n }; t0 += g.len; return g }); R.tot = t0 }
+function slDancerClip(ag, o, t) {
+  const R = SL_ROUTINE[ag.dpole ? 'pole' : 'stage'], F = SL_ROUTINE.force, fc = F?.[ag.dpole ? 'pole' : 'stage']
+  if (fc && SL_DUR[fc]) { o.clip = fc; o.ct = ((t - F.t0) / 1000 % SL_DUR[fc] + SL_DUR[fc]) % SL_DUR[fc]; return true }
+  const x = ((t / 1000 + ag.sOff) % R.tot + R.tot) % R.tot
+  for (const g of R.seg) if (x < g.len + g.t0) { o.clip = g.name; o.ct = x - g.t0; return true }
+  return false
+}
 const slBodyOf = (kit, ag) => ag.dancer && kit.dancer ? kit.dancer : kit.bodies[ag.body] || kit.bodies[3]
 function slStripBits(ag, T) {
   const t = T / 1000 + ag.sOff, u = SL_STRIP.force ?? (t % SL_STRIP.period) / SL_STRIP.period; let m = 0
@@ -38608,8 +38651,12 @@ function slFrame(t, dt, obl) {
       slFadeSet(ag, T, p, d)
       if (ag.kind === SL_K.stray) { if (d < D.dog) slDrawSkinned(kit.dog, p, d, ag.tint, ag.companion ? 0.9 : 0.95); continue }
       const strip = ag.dancer && kit.dancer ? slStripBits(ag, T) : 0
+      const poleOff = !ag.dancer ? 0 : ag.dpole ? (p.clip.startsWith('pole_') ? -0.16 : 0) : 1.8, px0 = p.x, pz0 = p.z
+      if (poleOff) { p.x += Math.sin(p.yaw) * poleOff; p.z += Math.cos(p.yaw) * poleOff }
       slDrawSkinned(slBodyOf(kit, ag), p, d, strip || (ag.dancer && kit.dancer) ? slDancerTint(ag, T) : ag.shimmer ? slShimmer(ag, T) : ag.tint, 1, strip); people++
       if (ag.plume && !(strip & 32) && d < D.ped * 0.5) slPlume(kit, ag, p)
+      if (poleOff) { p.x = px0; p.z = pz0 }
+      if (ag.patron && d < D.ped * 0.5) slMoney(kit, ag, p, T)
       if (ag.kind === SL_K.pram && d < D.pram && !slPramGone(ag, T) && !partsPram(kit, ag, p, d, T)) {
         const lod = d < 18 ? '' : '_lod1', s = p.scale, f = STREET.pramBack, x = p.x + Math.sin(p.yaw) * f * s, z = p.z + Math.cos(p.yaw) * f * s
         slSet(kit.parts['pram_body' + lod], x, 0, z, p.yaw, s); slBabySeen(ag, p, x, z, d, T)
