@@ -3481,12 +3481,13 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (stop) H = 560 + (districtHash % 4) * 16
     const style = stop ? 'core' : district
     const h0 = style === 'industrial' || style === 'tenement' ? H : Math.round(H * 0.55), h1 = H === h0 ? 0 : Math.round(H * 0.3)
-    const mass = [faustBox(x, h0 / 2, z, w, h0 / 2, d)]
-    if (h1) mass.push(faustBox(x, h0 + h1 / 2, z, w * 0.73, h1 / 2, d * 0.73), faustBox(x, h0 + h1 + (H - h0 - h1) / 2, z, w * 0.42, (H - h0 - h1) / 2, d * 0.42))
+    const mass = [faustBox(x, h0 / 2, z, w, h0 / 2, d)], need = style === 'core' || style === 'civic' ? inCoreNeed(H, stop) : [0, 0]
+    const up = (f, n) => [Math.min(w, Math.max(w * f, n[0])), Math.min(d, Math.max(d * f, n[1]))], m1 = up(0.73, need), m2 = up(0.42, need)
+    if (h1) mass.push(faustBox(x, h0 + h1 / 2, z, m1[0], h1 / 2, m1[1]), faustBox(x, h0 + h1 + (H - h0 - h1) / 2, z, m2[0], (H - h0 - h1) / 2, m2[1]))
     else if (style === 'industrial') mass.push(faustBox(x - w * 0.6, H + 18, z - d * 0.6, 1.6, 18, 1.6), faustBox(x + w * 0.4, H + 4, z, 4, 4, 6))
     else mass.push(faustBox(x + w * 0.3, H + 2, z, 3, 2, 4), faustBox(x - w * 0.4, H + 4, z - d * 0.3, 2.6, 4, 2.6))
     if (cath) mass.splice(0, mass.length, faustBox(x, 12, z, w, 12, d), faustBox(x, 27, z, 11, 3, d - 2.2), faustBox(x, 38, z, 8, 8, 8))
-    const skyMass = cath ? mass.slice(0, 2) : h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, w * 0.73, (H - h0) / 2, d * 0.73)] : mass.slice(0, 2)
+    const skyMass = cath ? mass.slice(0, 2) : h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, m1[0], (H - h0) / 2, m1[1])] : mass.slice(0, 2)
     const lot = { x, z, w, d, height: H, gothic, district: style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + i, gz), ...al && { alley: { side: i & 1 ? -1 : 1, half: inCm(al.G / 2) } } }
     if (landmark && !stop && (landmark !== 'cathedral' || cath)) lot.landmark = landmark
     if (isClub && !lot.landmark) {
@@ -3654,6 +3655,10 @@ function* faustSpawnsSteps(seed, S, avoid = []) {
   faustSpawnMemo = { key, rows }
   return rows
 }
+const inCoreNeed = (H, stop) => {
+  const K = FAUST_IN, S = K.stair, cw = 2 * S.width + S.well + (H >= 48 ? K.lift + K.part : 0) + 2 * K.part, cl = 2 * S.landing + S.run + 2 * K.part
+  return [cw / 2 + (stop ? 0.6 : 0) + 1 + K.wall, cl / 2 + K.hall + K.wall]
+}
 const FAUST_IN = { storey: 4, wall: 0.8, slab: 0.3, part: 0.15, door: [1.7, 3], inner: [1.6, 2.5], hall: 2.2,
   stair: { width: 1.3, well: 0.2, landing: 1.4, run: 3.2, rise: 2 }, lift: 2.4,
   open: 14, near: 40, close: 60 }
@@ -3685,11 +3690,13 @@ const inSlot = (plan, lot) => (lot.x - (plan.ci - plan.S / 2) * 96 > 56 ? 1 : 0)
 function inLiftHouse(x, z, H) {
   const K = FAUST_IN, S = K.stair, cw = 2 * S.width + S.well + K.lift + 3 * K.part, cl = 2 * S.landing + S.run + 2 * K.part
   const lx0 = inCm(x + 0.6 - cw / 2 + K.part) + 2 * S.width + S.well + K.part, cz1 = inCm(z + cl / 2) - K.part
-  const t = 0.15, y0 = H + 0.4, h = 2.8, X0 = lx0 - t, X1 = lx0 + K.lift + t, Z0 = cz1 - K.lift - t, Z1 = cz1 + t, d0 = z + 1, d1 = z + 2.6
+  const t = 0.15, y0 = H + 0.4, h = 2.8, X0 = lx0 - t, X1 = lx0 + K.lift + t, Z0 = cz1 - K.lift - t, Z1 = cz1 + t, d0 = z + 0.75, d1 = z + 2.85
   const b = (x0, x1, y1, y2, z0, z1) => faustBox((x0 + x1) / 2, (y1 + y2) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (y2 - y1) / 2, (z1 - z0) / 2)
-  return [b(X0, X1, y0, y0 + h, Z0, Z0 + t), b(X0, X1, y0, y0 + h, Z1 - t, Z1), b(X1 - t, X1, y0, y0 + h, Z0 + t, Z1 - t),
+  const out = [b(X0, X1, y0, y0 + h, Z0, Z0 + t), b(X0, X1, y0, y0 + h, Z1 - t, Z1), b(X1 - t, X1, y0, y0 + h, Z0 + t, Z1 - t),
     b(X0, X0 + t, y0, y0 + h, Z0 + t, d0), b(X0, X0 + t, y0, y0 + h, d1, Z1 - t), b(X0, X0 + t, y0 + 2.5, y0 + h, d0, d1),
     b(X0, X1, y0 + h, y0 + h + 0.2, Z0, Z1)]
+  out.door = { x: X0, z: (d0 + d1) / 2, out: [-1, 0], w: d1 - d0 }
+  return out
 }
 function faustInterior(plan, li) {
   const lot = plan.lots[li], { x, z, w, d, height: H, district: style, gothic, stop, mass } = lot, K = FAUST_IN, T = K.wall
@@ -3766,9 +3773,11 @@ function inWindows(B, k) {
     const x0 = B.x - B.w - 0.25, x1 = B.x + B.w + 0.25, z0 = B.z - B.d - 0.25, z1 = B.z + B.d + 0.25, t = 0.95, D = B.door
     const d0 = D.x - D.w / 2, d1 = D.x + D.w / 2
     shop(0, z1, (x0 + d0) / 2, (d0 - x0) / 2); shop(0, z1, (d1 + x1) / 2, (x1 - d1) / 2)
-    shop(1, z0, B.x, B.w + 0.25)
+    { let c = x0
+      for (const u of (B.backDoors || []).filter(q => q.out[1] < 0).map(q => q.x).sort((p, q) => p - q)) { if (u - 0.85 - c > 0.005) shop(1, z0, (c + u - 0.85) / 2, (u - 0.85 - c) / 2); c = u + 0.85 }
+      shop(1, z0, (c + x1) / 2, (x1 - c) / 2) }
     const sideShop = (face, plane, out) => { let c = z0 + t
-      const ends = (B.backDoors || []).filter(q => q.out[0] === out && !(B.club?.back && q.x === B.club.back[0] && q.z === B.club.back[1])).map(q => q.z).sort((p, q) => p - q)
+      const ends = (B.backDoors || []).filter(q => q.out[0] === out && true).map(q => q.z).sort((p, q) => p - q)
       for (const u of ends) { if (u - 0.85 - c > 0.005) shop(face, plane, (c + u - 0.85) / 2, (u - 0.85 - c) / 2); c = u + 0.85 }
       if (z1 - t - c > 0.005) shop(face, plane, (c + z1 - t) / 2, (z1 - t - c) / 2) }
     sideShop(2, x1, 1); sideShop(3, x0, -1)
@@ -4078,6 +4087,7 @@ function faustStorey(B, k) {
   const lanesOk = (x0, x1, z0, z1) => wins.every((q, i) => { const sp = laneSpan(i, x0, x1, z0, z1); return !sp || laneKeeps(i, sp) })
   const clear = (x0, x1, z0, z1, glass) => x0 >= R.x0 + 0.05 && x1 <= R.x1 - 0.05 && z0 >= R.z0 + 0.05 && z1 <= R.z1 - 0.05 &&
     !free.some(q => x0 < q[1] && x1 > q[0] && z0 < q[3] && z1 > q[2]) && (glass || lanesOk(x0, x1, z0, z1)) &&
+    !boxes.some(b => b.c && b.ey > 1.5 && Math.min(b.ex, b.ez) < 0.2 && x0 < b.cx + b.ex - 0.001 && x1 > b.cx - b.ex + 0.001 && z0 < b.cz + b.ez - 0.001 && z1 > b.cz - b.ez + 0.001) &&
     !(x0 < C.x1 + 0.3 && x1 > C.x0 - 0.3 && z0 < C.z1 + 1.6 && z1 > C.z0 - 0.3) &&
     !(k === 0 && x0 < B.door.x + 1.4 && x1 > B.door.x - 1.4 && z1 > G.z1 - 0.6)
   const take = (x0, x1, z0, z1) => free.push([x0 - 0.45, x1 + 0.45, z0 - 0.45, z1 + 0.45])
@@ -4087,7 +4097,7 @@ function faustStorey(B, k) {
       const L = side < 2 ? w : d
       for (let t = 0.2; t + len <= L - 0.2; t += len + 0.25) {
         const a0 = (side < 2 ? R.x0 : R.z0) + t, a1 = a0 + len
-        const r0 = side === 0 ? [a0, a1, R.z0 + 0.06, R.z0 + 0.06 + deep] : side === 1 ? [a0, a1, R.z1 - 0.06 - deep, R.z1 - 0.06] : side === 2 ? [R.x0 + 0.06, R.x0 + 0.06 + deep, a0, a1] : [R.x1 - 0.06 - deep, R.x1 - 0.06, a0, a1]
+        const r0 = side === 0 ? [a0, a1, R.z0 + 0.09, R.z0 + 0.09 + deep] : side === 1 ? [a0, a1, R.z1 - 0.09 - deep, R.z1 - 0.09] : side === 2 ? [R.x0 + 0.09, R.x0 + 0.09 + deep, a0, a1] : [R.x1 - 0.09 - deep, R.x1 - 0.09, a0, a1]
         out.push([side, ...r0])
       }
     }
@@ -4491,7 +4501,7 @@ function faustStorey(B, k) {
         for (let zc = R.z0 + 1.9; zc + 0.5 < R.z1 - 2.8; zc += 2.3) for (const [a, b] of runs) if (b - a > 1.4 && clear(a, b, zc - 0.5, zc + 0.5)) gondola(a, b, zc)
         place(2.4, 0.7, 1, cooler)
         place(1.8, 0.5, Math.max(2, Math.round((w + d) / 3.2)), (x0, x1, z0, z1, side) => shelves(x0, x1, z0, z1, true, side))
-        place(0.9, 0.4, 1, (x0, x1, z0, z1) => { box(x0, x1, fy, fy + 1.5, z0, z1, IN_TINT.steel, { c: 1 }); for (let q = 0; q < 3; q++) for (let g = x0 + 0.05; g < x1 - 0.2; g += 0.22) box(g, g + 0.18, fy + 0.5 + q * 0.32, fy + 0.74 + q * 0.32, z0 - 0.01, z0 + 0.02, pick([0xb02a2a, 0x2a4a8a, 0xd0a030, 0x3f5a4a, 0xe8e0c8]), { f: 16 | 32 }) })
+        place(0.9, 0.4, 1, (x0, x1, z0, z1) => { box(x0, x1, fy, fy + 1.5, z0, z1, IN_TINT.steel, { c: 1 }); for (let q = 0; q < 3; q++) for (let g = x0 + 0.05; g < x1 - 0.2; g += 0.22) box(g, g + 0.18, fy + 0.5 + q * 0.32, fy + 0.74 + q * 0.32, z0 - 0.03, z0 + 0.01, pick([0xb02a2a, 0x2a4a8a, 0xd0a030, 0x3f5a4a, 0xe8e0c8]), { f: 16 | 32 }) })
       }
       posters.push({ x: left ? R.x1 - 0.01 : R.x0 + 0.01, y: fy + 2.1, z: (R.z0 + R.z1) / 2, w: 0.7, h: 1.0, face: left ? 2 : 1, p: liq ? 'spirits' : 'open' })
       for (const [px, pz] of [[B.door.x - 2.4, R.z1 - 1.6], [B.door.x + 2.4, R.z1 - 1.6], [(R.x0 + R.x1) / 2, R.z0 + 1.2]]) if (clear(px - 0.5, px + 0.5, pz - 0.5, pz + 0.5, true)) spots.push({ kind: 'customer', x: px, y: fy, z: pz, face: [0, 1] })
@@ -4601,6 +4611,20 @@ function faustStorey(B, k) {
   }
   for (const BD of BDS) spots.push({ kind: 'backdoor', x: BD.axis === 0 ? BD.u : BD.side < 0 ? P.x0 + 0.6 : P.x1 - 0.6, y: y + 0.06, z: BD.axis === 0 ? P.z0 + 0.6 : BD.u, face: BD.axis === 0 ? [0, 1] : [-BD.side, 0] })
   const privates = k === 0 && B.venue === 'club' ? inPrivateRooms(B, P, G, y, rooms, boxes, lights, spots, wins) : []
+  { const planes = new Map(), SIDES = [[0, 1, 1], [0, -1, 2], [1, 1, 4], [1, -1, 8], [2, 1, 16], [2, -1, 32]]
+    for (const b of boxes) {
+      if (b.n) continue
+      for (const [a, sg, bit] of SIDES) if (b.f === undefined || b.f & bit) { const key = a + ':' + sg + ':' + Math.round(([b.cx, b.cy, b.cz][a] + sg * [b.ex, b.ey, b.ez][a]) * 1000); (planes.get(key) || planes.set(key, []).get(key)).push(b) }
+    }
+    for (const [key, list] of planes) {
+      if (list.length < 2) continue
+      const [a, sg] = key.split(':').map(Number), u = (a + 1) % 3, v = (a + 2) % 3, C = ['cx', 'cy', 'cz'], E = ['ex', 'ey', 'ez']
+      for (const b of list) {
+        if (b.c || !list.some(o => o !== b && (o.t !== b.t || o.m !== b.m) && Math.min(b[C[u]] + b[E[u]], o[C[u]] + o[E[u]]) - Math.max(b[C[u]] - b[E[u]], o[C[u]] - o[E[u]]) > 0.002 && Math.min(b[C[v]] + b[E[v]], o[C[v]] + o[E[v]]) - Math.max(b[C[v]] - b[E[v]], o[C[v]] - o[E[v]]) > 0.002 && (o.c || b[E[u]] * b[E[v]] <= o[E[u]] * o[E[v]]))) continue
+        if (b[E[a]] > 0.006) { b[E[a]] -= 0.0015; b[C[a]] -= sg * 0.0015 }
+      }
+    }
+  }
   const S = { version: 1, k, y, plate: P, type, rooms, boxes, ramps, lights, nodes, edges, ...spots.length ? { spots } : {}, ...privates.length ? { privates } : {} }
   S.hash = inHash(S)
   return S
@@ -18190,9 +18214,13 @@ let fragLimit = FRAG_LIMIT, timeLimit = TIME_LIMIT
 let matchLeft = 0
 let resultsLeft = 0
 
+const pickRow = p => p.car ? [p.x, p.y, p.z, p.gun, p.pow, p.heal, carrierIndex(p.car.id), ...p.car.p] : [p.x, p.y, p.z, p.gun, p.pow, p.heal]
 function dropWeapon(c) {
-  if (GUNS[c.gun].drop !== false) pickups.push({ x: c.x, y: c.y - c.h - c.r + 0.75, z: c.z,
-                 gun: c.gun, pow: 0, respawn: 0, dropped: true })
+  if (GUNS[c.gun].drop !== false) {
+    const pk = { x: c.x, y: c.y - c.h - c.r + 0.75, z: c.z, gun: c.gun, pow: 0, respawn: 0, dropped: true }, hit = carrierAt(c.x, c.y, c.z)
+    if (hit) pk.car = { id: hit.c.id, p: carrierLocal(hit.p, pk.x, pk.y, pk.z) }
+    pickups.push(pk)
+  }
   c.gun = 0
   c.ammo = Infinity
 }
@@ -18619,6 +18647,7 @@ function deliver(c, P, gunId, aimed, onKill) {
 
 function stepPickups(dt, list) {
   for (const pk of pickups) {
+    if (pk.car) { const k = carriers.get(pk.car.id); if (k) { const w = carrierWorld(carrierPose(k), ...pk.car.p); pk.x = w[0]; pk.y = w[1]; pk.z = w[2] } else pk.car = null }
     if (pk.respawn > 0) { pk.respawn -= dt; continue }
     for (const c of list) {
       if (c.dead > 0 || c.bot) continue
@@ -24218,7 +24247,7 @@ function setAnim(id, want, dt, t, hold, still, ticks, shift) {
     const s = i < n - 1 && ticks[i], h = ticks ? TICK : dt, x = s ? s.px ?? s.x : m.x + sh[0], y = s ? s.py ?? s.y : m.y + sh[1], z = s ? s.pz ?? s.z : m.z + sh[2]
     const cv = !carriers.size ? null : ticks?.[i]?.cv || carrierVelAt(x, y, z), cx = cv ? cv[0] * h : 0, cz = cv ? cv[2] * h : 0
     a.cv = cv
-    const d = !a.at ? 0 : ticks?.[i].fresh ? Infinity : Math.hypot(x - a.at.x - cx, z - a.at.z - cz)
+    const rl = ticks?.[i]?.rel, d = !a.at ? 0 : ticks?.[i].fresh ? Infinity : rl ? Math.hypot(rl[0], rl[1]) * h : Math.hypot(x - a.at.x - cx, z - a.at.z - cz)
     if (d < 240 * Math.max(h, TICK)) a.v += (d / Math.max(h, 1e-3) - a.v) * timeShare(h, id >= BOT_ID0 || ticks && (d < 0.6 * h || a.v < 0.6) ? 1 : TICK / 0.15)
     a.stepD = (a.stepD || 0) + (d < 240 * Math.max(h, TICK) ? d : 0); a.stepH = (a.stepH || 0) + h
     if (a.stepH >= 2 * TICK) { a.stepV = a.stepD / a.stepH; a.stepD = a.stepH = 0 }
@@ -26580,7 +26609,8 @@ function drawPickups(list, t) {
       m.userData.model = key
     }
     m.scale.setScalar(propRow(kind, id).pickupScale || 1)
-    m.position.set(p[0], p[1] + Math.sin(t / 420 + p[0]) * 0.13, p[2])
+    const k = p.length > 6 ? carrierNumbered(p[6]) : null, w = k ? carrierWorld(k.pose(drawNow()), p[7], p[8], p[9]) : p
+    m.position.set(w[0], w[1] + Math.sin(t / 420 + p[0]) * 0.13, w[2])
     m.rotation.y = t / 700
     m.rotation.x = kind === 'gun' ? -0.12 : 0
   }
@@ -26977,11 +27007,11 @@ function goreClear() {
     g.mesh.instanceMatrix.needsUpdate = true
   }
 }
-function goreAdd(kind, p, n, r, t, { sx = 1, sy = 1, rot = 0, grow = 0, delay = 0 } = {}) {
+function goreAdd(kind, p, n, r, t, { sx = 1, sy = 1, rot = 0, grow = 0, delay = 0 } = {}, car = null) {
   const g = goreSt?.[kind]; if (!g) return
   const i = g.head; g.head = (i + 1) % g.ent.length
   const full = r / (kind === 'pool' ? 0.78 : kind === 'crack' ? 0.9 : 0.45) * 2
-  g.ent[i] = { p: [p[0], p[1], p[2]], n: [n[0], n[1], n[2]], size: full, sx, sy, rot, grow, born: t + delay * 1000, k: -1, dl: -1 }
+  g.ent[i] = { p: [p[0], p[1], p[2]], n: [n[0], n[1], n[2]], size: full, sx, sy, rot, grow, born: t + delay * 1000, k: -1, dl: -1, car }
   goreSt.live = 1
 }
 const goreEase = u => u < 0 ? 0 : u >= 1 ? 1 : 1 - (1 - u) * (1 - u)
@@ -27000,7 +27030,10 @@ function goreFrame(t) {
     if (nx * q.dx + ny * q.dy + nz * q.dz > 0) { nx = -nx; ny = -ny; nz = -nz }
     if (down && ny < 0.6) continue
     st.n.landed++
-    goreAdd(q.g, goreRay, [nx, ny, nz], q.r, t, q.o)
+    const cb = carrierBodies.size ? carrierBodies.get(A.getPointer(rayCb.get_m_collisionObject())) : null
+    let car = null
+    if (cb) { const P = carrierPose(cb.c); car = { c: cb.c, p: carrierLocal(P, goreRay[0], goreRay[1], goreRay[2]), n: carrierLocal({ x: 0, y: 0, z: 0, yaw: P.yaw }, nx, ny, nz) } }
+    goreAdd(q.g, goreRay, [nx, ny, nz], q.r, t, q.o, car)
   }
   for (let i = st.bleeders.length - 1; i >= 0; i--) {
     const b = st.bleeders[i]
@@ -27011,7 +27044,7 @@ function goreFrame(t) {
     if (at) GORE.blood(at.x, at.y, at.z, 0, -0.4, 0, 0.35, 0)
   }
   if (!st.live) return
-  const hex = goreHex()
+  const hex = goreHex(), cps = new Map(), ct = drawNow()
   let live = 0
   for (const kind of GORE_KINDS) {
     const g = st[kind], C = GORE_CFG[kind]; let md = false, cd = false
@@ -27022,7 +27055,12 @@ function goreFrame(t) {
       live++
       const grown = C.grow && e.grow ? goreEase(age / e.grow) : age < 0 ? 0 : 1, fade = age > C.life - C.fade ? (C.life - age) / C.fade : 1
       const k = Math.round(grown * fade * 48) / 48
-      if (k !== e.k) {
+      if (e.car) {
+        let P = cps.get(e.car.c); if (!P) cps.set(e.car.c, P = e.car.c.pose(ct))
+        const w = carrierWorld(P, ...e.car.p), u = carrierTurn(P, ...e.car.n)
+        e.p[0] = w[0]; e.p[1] = w[1]; e.p[2] = w[2]; e.n[0] = u[0]; e.n[1] = u[1]; e.n[2] = u[2]
+      }
+      if (k !== e.k || e.car) {
         e.k = k
         goreN.set(e.n[0], e.n[1], e.n[2])
         goreQ.setFromUnitVectors(goreZ, goreN); goreQ2.setFromAxisAngle(goreZ, e.rot); goreQ.multiply(goreQ2)
@@ -34149,7 +34187,7 @@ GAME.lifecycle = {
   left(id) { if (dropMates(id)) teamsChanged() },
   empty() { resetMatch() },
   snapshot: () => ({
-    pk: pickups.filter(p => p.respawn <= 0).map(p => [p.x, p.y, p.z, p.gun, p.pow, p.heal]),
+    pk: pickups.filter(p => p.respawn <= 0).map(pickRow),
     mo: resultsLeft > 0 ? r2(resultsLeft) : 0,
     ml: timeLimit ? r2(matchLeft) : 0,
     fl: fragLimit, md: 'ffa', bl: settings.balance !== false ? 1 : 0, ...railState && { rg: railGlassWire() },
@@ -42704,7 +42742,7 @@ const airWorld = (p, x, y, z) => { const s = Math.sin(p.yaw), c = Math.cos(p.yaw
 const airPointV = (p, x, z) => [p.vx + p.w * (z - p.z), p.vy, p.vz - p.w * (x - p.x)]
 let airTrisRows = null
 const airTrisList = () => airTrisRows ||= Array.from({ length: airTris().length / 9 }, (_, i) => [0, 1, 2].map(k => Array.from(airTris().subarray(9 * i + 3 * k, 9 * i + 3 * k + 3))))
-const CARRIER = { near: 450, every: 20, inherit: 4, ease: 5 }
+const CARRIER = { near: 450, every: 20, inherit: 4, ease: 5, relTau: 0.06 }
 const carriers = new Map(), carrierBodies = new Map()
 let carrierKeys = null
 const carrierIndex = id => (carrierKeys ||= [...carriers.keys()].sort()).indexOf(id)
@@ -42732,6 +42770,8 @@ function carrierVelAt(x, y, z, t = isHost ? drawnT() : renderT) {
   return null
 }
 function carrierRelV(s) {
+  const rel = s.rel ?? (s.carryOn ? s.carryRel : null)
+  if (rel) return rel
   const cv = !carriers.size ? null : s.cv !== undefined ? s.cv : s.carryOn !== undefined ? (s.carryOn ? s.carryV : null) : carrierVelAt(s.x, s.y, s.z)
   return cv ? [(s.vx || 0) - cv[0], (s.vz || 0) - cv[2]] : [s.vx || 0, s.vz || 0]
 }
@@ -42787,7 +42827,19 @@ function carrierCarry(c, dt) {
   c.carryOn = false
   if (!carriers.size || c.dead > 0 || seatOf(c) || c.tie || c.zip) { c.carryV = null; return null }
   const hit = carrierAt(c.x, c.y, c.z)
-  if (hit) { c.carryV = carrierPointV(hit.p, c.x, c.z); c.carryId = hit.c.id; c.carryOn = c.grounded; return c.carryV }
+  if (hit) {
+    c.carryV = carrierPointV(hit.p, c.x, c.z); c.carryId = hit.c.id; c.carryOn = c.grounded
+    if (c.carryOn) {
+      const L = carrierLocal(hit.p, c.x, c.y, c.z), q = c.carryLoc
+      if (q && q.id === hit.c.id && dt > 0) {
+        const r = carrierTurn(hit.p, (L[0] - q.x) / dt, 0, (L[2] - q.z) / dt), k = 1 - Math.exp(-dt / CARRIER.relTau), o = c.carryRel
+        c.carryRel = o ? [o[0] + (r[0] - o[0]) * k, o[1] + (r[2] - o[1]) * k] : [r[0], r[2]]
+      }
+      c.carryLoc = { id: hit.c.id, x: L[0], z: L[2] }
+    } else { c.carryLoc = null; c.carryRel = null }
+    return c.carryV
+  }
+  c.carryLoc = null; c.carryRel = null
   if (c.grounded || !c.carryV) { c.carryV = null; return null }
   const k = Math.exp(-dt / CARRIER.inherit); c.carryV = [c.carryV[0] * k, 0, c.carryV[2] * k]
   if (Math.hypot(c.carryV[0], c.carryV[2]) < 0.25) c.carryV = null
@@ -44257,7 +44309,7 @@ function sampleTick(id, c, fresh, fire) {
   let list = tickSamples.get(id)
   if (!list) tickSamples.set(id, list = [])
   const anim = animOf(c)
-  list.push({ x: c.x, y: c.y, z: c.z, yaw: c.yaw, face: c.face ?? c.yaw, wy: c.wy, vx: c.vx, vy: c.vy, vz: c.vz, cv: c.carryOn ? c.carryV : null, anim, turned: anim === 4 && !!GAME.participant(id, c.cid).wallRun, ceil: !!c.ceil, fresh, fire })
+  list.push({ x: c.x, y: c.y, z: c.z, yaw: c.yaw, face: c.face ?? c.yaw, wy: c.wy, vx: c.vx, vy: c.vy, vz: c.vz, cv: c.carryOn ? c.carryV : null, rel: c.carryOn ? c.carryRel : null, anim, turned: anim === 4 && !!GAME.participant(id, c.cid).wallRun, ceil: !!c.ceil, fresh, fire })
 }
 let ticksRun = 0, tickRate = 0, snapsOut = 0, snapOutRate = 0, bytesUpAll = 0, bytesDownAll = 0
 
@@ -44341,7 +44393,7 @@ const OWN_PREDICTION = (F => {
     err: (e, a) => Math.hypot(e.x - a[F.x], e.y - a[F.y], e.z - a[F.z]),
     agrees: (e, a, web) => (e.web || 0) === web && Math.abs(e.fuel - a[F.fuel]) <= fuelEps && e.jl === !!a[F.jLock],
     carry: (e, c) => { c.faceAck = reconcileErr < c.r ? e.fc : undefined; c.flying = e.fl; c.water = e.wt | 0; c.springT = e.sp; [c.airT, c.jAir, c.jWas, c.jUsed] = e.ja || [0, false, false, false]; c.smashCam = e.smashCam; [c.leap, c.leapAir, c.leapVX, c.leapVZ, c.dove, c.leapPace, c.leapG = 0, c.leapT = 0] = e.leap; [c.hop, c.hopAir] = e.hop; c.mantle = e.ml ? [...e.ml] : null; c.mantleFall = !!e.mf; c.flyTurn = e.ft; [c.knT, c.knx, c.knz, c.knUp] = e.kn; c.wallHeld = e.wh; c.slide = e.sl; c.rope = e.rope; const o = e.vh && objs.find(o => o.id === e.vh[1]); c.vehT = o ? e.vh[0] : 0; if (o) { c.vehO = o; c.vehN = e.vh.slice(2) }
-      c.dashOn = e.dsh[0]; c.dashRun = e.dsh[1]; c.dashMask = e.dsh[3]; c.dashHit = e.dsh[2] && new Set(e.dsh[2]); c.carryV = e.cv ? [...e.cv] : null; c.carryId = e.cvId; c.winIn = e.wi ? [...e.wi] : null },
+      c.dashOn = e.dsh[0]; c.dashRun = e.dsh[1]; c.dashMask = e.dsh[3]; c.dashHit = e.dsh[2] && new Set(e.dsh[2]); c.carryV = e.cv ? [...e.cv] : null; c.carryId = e.cvId; c.carryLoc = null; c.winIn = e.wi ? [...e.wi] : null },
     restore: (c, a, web) => { const [x, y, z, vx, vy, vz] = ownExact || [a[F.x], a[F.y], a[F.z], a[F.vx], a[F.vy], a[F.vz]]; restoreChar(c, x, y, z, vx, vy, vz, a[F.fuel])
       const bh = c.body?.getBroadphaseHandle(), m = c.dashMask; c.dashMask = null
       if (m != null && bh && A.getPointer(bh) && bh.get_m_collisionFilterMask() !== m) { const g = bh.get_m_collisionFilterGroup(); world.removeRigidBody(c.body); world.addRigidBody(c.body, g, m) }
@@ -45826,7 +45878,7 @@ function drawRadar(me, others, t) {
   g.strokeStyle = '#ece9e2'; g.lineWidth = 1.8; g.beginPath(); g.moveTo(-3, 4); g.lineTo(-3, -4); g.lineTo(3, 4); g.lineTo(3, -4); g.stroke()
   g.restore()
 }
-const hostPickups = () => pickups.filter(p => p.respawn <= 0).map(p => [p.x, p.y, p.z, p.gun, p.pow, p.heal])
+const hostPickups = () => pickups.filter(p => p.respawn <= 0).map(pickRow)
 
 function debugRows(row, v, p) {
   return navWorker ? row('nav', navFail ? '<span class="w">' + esc(navFail) + '</span>'
