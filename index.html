@@ -38867,10 +38867,24 @@ function slBlastNote(what, x, z, B, by, caught, prams, skipped, T, hitP = []) {
     players: hitP.map(([c, d, dm]) => ({ id: c.id, d: slR2(d), dmg: slR2(dm), hp: slR2(c.hp), dead: c.dead > 0 })) })
   if (slBlastLog.length > 16) slBlastLog.shift()
 }
+const SL_OLD = { n: 24 }
+function slOldBodies(st, T, out) {
+  if (st.oldConns !== conns.size) { st.oldConns = conns.size; st.oldList = null }
+  if (!st.oldList || st.oldAt >= st.oldList.length) {
+    const who = [...players.values()].filter(p => !p.bot && p.id !== 0), back = STREET.backS * 1000 + 2000, d = r => who.length ? Math.min(...who.map(p => Math.hypot(p.x - r.x1, p.z - r.z1))) : 0
+    st.oldList = [...st.rec.values()].filter(r => r.kind === 11 && T - r.t >= back && !slGone.has(r.key)).sort((p, q) => d(p) - d(q)); st.oldAt = 0
+  }
+  for (let k = 0; k < SL_OLD.n && st.oldAt < st.oldList.length; k++, st.oldAt++) {
+    const r = st.oldList[st.oldAt]
+    if (!st.rec.has(r.key) || slGone.has(r.key)) continue
+    if (r.cause & 32) { const kr = (st.byId.get(r.id) || []).filter(q => q.kind === 1 && q.t <= r.t).at(-1); if (kr) out.push(kr.a) }
+    out.push(r.a)
+  }
+}
 function slWireOut() {
   const st = slState; if (!st || !isHost || !conns.size) return {}
   const T = tickAt || now(), out = []
-  if (T - st.lastOut >= STREET.refreshMs) { st.lastOut = T; for (const r of st.rec.values()) if (T - r.t < STREET.backS * 1000 + 2000) out.push(r.a); st.out.length = 0 }
+  if (T - st.lastOut >= STREET.refreshMs) { st.lastOut = T; for (const r of st.rec.values()) if (T - r.t < STREET.backS * 1000 + 2000) out.push(r.a); st.out.length = 0; if (out.length + SL_OLD.n * 2 < 380) slOldBodies(st, T, out) }
   else { for (const e of st.out) out.push(e.r.a); for (const e of st.out) e.n++; st.out = st.out.filter(e => e.n < STREET.repeat) }
   if (!out.length) return {}
   st.stats.wireN += out.length; st.stats.bytesOut += JSON.stringify(out).length + 6
