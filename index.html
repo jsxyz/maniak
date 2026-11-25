@@ -16460,11 +16460,18 @@ function clearSeat(c) {
   }
   c.seat = null
 }
+function hijackOf(c, o, i) {
+  if (c.bot || i < 0 || !o.V || o.V.fly || o.K.boat || o.k === MC_K || o.jackedBy === c.id || mcOwn.get(c.id)?.car === o.id) return 0
+  if (o.traffic?.driver) return 2
+  return !i && o.riders[0] === undefined && !o.crew ? 1 : 0
+}
 function sit(c, o, i) {
+  const jack = isHost ? hijackOf(c, o, i) : 0
   if (isHost && o.traffic) trafficDetach(o)
   o.riders[i] = c.id; c.seat = [o, i]
   world.removeRigidBody(c.body)
   setParked(o, false)
+  if (jack) { o.jackedBy = c.id; heatCrime(c, 'hijack', o.x, o.z, 1, jack === 2) }
 }
 function leave(c, o, i) {
   const [x, y, z] = o.V.exit[i] || o.V.exit[0], [ex, ey, ez] = seatAt(o, [x, y + 1.5, z]), d = Math.min(staticRay(ex, ey, ez, 0, -1, 0, 3), 1.5)
@@ -41450,7 +41457,7 @@ function slBabyFrame(dt) {
 
 const HEAT = {
   stars: [0, 3, 8, 16, 30, 50], cap: 60,
-  crime: { civilian: 1, ram: 1, property: 0.5, hurt: 0.4, kill: 3, dealer: 0.3, dealerKill: 0.5 }, limit: { property: 2.5, hurt: 0.8, dealer: 0.8 },
+  crime: { civilian: 1, ram: 1, hijack: 2, property: 0.5, hurt: 0.4, kill: 3, dealer: 0.3, dealerKill: 0.5 }, limit: { property: 2.5, hurt: 0.8, dealer: 0.8 },
   witness: { people: 40, enforcers: 60 },
   sight: 70, seen: 3, hide: 14, hideStar: 4, disguised: 5,
   force: [0, 2, 3, 4, 5, 6], armed: 0.5,
