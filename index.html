@@ -2593,10 +2593,11 @@ function faustCell(seed, gx, gz) {
   const industry = core || civic ? -1 : faustIndustryAt(seed, gx, gz)
   const district = core ? 'core' : civic ? 'civic' : industry >= 0 ? 'industrial' : 'tenement'
   const centralPlaza = gx >= -2 && gx <= 1 && gz >= -2 && gz <= 1, plaza = centralPlaza || districtHash % 29 === 0
-  const diagonal = gz - gx === 4
+  const diagonal = gz - gx === 4, diag = faustDiagAt(gx, gz), park = gx >= FAUST_NET.park.x[0] && gx <= FAUST_NET.park.x[1] && gz >= FAUST_NET.park.z[0] && gz <= FAUST_NET.park.z[1]
   const layout = district === 'industrial' ? 2 : district === 'civic' && districtHash % 3 === 0 || district === 'core' && districtHash % 7 === 0 ? 1 : 4
-  return { X, Z, districtHash, distance, district, industry, centralPlaza, plaza, diagonal, layout }
+  return { X, Z, districtHash, distance, district, industry, centralPlaza, plaza, diagonal, diag, park, layout }
 }
+const faustLotSlots = c => Array.from({ length: c.layout }, (_, i) => ({ i, x: c.X + (c.layout === 1 ? 48 : i & 1 ? 72 : 24), z: c.Z + (c.layout < 4 ? 48 : i & 2 ? 72 : 24) }))
 const railQuarter = n => Array.from({ length: n + 1 }, (_, i) => { const t = i / n, q = 1 + t * t; return [(1 - t * t) / q, 2 * t / q] })
 const RAIL_Q = railQuarter(16)
 function railPoints(segs, o = 0) {
@@ -2682,8 +2683,8 @@ function* faustRailSteps(seed, S) {
     const C = cell(gx, gz)
     if (C.plaza || C.diagonal || C.layout === 1 || faustIndustryBand(seed, x, z)) return null
     const out = []
-    for (let i = 0; i < C.layout; i++) {
-      const lx = C.X + (i & 1 ? 72 : 24), lz = C.Z + (C.layout < 4 ? 48 : i & 2 ? 72 : 24), hx = 12, hz = C.layout < 4 ? 28 : 12
+    for (const { i, x: lx, z: lz } of faustLotSlots(C)) {
+      const hx = 12, hz = C.layout < 4 ? 28 : 12
       if (Math.abs(lx - x) < hx + 15 && Math.abs(lz - z) < hz + 15) {
         if (i === 0 && (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0) return null
         out.push(faustKey(lx, lz))
@@ -2906,10 +2907,10 @@ const FAUST_FEAT = { loop: [23, 28], lamps: [[9, 0], [-9, 0], [0, 9], [0, -9], [
   stone: 0x6f767f, pale: 0x9aa1a8, dark: 0x3c4450, iron: 0x2b333d, bronze: 0x4d5c52, gold: 0xc9a85a, water: 0x2f6a8c, warm: 0xffd7a0,
   leaf: 0x2f4a3b, leaves: [0x24402f, 0x2c4a37, 0x3b5236, 0x6b4a2a], bark: 0x3b332a, grass: 0x35452f, path: 0x7d8288, void: 0x07090c, earth: 0x2a2a22, wood: 0x4a3a2c, post: 0x2a3a52, red: 0x7a2f2a }
 function faustFeatures(seed, gx, gz, c) {
-  if (!c.plaza || c.diagonal) return []
+  if (!c.plaza || c.diagonal || c.centralPlaza && !(gx >= -1 && gx <= 0 && gz >= -1 && gz <= 0)) return []
   const rng = genRng(faustMix(seed ^ 0x6e657773, gx, gz)), cx = gx * 96 + 48, cz = gz * 96 + 48, out = []
   const inner = c.centralPlaza && gx >= -1 && gx <= 0 && gz >= -1 && gz <= 0
-  const park = !c.centralPlaza && rng() < 0.4
+  const park = !c.centralPlaza && rng() < 0.4 || !!c.park
   const lm = !c.centralPlaza && !park && cityHash(faustMix(seed ^ 0x6c6d6b73, gx, gz)) % 100 < 45 ? (cityHash(faustMix(seed ^ 0x72616469, gx, gz)) & 1 ? 'radio' : 'spire') : null
   const kind = lm ? lm : park ? 'pond' : inner ? 'fountain' : c.centralPlaza ? ((gx === -2 || gx === 1) && (gz === -2 || gz === 1) ? 'statue' : 'obelisk') : ['statue', 'obelisk', 'fountain', 'statue'][rng() * 4 | 0]
   const big = c.centralPlaza ? 1 : 0, scale = { statue: [1.25, 1.7], obelisk: [1.4, 1.9], fountain: [1, 1.4], pond: [1, 1], radio: [1, 1], spire: [1, 1] }[kind][big]
@@ -3132,7 +3133,7 @@ function faustProps(P, rail) {
   const SZ = { hydrant: [0.18, 0.18], mailbox: [0.27, 0.25], meter: [0.1, 0.1], news: [1.55, 1.2], bin: [0.27, 0.27], drum: [0.27, 0.27], crate: [0.28, 0.28], bollard: [0.12, 0.12], clockpost: [0.1, 0.1], bust: [0.27, 0.27], busstop: [2.0, 0.55] }
   for (const lot of P.lots) {
     if (lot.stop) continue
-    const rng = genRng(lot.seed ^ 0x70726f70), ring = slLotRing(lot), tile = [lot.x - 14.8, lot.z - 14.8, lot.x + 14.8, lot.z + 14.8]
+    const rng = genRng(lot.seed ^ 0x70726f70), ring = slLotRing(lot), tile = lot.tile || [lot.x - 14.8, lot.z - 14.8, lot.x + 14.8, lot.z + 14.8]
     for (const [axis, dir, q] of SIDE) {
       const r = rng(), v = rng(), pickU = rng() * 4 | 0, h = rng() * 4 | 0
       if (r < 0.45 || axis === 0 && dir === lot.alley?.side) continue
@@ -3158,7 +3159,7 @@ function faustProps(P, rail) {
 function faustPosters(P) {
   const out = []
   for (const lot of P.lots) {
-    if (lot.stop || lot.district === 'industrial') continue
+    if (lot.stop || lot.district === 'industrial' || lot.landmark === 'cathedral') continue
     const rng = genRng(lot.seed ^ 0x706f7374), h0 = lot.mass[0].cy + lot.mass[0].ey
     if (rng() > 0.35 || h0 < 24) continue
     const side = rng() < 0.5 ? 1 : -1, z = lot.z + (rng() < 0.5 ? 1 : -1) * 0.43 * lot.d
@@ -3282,8 +3283,8 @@ function faustLandmarks(seed, S) {
   for (let gx = -S / 2; gx < S / 2; gx++) for (let gz = -S / 2; gz < S / 2; gz++) {
     const c = faustCell(seed, gx, gz)
     const kind = c.district === 'core' && c.distance <= 480 ** 2 ? 'theatre' : c.district === 'civic' ? 'cathedral' : null
-    if (!kind || c.layout !== 1 || c.plaza || c.diagonal) continue
-    const x = c.X + 48, z = c.Z + 48
+    if (!kind || c.layout !== 1 || c.plaza || c.diagonal || c.park || c.diag || kind === 'cathedral' && faustNet(seed, S).Q) continue
+    const { x, z } = faustLotSlots(c)[0]
     if ((gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 || Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z)) || rail.byCell.has(faustKey(gx + S / 2, gz + S / 2)) || faustChanCell(seed, S, gx, gz)) continue
     list.push({ k: gx + ' ' + gz, kind, h: faustMix(seed ^ 0x6c616e64, gx, gz) })
   }
@@ -3307,8 +3308,7 @@ function faustAlleyFor(seed, S, gx, gz, c, rail) {
   const X = gx * 96, Z = gz * 96
   if (rail.byCell.has(faustKey(gx + S / 2, gz + S / 2))) return null
   for (const [a, b] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) if (faustChanCell(seed, S, gx + a, gz + b)) return null
-  for (let i = 0; i < c.layout; i++) {
-    const x = X + (i & 1 ? 72 : 24), z = Z + (c.layout < 4 ? 48 : i & 2 ? 72 : 24)
+  for (const { i, x, z } of faustLotSlots({ X, Z, layout: c.layout })) {
     if (Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z))) return null
     if (faustSiteFor(seed, gx, gz, i, c.district, c.layout, c.plaza, c.diagonal, x, z)) return null
   }
@@ -3319,7 +3319,7 @@ function faustAlleyFor(seed, S, gx, gz, c, rail) {
 function faustAlleyRecord(al, gx, gz, layout, ds, ci, cj, lots) {
   const Z = gz * 96, K = FAUST_ALLEY, segs = []
   for (let k = 0; k < (layout === 4 ? 2 : 1); k++) {
-    const zc = Z + (layout === 4 ? (k ? 72 : 24) : 48), d = ds[k], hh = cityHash(faustMix(al.h ^ 0x646f6f72, k, gz))
+    const zc = lots[layout === 4 ? 2 * k : 0]?.z ?? lots[layout === 4 ? 2 * k + 1 : 1]?.z ?? Z + (layout === 4 ? (k ? 72 : 24) : 48), d = ds[k], hh = cityHash(faustMix(al.h ^ 0x646f6f72, k, gz))
     const s1 = hh & 1 ? 1 : -1, off = (d > 20 ? 0.45 : K.door) * d
     const doors = [[inCm(zc + ((hh >> 1 & 1) ? 1 : -1) * off), s1]]
     if (d > 20 || hh >> 2 & 1) doors.push([inCm(zc - ((hh >> 1 & 1) ? 1 : -1) * off), -s1])
@@ -3462,64 +3462,571 @@ function faustAlleyParts(f) {
   }
   return P
 }
-function faustClubHash(seed, gx, gz, i) { return cityHash(faustMix(seed ^ 0x636c7562, gx * 4 + i, gz)) }
+function faustClubHash(seed, gx, gz, i) { return cityHash(faustMix(seed ^ 0x636c7562, gx * 4 + (i & 3) + (i >> 2) * 100003, gz)) }
 function faustClubAt(seed, gx, gz, i) {
   const c = faustCell(seed, gx, gz)
   if (c.plaza || (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 && i === 0) return false
   if (!(c.layout === 4 && (c.district === 'core' || c.district === 'tenement') || c.district === 'industrial')) return false
   return faustClubHash(seed, gx, gz, i) % (c.district === 'core' ? 30 : c.district === 'tenement' ? 160 : 80) === 0
 }
+const FAUST_NET = { version: 24, ring: 136, ringW: 18, arm: 30, circle: 28, circleW: 14, lane: 7, mid: 8, pitch: 48, jog: [-14, -8, 0, 0, 8, 14],
+  cls: { boulevard: 30, avenue: 20, street: 12 }, park: { x: [-1, 0], z: [-6, -3] }, side: 1.6, pave: 0.8 }
+function faustPrisonCell(seed, S, gx, gz, free) { return false }
+function faustDiagAt(gx, gz) {
+  if (gz - gx === 4 && !(gx === -3 && gz === 1) && gx >= -10 && gx <= 9) return 1
+  if (gx === gz && Math.abs(gx + 0.5) >= 2.5 && Math.abs(gx + 0.5) <= 8.5) return 1
+  if (gz === -gx - 1 && Math.abs(gx + 0.5) >= 2.5 && Math.abs(gx + 0.5) <= 8.5) return -1
+  return 0
+}
+const faustNetKey = (x, z) => Math.round(x * 100) + ':' + Math.round(z * 100)
+const faustNetCm = v => Math.round(v * 100) / 100
+function faustSegHit(a, b, c, d) {
+  const rx = b[0] - a[0], rz = b[1] - a[1], sx = d[0] - c[0], sz = d[1] - c[1], den = rx * sz - rz * sx
+  if (Math.abs(den) < 1e-9) return null
+  const qx = c[0] - a[0], qz = c[1] - a[1], t = (qx * sz - qz * sx) / den, u = (qx * rz - qz * rx) / den, e = 1e-6
+  return t > -e && t < 1 + e && u > -e && u < 1 + e ? [t, u] : null
+}
+const faustSegDist = (x, z, a, b) => {
+  const dx = b[0] - a[0], dz = b[1] - a[1], L = dx * dx + dz * dz, t = L ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L)) : 0
+  return Math.hypot(a[0] + dx * t - x, a[1] + dz * t - z)
+}
+let faustNetMemo = null
+function faustNet(seed, S = 20) {
+  seed >>>= 0
+  if (faustNetMemo?.seed === seed && faustNetMemo.S === S) return faustNetMemo
+  const K = FAUST_NET, H = S / 2, A = S * 48, rail = faustRail(seed, S), chans = faustChannels(seed, S), h = (...v) => faustMix(seed ^ 0x4e455424, v[0] * 131 + (v[2] || 0) * 7919, v[1] ?? 0) / 4294967296
+  const cellOf = new Map(), cell = (gx, gz) => { const k = gx + ' ' + gz; if (!cellOf.has(k)) cellOf.set(k, faustCell(seed, gx, gz)); return cellOf.get(k) }
+  const inCity = (gx, gz) => gx >= -H && gz >= -H && gx < H && gz < H
+  const chanAt = (gx, gz) => !!faustChanCell(seed, S, gx, gz)
+  const central = (gx, gz) => gx >= -2 && gx <= 1 && gz >= -2 && gz <= 1
+  const edge = (gx, gz) => gx === -H || gz === -H || gx === H - 1 || gz === H - 1
+  const stopCell = (gx, gz) => (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0
+  const station = new Set()
+  for (const k of rail.lots) { const [x, z] = k.split(' ').map(Number); station.add(Math.floor(x / 96) + ' ' + Math.floor(z / 96)) }
+  const legacy = (gx, gz) => edge(gx, gz) || station.has(gx + ' ' + gz) || stopCell(gx, gz)
+  const pinLine = (a, k) => k <= -H + 1 || k >= H - 1 || Math.abs(k) === 3 || (a ? k * 96 === rail.zC : k * 96 === rail.xB) || Math.abs(k * 96) === A - 96
+  const lineCls = (a, k) => pinLine(a, k) ? 20 : k === 0 ? 30 : (v => v < 0.2 ? 30 : v < 0.62 ? 20 : 12)(h(a, k, 1))
+  const ind = (gx, gz) => cell(gx, gz).industry
+  const shapeId = (gx, gz) => { const i = ind(gx, gz); return i >= 0 ? faustIndustry(seed).shapes[i]?.id : null }
+  const quarterOK = (gx, gz) => inCity(gx, gz) && !edge(gx, gz) && (cell(gx, gz).district === 'civic' || cell(gx, gz).district === 'tenement' && cell(gx, gz).distance < 760 ** 2) && !cell(gx, gz).plaza && !cell(gx, gz).park && !cell(gx, gz).diag && !stopCell(gx, gz)
+    && !station.has(gx + ' ' + gz) && [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].every(([a, b]) => !chanAt(gx + a, gz + b))
+  let Q = null
+  for (const [w, d] of [[4, 4], [4, 3], [3, 4], [3, 3], [4, 2], [2, 4], [3, 2], [2, 3], [2, 2]]) if (!Q) {
+    const opts = []
+    for (let x0 = -H + 1; x0 + w <= H - 1; x0++) for (let z0 = -H + 1; z0 + d <= H - 1; z0++) {
+      let ok = true
+      for (let i = 0; i < w && ok; i++) for (let j = 0; j < d && ok; j++) ok = quarterOK(x0 + i, z0 + j)
+      for (let i = 1; i < w && ok; i++) ok = !pinLine(0, x0 + i)
+      for (let j = 1; j < d && ok; j++) ok = !pinLine(1, z0 + j)
+      if (ok) opts.push([h(x0, z0, 9), x0, z0])
+    }
+    if (opts.length) { opts.sort((p, q) => p[0] - q[0]); const [, x0, z0] = opts[0]; Q = { x0, z0, w, d, hole: [x0 + (w >> 1) - (w > 2 && h(x0, z0, 10) < 0.5 ? 1 : 0), z0 + (d >> 1) - (d > 2 && h(x0, z0, 11) < 0.5 ? 1 : 0)] } }
+  }
+  const inQ = (gx, gz) => !!Q && gx >= Q.x0 && gx < Q.x0 + Q.w && gz >= Q.z0 && gz < Q.z0 + Q.d
+  const qHole = (gx, gz) => !!Q && gx === Q.hole[0] && gz === Q.hole[1]
+  const parkCell = (gx, gz) => cell(gx, gz).park && !chanAt(gx, gz) && !station.has(gx + ' ' + gz)
+  const both = (a, k, j) => a ? [[j, k - 1], [j, k]] : [[k - 1, j], [k, j]]
+  const chanNear = (a, k, j) => a ? chanAt(j, k - 1) || chanAt(j, k) || chanAt(j - 1, k - 1) || chanAt(j + 1, k - 1) || chanAt(j - 1, k) || chanAt(j + 1, k)
+    : chanAt(k - 1, j) || chanAt(k, j) || chanAt(k - 1, j - 1) || chanAt(k - 1, j + 1) || chanAt(k, j - 1) || chanAt(k, j + 1)
+  const segW = (a, k, j) => {
+    const [p, q] = both(a, k, j), C = inCity(...q) ? q : p
+    if (!inCity(...q) && !inCity(...p)) return 0
+    if (k === H) return 0
+    if (central(...q) && central(...p)) return 0
+    if (legacy(...p) || legacy(...q) || chanNear(a, k, j)) return 20
+    if (pinLine(a, k)) return 20
+    const sameShape = shapeId(...p) && shapeId(...p) === shapeId(...q)
+    if (inQ(...p) && inQ(...q)) return 0
+    if (parkCell(...p) && parkCell(...q)) return 0
+    if (sameShape && (a === 0 || ['yard', 'marsh', 'scrap'].includes(shapeId(...p)))) return 0
+    const cp = cell(...p), cq = cell(...q)
+    if (a === 0 && (k & 1) && cp.district === 'core' && cq.district === 'core' && !cp.plaza && !cq.plaza && !central(...p) && !central(...q) && cp.layout !== 1 && cq.layout !== 1) return 0
+    const w = lineCls(a, k)
+    if (a === 0 && w <= 20 && cp.district === 'tenement' && cq.district === 'tenement' && !stopCell(...p) && !stopCell(...q) && h(k, j, 3) < (w === 12 ? 0.3 : 0.1)) return 0
+    return chanAt(...C) ? Math.min(w, 20) : w
+  }
+  const W = new Map(), wOf = (a, k, j) => { const key = a + ' ' + k + ' ' + j; if (!W.has(key)) W.set(key, segW(a, k, j)); return W.get(key) }
+  const raw = []
+  const add = (a, b, w, cls, extra) => { if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 0.05) raw.push({ a: [faustNetCm(a[0]), faustNetCm(a[1])], b: [faustNetCm(b[0]), faustNetCm(b[1])], w, cls, motor: true, ...extra }) }
+  for (const a of [0, 1]) for (let k = -H; k < H; k++) for (let j = -H; j < H; j++) {
+    const w = wOf(a, k, j); if (!w) continue
+    const m = k * 96, s0 = j * 96, cls = w >= 30 ? 'boulevard' : w >= 20 ? 'avenue' : 'street'
+    add(a ? [s0, m] : [m, s0], a ? [s0 + 96, m] : [m, s0 + 96], w, cls, { lattice: [a, k, j] })
+  }
+  const grain = new Map()
+  const prisonFree = new Set()
+  for (let gx = -H; gx < H; gx++) for (let gz = -H; gz < H; gz++) if (!chanAt(gx, gz) && !central(gx, gz) && !parkCell(gx, gz) && !inQ(gx, gz)) prisonFree.add(gx + ' ' + gz)
+  const band = (g, salt) => K.jog[Math.floor(h(Math.floor((g + 20) / 3), salt, 12) * K.jog.length)]
+  for (let gx = -H; gx < H; gx++) for (let gz = -H; gz < H; gz++) {
+    const c = cell(gx, gz), key = gx + ' ' + gz, X = gx * 96, Z = gz * 96, chan = chanAt(gx, gz)
+    let g
+    if (chan) g = { kind: 'chan' }
+    else if (central(gx, gz)) g = { kind: 'etoile' }
+    else if (parkCell(gx, gz)) g = { kind: 'park' }
+    else if (inQ(gx, gz)) g = { kind: qHole(gx, gz) ? 'close' : 'quarter' }
+    else if (faustPrisonCell(seed, S, gx, gz, prisonFree)) g = { kind: 'prison' }
+    else {
+      const role = c.district === 'industrial' ? shapeId(gx, gz) : null, yard = role === 'yard' || role === 'marsh' || role === 'scrap'
+      const al = yard || c.diag ? null : faustAlleyFor(seed, S, gx, gz, { district: c.district, layout: c.layout, plaza: c.plaza, diagonal: c.diagonal }, rail)
+      const old = legacy(gx, gz) || stopCell(gx, gz) || !!al
+      let ox = 48, oz = 48, xs = true, zs = true
+      if (c.plaza || c.layout === 1) xs = zs = false
+      else if (c.layout === 2) zs = false
+      if (al) xs = false
+      if (c.diag) xs = zs = false
+      if (!old && !c.plaza) {
+        if (c.district === 'core') { xs = false; oz = 48 + band(gz, 1) }
+        else if (c.district === 'tenement') { oz = 48 + band(gz, 2); if (!al) ox = 48 + band(gx, 3); const v = h(gx, gz, 6); if (v < 0.2) zs = false; else if (v < 0.38 && !al) xs = false }
+        else if (c.district === 'industrial') { if (!al) ox = 48 + band(gx, 4) }
+        else if (c.district === 'civic' && c.layout !== 1 && h(gx, gz, 5) < 0.5) xs = false
+      }
+      const fit = (o, wa, wb) => { const lo = wa / 2 + 30, hi = 96 - wb / 2 - 30; return lo > hi ? null : Math.min(hi, Math.max(lo, o)) }
+      if (!old) { if (xs) { ox = fit(ox, wOf(0, gx, gz), wOf(0, gx + 1, gz)); xs = ox !== null } if (zs) { oz = fit(oz, wOf(1, gz, gx), wOf(1, gz + 1, gx)); zs = oz !== null } }
+      g = { kind: c.plaza ? 'square' : yard ? 'yard' : 'grid', ox: xs ? ox : null, oz: zs ? oz : null, al, old, snap: legacy(gx, gz) }
+    }
+    grain.set(key, g)
+    if (g.kind !== 'grid' && g.kind !== 'square') continue
+    if (g.ox !== null) add([X + g.ox, Z], [X + g.ox, Z + 96], K.mid, 'street', { mid: [gx, gz, 0] })
+    if (g.oz !== null) add([X, Z + g.oz], [X + 96, Z + g.oz], K.mid, 'street', { mid: [gx, gz, 1] })
+  }
+  for (let gx = -H; gx < H; gx++) for (let gz = -H; gz < H; gz++) {
+    const dir = cell(gx, gz).diag, X = gx * 96, Z = gz * 96
+    if (!dir || central(gx, gz)) continue
+    add(dir > 0 ? [X, Z] : [X, Z + 96], dir > 0 ? [X + 96, Z + 96] : [X + 96, Z], 26, 'boulevard', { diag: dir })
+  }
+  const R = K.ring, ring = 24
+  const vtx = i => [faustNetCm(R * Math.cos(i / ring * 2 * Math.PI)), faustNetCm(R * Math.sin(i / ring * 2 * Math.PI))]
+  for (let i = 0; i < ring; i++) add(vtx(i), vtx(i + 1), K.ringW, 'ring', { oneway: 1 })
+  for (let q = 0; q < 8; q++) {
+    const dx = Math.round(Math.cos(q * Math.PI / 4)), dz = Math.round(Math.sin(q * Math.PI / 4))
+    add(vtx(q * 3), [dx * 192, dz * 192], q & 1 ? 26 : 30, 'boulevard', { arm: q })
+  }
+  { const p0 = [-288, 96], f = R * Math.cos(Math.PI / ring) / Math.hypot(...p0) - 0.02; add(p0, [p0[0] * f, p0[1] * f], 22, 'boulevard', { broadway: 1 }) }
+  for (const ch of chans.list) for (const sd of [-1, 1]) {
+    const opts = []
+    for (let k = -H + 2; k < H - 3; k++) {
+      const u = ch.u + sd, gx = ch.axis ? u : k, gz = ch.axis ? k : u, cells = ch.axis ? [[u, k], [u, k + 1], [u + sd, k], [u + sd, k + 1]] : [[k, u], [k + 1, u], [k, u + sd], [k + 1, u + sd]]
+      if (cells.some(([a, b]) => !inCity(a, b) || edge(a, b) || legacy(a, b) || chanAt(a, b) || central(a, b) || parkCell(a, b) || inQ(a, b) || cell(a, b).diag || cell(a, b).plaza || stopCell(a, b))) continue
+      opts.push([h(k, ch.u * 4 + sd, 40), k])
+    }
+    opts.sort((p, q) => p[0] - q[0])
+    for (const [, k] of opts.slice(0, 1)) {
+      const bank = ch.c + sd * 48, o = bank + sd * 96, s0 = k * 96, pts = []
+      for (let i = 0; i <= 8; i++) { const t = i / 8 * Math.PI / 2, x = o - sd * 96 * Math.cos(t), z = s0 + 96 * Math.sin(t); pts.push(ch.axis ? [x, z] : [z, x]) }
+      for (let i = 0; i < 8; i++) add(pts[i], pts[i + 1], 12, 'street', { crescent: 1 })
+    }
+  }
+  const circles = []
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const x = sx * 480, z = sz * 480, gx = Math.floor(x / 96), gz = Math.floor(z / 96)
+    const near = [[gx - 1, gz - 1], [gx, gz - 1], [gx - 1, gz], [gx, gz]]
+    if (near.some(([a, b]) => chanAt(a, b) || legacy(a, b) || inQ(a, b) || parkCell(a, b))) continue
+    circles.push({ x, z, r: K.circle })
+  }
+  for (const C of circles) for (let i = 0; i < 16; i++) { const t0 = (i + 0.5) / 16 * 2 * Math.PI, t1 = (i + 1.5) / 16 * 2 * Math.PI
+    add([C.x + C.r * Math.cos(t0), C.z + C.r * Math.sin(t0)], [C.x + C.r * Math.cos(t1), C.z + C.r * Math.sin(t1)], K.circleW, 'ring', { oneway: 1, circle: 1 }) }
+  const qNodes = []
+  if (Q) {
+    const P = K.pitch, x0 = Q.x0 * 96, z0 = Q.z0 * 96, nx = Q.w * 96 / P, nz = Q.d * 96 / P, id = (i, j) => i * 64 + j
+    const holeX0 = Q.hole[0] * 96, holeZ0 = Q.hole[1] * 96
+    const inHole = (x, z) => x > holeX0 + 1 && x < holeX0 + 95 && z > holeZ0 + 1 && z < holeZ0 + 95
+    const pts = new Map()
+    for (let i = 0; i <= nx; i++) for (let j = 0; j <= nz; j++) {
+      const bx = x0 + i * P, bz = z0 + j * P, border = i === 0 || j === 0 || i === nx || j === nz
+      const onHole = bx >= holeX0 && bx <= holeX0 + 96 && bz >= holeZ0 && bz <= holeZ0 + 96
+      if (inHole(bx, bz)) continue
+      const jit = border || onHole ? 0 : 11
+      pts.set(id(i, j), [bx + (h(i, j, 20) - 0.5) * 2 * jit, bz + (h(i, j, 21) - 0.5) * 2 * jit, border])
+    }
+    const deg = new Map(), edges = []
+    for (let i = 0; i <= nx; i++) for (let j = 0; j <= nz; j++) for (const [di, dj] of [[1, 0], [0, 1]]) {
+      const p = pts.get(id(i, j)), q = pts.get(id(i + di, j + dj)); if (!p || !q) continue
+      if (p[2] && q[2] && (di ? j === 0 || j === nz : i === 0 || i === nx)) continue
+      const mx = (p[0] + q[0]) / 2, mz = (p[1] + q[1]) / 2
+      if (inHole(mx, mz)) continue
+      const holeEdge = (p[0] === q[0] && (p[0] === holeX0 || p[0] === holeX0 + 96) || p[1] === q[1] && (p[1] === holeZ0 || p[1] === holeZ0 + 96)) && mx >= holeX0 && mx <= holeX0 + 96 && mz >= holeZ0 && mz <= holeZ0 + 96
+      if (!holeEdge && !p[2] && !q[2] && h(i * 2 + di, j * 2 + dj, 22) < 0.24) continue
+      edges.push([id(i, j), id(i + di, j + dj), holeEdge])
+      for (const n of [id(i, j), id(i + di, j + dj)]) deg.set(n, (deg.get(n) || 0) + 1)
+    }
+    for (const [u, v, straight] of edges) {
+      const p = pts.get(u), q = pts.get(v), dead = (deg.get(u) === 1 && !p[2]) || (deg.get(v) === 1 && !q[2])
+      const L = Math.hypot(q[0] - p[0], q[1] - p[1]), ux = (q[0] - p[0]) / L, uz = (q[1] - p[1]) / L, bend = straight ? 0 : (h(u, v, 23) - 0.5) * 12
+      const m = [(p[0] + q[0]) / 2 - uz * bend, (p[1] + q[1]) / 2 + ux * bend]
+      add(p, m, K.lane, 'lane', { motor: !dead, quarter: 1 }); add(m, q, K.lane, 'lane', { motor: !dead, quarter: 1 })
+    }
+    for (const p of pts.values()) qNodes.push(p)
+  }
+  const segs = []
+  const bucket = new Map(), cellKeys = s => { const out = new Set(); for (let t = 0; t <= 1.0001; t += 0.125) { const x = s.a[0] + (s.b[0] - s.a[0]) * t, z = s.a[1] + (s.b[1] - s.a[1]) * t
+    for (const dx of [-0.5, 0.5]) for (const dz of [-0.5, 0.5]) out.add(Math.floor((x + dx) / 96) + ' ' + Math.floor((z + dz) / 96)) } return out }
+  raw.forEach((s, i) => { s.cuts = [0, 1]; for (const k of cellKeys(s)) { if (!bucket.has(k)) bucket.set(k, []); bucket.get(k).push(i) } })
+  const seen = new Set()
+  for (const list of bucket.values()) for (let p = 0; p < list.length; p++) for (let q = p + 1; q < list.length; q++) {
+    const i = list[p], j = list[q], key = i < j ? i + ' ' + j : j + ' ' + i
+    if (seen.has(key)) continue
+    seen.add(key)
+    const r = faustSegHit(raw[i].a, raw[i].b, raw[j].a, raw[j].b)
+    if (r) { raw[i].cuts.push(r[0]); raw[j].cuts.push(r[1]) }
+  }
+  for (const s of raw) {
+    const dx = s.b[0] - s.a[0], dz = s.b[1] - s.a[1]
+    for (let k = Math.ceil(Math.min(s.a[0], s.b[0]) / 96); k * 96 <= Math.max(s.a[0], s.b[0]); k++) if (dx) { const t = (k * 96 - s.a[0]) / dx; if (t > 1e-6 && t < 1 - 1e-6) s.cuts.push(t) }
+    for (let k = Math.ceil(Math.min(s.a[1], s.b[1]) / 96); k * 96 <= Math.max(s.a[1], s.b[1]); k++) if (dz) { const t = (k * 96 - s.a[1]) / dz; if (t > 1e-6 && t < 1 - 1e-6) s.cuts.push(t) }
+    const L0 = Math.hypot(dx, dz), raw0 = [...new Set(s.cuts.map(t => Math.round(Math.max(0, Math.min(1, t)) * 1e6) / 1e6))].sort((p, q) => p - q), ts = [0]
+    for (const t of raw0) if (t > 0 && t < 1 && (t - ts.at(-1)) * L0 >= 0.5 && (1 - t) * L0 >= 0.5) ts.push(t)
+    ts.push(1)
+    for (let n = 0; n + 1 < ts.length; n++) {
+      const a = [faustNetCm(s.a[0] + dx * ts[n]), faustNetCm(s.a[1] + dz * ts[n])], b = [faustNetCm(s.a[0] + dx * ts[n + 1]), faustNetCm(s.a[1] + dz * ts[n + 1])]
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.3) continue
+      segs.push({ ...s, a, b, cuts: undefined })
+    }
+  }
+  for (const C of circles) for (let i = segs.length - 1; i >= 0; i--) { const s = segs[i]; if (!s.circle && Math.hypot((s.a[0] + s.b[0]) / 2 - C.x, (s.a[1] + s.b[1]) / 2 - C.z) < C.r - 1) segs.splice(i, 1) }
+  for (let pass = 0; pass < 2; pass++) {
+    const deg = new Map(); for (const s of segs) for (const p of [s.a, s.b]) { const k = faustNetKey(p[0], p[1]); deg.set(k, (deg.get(k) || 0) + 1) }
+    for (let i = segs.length - 1; i >= 0; i--) { const s = segs[i]; if (Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) < 3 && (deg.get(faustNetKey(...s.a)) === 1 || deg.get(faustNetKey(...s.b)) === 1)) segs.splice(i, 1) }
+  }
+  const nodes = new Map()
+  const node = p => { const k = faustNetKey(p[0], p[1]); if (!nodes.has(k)) nodes.set(k, { x: p[0], z: p[1], segs: [] }); return nodes.get(k) }
+  segs.forEach((s, i) => { node(s.a).segs.push(i); node(s.b).segs.push(i) })
+  for (const n of nodes.values()) {
+    const arms = n.segs.map(i => { const s = segs[i], o = faustNetKey(s.a[0], s.a[1]) === faustNetKey(n.x, n.z) ? s.b : s.a; return [Math.sign(Math.round(o[0] - n.x)), Math.sign(Math.round(o[1] - n.z)), s] })
+    n.deg = arms.length
+    const big = arms.filter(([, , s]) => s.motor && s.w >= 20 && !s.oneway)
+    n.signal = n.x % 96 === 0 && n.z % 96 === 0 && big.some(([ax, az]) => !ax) && big.some(([ax, az]) => !az) && big.length >= 3
+    n.junction = n.deg >= 3
+    n.square = n.junction && arms.every(([ax, az]) => !ax || !az)
+  }
+  const cells = new Map()
+  segs.forEach((s, i) => {
+    const gx = Math.floor((s.a[0] + s.b[0]) / 2 / 96 + (s.a[0] === s.b[0] && s.a[0] % 96 === 0 ? 1e-9 : 0)), gz = Math.floor((s.a[1] + s.b[1]) / 2 / 96 + (s.a[1] === s.b[1] && s.a[1] % 96 === 0 ? 1e-9 : 0))
+    const k = gx + ' ' + gz
+    if (!cells.has(k)) cells.set(k, { segs: [] })
+    s.id = gx + ':' + gz + ':' + (s.lattice ? s.lattice[0] + ':0' : s.mid ? s.mid[2] + ':m' : s.diag ? 'diagonal' : s.cls) + ':' + cells.get(k).segs.length
+    cells.get(k).segs.push(s)
+  })
+  const net = { seed, S, version: K.version, segs, nodes, cells, grain, Q, circles, station, rail, cell, legacy, chanAt, h, wOf }
+  for (let gx = -H; gx < H; gx++) for (let gz = -H; gz < H; gz++) {
+    const k = gx + ' ' + gz
+    if (!cells.has(k)) cells.set(k, { segs: [] })
+    Object.assign(cells.get(k), { c: cell(gx, gz), g: grain.get(k) })
+  }
+  net.lots = (gx, gz) => { const C = cells.get(gx + ' ' + gz); if (C && !C.slots) faustNetLots(net, gx, gz); return C }
+  net.ave = (axis, k, j) => wOf(axis, k, j)
+  net.signal = (x, z) => !!nodes.get(faustNetKey(x, z))?.signal
+  net.junction = (x, z) => !!nodes.get(faustNetKey(x, z))?.junction
+  net.zebra = (x, z) => !!nodes.get(faustNetKey(x, z))?.square
+  net.cuts = new Map()
+  return faustNetMemo = net
+}
+function faustNetNear(net, gx, gz, pad = 0) {
+  const out = []
+  for (let i = gx - 1; i <= gx + 1; i++) for (let j = gz - 1; j <= gz + 1; j++) for (const s of net.cells.get(i + ' ' + j)?.segs || []) out.push([s.a[0], s.a[1], s.b[0], s.b[1], s.w / 2 + pad, s])
+  return out
+}
+function faustNetLots(net, gx, gz) {
+  const C = net.cells.get(gx + ' ' + gz), { c, g } = C, X = gx * 96, Z = gz * 96, h = net.h, K = FAUST_NET
+  C.slots = []; C.pads = []; C.open = []
+  if (g.kind === 'chan') return
+  const near = faustNetNear(net, gx, gz), tilt = near.filter(([ax, az, bx, bz]) => ax !== bx && az !== bz), slanted = C.segs.some(s => s.a[0] !== s.b[0] && s.a[1] !== s.b[1]) || g.kind === 'quarter'
+  const garden = g.kind === 'etoile' && Math.max(Math.abs(X + 48), Math.abs(Z + 48)) < 96
+  if (g.kind === 'prison') { const x0 = X + Math.max(net.wOf(0, gx, gz), K.lane) / 2 + 2, z0 = Z + Math.max(net.wOf(1, gz, gx), K.lane) / 2 + 2, x1 = X + 96 - Math.max(net.wOf(0, gx + 1, gz), K.lane) / 2 - 2, z1 = Z + 96 - Math.max(net.wOf(1, gz + 1, gx), K.lane) / 2 - 2
+    C.slots = [{ x: (x0 + x1) / 2, z: (z0 + z1) / 2, hw: (x1 - x0) / 2, hd: (z1 - z0) / 2, prison: true, b: [x0, z0, x1, z1] }]; C.pads = [[X + 3.5, Z + 3.5, X + 92.5, Z + 92.5]]; return }
+  if (g.kind === 'close') { const zb = Z + 96 - Math.max(net.wOf(1, gz + 1, gx), K.lane) / 2 - 2; C.slots = [{ x: X + 48, z: (Z + 30 + zb) / 2, hw: 30, hd: (zb - Z - 30) / 2, close: true, b: [X + 14, Z + 30, X + 82, zb] }]; C.pads = [[X + 3.5, Z + 3.5, X + 92.5, Z + 92.5]]; return }
+  const regular = (g.kind === 'grid' || g.kind === 'square' || g.kind === 'yard') && !slanted
+  if (regular) {
+    const wm = (a, k, j) => Math.max(net.wOf(a, k, j), net.wOf(a, k, j - 1) && net.wOf(a, k, j) ? net.wOf(a, k, j - 1) : 0, net.wOf(a, k, j + 1) && net.wOf(a, k, j) ? net.wOf(a, k, j + 1) : 0), bW = wm(0, gx, gz), bE = wm(0, gx + 1, gz), bN = wm(1, gz, gx), bS = wm(1, gz + 1, gx)
+    const xb = [bW ? bW / 2 + 2 : 1], zb = [bN ? bN / 2 + 2 : 1]
+    if (g.ox !== null && g.ox !== undefined) xb.push(g.ox - 6, g.ox + 6)
+    else if (g.al) xb.push(48 - g.al.G / 2, 48 + g.al.G / 2)
+    if (g.oz !== null && g.oz !== undefined) zb.push(g.oz - 6, g.oz + 6)
+    xb.push(bE ? 96 - bE / 2 - 2 : 95); zb.push(bS ? 96 - bS / 2 - 2 : 95)
+    const pb = (lo, hi) => [lo - 2 + K.pave, hi + 2 - K.pave]
+    for (let b = 0; b < zb.length; b += 2) for (let a = 0; a < xb.length; a += 2) {
+      const x0 = X + xb[a], x1 = X + xb[a + 1], z0 = Z + zb[b], z1 = Z + zb[b + 1]
+      const [px0, px1] = [bW || a ? x0 - 2 + K.pave : x0 - 1, bE || a + 2 < xb.length ? x1 + 2 - K.pave : x1 + 1], [pz0, pz1] = [bN || b ? z0 - 2 + K.pave : z0 - 1, bS || b + 2 < zb.length ? z1 + 2 - K.pave : z1 + 1]
+      C.pads.push([px0, pz0, px1, pz1])
+      if (g.kind === 'square' || g.kind === 'yard') continue
+      const L = x1 - x0, n = L > 64 && g.kind === 'grid' && !g.old ? 2 : 1
+      for (let m = 0; m < n; m++) {
+        const u0 = x0 + L * m / n + (m ? 1 : 0), u1 = x0 + L * (m + 1) / n - (m + 1 < n ? 1 : 0)
+        C.slots.push({ x: (u0 + u1) / 2, z: (z0 + z1) / 2, hw: (u1 - u0) / 2, hd: (z1 - z0) / 2, fill: n > 1 || L > 56, b: [u0, z0, u1, z1] })
+      }
+    }
+    if (g.kind === 'yard') C.slots = faustLotSlots(c).map(s => ({ x: s.x, z: s.z, hw: 22, hd: 40, legacy: true, b: [X + 2, Z + 2, X + 94, Z + 94] }))
+    if (g.snap && c.layout !== 1) {
+      const leg = faustLotSlots(c)
+      if (leg.length === C.slots.length) C.slots = leg.map((s, i) => ({ x: s.x, z: s.z, hw: C.slots[i].hw, hd: C.slots[i].hd, legacy: true, b: C.slots[i].b }))
+    }
+    if (c.layout === 1 && C.slots.length === 1) Object.assign(C.slots[0], { x: X + 48, z: Z + 48 })
+    const hit = l => tilt.some(([ax, az, bx, bz, hw]) => { const cx = Math.max(l.x - l.hw, Math.min(l.x + l.hw, (ax + bx) / 2)), cz = Math.max(l.z - l.hd, Math.min(l.z + l.hd, (az + bz) / 2))
+      for (let u = -1; u <= 1; u += 0.25) for (let v = -1; v <= 1; v += 0.25) if (faustSegDist(l.x + u * l.hw, l.z + v * l.hd, [ax, az], [bx, bz]) < hw + 3) return true
+      return false })
+    C.slots = C.slots.filter(l => { if (!hit(l)) return true
+      if (l.legacy) { for (let k = 1; k <= 7; k++) { const t = { ...l, hw: l.hw * (1 - k * 0.07), hd: l.hd * (1 - k * 0.07) }; if (!hit(t)) { Object.assign(l, t, { b: [t.x - t.hw, t.z - t.hd, t.x + t.hw, t.z + t.hd] }); return t.hw >= 7 && t.hd >= 7 } } return false }
+      const o = { ...l }
+      for (let k = 0; k < 6; k++) { o.hw = l.hw * (1 - k * 0.08); o.hd = l.hd * (1 - k * 0.08); for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) { const t = { ...o, x: l.x + sx * (l.hw - o.hw), z: l.z + sz * (l.hd - o.hd) }; if (!hit(t)) { Object.assign(l, t, { b: [t.x - t.hw, t.z - t.hd, t.x + t.hw, t.z + t.hd] }); return t.hw >= 7 && t.hd >= 7 } } }
+      return false })
+    return
+  }
+  const N = 96, road = new Uint8Array(N * N), taken = new Uint8Array(N * N)
+  for (const [ax, az, bx, bz, hw] of near) {
+    const r = hw + (Math.abs(hw - 4) < 0.01 ? 8 : 3), i0 = Math.max(0, Math.floor(Math.min(ax, bx) - r - X)), i1 = Math.min(N - 1, Math.ceil(Math.max(ax, bx) + r - X)), j0 = Math.max(0, Math.floor(Math.min(az, bz) - r - Z)), j1 = Math.min(N - 1, Math.ceil(Math.max(az, bz) + r - Z))
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) { const k = j * N + i; if (road[k] === 2) continue
+      const d = faustSegDist(X + i + 0.5, Z + j + 0.5, [ax, az], [bx, bz]); if (d < hw) road[k] = 2; else if (d < r) road[k] = 1 }
+  }
+  for (const b of net.rail.byCell.get(faustKey(gx + net.S / 2, gz + net.S / 2)) || []) if (b.cy - b.ey < 3) {
+    for (let j = Math.max(0, Math.floor(b.cz - b.ez - 2 - Z)); j <= Math.min(N - 1, Math.ceil(b.cz + b.ez + 2 - Z)); j++) for (let i = Math.max(0, Math.floor(b.cx - b.ex - 2 - X)); i <= Math.min(N - 1, Math.ceil(b.cx + b.ex + 2 - X)); i++) road[j * N + i] ||= 3
+  }
+  if (g.kind === 'etoile') for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const x = X + i + 0.5, z = Z + j + 0.5
+    if (Math.hypot(x, z) < K.ring + K.ringW / 2 + 3) road[j * N + i] ||= 1; else if (Math.max(Math.abs(x), Math.abs(z)) > 189) road[j * N + i] ||= 3 }
+  const quarter = g.kind === 'quarter' || g.kind === 'close', size = quarter ? [9, 12] : c.district === 'core' || g.kind === 'etoile' ? [11, 16] : [10, 13]
+  const free = (i0, j0, i1, j1) => { if (i0 < 1 || j0 < 1 || i1 > N - 1 || j1 > N - 1) return false; for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) if (road[j * N + i] || taken[j * N + i]) return false; return true }
+  if (c.plaza && !c.centralPlaza || garden || g.kind === 'park') return faustNetPads(C, road, X, Z, tilt, near)
+  const fronts = []
+  for (let i = 1; i < N - 1; i++) for (let j = N - 2; j > 0; j--) if (!road[j * N + i] && (road[(j + 1) * N + i] === 1 || road[(j + 1) * N + i] === 2)) fronts.push([i, j])
+  fronts.sort((p, q) => p[0] - q[0] || q[1] - p[1])
+  for (const [fi, fj] of fronts) {
+    if (taken[fj * N + fi]) continue
+    const hw = size[0] + Math.floor(h(fi, fj, 31) * (size[1] - size[0] + 1)), hd = size[0] + Math.floor(h(fi, fj, 32) * (size[1] - size[0] + 1))
+    let done = false
+    for (let ww = hw; ww >= 8 && !done; ww--) for (let gap = 0; gap <= 14 && !done; gap += 2) for (const sh of [0, -ww, ww, -ww / 2 | 0, ww / 2 | 0]) {
+      const i0 = fi - ww + sh, i1 = fi + ww + sh, j1 = fj + 1 - gap, dd = Math.min(hd, quarter ? 14 : 12)
+      let d = dd
+      while (d >= 8 && !free(i0, j1 - 2 * d, i1, j1)) d--
+      if (d < 8) continue
+      const front = []
+      for (let i = i0; i < i1; i++) { let k = 0; while (j1 + k < N && !(road[(j1 + k) * N + i] === 1 || road[(j1 + k) * N + i] === 2) && k < 12) k++; front.push(j1 + k >= N ? 99 : k) }
+      if (front[front.length >> 1] > (quarter ? 10 : 4)) continue
+      const mg = 5
+      for (let j = Math.max(0, j1 - 2 * d - mg); j < Math.min(N, j1 + mg); j++) for (let i = Math.max(0, i0 - mg); i < Math.min(N, i1 + mg); i++) taken[j * N + i] = 1
+      C.slots.push({ x: X + (i0 + i1) / 2, z: Z + j1 - d, hw: (i1 - i0) / 2, hd: d, fill: true, packed: true, b: [X + i0, Z + j1 - 2 * d, X + i1, Z + j1] })
+      done = true
+    }
+  }
+  C.slots.sort((p, q) => p.z - q.z || p.x - q.x)
+  faustNetPads(C, road, X, Z, tilt, near)
+}
+function faustNetPads(C, road, X, Z, tilt = [], near = tilt) {
+  const N = 96, clear = (x, z) => near.every(([ax, az, bx, bz, hw]) => faustSegDist(x, z, [ax, az], [bx, bz]) >= hw - 0.02)
+  const edge = (i, j, side) => {
+    const cx = X + i + 0.5, cz = Z + j + 0.5
+    for (const [ax, az, bx, bz, hw] of tilt) {
+      const L = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / L, uz = (bz - az) / L, nx = -uz, nz = ux
+      if (Math.abs(nx) < 0.05 || faustSegDist(cx, cz, [ax, az], [bx, bz]) >= hw) continue
+      const sg = Math.sign((cx + side - ax) * nx + (cz - az) * nz) || 1, at = z => ax + (sg * hw - (z - az) * nz) / nx
+      const lo = X + i + (side > 0 ? 0 : -0.5), hi = X + i + (side > 0 ? 1.5 : 1), c = v => Math.round(Math.min(hi, Math.max(lo, v)) * 100) / 100
+      const fix = (x, z) => { const stop = side > 0 ? X + i + 4 : X + i - 3; for (let k = 0; k < 40 && !clear(x, z); k++) x = side > 0 ? Math.min(stop, x + 0.1) : Math.max(stop, x - 0.1); return clear(x, z) ? Math.round(x * 100) / 100 : side > 0 ? X + i + 1 : X + i }
+      return [fix(c(at(Z + j)), Z + j), fix(c(at(Z + j + 1)), Z + j + 1)]
+    }
+    return null
+  }
+  for (let j = 0; j < N; j++) { let i = 0; while (i < N) { if (road[j * N + i] === 2) { i++; continue } let e = i; while (e < N && road[j * N + e] !== 2) e++
+    const l = i > 0 ? edge(i - 1, j, 1) : null, r = e < N ? edge(e, j, -1) : null
+    if (l || r) { const L = l || [X + i, X + i], R = r || [X + e, X + e]
+      if (R[0] - L[0] > 0.05 || R[1] - L[1] > 0.05) C.pads.push([X + i, Z + j, X + e, Z + j + 1, L[0], L[1], Math.max(L[0], R[0]), Math.max(L[1], R[1])]) }
+    else C.pads.push([X + i, Z + j, X + e, Z + j + 1]); i = e } }
+  const merged = []
+  for (const p of C.pads) { const q = p.length === 4 && merged.find(m => m.length === 4 && m[0] === p[0] && m[2] === p[2] && m[3] === p[1]); if (q) q[3] = p[3]; else merged.push(p.slice()) }
+  C.pads = merged
+}
+function faustNetFull(net, a, k) {
+  const H = net.S / 2
+  if (k <= -H || k >= H) return false
+  if (net.circles.some(c => (a ? c.z : c.x) === k * 96)) return false
+  for (let j = -H; j < H; j++) if (net.wOf(a, k, j) < 20) return false
+  return true
+}
+function faustNetTiles(pads) {
+  const out = []
+  for (const p of pads || []) { const hw = (p[2] - p[0]) / 2, hd = (p[3] - p[1]) / 2; if (Math.min(hw, hd) >= 3) out.push([p[0] + hw, p[1] + hd, Math.min(hw, hd, 14.3)]) }
+  return out.sort((a, b) => b[2] - a[2]).slice(0, 12)
+}
+function faustNetNav(net, at, target) {
+  const direct = { corner: null, there: target.y < 5, pad: null }
+  if (Math.hypot(at.x - target.x, at.z - target.z) < 24) return direct
+  if (!net.nav) {
+    const adj = new Map(), idx = new Map(), cellK = (x, z) => Math.floor(x / 96) + ' ' + Math.floor(z / 96)
+    const link = (a, b) => { const k = faustNetKey(a[0], a[1]); if (!adj.has(k)) adj.set(k, []); adj.get(k).push(faustNetKey(b[0], b[1])) }
+    for (const q of net.segs) if (q.motor) { link(q.a, q.b); if (!q.oneway) link(q.b, q.a) }
+    for (const k of adj.keys()) { const n = net.nodes.get(k), c = cellK(n.x, n.z); if (!idx.has(c)) idx.set(c, []); idx.get(c).push(k) }
+    net.nav = { adj, idx, cellK, memo: new Map() }
+  }
+  const N = net.nav, nearest = (x, z) => {
+    let best = null, bd = Infinity
+    for (let r = 0; r <= 3 && !best; r++) for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) {
+      for (const k of N.idx.get((Math.floor(x / 96) + i) + ' ' + (Math.floor(z / 96) + j)) || []) { const n = net.nodes.get(k), d = Math.hypot(n.x - x, n.z - z); if (d < bd) { bd = d; best = k } }
+    }
+    return best
+  }
+  const s = nearest(at.x, at.z), t = nearest(target.x, target.z)
+  if (!s || !t || s === t) return direct
+  const key = s + '>' + t
+  let path = N.memo.get(key)
+  if (!path) {
+    const T = net.nodes.get(t), h = k => { const n = net.nodes.get(k); return Math.hypot(n.x - T.x, n.z - T.z) }
+    const g = new Map([[s, 0]]), prev = new Map(), open = [[h(s), s]], done = new Set()
+    while (open.length) {
+      let bi = 0; for (let i = 1; i < open.length; i++) if (open[i][0] < open[bi][0]) bi = i
+      const [, k] = open.splice(bi, 1)[0]
+      if (done.has(k)) continue
+      done.add(k)
+      if (k === t || done.size > 4000) break
+      const n = net.nodes.get(k)
+      for (const m of N.adj.get(k) || []) {
+        const o = net.nodes.get(m), c = g.get(k) + Math.hypot(o.x - n.x, o.z - n.z)
+        if (c < (g.get(m) ?? Infinity)) { g.set(m, c); prev.set(m, k); open.push([c + h(m), m]) }
+      }
+    }
+    path = []
+    if (prev.has(t)) for (let k = t; k; k = prev.get(k)) path.unshift(k)
+    if (N.memo.size > 256) N.memo.delete(N.memo.keys().next().value)
+    N.memo.set(key, path)
+  }
+  for (const k of path) { const n = net.nodes.get(k); if (Math.hypot(n.x - at.x, n.z - at.z) > 3) return { corner: { x: n.x, y: 0, z: n.z }, there: target.y < 5, pad: null } }
+  return direct
+}
+function faustNetGround(g, P, X, Z) {
+  const garden = P.centralPlaza, tint = P.park ? FAUST_FEAT.grass : P.net === 'quarter' || P.net === 'close' ? 0x5f5c57 : P.plaza ? 0x5d626a : 0x737983
+  for (const p of P.pads) {
+    const cx = (p[0] + p[2]) / 2, cz = (p[1] + p[3]) / 2
+    const col = garden && Math.hypot(cx, cz) < FAUST_NET.ring - 14 ? FAUST_FEAT.grass : tint
+    if (p.length > 4) { const a = [p[4], 0.02, p[1]], b = [p[6], 0.02, p[1]], c = [p[7], 0.02, p[3]], d = [p[5], 0.02, p[3]]; if (p[6] - p[4] > 0.01 || p[7] - p[5] > 0.01) { g.tri(a, d, c, col); g.tri(a, c, b, col) } }
+    else g.box(faustBox(cx, 0.01, cz, (p[2] - p[0]) / 2, 0.01, (p[3] - p[1]) / 2), col)
+  }
+  const quad = (a, u, n, len, wd, y, col) => {
+    const p0 = [a[0] - n[0] * wd / 2, y, a[1] - n[1] * wd / 2], p1 = [p0[0] + u[0] * len, y, p0[2] + u[1] * len], p3 = [a[0] + n[0] * wd / 2, y, a[1] + n[1] * wd / 2], p2 = [p3[0] + u[0] * len, y, p3[2] + u[1] * len]
+    const up = (p1[2] - p0[2]) * (p3[0] - p0[0]) - (p1[0] - p0[0]) * (p3[2] - p0[2]) > 0
+    if (up) { g.tri(p0, p1, p2, col); g.tri(p0, p2, p3, col) } else { g.tri(p0, p2, p1, col); g.tri(p0, p3, p2, col) }
+  }
+  const net = faustState && faustNet(faustState.seed, faustState.S)
+  for (const r of P.roads) {
+    if (r.foot) continue
+    const L = Math.hypot(r.b[0] - r.a[0], r.b[2] - r.a[2]); if (L < 6) continue
+    const u = [(r.b[0] - r.a[0]) / L, (r.b[2] - r.a[2]) / L], n = [-u[1], u[0]], a = [r.a[0], r.a[2]], end = k => net?.junction(k ? r.b[0] : r.a[0], k ? r.b[2] : r.a[2])
+    const t0 = end(0) ? 12 : 2, t1 = end(1) ? L - 12 : L - 2
+    const mo = r.width < 20 ? -1.35 : 0
+    if (r.width >= 12 && !r.oneway) for (let t = t0; t + 2.4 <= t1; t += 12) quad([a[0] + u[0] * t + n[0] * mo, a[1] + u[1] * t + n[1] * mo], u, n, 2.4, 0.12, 0.012, 0xb4a77d)
+    if (r.width >= 8) for (const k of [0, 1]) if (net?.zebra(k ? r.b[0] : r.a[0], k ? r.b[2] : r.a[2])) {
+      const t = k ? L - 4.5 : 4.5, dir = k ? -1 : 1
+      for (let o = -r.width / 2 + 1; o <= r.width / 2 - 1; o += 1.6) quad([a[0] + u[0] * t + n[0] * o, a[1] + u[1] * t + n[1] * o], [u[0] * dir, u[1] * dir], n, 3, 0.55, 0.012, 0xadb0ad)
+    }
+  }
+}
+function faustStreetCell(seed, S, gx, gz, rail) {
+  const c = faustCell(seed, gx, gz), { X, Z, plaza, centralPlaza, diagonal, layout, district } = c, chan = faustChanCell(seed, S, gx, gz)
+  const role = district === 'industrial' ? faustIndustry(seed).shapes[c.industry]?.id : null, yard = role === 'yard' || role === 'marsh' || role === 'scrap'
+  const al = chan || yard ? null : faustAlleyFor(seed, S, gx, gz, { district, layout, plaza, diagonal }, rail), ways = []
+  for (const axis of [0, 1]) for (const offset of [0, 48]) {
+    const wide = offset === 0, mid = (axis ? Z : X) + offset
+    if (chan && !wide || plaza && !wide || centralPlaza && Math.abs(mid) < 192 || !wide && (layout === 1 || layout === 2 && axis === 1 || al && axis === 0)) continue
+    ways.push({ axis, offset, cuts: [0.5], road: { id: [gx, gz, axis, offset].join(':'), a: axis ? [X, 0, mid] : [mid, 0, Z], b: axis ? [X + 96, 0, mid] : [mid, 0, Z + 96], width: wide ? 20 : 8, avenue: wide } })
+  }
+  if (diagonal) ways.push({ diagonal: true, cuts: [0.5], road: { id: gx + ':' + gz + ':diagonal', a: [X, 0, Z], b: [X + 96, 0, Z + 96], width: 26, avenue: true } })
+  return { c, chan, al, ways, slots: faustLotSlots(c) }
+}
+let faustStreetsMemo = null
+function faustStreets(seed, S = 20) {
+  if (FAUST_NET.version) { const net = faustNet(seed, S); return net.streets ||= { seed: net.seed, S, cuts: new Map(), ave: net.ave, signal: net.signal, slant: (x, z) => !!net.nodes.get(faustNetKey(x, z))?.segs.some(i => { const q = net.segs[i]; return q.a[0] !== q.b[0] && q.a[1] !== q.b[1] }) } }
+  seed >>>= 0
+  if (faustStreetsMemo?.seed === seed && faustStreetsMemo.S === S) return faustStreetsMemo
+  const H = S / 2, rail = faustRail(seed, S), cells = new Map(), cuts = new Map()
+  for (let gx = -H; gx < H; gx++) for (let gz = -H; gz < H; gz++) {
+    const st = faustStreetCell(seed, S, gx, gz, rail)
+    cells.set(gx + ' ' + gz, st)
+    for (const w of st.ways) cuts.set(w.road.id, w.cuts)
+  }
+  const ave = (axis, k, j) => cells.get(axis ? j + ' ' + k : k + ' ' + j)?.ways.find(w => w.axis === axis && w.offset === 0)?.road.width || 0
+  const signal = (x, z) => x % 96 === 0 && z % 96 === 0
+  return faustStreetsMemo = { seed, S, cells, cuts, ave, signal }
+}
+function faustCityRoads(seed, S = 20) {
+  const out = []
+  if (FAUST_NET.version) { for (const q of faustNet(seed, S).segs) out.push({ id: q.id, pts: [q.a.slice(), q.b.slice()], width: q.w, class: q.cls, ...q.oneway && { oneway: true }, ...!q.motor && { foot: true } }); return out }
+  for (const st of faustStreets(seed, S).cells.values()) for (const w of st.ways) {
+    const r = w.road
+    out.push({ id: r.id, pts: [[r.a[0], r.a[2]], [r.b[0], r.b[2]]], width: r.width, class: w.diagonal ? 'boulevard' : r.avenue ? 'avenue' : 'street' })
+  }
+  return out
+}
+function faustCityParks(seed, S = 20) {
+  const out = [], box = (x0, z0, x1, z1) => [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]
+  if (FAUST_NET.version) {
+    const net = faustNet(seed, S), K = FAUST_NET
+    out.push({ kind: 'park', name: 'FAUST PARK', poly: box(K.park.x[0] * 96, K.park.z[0] * 96, K.park.x[1] * 96 + 96, K.park.z[1] * 96 + 96) })
+    for (const [k, C] of net.cells) { if (C.g.kind !== 'square' || !C.c.plaza) continue; const [gx, gz] = k.split(' ').map(Number); out.push({ kind: 'square', poly: box(gx * 96 + 10, gz * 96 + 10, gx * 96 + 86, gz * 96 + 86) }) }
+    if (net.Q) { const [hx, hz] = net.Q.hole; out.push({ kind: 'square', name: 'CATHEDRAL CLOSE', poly: box(hx * 96 + 4, hz * 96 + 4, hx * 96 + 92, hz * 96 + 92) }) }
+    for (const c of net.circles) out.push({ kind: 'circle', poly: Array.from({ length: 16 }, (_, i) => [c.x + (c.r - 8) * Math.cos(i * Math.PI / 8), c.z + (c.r - 8) * Math.sin(i * Math.PI / 8)]) })
+    out.push({ kind: 'plaza', name: 'FAUST PLAZA', poly: Array.from({ length: 24 }, (_, i) => [(K.ring - K.ringW / 2) * Math.cos(i * Math.PI / 12), (K.ring - K.ringW / 2) * Math.sin(i * Math.PI / 12)]) })
+    return out
+  }
+  for (const st of faustStreets(seed, S).cells.values()) {
+    const c = st.c
+    if (!c.plaza || st.chan || c.centralPlaza) continue
+    out.push({ kind: faustFeatures(seed, c.X / 96, c.Z / 96, c)[0]?.k === 'pond' ? 'park' : 'square', poly: box(c.X, c.Z, c.X + 96, c.Z + 96) })
+  }
+  out.push({ kind: 'plaza', name: 'FAUST PLAZA', poly: box(-192, -192, 192, 192) })
+  return out
+}
 function faustPlan(seed, ci, cj, S = 20) {
   const gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96
-  const rng = genRng(faustMix(seed, gx, gz)), { districtHash, distance, district, industry, centralPlaza, plaza, diagonal, layout } = faustCell(seed, gx, gz)
+  const rng = genRng(faustMix(seed, gx, gz)), cellNow = faustCell(seed, gx, gz), { districtHash, distance, district, industry, centralPlaza } = cellNow
   const rail = faustRail(seed, S), chan = faustChanCell(seed, S, gx, gz)
   const role = district === 'industrial' ? faustIndustry(seed).shapes[industry]?.id : null, yardSite = role === 'yard' || role === 'marsh' ? 'site_freight' : role === 'scrap' ? 'site_scrap' : null
   const lots = [], boxes = chan ? faustChanBoxes(chan, X, Z) : [faustBox(X + 48, -0.52, Z + 48, 48.05, 0.5, 48.05)]
   const roads = [], lanes = [], sidewalks = [], masts = [], screens = []
-  const al = chan || yardSite ? null : faustAlleyFor(seed, S, gx, gz, { district, layout, plaza, diagonal }, rail), alD = []
-  for (const axis of [0, 1]) for (const offset of [0, 48]) {
-    const wide = offset === 0, width = wide ? 20 : 8, q = (wide ? 4.2 : 2), mid = (axis ? Z : X) + offset
-    const point = (along, across = 0) => axis ? [X + along, 0, mid + across] : [mid + across, 0, Z + along]
-    if (chan && !wide || plaza && !wide || centralPlaza && Math.abs(mid) < 192 || !wide && (layout === 1 || layout === 2 && axis === 1 || al && axis === 0)) continue
-    roads.push({ id: [gx, gz, axis, offset].join(':'), a: point(0), b: point(96), width, avenue: wide })
-    for (const side of [-1, 1]) {
-      const forward = axis ? side > 0 : side < 0, road = roads.at(-1).id
-      const path = [point(forward ? 0 : 96, side * q), point(forward ? 96 : 0, side * q)]
-      lanes.push({ kind: 'motor', road, path, width: wide ? 3.3 : 3 })
-      if (wide) lanes.push({ kind: 'bike', road, path: [point(forward ? 0 : 96, side * 8.3), point(forward ? 96 : 0, side * 8.3)], width: 1.6 })
-      sidewalks.push([point(0, side * (width / 2 + 2)), point(96, side * (width / 2 + 2))])
+  const net = faustNet(seed, S), NC = net.lots(gx, gz), G0 = NC.g, plaza = cellNow.plaza || G0.kind === 'park', diagonal = cellNow.diag !== 0
+  const slots = chan ? [] : NC.slots.slice(), packed = slots.some(q => q.packed), stopCell = !centralPlaza && (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0
+  if (stopCell && packed && slots.length) { const fit = slots.filter(q => q.hw >= 9 && q.hd >= 9), pool = fit.length ? fit : slots, best = pool.reduce((p, q) => Math.hypot(q.x - X - 72, q.z - Z - 24) < Math.hypot(p.x - X - 72, p.z - Z - 24) ? q : p); slots.splice(slots.indexOf(best), 1); slots.unshift(best) }
+  if (slots.length > FAUST_SKY_LOTS) slots.length = FAUST_SKY_LOTS
+  const layout = chan || packed ? 0 : G0.kind === 'close' || G0.kind === 'prison' ? 1 : cellNow.layout === 1 && slots.length === 1 ? 1 : slots.length === 4 ? 4 : slots.length === 2 ? 2 : 0
+  const al = G0.kind === 'grid' && G0.al && (layout === 4 || layout === 2) ? G0.al : null, alD = []
+  for (const q of NC.segs) {
+    const w = q.w, L = Math.hypot(q.b[0] - q.a[0], q.b[1] - q.a[1]), ux = (q.b[0] - q.a[0]) / L, uz = (q.b[1] - q.a[1]) / L, nx = -uz, nz = ux
+    const P3 = (t, o) => [faustNetCm(q.a[0] + ux * t + nx * o), 0, faustNetCm(q.a[1] + uz * t + nz * o)]
+    const road = { id: q.id, a: [q.a[0], 0, q.a[1]], b: [q.b[0], 0, q.b[1]], width: w, avenue: w >= 20, cuts: [], ...q.oneway && { oneway: true }, ...!q.motor && { foot: true } }
+    roads.push(road)
+    for (const side of [-1, 1]) sidewalks.push([P3(0, side * (w / 2 + 2)), P3(L, side * (w / 2 + 2))])
+    if (!q.motor) continue
+    const lw = w >= 20 ? 3.3 : w >= 12 ? 3 : w > 7 ? 3 : 2.5, o = q.oneway ? 0 : w >= 26 ? 4.2 : w >= 20 ? 2.9 : w > 7 ? 2 : 1.75, park = !q.oneway && w >= 12 && w < 20, bk = w >= 26 ? 8.3 : 5.6
+    if (q.oneway) lanes.push({ kind: 'motor', road: road.id, path: [P3(0, 0), P3(L, 0)], width: lw })
+    else for (const side of [-1, 1]) {
+      const os = park ? (side > 0 ? 0.3 : 3) : o
+      lanes.push({ kind: 'motor', road: road.id, path: side > 0 ? [P3(0, os), P3(L, os)] : [P3(L, -os), P3(0, -os)], width: lw })
+      if (w >= 20) lanes.push({ kind: 'bike', road: road.id, path: side > 0 ? [P3(0, bk), P3(L, bk)] : [P3(L, -bk), P3(0, -bk)], width: 1.6 })
     }
   }
-  if (diagonal) {
-    roads.push({ id: gx + ':' + gz + ':diagonal', a: [X, 0, Z], b: [X + 96, 0, Z + 96], width: 26, avenue: true })
-    for (const side of [-1, 1]) {
-      const path = [[X + side * 4, 0, Z - side * 4], [X + 96 + side * 4, 0, Z + 96 - side * 4]]
-      lanes.push({ kind: 'motor', road: roads.at(-1).id, path: side < 0 ? path : path.reverse(), width: 4 })
-      sidewalks.push([[X + side * 12, 0, Z - side * 12], [X + 96 + side * 12, 0, Z + 96 - side * 12]])
-    }
-  }
+  const westAve = q => roads.some(r => r.avenue && r.a[0] === X && r.b[0] === X && Math.min(r.a[2], r.b[2]) <= Z + q - 4 && Math.max(r.a[2], r.b[2]) >= Z + q + 4)
+  const tilt = faustNetNear(net, gx, gz).filter(([ax, az, bx, bz]) => ax !== bx && az !== bz)
+  const ownLamps = chan ? faustLampOffsets(cellNow.diagonal) : [20, 44, 76].filter(q => westAve(q) && tilt.every(([ax, az, bx, bz, hw]) => faustSegDist(X + 8.6, Z + q, [ax, az], [bx, bz]) > hw + 4 && faustSegDist(X + 11.4, Z + q, [ax, az], [bx, bz]) > hw + 2)).filter((q, i, a) => !(q === 44 && a.includes(20)))
   const sites = []
-  const landmark = !plaza && layout === 1 ? faustLandmarks(seed, S).get(gx + ' ' + gz) : undefined
-  if (!plaza && !chan) for (let i = 0; i < layout; i++) {
-    let x = X + (layout === 1 ? 48 : i & 1 ? 72 : 24)
-    const z = Z + (layout < 4 ? 48 : i & 2 ? 72 : 24)
+  const landmark = G0.kind === 'close' ? 'cathedral' : G0.kind === 'prison' ? undefined : !plaza && layout === 1 ? faustLandmarks(seed, S).get(gx + ' ' + gz) : undefined
+  for (let i = 0; i < slots.length; i++) {
+    const sl = slots[i]
+    let x = sl.x, z = sl.z
     const ticket = rng(); let H = 4 * (district === 'core' ? distance > 650 ** 2 ? i === 0 ? 80 + (rng() * 22 | 0) : 12 + (rng() * 8 | 0) : ticket > 0.22 ? 34 + (rng() * 54 | 0) : 9 + (rng() * 16 | 0)
       : district === 'civic' ? 12 + (rng() * 25 | 0) : district === 'industrial' ? 2 + (rng() * 6 | 0) : 4 + (rng() * 10 | 0))
-    const w = layout === 1 ? 29 : 10 + (rng() * 3 | 0), d0 = layout < 4 ? 28 : 10 + (rng() * 3 | 0)
+    const m = sl.packed || sl.legacy || sl.close || sl.prison ? 0 : Math.max(0, Math.min(7, sl.hw - 9)), md = sl.packed || sl.legacy || sl.close || sl.prison ? 0 : Math.max(0, Math.min(2, sl.hd - 9)), bw = Math.max(4, Math.min(sl.x - sl.b[0], sl.b[2] - sl.x) - m), bd = Math.max(4, Math.min(sl.z - sl.b[1], sl.b[3] - sl.z) - md)
+    const big = layout === 1, rw = big ? 29 : (10 + (rng() * 3 | 0)) * (sl.packed ? 2 : sl.hw / 14.8), rd = big ? 28 : (10 + (rng() * 3 | 0)) * (sl.packed ? 2 : sl.hd / 14.8)
+    const w = sl.prison ? bw : Math.round(Math.min(bw, big && bd >= 20 ? bw : 20, Math.max(sl.packed ? bw : 7, rw)) * 10) / 10, d0 = sl.prison ? bd : Math.round(Math.min(bd, Math.max(sl.packed ? bd : 7, rd)) * 10) / 10
     const row = layout === 4 ? i >> 1 : 0, d = al && i & 1 ? alD[row] : d0
     if (al && !(i & 1)) alD[row] = d
     let gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
     if (landmark === 'theatre' || landmark === 'hotel') gothic = false
-    const isClub = faustClubAt(seed, gx, gz, i)
+    const isClub = !sl.prison && faustClubAt(seed, gx, gz, i)
     if (isClub) gothic = false
-    const cath = landmark === 'cathedral' && !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0)
-    if (cath) H = 46
+    const cath = landmark === 'cathedral' && (G0.kind === 'close' || !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0))
+    if (cath) { H = 46; gothic = true }
+    if (G0.kind === 'etoile') H = 24 + (faustMix(seed ^ 0x65746f69, gx * 4 + i, gz) & 1) * 4
     if (landmark === 'hotel' && !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0)) H = 72 + faustMix(seed ^ 0x686f7465, gx, gz) % 5 * 8
     const site = yardSite ? { k: yardSite, x, z, s: 1, q: 0, h: (districtHash >>> 8) + i * 7919 & 0xffffff } : faustSiteFor(seed, gx, gz, i, district, layout, plaza, diagonal, x, z)
-    if (site && !(Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z)))) { sites.push(site); continue }
-    if (diagonal && Math.abs(z - x - 384) < w + d + 18 || Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(x, z))) continue
+    if (site && !sl.prison && !(Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(sl.x, sl.z)))) { sites.push(site); continue }
+    if (Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(sl.x, sl.z))) continue
+    if (!big && !(stopCell && i === 0) && (w < 7.5 || d < 7.5)) continue
+    if (!sl.packed && !sl.legacy && !(stopCell && i === 0)) z = Math.round(Math.min(sl.b[3] - 2 - d, Math.max(sl.b[3] - 7 - d, sl.b[1] + 8 + d)) * 100) / 100
     if (al) x = X + 48 + (i & 1 ? 1 : -1) * (al.G / 2 + w)
-    const stop = (gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 && i === 0
+    const stop = stopCell && i === 0
     if (stop) H = 560 + (districtHash % 4) * 16
     const style = stop ? 'core' : district
     const h0 = style === 'industrial' || style === 'tenement' ? H : Math.round(H * 0.55), h1 = H === h0 ? 0 : Math.round(H * 0.3)
@@ -3530,7 +4037,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     else mass.push(faustBox(x + w * 0.3, H + 2, z, 3, 2, 4), faustBox(x - w * 0.4, H + 4, z - d * 0.3, 2.6, 4, 2.6))
     if (cath) mass.splice(0, mass.length, faustBox(x, 12, z, w, 12, d), faustBox(x, 27, z, 11, 3, d - 2.2), faustBox(x, 38, z, 8, 8, 8))
     const skyMass = cath ? mass.slice(0, 2) : h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, m1[0], (H - h0) / 2, m1[1])] : mass.slice(0, 2)
-    const lot = { x, z, w, d, height: H, gothic, district: style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + i, gz), ...al && { alley: { side: i & 1 ? -1 : 1, half: inCm(al.G / 2) } } }
+    const lot = { x, z, w, d, height: H, gothic, district: cath ? 'civic' : style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + (i & 3) + (i >> 2) * 100003, gz), slot: i, tile: [sl.b[0] - 1.2, sl.b[1] - 1.2, sl.b[2] + 1.2, sl.b[3] + 1.2], ...al && { alley: { side: i & 1 ? -1 : 1, half: inCm(al.G / 2) } } }
     if (landmark && !stop && (landmark !== 'cathedral' || cath)) lot.landmark = landmark
     if (isClub && !lot.landmark) {
       const dx = style === 'industrial' ? x - 0.6 * w : x, r = v => Math.round(v * 100) / 100, hs = faustClubHash(seed, gx, gz, i) >>> 8, al = lot.alley
@@ -3538,7 +4045,8 @@ function faustPlan(seed, ci, cj, S = 20) {
       lot.club = { name: hs % 4, door: [r(dx), r(z + d)], bouncer: [r(dx + 1.7), r(z + d + 0.9)], queue: [1, 2, 3].map(k => [r(dx + 1.7 + k * 0.9), r(z + d + 0.9)]),
         back: al ? [r(x + al.side * w), r(z + (hs >>> 5 & 1 ? 1 : -1) * 0.45 * d)] : [r(x + (hs >>> 5 & 1 ? 1 : -1) * 0.45 * w), r(z - d)], backOut: al ? [al.side, 0] : [0, -1], stage: hs >>> 4 & 1 ? 1 : -1 }
     }
-    if (!lot.landmark && !lot.venue) { const venue = faustVenueFor(seed, gx, gz, i, style, layout, stop, diagonal, gothic); if (venue) lot.venue = venue }
+    if (sl.prison) lot.prison = true
+    else if (!lot.landmark && !lot.venue) { const venue = faustVenueFor(seed, gx, gz, i, style, layout, stop, diagonal, gothic); if (venue) lot.venue = venue }
     lots.push(lot); boxes.push(...mass)
     if (style !== 'industrial' && style !== 'tenement') {
       for (const side of [-1,1]) for (const k of [-0.86,0,0.86]) {
@@ -3559,8 +4067,8 @@ function faustPlan(seed, ci, cj, S = 20) {
     if (H > 36 && i === 0 && !cath) screens.push({ x, y: 20, z: z + d + 0.12, w: 16, h: 9, yaw: 0, ground: null })
   }
   const alleys = al ? [faustAlleyRecord(al, gx, gz, layout, alD.length ? alD : [28], ci, cj, lots)] : []
-  for (const q of faustLampOffsets(diagonal)) boxes.push(faustBox(X + 11.4, 4.5, Z + q, 0.14, 4.5, 0.14, { slim: true }))
-  const features = chan ? [] : faustFeatures(seed, gx, gz, { plaza, centralPlaza, diagonal })
+  for (const q of ownLamps) boxes.push(faustBox(X + 11.4, 4.5, Z + q, 0.14, 4.5, 0.14, { slim: true }))
+  const features = chan || G0.kind === 'quarter' || G0.kind === 'close' || G0.kind === 'prison' ? [] : faustFeatures(seed, gx, gz, { plaza, centralPlaza, diagonal, park: G0.kind === 'park' })
   boxes.push(...faustFeatBoxes(features))
   const props = chan ? [] : faustProps({ ci, cj, S, plaza, diagonal, layout, roads, lots, alley: !!al }, rail.boxes.filter(b => b.cy - b.ey < 3 && Math.abs(b.cx - X - 48) < 60 + b.ex && Math.abs(b.cz - Z - 48) < 60 + b.ez))
   boxes.push(...faustFeatBoxes(props))
@@ -3584,11 +4092,12 @@ function faustPlan(seed, ci, cj, S = 20) {
   }
   const graph = { nodes: [...nodes.values()], edges }, departures = []
   for (const road of roads) if (road.avenue) for (const i of [0, 1]) {
-    const position = i ? road.b : road.a, direction = [0, 2].map(k => (road.b[k] - road.a[k]) / 96 * (i ? 1 : -1)), edge = S * 48
+    const len = Math.hypot(road.b[0] - road.a[0], road.b[2] - road.a[2]) || 1, position = i ? road.b : road.a, direction = [0, 2].map(k => (road.b[k] - road.a[k]) / len * (i ? 1 : -1)), edge = S * 48
     if (Math.abs(position[0]) === edge && position[0] * direction[0] > 0 || Math.abs(position[2]) === edge && position[2] * direction[1] > 0)
       departures.push({ id: road.id + ':' + i, position, direction, width: road.width })
   }
-  const content = { version: 23, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
+  const pads = chan ? [] : NC.pads.map(p => p.map(faustNetCm)), rim = [net.wOf(0, gx, gz), net.wOf(1, gz, gx), net.wOf(0, gx + 1, gz), net.wOf(1, gz + 1, gx)]
+  const content = { version: FAUST_NET.version, net: G0.kind, park: G0.kind === 'park', diag: cellNow.diag, pads, edges: rim, ownLamps, chan: chan ? { id: chan.id, axis: chan.axis } : null, seed: seed >>> 0, ci, cj, S, plaza: plaza && !chan, centralPlaza, district, diagonal, layout, lots, boxes, roads, lanes, sidewalks, masts, stops: masts, airBand: FAUST.airBand.slice(), screens, graph, departures, rail: rail.hash, railLights, features, props, sites, alleys, alleyFeat, alleyLights }
   let hash = 2166136261
   const json = JSON.stringify(content)
   for (let i = 0; i < json.length; i++) hash = Math.imul(hash ^ json.charCodeAt(i), 16777619)
@@ -3643,7 +4152,7 @@ function* faustSpawnsSteps(seed, S, avoid = []) {
     const X = gx * 96, Z = gz * 96, cx = X + 48, cz = Z + 48, nx = Math.max(0, X, -X - 96), nz = Math.max(0, Z, -Z - 96)
     if (nx * nx + nz * nz > K.reach * K.reach) continue
     const p = plan(gx, gz), near = yield* around(gx, gz)
-    const tiles = p.chan ? [] : p.plaza ? [[cx, cz, 37.5]] : [[X + 24, Z + 24], [X + 72, Z + 24], [X + 24, Z + 72], [X + 72, Z + 72]]
+    const tiles = p.chan ? [] : p.net && !(p.plaza && p.net === 'square') ? faustNetTiles(p.pads) : p.plaza ? [[cx, cz, 37.5]] : [[X + 24, Z + 24], [X + 72, Z + 24], [X + 24, Z + 72], [X + 72, Z + 72]]
       .filter(([x, z]) => !(p.diagonal && Math.abs(z - x - 384) < 42)).map(([x, z]) => [x, z, 14.3])
     let n = 0
     for (const [tx, tz, r] of tiles) {
@@ -3795,7 +4304,7 @@ const IN_TINT = { plaster: 0xb9b2a3, plasterCool: 0x9fa7ad, wood: 0x5a3a24, wood
   stone: 0xc9c3b6, marble: 0xd8d2c6, marbleDark: 0x2b2a2c, tile: 0x8d8a82, lino: 0x6d6a5e, carpet: 0x5b2a2a, concrete: 0x77797a,
   steel: 0x5d656b, green: 0x3f5a4a, leather: 0x4a2a20, paper: 0xd8d3c4, cloth: 0x6b6f7a, red: 0x8a2a24, cream: 0xd9cfb0,
   black: 0x0d0d0f, glass: 0x1a2a34, crate: 0x7a6040, shelf: 0x3a3a3c }
-const inWindowKey = (B, k, face, bay) => B.chunk * 4194304 + B.slot * 1048576 + k * 1024 + face * 256 + bay
+const inWindowKey = (B, k, face, bay) => B.chunk * 16777216 + B.slot * 1048576 + k * 1024 + face * 256 + bay
 const inDistrict = (cx, cz) => {
   const F = typeof faustState !== 'undefined' && faustState
   if (F) return DS_DISTRICT_CODE[faustCell(F.seed, Math.floor(cx / 96), Math.floor(cz / 96)).district]
@@ -3909,7 +4418,7 @@ function inPrivateRooms(B, P, G, y, rooms, boxes, lights, spots, wins) {
     bx(a0, a1, vF - 0.03, vF, fy, top, wine, { f: bit(0, -1) }); bx(a0, a1, vF - 0.05, vF, top, top + 0.05, 0xb08d4a, { m: 1, f: bit(0, -1) | 4 })
     bx(a0, a0 + 0.03, v0, vF, fy, top, wine, { f: bit(1, 0) }); bx(a1 - 0.03, a1, v0, vF, fy, top, wine, { f: bit(-1, 0) })
     bx(a0, u0 - 0.8, v0, v0 + 0.03, fy, top, wine, { f: bit(0, 1) }); bx(u0 + 0.8, a1, v0, v0 + 0.03, fy, top, wine, { f: bit(0, 1) })
-    for (const dv of [0, 1]) bx(dv ? u0 + 0.8 : a0, dv ? a1 : u0 - 0.8, v0, v0 + 0.04, fy + 1.0, fy + 1.04, 0xb08d4a, { m: 1, f: bit(0, 1) })
+    for (const dv of [0, 1]) bx(dv ? u0 + 0.8 : a0 + 0.015, dv ? a1 - 0.015 : u0 - 0.8, v0 + 0.01, v0 + 0.04, fy + 1.0, fy + 1.04, 0xb08d4a, { m: 1, f: bit(0, 1) })
     bx(uc - 0.85, uc + 0.85, vd - 0.85, vd + 0.85, fy, fy + 0.19, 0x5a3a24, { c: 1, f: 63 ^ 8 }); bx(uc - 0.78, uc + 0.78, vd - 0.78, vd + 0.78, fy + 0.19, fy + 0.21, 0xb02a50, { m: 1, f: 4 })
     for (const q of [[-0.85, 0.85, -0.85, -0.78], [-0.85, 0.85, 0.78, 0.85], [-0.85, -0.78, -0.78, 0.78], [0.78, 0.85, -0.78, 0.78]]) bx(uc + q[0], uc + q[1], vd + q[2], vd + q[3], fy + 0.19, fy + 0.23, 0xb08d4a, { m: 1, f: 4 })
     bx(uc - 1.3, uc + 1.3, vB - 0.95, vB - 0.04, fy, fy + 0.42, 0xb88a62, { c: 1, f: 63 ^ 8 }); bx(uc - 1.3, uc + 1.3, vB - 0.28, vB - 0.04, fy + 0.42, fy + 1.0, 0x96623e, { c: 1, f: 63 ^ 8 })
@@ -4419,7 +4928,7 @@ function faustStorey(B, k) {
           bx2(0.07, 0.1, fy + 2.55, fy + 2.75, mid - 1.2, mid + 1.2, 0xff3a5c, { m: 2, r }); light(X(0.8), fy + 2.4, mid, r, 0.8, 0xff4a6a)
         } else {
           for (let q = c0 + 0.15; q < c1 - 0.25;) { const len = 0.06 + rng() * 0.05; bottle(dd - 0.34, fy + 1.15, q, len); q += len + 0.12 + rng() * 0.2 }
-          bx2(dd - 0.03, dd, fy + 2.55, fy + 2.75, mid - 1.2, mid + 1.2, 0xff3a5c, { m: 2, r }); bx2(dd - 0.02, dd - 0.01, fy + 2.75, y + 3.7, mid - 0.01, mid + 0.01, IN_TINT.steel, { m: 1 })
+          bx2(dd - 0.03, dd, fy + 2.55, fy + 2.75, mid - 1.2, mid + 1.2, 0xff3a5c, { m: 2, r }); bx2(dd - 0.022, dd - 0.008, fy + 2.75, y + 3.7, mid - 0.01, mid + 0.01, IN_TINT.steel, { m: 1 })
           light(X(dd - 0.6), fy + 2.4, mid, r, 0.8, 0xff4a6a)
         }
         take(Math.min(X(0), X(dd + 1.1)), Math.max(X(0), X(dd + 1.1)), c0, c1)
@@ -5532,19 +6041,19 @@ function faustChannels(seed, S) {
     const P2 = (s, w) => axis ? [c + w, s] : [s, c + w]
     const chan = { id, n, kind: river ? 'river' : 'flood', axis, u, c, dir, lo, hi, kLo, kHi, src: dir > 0 ? lo : hi, dst: dir > 0 ? hi : lo, bridges: [], ramps: [], outfalls: [] }
     for (let i = -H; i < H; i++) {
-      const gx = axis ? u : i, gz = axis ? i : u, diag = gz - gx === 4, s = i * 96
+      const gx = axis ? u : i, gz = axis ? i : u, dg = faustDiagAt(gx, gz), diag = dg !== 0, mr = dg < 0 && !axis ? -1 : 1, s = i * 96
       cells.set(gx + ' ' + gz, chan)
       chan.bridges.push({ id: id + ':b:' + i, kind: 'road', s, a: P2(s, -K.span), b: P2(s, K.span), half: K.deck })
-      if (diag) chan.bridges.push({ id: id + ':d:' + i, kind: 'diag', s: s + 48, a: P2(s + 48 - 48, -48), b: P2(s + 48 + 48, 48), half: 15, span: 48 })
+      if (diag) chan.bridges.push({ id: id + ':d:' + i, kind: 'diag', s: s + 48, a: dg > 0 ? P2(s, -48) : axis ? P2(s + 96, -48) : P2(s, 48), b: dg > 0 ? P2(s + 96, 48) : axis ? P2(s, 48) : P2(s + 96, -48), half: 15, span: 48, ...(dg < 0 && { m: -1 }) })
       else if (faustMix(seed ^ 0x464f4f54, i, u + n * 64) % 100 < 45) chan.bridges.push({ id: id + ':f:' + i, kind: 'foot', s: s + 48, a: P2(s + 48, -K.span + 2), b: P2(s + 48, K.span - 2), half: K.foot })
     }
     for (let k = kLo; k <= kHi; k++) {
       const h = faustMix(seed ^ 0x52414d50, k, u + n * 64), o = faustMix(seed ^ 0x4f555446, k, u + n * 64)
       const rs = k * 96 + (h & 1 ? 24 : -24), rside = (h >>> 1) & 1 ? 1 : -1, rh = K.ramp.w / 2 + 1
-      const clash = chan.bridges.some(b => b.kind === 'diag' ? rs - b.s > Math.min(rside * 4, rside * K.top) - 15 * 1.4142 - rh && rs - b.s < Math.max(rside * 4, rside * K.top) + 15 * 1.4142 + rh
+      const clash = chan.bridges.some(b => b.kind === 'diag' ? rs - b.s > Math.min(rside * (b.m || 1) * 4, rside * (b.m || 1) * K.top) - 15 * 1.4142 - rh && rs - b.s < Math.max(rside * (b.m || 1) * 4, rside * (b.m || 1) * K.top) + 15 * 1.4142 + rh
         : Math.abs(rs - b.s) < b.half + rh)
       if ((h >>> 3) % 100 < 55 && !clash && rs - K.ramp.w / 2 > lo && rs + K.ramp.w / 2 < hi) chan.ramps.push({ id: id + ':r:' + k, side: rside, s: rs, w: K.ramp.w })
-      const under = (side, s) => chan.bridges.some(b => b.kind === 'diag' ? Math.abs(s - (b.s + side * 16.6)) < 25 : Math.abs(s - b.s) < b.half + 3)
+      const under = (side, s) => chan.bridges.some(b => b.kind === 'diag' ? Math.abs(s - (b.s + side * (b.m || 1) * 16.6)) < 25 : Math.abs(s - b.s) < b.half + 3)
       if (o % 100 < 40 && k * 96 + ((o >>> 9) & 1 ? 38 : -38) > lo + 2 && k * 96 + ((o >>> 9) & 1 ? 38 : -38) < hi - 2 && !under((o >>> 7) & 1 ? 1 : -1, k * 96 + ((o >>> 9) & 1 ? 38 : -38))) { const side = (o >>> 7) & 1 ? 1 : -1, s = k * 96 + ((o >>> 9) & 1 ? 38 : -38), bk = river ? FAUST_WATER.river.sec : FAUST_CHAN.sec, md = river ? 2.2 : 6.5, uu = K.top - (K.top - bk.foot) * md / bk.h
         const nn = Math.hypot(bk.h, K.top - bk.foot), nu = -side * bk.h / nn, ny = (K.top - bk.foot) / nn, p = P2(s, side * uu)
         chan.outfalls.push({ id: id + ':o:' + k, kind: 'wall', side, s, depth: md, r: river ? 0.7 : 0.9, x: cm(p[0]), y: cm(K.ground - md), z: cm(p[1]), normal: axis ? [cm(nu), cm(ny), 0] : [0, cm(ny), cm(nu)] })
@@ -5561,7 +6070,7 @@ function faustChannels(seed, S) {
         const h = faustMix(seed ^ 0x51554159, k * 2 + (e > 0 ? 1 : 0), u), s = k * 96 + e * Q.at, side = (h >>> 8) & 1 ? 1 : -1, hl = Q.len / 2 + Q.gap
         const works = faustIndustryAt(seed, Math.floor((axis ? c : s) / 96), Math.floor((axis ? s : c) / 96)) >= 0
         if (h % 100 >= (works ? Q.works : Q.pct) || s - hl < lo + 40 || s + hl > hi - 40) continue
-        const hit = chan.bridges.some(b => b.kind === 'diag' ? Math.abs(s - (b.s + side * 16.6)) < 25 + hl : Math.abs(s - b.s) < b.half + hl)
+        const hit = chan.bridges.some(b => b.kind === 'diag' ? Math.abs(s - (b.s + side * (b.m || 1) * 16.6)) < 25 + hl : Math.abs(s - b.s) < b.half + hl)
           || chan.ramps.some(r => r.side === side && Math.abs(r.s - s) < r.w / 2 + hl) || chan.outfalls.some(o => o.kind === 'wall' && o.side === side && Math.abs(o.s - s) < o.r + hl)
         if (hit) continue
         chan.quays.push({ id: id + ':q:' + k + (e > 0 ? 'b' : 'a'), side, s, len: Q.len, kind: works ? 'port' : (h >>> 9) % 3 ? 'dock' : 'yard', h: h >>> 12, ladders: [s - Q.ladder, s + Q.ladder] })
@@ -5634,7 +6143,7 @@ function* faustChanPiece(ch, k, emit, look) {
   }
   const gaps = side => {
     const g = []
-    for (const b of ch.bridges) { const w = b.kind === 'diag' ? 15 * 1.4142 + 0.6 : b.half + 0.3, at = b.kind === 'diag' ? b.s + side * K.top : b.s; g.push([at - w, at + w]) }
+    for (const b of ch.bridges) { const w = b.kind === 'diag' ? 15 * 1.4142 + 0.6 : b.half + 0.3, at = b.kind === 'diag' ? b.s + side * (b.m || 1) * K.top : b.s; g.push([at - w, at + w]) }
     for (const r of ch.ramps) if (r.side === side) g.push([r.s - r.w / 2 - 0.25, r.s + r.w / 2 + 0.25])
     for (const q of ch.quays || []) if (q.side === side) g.push([q.s - q.len / 2 - 0.3, q.s + q.len / 2 + 0.3])
     if (river) for (let q = Math.ceil((s0 - 4) / 16) * 16 + (side > 0 ? 8 : 0); q < s1 + 4; q += 16) g.push([q - 4, q + 4])
@@ -5746,7 +6255,7 @@ function* faustChanPiece(ch, k, emit, look) {
   const tags = []
   for (let n = 0; n < 8; n++) {
     const h = faustMix(0x67726166 ^ ch.n, k * 16 + n, ch.u), side = (h & 1) ? 1 : -1, s = k * 96 - 44 + ((h >>> 1) % 88)
-    if (s < s0 + 3 || s > s1 - 3 || ch.bridges.some(b => Math.abs(s - (b.kind === 'diag' ? b.s + side * 22 : b.s)) < (b.kind === 'diag' ? 26 : b.half + 4)) ||
+    if (s < s0 + 3 || s > s1 - 3 || ch.bridges.some(b => Math.abs(s - (b.kind === 'diag' ? b.s + side * (b.m || 1) * 22 : b.s)) < (b.kind === 'diag' ? 26 : b.half + 4)) ||
       ch.ramps.some(r => r.side === side && Math.abs(r.s - s) < 7)) continue
     if (n < 2) { patch(side, s, tOf(D * 0.775), tOf(D), 1.7, T.drain, 0, 0.05); patch(side, s, tOf(D * 0.7125), tOf(D * 0.775), 2.2, T.collar, G.wall, 0.045); continue }
     if (!river) tags.push({ h, side, s })
@@ -5874,9 +6383,10 @@ function faustChanWaterSet(F, level) {
   }
 }
 function faustChanCellLook(g, axis, X, Z, diagonal) {
+  const dsg = diagonal === true ? 1 : diagonal || 0
   const w = 48 - FAUST_CHAN.cut
   for (const mid of [w / 2, 96 - w / 2]) g.box(axis ? faustBox(X + mid, -0.08, Z + 48, w / 2, 0.08, 48) : faustBox(X + 48, -0.08, Z + mid, 48, 0.08, w / 2), 0x242a33)
-  for (const m of [9.2 + (w - 9.2) / 2, 96 - 9.2 - (w - 9.2) / 2]) for (const a of [24, 72]) if (!(diagonal && Math.abs(m - a) < 42))
+  for (const m of [9.2 + (w - 9.2) / 2, 96 - 9.2 - (w - 9.2) / 2]) for (const a of [24, 72]) if (!(dsg && Math.abs((dsg < 0 ? 96 - m : m) - a) < 42))
     g.box(axis ? faustBox(X + m, 0.02, Z + a, (w - 9.2) / 2, 0.02, 14.8) : faustBox(X + a, 0.02, Z + m, 14.8, 0.02, (w - 9.2) / 2), 0x737983)
 }
 function faustGroundCut(A, cuts) {
@@ -8300,6 +8810,7 @@ function faustRingUrbanJob(F, Z, b) {
 }
 
 function faustNav(at, target) {
+  if (FAUST_NET.version && faustState) return faustNetNav(faustNet(faustState.seed, faustState.S), at, target)
   const snap = v => Math.round(v / 96) * 96, ax = snap(at.x), az = snap(at.z), tx = snap(target.x), tz = snap(target.z)
   const dx = Math.abs(at.x - ax), dz = Math.abs(at.z - az)
   let x, z
@@ -8555,17 +9066,20 @@ const faustLampMemo = new WeakMap()
 function faustLampSites(P, raw) {
   if (!raw && faustLampMemo.has(P)) return faustLampMemo.get(P)
   const L = FAUST_NIGHT.lamps, X = (P.ci - P.S / 2) * 96, Z = (P.cj - P.S / 2) * 96, out = [], dirs = new Map()
-  for (const q of faustLampOffsets(P.diagonal)) out.push({ x: X + 8.6, z: Z + q, nx: 1, nz: 0, own: true })
+  for (const q of P.ownLamps ?? faustLampOffsets(P.diagonal)) out.push({ x: X + 8.6, z: Z + q, nx: 1, nz: 0, own: true })
   for (const road of P.roads) {
     const dx = road.b[0] - road.a[0], dz = road.b[2] - road.a[2], length = Math.hypot(dx, dz), ux = dx / length, uz = dz / length
+    if (road.foot) continue
     if (dx && dz) {
-      for (const side of [1, -1]) for (const along of side > 0 ? [17, 51, 85, 119] : [34, 68, 102])
-        out.push({ x: road.a[0] + ux * along + side * Math.SQRT1_2 * 11, z: road.a[2] + uz * along - side * Math.SQRT1_2 * 11, nx: 0, nz: 0 })
+      const off = road.width / 2 + 1.2
+      for (const side of [1, -1]) for (let along = side > 0 ? 9 : 26; along < length - 6; along += 34)
+        out.push({ x: road.a[0] + ux * along - uz * side * off, z: road.a[2] + uz * along + ux * side * off, nx: 0, nz: 0 })
       continue
     }
+    if (road.width < 12 && !road.oneway && P.net && length < 30) continue
     const nx = dx ? 0 : 1, nz = dx ? 1 : 0, own = !dx && road.avenue && road.a[0] === X
-    for (const side of [1, -1]) for (const along of side > 0 ? own ? [] : L.near : L.far) {
-      const s = { x: road.a[0] + ux * along + nx * side * L.head, z: road.a[2] + uz * along + nz * side * L.head, nx: nx * side, nz: nz * side }
+    for (const side of [1, -1]) for (const along of (side > 0 ? own ? [] : L.near : L.far).map(a => P.net ? Math.round(a / 96 * length * 100) / 100 : a)) {
+      const hd = P.net ? road.width >= 20 ? road.width / 2 - 1.4 : road.width / 2 + 0.6 : L.head, s = { x: road.a[0] + ux * along + nx * side * hd, z: road.a[2] + uz * along + nz * side * hd, nx: nx * side, nz: nz * side }
       out.push(s); dirs.set(s, [ux, uz])
     }
   }
@@ -8584,8 +9098,11 @@ function faustLampSites(P, raw) {
       }
     })
   }
-  const clear = (x, z) => Math.abs(z - x - (Z - X)) * Math.SQRT1_2 > 14
-  const res = P.diagonal ? out.filter(s => s.own || !s.nx && !s.nz || clear(s.x, s.z) && clear(s.x + s.nx * (L.post - L.head), s.z + s.nz * (L.post - L.head))) : out
+  const slant = P.roads.filter(r => r.a[0] !== r.b[0] && r.a[2] !== r.b[2])
+  const clear = P.net ? (x, z) => slant.every(r => faustSegDist(x, z, [r.a[0], r.a[2]], [r.b[0], r.b[2]]) > r.width / 2 + 1) && P.lots.every(l => Math.abs(x - l.x) > l.w + 0.3 || Math.abs(z - l.z) > l.d + 0.3)
+    : (x, z) => Math.abs(z - x - (Z - X)) * Math.SQRT1_2 > 14
+  const nr = P.net ? faustNetNear(faustNet(P.seed, P.S), P.ci - P.S / 2, P.cj - P.S / 2) : [], free = (x, z) => nr.every(([ax, az, bx, bz, hw]) => faustSegDist(x, z, [ax, az], [bx, bz]) > hw + 0.6)
+  const res = P.diagonal || P.net ? out.filter(s => s.own || clear(s.x, s.z) && (!s.nx && !s.nz ? free(s.x, s.z) : clear(s.x + s.nx * (L.post - L.head), s.z + s.nz * (L.post - L.head)) && free(s.x + s.nx * (L.post - L.head), s.z + s.nz * (L.post - L.head)))) : out
   if (!raw && P.seed !== undefined) faustLampMemo.set(P, res)
   return res
 }
@@ -8895,7 +9412,7 @@ function faustLaundry(g, lot) {
 }
 function faustVenueFor(seed, gx, gz, i, district, layout, stop, diagonal, gothic) {
   if (stop || diagonal || layout !== 4 || gothic || (district !== 'tenement' && district !== 'core')) return null
-  const h = cityHash(faustMix(seed ^ 0x76656e75, gx * 4 + i, gz))
+  const h = cityHash(faustMix(seed ^ 0x76656e75, gx * 4 + (i & 3) + (i >> 2) * 100003, gz))
   if (h % 100 >= (district === 'tenement' ? 11 : 8)) return null
   return (h >>> 8) % 100 < (district === 'tenement' ? 45 : 40) ? 'liquor' : 'conv'
 }
@@ -10179,7 +10696,7 @@ function faustStreetSpace(P) {
     solid.push([x - 0.4, z - 0.4, x + 0.4, z + 0.4])
   }
   for (const r of P.roads) roads.push([Math.min(r.a[0], r.b[0]) - r.width / 2, Math.min(r.a[2], r.b[2]) - r.width / 2, Math.max(r.a[0], r.b[0]) + r.width / 2, Math.max(r.a[2], r.b[2]) + r.width / 2])
-  roads.push([X + 86, Z - 10, X + 106, Z + 106], [X - 10, Z + 86, X + 106, Z + 106])
+  { const [, , wE, wS] = P.edges || [20, 20, 20, 20]; roads.push([X + 96 - wE / 2 - 2, Z - 10, X + 106, Z + 106], [X - 10, Z + 96 - wS / 2 - 2, X + 106, Z + 106]) }
   for (const x of [X, X + 96]) for (const z of [Z, Z + 96]) solid.push([x - 20, z - 20, x + 20, z + 20])
   for (const l of P.lots) {
     const r = slLotRing(l), p = 0.7
@@ -10348,9 +10865,10 @@ function* faustVisualSteps(c) {
   for (let w = 0, t0 = performance.now(); FAUST_FACES.promise && !FAUST_FACES.settled && w < 600 && performance.now() - t0 < 1500; w++) yield 'frame'
   c.signFace = !!FAUST_FACES.set
   const decoLots = [], glassLots = [], gothicLots = [], facade = faustBatch(3072), ornament = faustBatch(65536), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
-  if (P.chan) faustChanCellLook(ornament, P.chan.axis, X, Z, P.diagonal)
+  if (P.chan) faustChanCellLook(ornament, P.chan.axis, X, Z, P.net ? P.diag : P.diagonal)
   else ornament.box(faustBox(X + 48, -0.08, Z + 48, 48, 0.08, 48), 0x242a33)
-  if (P.chan) {} else if (P.plaza) {
+  if (P.chan) {} else if (P.net) faustNetGround(ornament, P, X, Z)
+  else if (P.plaza) {
     const park = P.features?.[0]?.k === 'pond'
     ornament.box(faustBox(X + 48, 0.018, Z + 48, 38, 0.018, 38), park ? FAUST_FEAT.grass : 0x5d626a)
     if (!park) for (let i = 14; i < 96; i += 8) {
@@ -10365,7 +10883,7 @@ function* faustVisualSteps(c) {
   }
   for (const axis of [0, 1]) for (const offset of [0, 96]) for (const side of [-1, 1]) {
     const cross = offset + side * 8.4
-    if (P.chan || cross < 0 || cross > 96) continue
+    if (P.chan || P.net || cross < 0 || cross > 96) continue
     const b = (along, across, len, width, tint, y = 0.012) => ornament.box(faustBox(X + (axis ? along : across), y, Z + (axis ? across : along), axis ? len : width, 0.006, axis ? width : len), tint)
     b(48, cross, 36, 0.74, 0x3d5557); b(48, cross - side * 1, 36, 0.08, 0xa3adb0, 0.02)
     for (let a = 16; a <= 80; a += 12) b(a, offset + side * 0.2, 2.4, 0.06, 0xb4a77d)
@@ -10431,7 +10949,7 @@ function* faustVisualSteps(c) {
       }
     }
     faustGap(ornament, faustBox(x, 2.1, z + d + 0.29, 1.25, 2.1, 0.04), 0x1b222b, B.door)
-    ornament.box(faustBox(x, 3.06, z + d + 0.34, 0.85, 0.06, 0.02), 0x8a6a38)
+    ornament.box(faustBox(x, 3.07, z + d + 0.34, 0.85, 0.06, 0.02), 0x8a6a38)
     if (!art) faustDecoMarquee(ornament, lot)
     faustDecoTheatre(ornament, lot)
     faustDecoHotel(ornament, lot)
@@ -10473,7 +10991,7 @@ function* faustVisualSteps(c) {
     }
     yield
   }
-  for (const q of faustLampOffsets(c.plan.diagonal)) {
+  for (const q of c.plan.ownLamps ?? faustLampOffsets(c.plan.diagonal)) {
     ornament.box(faustBox(X + 11.4, 4.5, Z + q, 0.12, 4.5, 0.12), 0x252d37)
     ornament.box(faustBox(X + 9.9, 8.8, Z + q, 1.6, 0.1, 0.12), 0x5c6671)
     ornament.box(faustBox(X + 8.6, 8.62, Z + q, 0.65, 0.08, 0.3), 0xd6d0b2, -FAUST_NIGHT.lamps.glow)
@@ -10508,7 +11026,7 @@ function* faustVisualSteps(c) {
   }
   for (const feat of faustFeatMesh(P)) { if (feat.userData.feat) dsFeatsLook(c, feat.geometry); root.add(feat) }
   if (cones.p.length) root.add(faustCivicGlowMesh(cones))
-  if (faustState.poolMaterial) for (const q of faustLampOffsets(c.plan.diagonal)) {
+  if (faustState.poolMaterial) for (const q of c.plan.ownLamps ?? faustLampOffsets(c.plan.diagonal)) {
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
     pool.rotation.x = -Math.PI / 2; pool.position.set(X + 8.6, 0.065, Z + q); root.add(pool)
   }
@@ -10574,6 +11092,7 @@ function faustHouse(g, b, tint, B) {
 }
 const inHouseDoor = B => B.core.stairX + (2 * FAUST_IN.stair.width + FAUST_IN.stair.well) / 2
 const FAUST_SKY = 5, FAUST_FAR_TILE = 4
+const FAUST_SKY_LOTS = 12
 function faustSkyBoxes(lot) {
   const { x, z, height: H, mass, seed, stop } = lot
   if (mass.length < 3 || lot.district === 'industrial' || lot.district === 'tenement') return lot.skyMass
@@ -10588,16 +11107,17 @@ function faustSkyCell(c, visible) {
   const sky = faustState.skyline?.userData.cells[c.ci * faustState.S + c.cj]
   faustIn.doorsDirty = true; if (faustIn.mode) visible = true
   if (!sky) return
-  const pose = new THREE.Object3D(), { mesh, offset } = sky
-  for (let i = 0; i < FAUST_SKY * 4; i++) {
+  const pose = new THREE.Object3D(), { mesh, offset, n } = sky
+  for (let i = 0; i < n; i++) {
     const b = c.plan.lots[i / FAUST_SKY | 0] && faustSkyBoxes(c.plan.lots[i / FAUST_SKY | 0])[i % FAUST_SKY]
     if (visible && b) { pose.position.set(b.cx, b.cy, b.cz); pose.scale.set(b.ex * 2, b.ey * 2, b.ez * 2) }
     else { pose.position.set(0, -100, 0); pose.scale.set(0, 0, 0) }
     pose.updateMatrix(); mesh.setMatrixAt(offset + i, pose.matrix)
     mesh.geometry.attributes.faustSpire.setX(offset + i, b?.spire ? 1 : 0)
   }
-  mesh.geometry.attributes.faustSpire.addUpdateRange(offset, FAUST_SKY * 4); mesh.geometry.attributes.faustSpire.needsUpdate = true
-  mesh.instanceMatrix.addUpdateRange(offset * 16, FAUST_SKY * 4 * 16); mesh.instanceMatrix.needsUpdate = true
+  if (!n) return
+  mesh.geometry.attributes.faustSpire.addUpdateRange(offset, n); mesh.geometry.attributes.faustSpire.needsUpdate = true
+  mesh.instanceMatrix.addUpdateRange(offset * 16, n * 16); mesh.instanceMatrix.needsUpdate = true
 }
 function faustSkyline() { return drain(faustSkylineSteps()) }
 function* faustSkylineSteps() {
@@ -10610,17 +11130,17 @@ function* faustSkylineSteps() {
     let mesh = tiles.get(key)
     if (!mesh) {
       const geo = geometry.clone()
-      geo.setAttribute('faustSpire', new THREE.InstancedBufferAttribute(new Float32Array(T * T * FAUST_SKY * 4), 1).setUsage(THREE.DynamicDrawUsage))
-      mesh = new THREE.InstancedMesh(geo, F.materials.far, T * T * FAUST_SKY * 4)
+      geo.setAttribute('faustSpire', new THREE.InstancedBufferAttribute(new Float32Array(T * T * FAUST_SKY * FAUST_SKY_LOTS), 1).setUsage(THREE.DynamicDrawUsage))
+      mesh = new THREE.InstancedMesh(geo, F.materials.far, T * T * FAUST_SKY * FAUST_SKY_LOTS)
       mesh.count = 0; mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
       mesh.boundingBox = new THREE.Box3(); mesh.boundingSphere = new THREE.Sphere()
       mesh.userData.farBox = mesh.boundingBox; mesh.name = 'far-buildings ' + key
       tiles.set(key, mesh); sky.add(mesh); F.farDraws.push(mesh)
     }
-    const offset = mesh.count; mesh.count += FAUST_SKY * 4
-    sky.userData.cells[x * F.S + z] = { mesh, offset }
+    const offset = mesh.count, n = FAUST_SKY * Math.min(FAUST_SKY_LOTS, plan.lots.length); mesh.count += n
+    sky.userData.cells[x * F.S + z] = { mesh, offset, n }
     faustSkyCell({ ci: x, cj: z, plan }, true)
-    for (let i = 0; i < FAUST_SKY * 4; i++) {
+    for (let i = 0; i < n; i++) {
       const lot = plan.lots[i / FAUST_SKY | 0], boxes = lot && faustSkyBoxes(lot), b = boxes?.[i % FAUST_SKY]
       col.setHex(faustArtDeco(lot) && i % FAUST_SKY > 2 ? faustDecoStyle(lot).palette.pier : faustGothic(lot) && i % FAUST_SKY > 2 ? FAUST_GOTHIC.soot : lot && boxes.length === FAUST_SKY && i % FAUST_SKY > 2 ? i % FAUST_SKY === 3 ? FAUST_DECO.crown : FAUST_DECO.steel : faustWall(lot))
       mesh.setColorAt(offset + i, col)
@@ -10951,8 +11471,6 @@ function faustMonument() {
   faustDisposeSky()
   const F = faustState, far = F.skyScene = new THREE.Scene(), batch = faustBatch(), dark = 0x242d39, black = 0x151d28
   F.skyCamera = new THREE.PerspectiveCamera()
-  const plaza = faustBatch(36, true); plaza.box(faustBox(0, -0.01, 0, 192, 0.015, 192), 0x404b5b)
-  const paving = new THREE.Mesh(plaza.geometry(), faustSurfaceMaterial(F, 'body')); paving.receiveShadow = true; worldGroup.add(paving)
   far.add(new THREE.HemisphereLight(0x94a9c5, 0x0d1420, 0.26))
   const moon = new THREE.DirectionalLight(0xb8d3ff, 2.5); moon.position.set(-28, 18, 14); far.add(moon)
   const skyStone = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.91, fog: false })
@@ -11106,7 +11624,7 @@ function* faustFarLightsSteps() {
     yield
     const plan = faustPlan(F.seed, ci, cj, F.S), key = (ci / T | 0) + ' ' + (cj / T | 0)
     let tile = tiles.get(key)
-    if (!tile) tiles.set(key, tile = { lights: faustBatch(T * T * 48), warnings: [] })
+    if (!tile) tiles.set(key, tile = { lights: faustBatch(T * T * 144), warnings: [] })
     const { lights, warnings } = tile
     for (const road of plan.roads) {
       const dx = road.b[0] - road.a[0], dz = road.b[2] - road.a[2], length = Math.hypot(dx, dz), nx = -dz / length, nz = dx / length
@@ -17120,21 +17638,22 @@ function faustKerbCars(seed, S, ci, cj, P) {
   const doors = P.lots.flatMap(l => l.club ? [l.club.door, l.club.bouncer, ...l.club.queue] : []), sites = (P.sites || []).map(t => [t.x, t.z])
   const posts = [...props.map(p => [p.x, p.z]), ...faustLampSites(P).flatMap(l => [[l.x, l.z], [l.x + l.nx * 1.8, l.z + l.nz * 1.8]])]
   const lanes = P.lanes.map(l => { const [a, b] = l.path, L = Math.hypot(b[0] - a[0], b[2] - a[2]) || 1; return [(a[0] + b[0]) / 2, (a[2] + b[2]) / 2, (b[0] - a[0]) / L, (b[2] - a[2]) / L, l.width / 2, L / 2] })
+  const cross = P.net ? [-1, 0, 1].flatMap(a => [-1, 0, 1].flatMap(b => ci + a >= 0 && ci + a < S && cj + b >= 0 && cj + b < S ? faustGet(ci + a, cj + b).plan.roads.filter(q => !q.foot) : [])) : []
   const boxGap = (a, b) => { let g = -Infinity; for (const [nx, nz] of [[a[2], a[3]], [-a[3], a[2]], [b[2], b[3]], [-b[3], b[2]]]) { const r = q => q[5] * Math.abs(q[2] * nx + q[3] * nz) + q[4] * Math.abs(-q[3] * nx + q[2] * nz); g = Math.max(g, Math.abs((b[0] - a[0]) * nx + (b[1] - a[1]) * nz) - r(a) - r(b)) } return g }
   P.roads.forEach((r, ri) => {
-    if (r.avenue || r.width !== 8) return
+    if (P.net ? r.oneway || r.foot || r.width < 12 : r.avenue || r.width !== 8) return
     const ax = r.a[0], az = r.a[2], L = Math.hypot(r.b[0] - ax, r.b[2] - az), dx = (r.b[0] - ax) / L, dz = (r.b[2] - az) / L
-    for (const side of [-1, 1]) for (const [s0, s1] of [[K.end, L / 2 - K.mid], [L / 2 + K.mid, L - K.end]])
+    for (const side of P.net && r.width < 20 ? [1] : [-1, 1]) for (const [s0, s1] of P.net ? [[K.mid, L - K.mid]] : [[K.end, L / 2 - K.mid], [L / 2 + K.mid, L - K.end]])
       for (let n = 0, sa = s0 + K.pitch / 2; sa + K.pitch / 2 <= s1 + 1e-6; n++, sa += K.pitch) {
         const h = parkedHash(seed, ci, cj, ri, side, s0, n)
-        if ((h & 0xffff) / 65536 >= (K.fill[P.district] ?? 0)) continue
+        if ((h & 0xffff) / 65536 >= (K.fill[P.district] ?? 0) * (P.net && r.width >= 20 ? 0.45 : 1)) continue
         let t = (h >>> 16) / 65536 * tot; const f = K.fleet.find(q => (t -= q[1]) < 0) || K.fleet[0], V = VEHICLE_SHAPES[f[0]]
         const hw = V.w / 2, hl = V.l / 2, cx0 = ax + dx * sa, cz0 = az + dz * sa
         if (posts.some(([px, pz]) => { const u = (px - ax) * dx + (pz - az) * dz, v = ((px - ax) * -dz + (pz - az) * dx) * side; return v > 0 && v < K.postLat && Math.abs(u - sa) < hl + K.post })) continue
-        const lat = side * (K.kerb - K.off - hw), x = cx0 - dz * lat, z = cz0 + dx * lat
+        const lat = side * ((P.net ? r.width / 2 - 0.3 : K.kerb - K.off) - hw), x = cx0 - dz * lat, z = cz0 + dx * lat
         const near = (pts, d) => pts.some(p => Math.hypot(p[0] - x, p[1] - z) < d)
         if (near(hyd, hl + K.hydrant) || near(shel, K.shelter) || near(mouths, hl + K.alley) || near(doors, hl + K.venue) || near(sites, K.site + hl)
-          || near(parkedDocks.pts, K.dock) || faustSewNear(sew, x, z, hl + K.manhole) || lanes.some(l => boxGap([x, z, dx, dz, hw, hl], l) < K.lane)) continue
+          || near(parkedDocks.pts, K.dock) || faustSewNear(sew, x, z, hl + K.manhole) || lanes.some(l => boxGap([x, z, dx, dz, hw, hl], l) < K.lane) || cross.some(q => q.id !== r.id && faustSegDist(x, z, [q.a[0], q.a[2]], [q.b[0], q.b[2]]) < q.width / 2 + hl)) continue
         out.push({ x, z, yaw: Math.atan2(-dx, -dz) + (parkedHash(h, 7) & 1 ? Math.PI : 0), hl, hw, kind: f[0], seed: parkedHash(h, 0x5eed),
           slot: ci + ' ' + cj + ' ' + ri + ' ' + side + ' ' + s0 + ' ' + n, ci, cj, place: out.length })
       }
@@ -17531,19 +18050,21 @@ function trafficCell(ci, cj) {
     const [a, b] = lane.path, length = Math.hypot(b[0] - a[0], b[2] - a[2]), dx = (b[0] - a[0]) / length, dz = (b[2] - a[2]) / length
     const forward = (b[0] - a[0]) * (road.b[0] - road.a[0]) + (b[2] - a[2]) * (road.b[2] - road.a[2]) > 0
     const start = forward ? road.a : road.b, finish = forward ? road.b : road.a
-    for (let part = 0; part < 2; part++) {
-      const at = t => node(start[0] + (finish[0] - start[0]) * t, start[2] + (finish[2] - start[2]) * t)
-      const from = at(part / 2), to = at((part + 1) / 2)
+    const ts = [0, ...faustStreets(faustState.seed, faustState.S).cuts.get(road.id) || road.cuts || [0.5], 1]
+    for (let part = 0; part + 1 < ts.length; part++) {
+      const at = t => t === 0 ? node(start[0], start[2]) : t === 1 ? node(finish[0], finish[2]) : node(start[0] + (finish[0] - start[0]) * t, start[2] + (finish[2] - start[2]) * t)
+      const from = at(ts[part]), to = at(ts[part + 1])
       if (from.out.some(e => e.to === to)) continue
       const e = { from, to, dx, dz, ox: a[0] - start[0], oz: a[2] - start[2], district: p.district,
-        length: length / 2, width: road.width, kind: !road.avenue ? 'side' : dx && dz ? 'boulevard' : 'avenue' }
+        length: length * (ts[part + 1] - ts[part]), width: road.width, kind: road.oneway ? 'ring' : !road.avenue ? 'side' : dx && dz ? 'boulevard' : 'avenue' }
       from.out.push(e); T.edges.push(e)
     }
   }
 }
 const trafficFits = (e, V) => e.kind !== 'side' || !V || V.l < 5.4
 const trafficCanTurn = (e, n) => !e || e.dx * n.dx + e.dz * n.dz >= -0.01
-const trafficSignalled = n => !n.ring && n.x % 96 === 0 && n.z % 96 === 0 && n.out.some(e => !e.dx) && n.out.some(e => !e.dz)
+const trafficSignalNode = n => n.sig ?? (faustState ? n.sig = faustStreets(faustState.seed, faustState.S).signal(n.x, n.z) : n.x % 96 === 0 && n.z % 96 === 0)
+const trafficSignalled = n => !n.ring && trafficSignalNode(n) && n.out.some(e => !e.dx) && n.out.some(e => !e.dz)
 const trafficJunction = n => n.out.some(e => n.out.some(f => Math.abs(e.dx * f.dz - e.dz * f.dx) > 0.1))
 const trafficTrim = e => e.kind === 'side' ? 10 : TRAFFIC.trim
 const trafficStop = (e, node = e.to) => trafficSignalled(node) ? TRAFFIC.stop : Math.max(trafficTrim(e) + 2, ...node.out.map(n => n.width / 2 + 4))
@@ -17608,12 +18129,12 @@ function trafficDriveTo(vehicle, point, options = {}) {
   if (!o?.V || !objs.includes(o) || !TRAFFIC.fleet.includes(o.V.name) || !o.car || o.heldBy !== undefined || o.riders.some(v => v !== undefined)) return false
   trafficState ||= (trafficReset(), trafficState); trafficNear(o.x, o.z)
   const fw = rotq(o.q, [0, 0, -1])
-  const score = e => { const p = trafficPoint(e, clamp((o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, 12, e.length - 12)); return Math.hypot(o.x - p.x, o.z - p.z) + (1 - fw[0] * e.dx - fw[2] * e.dz) * 8 }
+  const score = e => { const p = trafficPoint(e, clamp((o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, Math.min(12, e.length / 2), e.length - Math.min(12, e.length / 2))); return Math.hypot(o.x - p.x, o.z - p.z) + (1 - fw[0] * e.dx - fw[2] * e.dz) * 8 }
   const current = o.traffic, edge = current?.edge || trafficState.edges.filter(e => trafficFits(e, o.V)).reduce((a, b) => !a || score(b) < score(a) ? b : a, null)
   if (!edge || score(edge) > 28) return false
   trafficNear(point.x, point.z)
-  const gap = e => { const q = trafficPoint(e, clamp((point.x-e.from.x)*e.dx+(point.z-e.from.z)*e.dz, 12, e.length-12)); return Math.hypot(point.x-q.x,point.z-q.z) }
-  const end = trafficState.edges.filter(e=>trafficFits(e,o.V)).reduce((a,b)=>gap(b)<gap(a)?b:a,edge), goalS=clamp((point.x-end.from.x)*end.dx+(point.z-end.from.z)*end.dz,12,end.length-12)
+  const gap = e => { const q = trafficPoint(e, clamp((point.x-e.from.x)*e.dx+(point.z-e.from.z)*e.dz, Math.min(12, e.length / 2), e.length - Math.min(12, e.length / 2))); return Math.hypot(point.x-q.x,point.z-q.z) }
+  const end = trafficState.edges.filter(e=>trafficFits(e,o.V)).reduce((a,b)=>gap(b)<gap(a)?b:a,edge), goalS=clamp((point.x-end.from.x)*end.dx+(point.z-end.from.z)*end.dz,Math.min(12, end.length / 2),end.length-Math.min(12, end.length / 2))
   const start = current?.path ? current.next : edge
   const route = end === start && !current?.path && goalS > (o.x-edge.from.x)*edge.dx+(o.z-edge.from.z)*edge.dz ? [] : trafficRoute(start.to,end.from,start.from,o.V,start,end)
   if (!route) return false
@@ -18025,7 +18546,7 @@ function trafficSpawn(people) {
     let pick = Math.random() * weight
     const e = edges.find(e => (pick -= trafficWeight(e)) <= 0) || edges.at(-1)
     const mix = e.kind === 'side' ? ['Car','Car','Car','Sports car'] : ['Car','Car','Sports car','Van','Car','Truck','Bus','Car'], name = mix[T.serial % mix.length], k = OBJECTS.findIndex(K => K.name === name)
-    const V = vehicleOf(OBJECTS[k]), margin = n => (n.x % 96 === 0 && n.z % 96 === 0 ? TRAFFIC.stop : trafficStop(e, n)) + V.l / 2 + 1
+    const V = vehicleOf(OBJECTS[k]), margin = n => (trafficSignalNode(n) ? TRAFFIC.stop : trafficStop(e, n)) + V.l / 2 + 1
     const start = margin(e.from), end = e.length - margin(e.to)
     if (end < start) continue
     const q = trafficPoint(e, start + Math.random() * (end - start))
@@ -32520,7 +33041,7 @@ function autoLane(x, z, V) {
   let best = { d: Infinity, p: null }
   for (const e of trafficState.edges) {
     if (!trafficFits(e, V)) continue
-    const p = trafficPoint(e, clamp((x - e.from.x) * e.dx + (z - e.from.z) * e.dz, 12, e.length - 12)), d = Math.hypot(x - p.x, z - p.z)
+    const p = trafficPoint(e, clamp((x - e.from.x) * e.dx + (z - e.from.z) * e.dz, Math.min(12, e.length / 2), e.length - Math.min(12, e.length / 2))), d = Math.hypot(x - p.x, z - p.z)
     if (d < best.d) best = { d, p }
   }
   return best
@@ -32538,7 +33059,7 @@ function autoOpenInput(o, W) {
 function autoWhy(o, a, inp) {
   const fw = rotq(o.q, [0, 0, -1]), e = a?.edge, why = []
   if (e) {
-    const along = (o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, left = e.length - along, p = trafficPoint(e, clamp(along, 12, e.length - 12))
+    const along = (o.x - e.from.x) * e.dx + (o.z - e.from.z) * e.dz, left = e.length - along, p = trafficPoint(e, clamp(along, Math.min(12, e.length / 2), e.length - Math.min(12, e.length / 2)))
     if (trafficJunction(e.to) && left < 40) {
       const sig = trafficSignalled(e.to) ? trafficSignal(e.to.x, e.to.z, e.dx ? 'x' : 'z') : 'no signal', owner = trafficState.locks.get(e.to.key)
       why.push('junction ' + Math.round(left) + ' m ahead: ' + sig + (owner !== undefined && owner !== o.id ? ', taken by car ' + owner : ''))
@@ -37495,9 +38016,10 @@ const slCentral = (gx, gz) => gx >= -2 && gx <= 1 && gz >= -2 && gz <= 1
 function slAvenue(axis, jx, jz, sgn) {
   const S = slState.S, A = S * 48
   if (Math.abs(jx) >= A || Math.abs(jz) >= A) return false
-  if (axis === 'z') { const gx = Math.round(jx / 96), gz = Math.round(jz / 96) + (sgn > 0 ? 0 : -1); return gz >= -S / 2 && gz < S / 2 && !(slCentral(gx, gz) && Math.abs(jx) < 192) }
+  const net = faustStreets(slState.seed, S)
+  if (axis === 'z') { const gx = Math.round(jx / 96), gz = Math.round(jz / 96) + (sgn > 0 ? 0 : -1); return gz >= -S / 2 && gz < S / 2 && net.ave(0, gx, gz) === 20 }
   const gz = Math.round(jz / 96), gx = Math.round(jx / 96) + (sgn > 0 ? 0 : -1)
-  return gx >= -S / 2 && gx < S / 2 && !(slCentral(gx, gz) && Math.abs(jz) < 192)
+  return gx >= -S / 2 && gx < S / 2 && net.ave(1, gz, gx) === 20
 }
 const slJunction = (jx, jz) => slAvenue('z', jx, jz, 1) && slAvenue('z', jx, jz, -1) && slAvenue('x', jx, jz, 1) && slAvenue('x', jx, jz, -1)
 function slJunctionRoute(jx, jz, dir, v, cs = [11.2, 11.2, 11.2, 11.2]) {
@@ -37529,7 +38051,7 @@ function slCell(ci, cj) {
   const P = slPlan(ci, cj), S = st.S, gx = ci - S / 2, gz = cj - S / 2, X = gx * 96, Z = gz * 96, seed = st.seed
   const q = 1, rng = genRng(slHash(seed, gx, gz, 26)), q_ = () => q
   cell = { key, ci, cj, X, Z, agents: [], flocks: [], used: performance.now(), rings: [], dist: P.plaza ? 'plaza' : P.diagonal ? 'diag' : P.district }
-  const lots = P.lots, rings = lots.map(l => [slLotRing(l), slLotBody(l), !!l.alley]).filter(([r]) => !P.diagonal || r[3] - r[0] - 384 < -21.2 || r[1] - r[2] - 384 > 21.2)
+  const lots = P.lots, rings = lots.map(l => [slLotRing(l), slLotBody(l), !!l.alley]).filter(([r]) => !P.diagonal || P.net || r[3] - r[0] - 384 < -21.2 || r[1] - r[2] - 384 > 21.2)
   const near = slNear(ci, cj)
   cell.rings = rings.map(([r, body, alley]) => {
     const posts = near.posts.filter(p => p[0] < r[2] + 4 && p[2] > r[0] - 4 && p[1] < r[3] + 4 && p[3] > r[1] - 4)
@@ -37543,9 +38065,9 @@ function slCell(ci, cj) {
   const body = () => { const r = rng(); return r < 0.6 ? (r * 5 / 0.6 | 0) % 3 : 3 + (rng() < 0.5 ? 0 : 1) }
   const tint = () => { const r = rng(); return [0.82 + r * 0.3, 0.82 + rng() * 0.28, 0.82 + rng() * 0.26] }
   if (P.chan) return slKeep(cell)
-  if (P.diagonal && !cell.rings.length) return slKeep(cell)
+  if (P.diagonal && !cell.rings.length || P.net === 'etoile' && !cell.rings.length && !(gx >= -1 && gx <= 0 && gz >= -1 && gz <= 0)) return slKeep(cell)
   if (P.sites?.some(t => t.k === 'site_freight' || t.k === 'site_scrap')) return slKeep(cell)
-  if (P.plaza || !cell.rings.length) {
+  if (P.plaza && !(P.net && cell.rings.length) || !cell.rings.length) {
     const cx = X + 48, cz = Z + 48, R0 = P.plaza ? 34 : 30
     for (let i = 0; i < n && k < 88; i++) {
       const m = 3 + (rng() * 3 | 0), a0 = rng() * 6.283, pts = [], ft = P.features?.length
@@ -37559,7 +38081,7 @@ function slCell(ci, cj) {
     for (let f = 0; f < (P.plaza ? 3 : 1); f++) cell.flocks.push(slFlock(cell, fid(48 + f), cx + (rng() - 0.5) * 50, cz + (rng() - 0.5) * 50, 8 + (rng() * 12 | 0), rng))
     return slKeep(cell)
   }
-  const junc = Z - X !== 384 && slJunction(X, Z), corners = junc && slJunctionCorners(X, Z, near)
+  const junc = (P.net ? !faustStreets(seed, S).slant(X, Z) : Z - X !== 384) && slJunction(X, Z), corners = junc && slJunctionCorners(X, Z, near)
   for (let i = 0; i < n && k < 88; i++) {
     const ring = cell.rings[rng() * cell.rings.length | 0], pts = ring.pts, r = rng()
     const tw = tint(), b = body()
@@ -37590,7 +38112,7 @@ function slCell(ci, cj) {
     if (kind === SL_K.walker) R.heel = slHeelSpans(R, ring.posts.concat(ring.kerbs))
     cell.agents.push({ id: id(k++), kind, body: kind === SL_K.pram ? 3 + (rng() < 0.5 ? 0 : 1) : b, tint: tw, route: R })
   }
-  for (const q of faustLampOffsets(P.diagonal)) if (rng() < 0.55 * q_(q)) {
+  for (const q of P.ownLamps ?? faustLampOffsets(P.diagonal)) if (rng() < 0.55 * q_(q)) {
     const x = X + 11.4 + 0.55, z = Z + q + (rng() - 0.5) * 0.8, ring = slNearestRing(cell.rings, x, z)
     if (cell.rings.some(g => slInside(g.r, x, z, -0.2)) || near.bodies.some(g => slPointGap(x, z, g) < SL_CLEAR.r + 0.05)) continue
     cell.agents.push({ id: id(k++), kind: SL_K.idle, body: body(), tint: tint(), x, z, yaw: -Math.PI / 2 + (rng() - 0.5) * 0.6,
@@ -37984,6 +38506,7 @@ function slLine(axis, c, dir) {
   let L = st.lines.get(key); if (L) return L
   const A = st.S * 48, q = 1
   L = { axis, c, dir, A, len: 2 * A, riders: [], laps: new Map() }
+  if (FAUST_NET.version && !faustNetFull(faustNet(st.seed, st.S), axis === 'z' ? 0 : 1, Math.round(c / 96))) { st.lines.set(key, L); return L }
   const n = Math.max(1, Math.round(2 * A / STREET.cyclistGap))
   for (let i = 0; i < n; i++) {
     if (slRnd(st.seed, c, dir, i, 7) > 0.5 + 0.45 * q) continue
@@ -38471,8 +38994,9 @@ function slAround(x, z, R, T, fn, skip, warm = false, sink = null) {
 const slAroundPose = SL_POSE()
 function slLinesNear(x, z, R) {
   const st = slState, A = st.S * 48, out = []
-  for (let k = Math.ceil((x - R - 9) / 96); k * 96 <= x + R + 9; k++) { const c = k * 96; if (Math.abs(c) >= A) continue; out.push(slLine('z', c, 1), slLine('z', c, -1)) }
-  for (let k = Math.ceil((z - R - 9) / 96); k * 96 <= z + R + 9; k++) { const c = k * 96; if (Math.abs(c) >= A) continue; out.push(slLine('x', c, 1), slLine('x', c, -1)) }
+  const full = (a, k) => !FAUST_NET.version || faustNetFull(faustNet(st.seed, st.S), a, k)
+  for (let k = Math.ceil((x - R - 9) / 96); k * 96 <= x + R + 9; k++) { const c = k * 96; if (Math.abs(c) >= A || !full(0, k)) continue; out.push(slLine('z', c, 1), slLine('z', c, -1)) }
+  for (let k = Math.ceil((z - R - 9) / 96); k * 96 <= z + R + 9; k++) { const c = k * 96; if (Math.abs(c) >= A || !full(1, k)) continue; out.push(slLine('x', c, 1), slLine('x', c, -1)) }
   return out
 }
 function slCarBoxes(x, z, d) {
@@ -39810,16 +40334,16 @@ function dsRect(f, k, j) {
   const a = B[0], w = B[1] - a
   return { a0: f.c + a + w * f.wx[0], a1: f.c + a + w * f.wx[1], y0: 4 * k + 4 * f.wy[0], y1: 4 * k + 4 * f.wy[1] }
 }
-const dsKey = (chunk, slot, k, face, bay) => (chunk * 4 + slot) * 1048576 + k * 1024 + face * 256 + bay
+const dsKey = (chunk, slot, k, face, bay) => (chunk * 16 + slot) * 1048576 + k * 1024 + face * 256 + bay
 function dsUnkey(key) {
   const lo = key % 1048576, hi = Math.floor(key / 1048576)
-  return { chunk: hi >> 2, slot: hi & 3, k: lo >> 10, face: lo >> 8 & 3, bay: lo & 255 }
+  return { chunk: Math.floor(hi / 16), slot: hi & 15, k: lo >> 10, face: lo >> 8 & 3, bay: lo & 255 }
 }
 function dsKeyText(key) {
   const u = dsUnkey(key), S = faustState?.S || 20
   return Math.floor(u.chunk / S) + ' ' + u.chunk % S + ' ' + u.slot + '/' + u.k + '/' + u.face + '/' + u.bay
 }
-const dsSlot = (lot, ci, cj) => (lot.x - (ci * 96 - ARENA) > 56 ? 1 : 0) + (lot.z - (cj * 96 - ARENA) > 56 ? 2 : 0)
+const dsSlot = (lot, ci, cj) => lot.slot ?? (lot.x - (ci * 96 - ARENA) > 56 ? 1 : 0) + (lot.z - (cj * 96 - ARENA) > 56 ? 2 : 0)
 function dsPlan(ci, cj) {
   const F = faustState, c = F.chunks.get(faustKey(ci, cj))
   if (c) return c.plan
@@ -42639,7 +43163,7 @@ function squadSpot(x, z, lo, hi, V, people, relax) {
   const T = trafficState
   const edges = T.edges.filter(e => { const q = trafficPoint(e, e.length / 2), d = Math.hypot(q.x - x, q.z - z); return d > lo && d < hi && trafficFits(e, V) && Math.max(Math.abs(e.to.x), Math.abs(e.to.z)) < ARENA - 96 })
   for (let trial = 0; edges.length && trial < 12; trial++) {
-    const e = edges[Math.random() * edges.length | 0], margin = n => (n.x % 96 === 0 && n.z % 96 === 0 ? TRAFFIC.stop : trafficStop(e, n)) + V.l / 2 + 1
+    const e = edges[Math.random() * edges.length | 0], margin = n => (trafficSignalNode(n) ? TRAFFIC.stop : trafficStop(e, n)) + V.l / 2 + 1
     const start = margin(e.from), end = e.length - margin(e.to)
     if (end < start) continue
     const q = trafficPoint(e, start + Math.random() * (end - start))
