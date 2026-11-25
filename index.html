@@ -1070,7 +1070,8 @@ const CHARS = [
 const DISGUISE_CID = CHARS.push({ ...CHARS[0], name: 'Alistair', hidden: true, model: 'alistair', role: 'The Maniak, in his civilian clothes' }) - 1
 CHARS[0].disguise = DISGUISE_CID; CHARS[0].pipe = true
 CHARS.push({ ...CHARS[1], name: 'Blue freak', rig: null, model: 'blue_freak', color: 0x574cff, role: 'A blue puppet with a red scarf and a shiv' })
-const RIG_GLOVE = (c, k = 1) => ['sphere', 'hand_{s}', [0, 0, 0.02], [0.085 * k, 0.09 * k, 0.09 * k], c, 0]
+const GLOVE_OUT = 0.03
+const RIG_GLOVE = (c, k = 1) => ['sphere', 'hand_{s}', [GLOVE_OUT * k, 0, 0.02], [0.085 * k, 0.09 * k, 0.09 * k], c, 0]
 const RIG_TRUNKS = c => ['box', 'pelvis', [0, -0.02, 0], [0.3, 0.16, 0.22], c, 0]
 const RING_BASE = { side: 'freaks', hidden: true, atk: 'Jab', jump: 6 }
 CHARS.push(
@@ -8257,7 +8258,7 @@ function faustRingInterior(b) {
   }
   const lamp = (u, v, y, r, power, color) => { const [z] = zr(v, v); F.lights.push([inCm(cx + u), inCm(y), inCm(z), r, power, color]) }
   const shell = [], pieces = []
-  const holes = faustRingWinHoles(b, sg, cx, cz, ex, ez, T, K.skin)
+  const holes = faustRingWinHoles(b, sg, cx, cz, ex, ez, T, K.skin), winKeep = faustRingWinKeeps(b, sg, cx, cz, ex, ez, T, FH)
   const carve = (u0, u1, y0, y1, v0, v1) => {
     let list = [[u0, u1, y0, y1, v0, v1]]
     for (const h of holes) {
@@ -8296,7 +8297,7 @@ function faustRingInterior(b) {
   const overlap = (p, q, m = 0) => p[0] < q[1] + m && p[1] > q[0] - m && p[2] < q[3] + m && p[3] > q[2] - m
   const slot = (p, q) => { const gx = Math.max(p[0] - q[1], q[0] - p[1]), gz = Math.max(p[2] - q[3], q[2] - p[3])
     const g = gx > 0 && gz <= 0 ? gx : gz > 0 && gx <= 0 ? gz : 1e9; return g > 0.1 && g < 1.1 }
-  const fits = fp => !occ.some(q => overlap(fp, q, 0.0) || slot(fp, q)) && !keep.some(q => overlap(fp, q))
+  const fits = fp => !occ.some(q => overlap(fp, q, 0.0) || slot(fp, q)) && !keep.some(q => overlap(fp, q)) && !winKeep.some(q => q[4] === F.k && overlap(fp, q))
   const place = (R, side, len, depth, prefer, build) => {
     const lo = (side[0] === 'u' ? R.v0 : R.u0) + len / 2 + 0.04, hi = (side[0] === 'u' ? R.v1 : R.u1) - len / 2 - 0.04
     if (hi < lo) return false
@@ -8657,6 +8658,28 @@ function faustRingWinStale(F, e) {
     const s = O.b?.box
     if (s && !O.urban && Math.abs(w.at[0] - s.cx) <= s.ex + 0.6 && Math.abs(w.at[2] - s.cz) <= s.ez + 0.6) O.stale = true
   }
+}
+function faustRingWinKeeps(b, sg, cx, cz, ex, ez, T, FH) {
+  const F = faustState, out = [], m = /^ring (-?\d+) (-?\d+)/.exec(String(b.id))
+  if (!F || !m) return out
+  const i = +m[1], j = +m[2]
+  let c = F.ringPlans?.get(i + ' ' + j)
+  if (!c) { const plan = faustRoadsReady(F); if (plan) c = faustRingPlan(F, plan, i, j) }
+  if (!c?.part) return out
+  const D = 1.2, mg = 0.2
+  for (let pi = 0; pi < c.part.length && pi < FAUST_RINGWIN.span; pi++) {
+    const w = faustRingWinOf(c.part[pi])
+    if (!w || w.rot || Math.abs(w.at[0] - cx) > ex + 0.6 || Math.abs(w.at[2] - cz) > ez + 0.6) continue
+    const k = w.at[1] >= FH ? 1 : 0
+    if (w.n[2]) {
+      const u0 = w.at[0] - cx - w.hx - mg, u1 = w.at[0] - cx + w.hx + mg
+      out.push(w.n[2] * sg > 0 ? [u0, u1, 0, T + D, k] : [u0, u1, 2 * ez - T - D, 2 * ez, k])
+    } else {
+      const v = sg > 0 ? cz + ez - w.at[2] : w.at[2] - (cz - ez)
+      out.push(w.n[0] < 0 ? [-ex, -ex + T + D, v - w.hx - mg, v + w.hx + mg, k] : [ex - T - D, ex, v - w.hx - mg, v + w.hx + mg, k])
+    }
+  }
+  return out
 }
 function faustRingWinHoles(b, sg, cx, cz, ex, ez, T, sk) {
   const F = faustState, out = [], m = /^ring (-?\d+) (-?\d+)/.exec(String(b.id))
@@ -47483,7 +47506,7 @@ function rainBuild() {
   const pidx = []
   for (let i = 0; i < PAPER.n; i++) pidx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 2, i * 4 + 1, i * 4 + 3)
   R.paper = fxRibbon(PAPER.n * 4, pidx, { fog: false })
-  R.p = { x: new Float32Array(PAPER.n), z: new Float32Array(PAPER.n), f: new Float32Array(PAPER.n), s: new Float32Array(PAPER.n), p: new Float32Array(PAPER.n) }
+  R.p = { x: new Float32Array(PAPER.n), z: new Float32Array(PAPER.n), f: new Float32Array(PAPER.n), s: new Float32Array(PAPER.n), p: new Float32Array(PAPER.n), w: new Uint8Array(PAPER.n) }
   for (let i = 0; i < PAPER.n; i++) { R.p.x[i] = rnd() * PAPER.box; R.p.z[i] = rnd() * PAPER.box; R.p.f[i] = 0.55 + 0.45 * rnd(); R.p.s[i] = 0.6 + 0.8 * rnd(); R.p.p[i] = rnd() * 6.283 }
   R.group = new THREE.Group(); R.group.name = 'rain'
   for (const m of [R.streaks, R.splashes, R.paper]) { m.frustumCulled = false; m.renderOrder = 6; m.matrixAutoUpdate = false; R.group.add(m) }
@@ -47571,14 +47594,16 @@ function paperDraw(dt, fx, look) {
   R.px += weather.windX * K.drift * dt; R.pz += weather.windZ * K.drift * dt; R.pT += dt
   const me = isHost ? players.get(0) : predicted, gy = me ? me.y - me.h - me.r : c.y - 1.7
   const pa = R.paper.geometry.attributes.position.array, ka = R.paper.geometry.attributes.color.array, hop = Math.min(1, weather.windX * weather.windX + weather.windZ * weather.windZ > 0 ? Math.hypot(weather.windX, weather.windZ) / 9 : 0)
+  const wref = (R.pWt = (R.pWt || 0) - dt) <= 0
+  if (wref) R.pWt = 0.25
   for (let i = 0; i < n; i++) {
     const f = P.f[i], rx = rainWrap(P.x[i] + R.px * f - c.x, K.box) - K.box / 2, rz = rainWrap(P.z[i] + R.pz * f - c.z, K.box) - K.box / 2
     const th = R.pT * (1.4 + P.s[i] * 2.2) + P.p[i], air = hop * Math.abs(Math.sin(R.pT * 1.9 * P.s[i] + P.p[i] * 2)), y = gy + 0.03 + 0.5 * air, ph = 0.08 + (0.25 + 0.75 * Math.abs(Math.sin(R.pT * 2.3 * P.s[i] + P.p[i]))) * Math.min(1, air * 4)
-    const x = c.x + rx, z = c.z + rz, cth = Math.cos(th), sth = Math.sin(th), cph = Math.cos(ph), sph = Math.sin(ph), hw = K.size[0] / 2, hh = K.size[1] / 2
+    const x = c.x + rx, z = c.z + rz, wet = (wref && (P.w[i] = FAUSTLAND_API.water.at(x, z, rainWaterOut) ? 1 : 0), P.w[i]), cth = Math.cos(th), sth = Math.sin(th), cph = Math.cos(ph), sph = Math.sin(ph), hw = K.size[0] / 2, hh = K.size[1] / 2
     const ux = cth * hw, uz = sth * hw, vx = -sth * cph * hh, vy = sph * hh, vz = cth * cph * hh, k = i * 12
     pa[k] = x - ux - vx; pa[k + 1] = y - vy; pa[k + 2] = z - uz - vz; pa[k + 3] = x + ux - vx; pa[k + 4] = y - vy; pa[k + 5] = z + uz - vz
     pa[k + 6] = x - ux + vx; pa[k + 7] = y + vy; pa[k + 8] = z - uz + vz; pa[k + 9] = x + ux + vx; pa[k + 10] = y + vy; pa[k + 11] = z + uz + vz
-    const d = Math.hypot(rx, rz), a = 0.9 * Math.min(1, d / 1.5) * (1 - Math.min(1, Math.max(0, (d - 11) / 6))), cc = i & 1 ? alt : col, q = i * 16
+    const d = Math.hypot(rx, rz), a = (wet ? 0 : 0.9) * Math.min(1, d / 1.5) * (1 - Math.min(1, Math.max(0, (d - 11) / 6))), cc = i & 1 ? alt : col, q = i * 16
     for (let v = 0; v < 4; v++) { ka[q + v * 4] = cc[0]; ka[q + v * 4 + 1] = cc[1]; ka[q + v * 4 + 2] = cc[2]; ka[q + v * 4 + 3] = a }
   }
   R.paper.geometry.attributes.position.needsUpdate = R.paper.geometry.attributes.color.needsUpdate = true; R.paper.geometry.setDrawRange(0, n * 6)
