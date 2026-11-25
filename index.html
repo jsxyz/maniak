@@ -24742,11 +24742,51 @@ function rigAnimate(a, want, dt, t) {
   } else R.inst.position.y = R.inst.userData.y
   rigMovePose(a, R, want, t)
   rigGait(a, R, M, dt, airborne)
+  if (R.lod < 2 && a.dying < 0 && !airborne && !a.swimming && !SOLE.holds.has(hold) && !(a.chainState?.[0] >= 3) && bodyOf(a.spec.model) === 'maniak') rigSoleFloor(a, R, a.mesh.position.y - a.spec.h - a.spec.r, dt)
+  else R.soleLift = 0
   if (a.dealId !== undefined) dealRig(a, R, dt, t)
   rigCape(a, R, dt)
   goreBones(a, R)
 }
 const RIG_GAIT = 'gait'
+const SOLE = { dirs: 64, cap: 0.12, pad: 0.003, fall: 0.6, ground: 0.02, band: 0.03, rate: 0.2, holds: new Set(['sit', 'swing', 'climb', 'ceiling', 'dive', 'fly', 'hover', 'ascend', 'descend', 'held']) }
+const soleM = new THREE.Matrix4(), soleV = new THREE.Vector3()
+function rigSoles(R) {
+  if (R.soles) return R.soles
+  const out = R.soles = [], m = R.lods[0], g = m?.geometry, sk = m?.skeleton
+  if (!g?.attributes.skinIndex || !sk) return out
+  const si = g.attributes.skinIndex, sw = g.attributes.skinWeight, P = g.attributes.position, by = new Map(), v = new THREE.Vector3()
+  for (let i = 0; i < P.count; i++) {
+    let best = -1, bw = 0
+    for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > bw) { bw = w; best = si.getComponent(i, k) } }
+    if (best < 0 || !/^(foot|ball)_[lr]$/.test(sk.bones[best].name)) continue
+    v.fromBufferAttribute(P, i).applyMatrix4(m.bindMatrix).applyMatrix4(sk.boneInverses[best])
+    if (!by.has(best)) by.set(best, [])
+    by.get(best).push(v.clone())
+  }
+  const n = SOLE.dirs, dirs = Array.from({ length: n }, (_, i) => { const y = 1 - 2 * (i + 0.5) / n, r = Math.sqrt(1 - y * y), a = i * 2.399963; return new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r) })
+  for (const [best, pts] of by) {
+    const keep = new Set()
+    for (const d of dirs) { let bi = 0, bd = -Infinity; pts.forEach((p, i) => { const s = p.dot(d); if (s > bd) { bd = s; bi = i } }); keep.add(bi) }
+    for (const i of keep) out.push({ bone: sk.bones[best], p: pts[i] })
+  }
+  out.sort((a, b) => a.bone.id - b.bone.id)
+  return out
+}
+function rigSoleFloor(a, R, floor, dt) {
+  const S = rigSoles(R), m = R.lods[0]
+  if (!S.length) return
+  R.inst.updateMatrixWorld(true)
+  let low = Infinity, last = null
+  for (const s of S) {
+    if (s.bone !== last) { soleM.multiplyMatrices(m.matrixWorld, m.bindMatrixInverse).multiply(s.bone.matrixWorld); last = s.bone }
+    low = Math.min(low, soleV.copy(s.p).applyMatrix4(soleM).y)
+  }
+  const want = SOLE.ground * clamp(1 - Math.abs(floor + 0.02) / SOLE.band, 0, 1), step = SOLE.rate * dt, g = R.soleG || 0
+  R.soleG = g + clamp(want - g, -step, step)
+  const lift = R.soleLift = Math.max(clamp(floor + R.soleG + SOLE.pad - low, 0, SOLE.cap), (R.soleLift || 0) - SOLE.fall * dt)
+  if (lift > 0) { R.inst.position.y += lift; R.inst.updateMatrixWorld(true) }
+}
 function rigGaitInto(R, fade) {
   if (R.base) R.base.fadeOut(fade)
   if (!(R.gw > 0)) R.gph = 0
@@ -34057,7 +34097,7 @@ const HOST_PHASES = {
     const inp = cur.get(id) || IDLE_INPUT
     if (id !== 0) c.pitch = inp.pitch || 0
     coatPipeStep(c, inp, dt)
-    if (inp.fire || inp.alt || inp.descend) c.aimD = inp.d || 0
+    if (inp.fire || inp.alt || inp.descend || inp.pf || inp.pa) c.aimD = inp.d || 0
     c.cool = Math.max(0, c.cool - dt)
     for (const cm of [stepCharge(c, dt, inp), stepAltCharge(c, dt, inp)]) if (cm) { cm.push(id, 1, carHayLow(c, cm) ? 1 : 0); tracers.push(cm); GAME.audio.fx([cm]) }
     if (c.powT > 0 && (c.powT -= dt) <= 0) { c.powT = 0; c.pow = 0 }
@@ -34270,7 +34310,7 @@ const GRAB = {
   reach: 1.7,
   pull: 0.3,
   slip: 1.5, slipStreet: 6, mash: 0.25, regrab: 3,
-  punt: { drop: 0.24, done: 0.62, speed: 36, mass: 1, pitch: 0.42, top: 1.15, spin: 13 },
+  punt: { drop: 0.24, done: 0.62, speed: 36, mass: 1, spin: 13 },
   throw: { done: 0.4, speed: 24, mass: 2, spin: 5 },
   fly: { r: 0.45, min: 6, s: 5 },
   grabS: 0.28, rip: 0.45,
@@ -34399,10 +34439,47 @@ function partsKickAt(c, R, out = [0, 0, 0]) {
   out[0] = c.x + fx * f; out[1] = c.y - c.h - c.r + 0.42 + R * 0.5; out[2] = c.z + fz * f
   return out
 }
-function partsLaunch(c, how, m) {
-  const P = how === 'punt' ? GRAB.punt : GRAB.throw, [yaw, pitch] = aimAngles(c, 40)
-  const up = how === 'punt' ? clamp(pitch + P.pitch, 0.18, P.top) : clamp(pitch + 0.12, -0.3, 1.2)
-  const s = P.speed * Math.min(1, Math.sqrt(P.mass / Math.max(0.05, m))), [dx, dy, dz] = aimDir(yaw, up)
+const PUNT = { reach: 40, lo: -0.9, hi: 1.45, scan: 48, bisect: 28, tick: TICK, steps: 600 }
+function puntPoint(c) {
+  const r = camRay(c, c.yaw, c.pitch), d = c.aimD > 0 ? clamp(c.aimD, r.near, r.near + PUNT.reach) : r.near + PUNT.reach
+  const hit = [], t = staticRay(r.x, r.y, r.z, r.dx, r.dy, r.dz, d + 0.4, hit)
+  return [r.x + r.dx * d, r.y + r.dy * d, r.z + r.dz * d, hit.length >= 6 && t < d + 0.4 && hit[4] > 0.7 ? 1 : 0]
+}
+function puntRise(th, s, D, k, dt, ty) {
+  let x = 0, y = 0, vx = s * Math.cos(th), vy = s * Math.sin(th)
+  for (let i = 0; i < PUNT.steps; i++) {
+    vy += GRAV * dt; vx *= k; vy *= k
+    const nx = x + vx * dt, ny = y + vy * dt
+    if (nx >= D) return y + (ny - y) * (D - x) / Math.max(1e-9, nx - x)
+    if (vx < 1e-3 || vy < 0 && ny < ty) break
+    x = nx; y = ny
+  }
+  return -1000 + x
+}
+function puntSolve(D, ty, s, k, dt, steep) {
+  const th = i => PUNT.lo + (PUNT.hi - PUNT.lo) * i / PUNT.scan, ys = []
+  let best = PUNT.lo, by = -Infinity, first = -1, last = -1
+  for (let i = 0; i <= PUNT.scan; i++) {
+    const y = ys[i] = puntRise(th(i), s, D, k, dt, ty)
+    if (y >= ty) { if (first < 0) first = i; last = i }
+    if (y > by) { by = y; best = th(i) }
+  }
+  if (first < 0) return best
+  const i = steep && last < PUNT.scan ? last : first, up = i === last && last < PUNT.scan && steep
+  if (up ? false : !i) return th(i)
+  let a = th(up ? i + 1 : i - 1), b = th(i)
+  for (let j = 0; j < PUNT.bisect; j++) { const m = (a + b) / 2; if (puntRise(m, s, D, k, dt, ty) >= ty) b = m; else a = m }
+  return b
+}
+function partsLaunch(c, how, m, from, body) {
+  const P = how === 'punt' ? GRAB.punt : GRAB.throw, s = P.speed * Math.min(1, Math.sqrt(P.mass / Math.max(0.05, m)))
+  if (how === 'punt' && from) {
+    const pt = c.parts?.pt || puntPoint(c), dx = pt[0] - from[0], dz = pt[2] - from[2], D = Math.max(0.5, Math.hypot(dx, dz))
+    const hx = D > 0.5 ? dx / D : -Math.sin(c.yaw), hz = D > 0.5 ? dz / D : -Math.cos(c.yaw), dt = body.dt || PUNT.tick
+    const ty = pt[1] + body.lift - from[1], th = puntSolve(D, ty, s, Math.pow(1 - (body.damp || 0), dt), dt, pt[3] > 0 && pt[1] - from[1] > 0.5), ch = Math.cos(th)
+    return { v: [hx * ch * s, Math.sin(th) * s, hz * ch * s], speed: s, spin: [hz, 0, -hx], yaw: Math.atan2(-hx, -hz) }
+  }
+  const [yaw, pitch] = aimAngles(c, 40), up = clamp(pitch + 0.12, -0.3, 1.2), [dx, dy, dz] = aimDir(yaw, up)
   return { v: [dx * s + (c.vx || 0) * 0.5, dy * s, dz * s + (c.vz || 0) * 0.5], speed: s, spin: [dz, 0, -dx], yaw }
 }
 
@@ -34434,7 +34511,7 @@ function partsStep(c, inp, dt) {
       return true
     }
     if (useEdge && c.useT <= 0) { if (person) { S.rip = 0; S.ripGrab = false } else { c.useT = USE_S; partsLetGo(c, held, 'drop') } }
-    else if (fire && c.useT <= 0) { Object.assign(S, person && !inp.sprint ? { act: 7, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : cover && !inp.sprint ? { act: 6, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : limb && !inp.sprint ? { act: 5, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : { act: 1, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S; if (limb) held.ref.clubHit = null }
+    else if (fire && c.useT <= 0) { Object.assign(S, person && !inp.sprint ? { act: 7, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : cover && !inp.sprint ? { act: 6, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : limb && !inp.sprint ? { act: 5, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : { act: 1, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R), pt: puntPoint(c) }); c.useT = USE_S; if (limb) held.ref.clubHit = null }
     else if (alt && c.useT <= 0) { Object.assign(S, { act: 2, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S }
     return true
   }
@@ -34514,7 +34591,8 @@ function partsLetGo(c, held, how) {
   if (held.src === 'object') {
     const o = held.ref
     if (how === 'drop') { release(c, o, 0); return }
-    const L = partsLaunch(c, how, o.K.mass), at = how === 'punt' ? partsKickAt(c, held.R) : handOf(c, o, true), k = Math.min(1, 1.6 / Math.sqrt(o.K.mass))
+    const at = how === 'punt' ? partsKickAt(c, held.R) : handOf(c, o, true), k = Math.min(1, 1.6 / Math.sqrt(o.K.mass))
+    const L = partsLaunch(c, how, o.K.mass, how === 'punt' && at, { damp: o.K.damp?.[0], lift: o.K.half ? o.K.half[1] : o.K.r ?? o.R * 0.5 })
     holdBy(o, null)
     const P = how === 'punt' ? GRAB.punt : GRAB.throw
     putObject(o, [...at, ...o.q, ...L.v, ...L.spin.map(v => v * P.spin * k)])
@@ -34561,7 +34639,7 @@ function partsLetGoHost(c, held, how, credit) {
       return
     }
     const at = how === 'punt' ? partsKickAt(c, h.r) : partsHoldAt(c.x, c.y, c.z, c.yaw, c, 'scruff', h.r)
-    const L = how === 'drop' ? { v: [-Math.sin(c.yaw) * 2, 1.5, -Math.cos(c.yaw) * 2], speed: 0 } : partsLaunch(c, how, PARTS.person.mass)
+    const L = how === 'drop' ? { v: [-Math.sin(c.yaw) * 2, 1.5, -Math.cos(c.yaw) * 2], speed: 0 } : partsLaunch(c, how, PARTS.person.mass, how === 'punt' && [at[0], (d => d < h.h + h.r ? at[1] + (h.h + h.r - d) + 0.02 : at[1])(staticRay(at[0], at[1], at[2], 0, -1, 0, h.h + h.r + 0.05)), at[2]], { lift: h.h + h.r })
     partsFree(h, at, L.v)
     if (how === 'drop') return
     const G = GUNS[how === 'punt' ? PUNT_G() : FLUNG_G()], n = L.speed || 1
@@ -34587,8 +34665,8 @@ function partsLetGoHost(c, held, how, credit) {
       return
     }
     const R = s.R, at = how === 'punt' ? partsKickAt(c, R) : partsHoldAt(c.x, c.y, c.z, c.yaw, c, partsGrip(s.kind), R)
-    const L = how === 'drop' ? { v: [0, 0, 0], speed: 0, yaw: c.yaw } : partsLaunch(c, how, PARTS[s.kind].mass)
     const H = partsCentre(s.ag, s.what); at[1] = Math.max(at[1], H + 0.05)
+    const L = how === 'drop' ? { v: [0, 0, 0], speed: 0, yaw: c.yaw } : partsLaunch(c, how, PARTS[s.kind].mass, how === 'punt' && at, { lift: H, dt: PUNT.tick / 4 })
     const r = partsFling(s.ag, at, L.v, T, s.what, c.id, H)
     if (r && how !== 'drop' && !s.what && !slDeathOf(s.ag.id, T)) { const gi = how === 'punt' ? PUNT_G() : FLUNG_G(), n = L.speed || 1
       slHurt(s.ag, { x: at[0], z: at[2], down: false }, L.v[0] / n, L.v[2] / n, 0, c, T, 0, how === 'punt' ? GUNS[gi].dmg : GUNS[gi].dmg * 0.5, gi, 3) }
@@ -34981,9 +35059,16 @@ function partsDraw(me, others, t, dt, meD) {
 const PARTS_CLIPS = { grab: 'maniak_grab', hold: 'maniak_hold', scruff: 'maniak_hold_scruff', over: 'maniak_hold_over', pull: 'maniak_pull', throw: 'maniak_throw', punt: 'maniak_punt', slam: 'maniak_slam' }
 const ARM_CARRY = { ease: 0.35, out: 0.12, bend: 0.96, wrist: 0.07, edge: 0.05, half: [0.2, 0.34], k: 0.45 }
 const armV = Array.from({ length: 11 }, () => new THREE.Vector3()), armQ = Array.from({ length: 6 }, () => new THREE.Quaternion())
+const armBox = new THREE.Box3()
 function armUnder(K) {
   if (K.armUnder === undefined) { const H = hullOf(K); K.armUnder = H ? -Math.min(...H.pts.map(p => p[1])) : K.r || K.half?.[1] || 0 }
   return K.armUnder
+}
+function armBounds(at) {
+  const m = objPool.find(v => v.visible && v.userData.oid === at.id)
+  if (!m || Math.abs(m.quaternion.x) > 0.02 || Math.abs(m.quaternion.z) > 0.02) return null
+  m.updateMatrixWorld(true); armBox.setFromObject(m)
+  return armBox.isEmpty() ? null : { under: m.position.y - armBox.min.y, dx: (armBox.min.x + armBox.max.x) / 2 - m.position.x, dz: (armBox.min.z + armBox.max.z) / 2 - m.position.z, ex: (armBox.max.x - armBox.min.x) / 2, ez: (armBox.max.z - armBox.min.z) / 2 }
 }
 function armReach(R, n0, n1, n2, goal, pole, w) {
   const upper = R.bones.get(n0), lower = R.bones.get(n1), end = R.bones.get(n2)
@@ -35015,17 +35100,20 @@ function armCarry(a, R, hold, w) {
   m.updateMatrixWorld(true)
   const sh = [R.bones.get('upperarm_l'), R.bones.get('upperarm_r')]
   if (!sh[0] || !sh[1]) return
+  const B = armBounds(at)
   let fe = hold.R, le = hold.R
-  if (K.half && at.q) {
+  if (B) { fe = Math.abs(fx) * B.ex + Math.abs(fz) * B.ez; le = Math.abs(rx) * B.ex + Math.abs(rz) * B.ez }
+  else if (K.half && at.q) {
     const q = armQ[5].set(at.q[0], at.q[1], at.q[2], at.q[3]); fe = le = 0
     K.half.forEach((hv, i) => { s0.set(i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0).applyQuaternion(q); fe += Math.abs(s0.x * fx + s0.z * fz) * hv; le += Math.abs(s0.x * rx + s0.z * rz) * hv })
   }
   const half = Math.min(clamp(le * ARM_CARRY.k, ARM_CARRY.half[0], ARM_CARRY.half[1]), Math.max(0.06, le - 0.03))
   sh[0].getWorldPosition(s0); const mx = s0.x, mz = s0.z; sh[1].getWorldPosition(s0)
-  const cx = (mx + s0.x) / 2, cz = (mz + s0.z) / 2, off = (at.x - cx) * fx + (at.z - cz) * fz, back = clamp(off, 0, Math.max(0, fe - ARM_CARRY.edge))
-  const y = at.y - armUnder(K) - ARM_CARRY.wrist
+  const ox = at.x + (B ? B.dx : 0), oz = at.z + (B ? B.dz : 0)
+  const cx = (mx + s0.x) / 2, cz = (mz + s0.z) / 2, off = (ox - cx) * fx + (oz - cz) * fz, back = clamp(off, 0, Math.max(0, fe - ARM_CARRY.edge))
+  const y = at.y - (B ? B.under : armUnder(K)) - ARM_CARRY.wrist
   ;[['l', -1], ['r', 1]].forEach(([s, sg], i) => {
-    goal.set(at.x - fx * back + rx * half * sg, y, at.z - fz * back + rz * half * sg)
+    goal.set(ox - fx * back + rx * half * sg, y, oz - fz * back + rz * half * sg)
     sh[i].getWorldPosition(s0)
     pole.set(s0.x + rx * sg * 0.45 - fx * 0.25, s0.y - 0.1, s0.z + rz * sg * 0.45 - fz * 0.25)
     armReach(R, 'upperarm_' + s, 'lowerarm_' + s, 'hand_' + s, goal, pole, w)
@@ -45701,8 +45789,8 @@ function draw(dt, t) {
   if (view && !(me.dead > 0)) {
     const tv0 = realNow()
     shotSkip = sits.get(myId)?.[0] ?? null
-    const bodies = isHost ? [...players.values()].map(c => (P => P ? { ...c, x: P[0], y: P[1], z: P[2] } : c)(c === me ? null : drawnPose(c)))
-      : others.filter(o => shotSkip === null || sits.get(o.id)?.[0] !== shotSkip).map(o => { const C = GAME.participant(o.id, o.cid)
+    const bodies = isHost ? [...players.values()].filter(c => c.grabBy !== myId).map(c => (P => P ? { ...c, x: P[0], y: P[1], z: P[2] } : c)(c === me ? null : drawnPose(c)))
+      : others.filter(o => (shotSkip === null || sits.get(o.id)?.[0] !== shotSkip) && o.grab !== myId + 1).map(o => { const C = GAME.participant(o.id, o.cid)
                           return { x: o.x, y: o.y, z: o.z, r: C.r, h: C.h, dead: o.dead, prot: o.prot } })
     background.simAdd('aim prep', realNow() - tv0)
     const d = reticleAt(me, view, bodies, obl, CAM.far)
