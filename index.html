@@ -41084,7 +41084,7 @@ function dsWireFor(gid) {
   if (!st || !isHost || !c || !st.chunks.size) return ''
   let g = st.guests.get(gid)
   if (!g) st.guests.set(gid, g = new Map())
-  const T = tickAt || now(), S = faustState.S, ci = Math.floor((c.x + ARENA) / 96), cj = Math.floor((c.z + ARENA) / 96), near = DESTRUCT.near
+  const T = tickAt || now(), S = faustState.S, ci = Math.max(0, Math.min(S - 1, Math.floor((c.x + ARENA) / 96))), cj = Math.max(0, Math.min(S - 1, Math.floor((c.z + ARENA) / 96))), near = DESTRUCT.near
   const due = []
   for (const [chunk, ch] of st.chunks) {
     if (dsTileBusy(chunk)) continue
@@ -45063,11 +45063,52 @@ function boatCarry(o) {
   const top = Math.max(S.d, ...S.deck.map(d => Math.max(d[1], d[4]))), hy = (top + 3.5) / 2
   carrierAdd({ id, pose: () => boatDeckPose(o), volume: [[0, hy - 1, 0, S.b / 2 + 0.4, hy, S.l / 2 + 0.4]], parts: [], radius: S.l / 2 + 6, boat: o.id })
 }
+const boatTrisCache = new Map()
+function boatDeckTris(K) {
+  const name = K.model || K.name
+  if (boatTrisCache.has(name)) return boatTrisCache.get(name)
+  const S = BOAT_SHAPES[name], H = hullOf(K), tris = []
+  const box = (x0, y0, z0, x1, y1, z1) => {
+    const c = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]].map(p => [p[0] - H.at[0], p[1] - H.at[1], p[2] - H.at[2]])
+    for (const f of [[0, 3, 2, 1], [4, 5, 6, 7], [0, 4, 7, 3], [1, 2, 6, 5], [3, 7, 6, 2], [0, 1, 5, 4]]) tris.push([c[f[0]], c[f[1]], c[f[2]]], [c[f[0]], c[f[2]], c[f[3]]])
+  }
+  const hw = S.b / 2 * 0.85, hl = S.l / 2 * 0.9
+  box(-hw, S.d - 0.5, -hl, hw, S.d, hl)
+  for (const d of S.deck) box(d[0], d[1], d[2], d[3], d[4], d[5])
+  boatTrisCache.set(name, tris)
+  return tris
+}
+function boatTrackPose(id, t) {
+  const tr = objTracks.get(id)
+  if (!tr || !tr.length) return null
+  let j = 0
+  while (j < tr.length && tr[j].t < t) j++
+  const n = tr.length, end = j >= n && n > 1, a = end ? tr[n - 2] : tr[Math.max(0, j - 1)], b = end ? tr[n - 1] : tr[Math.min(j, n - 1)], P = a.p, Q = b.p, dt = (b.t - a.t) / 1000
+  const span = b.t - a.t, u = span === 0 ? 1 : end ? Math.min((t - a.t) / span, 1 + 600 / span) : clamp((t - a.t) / span, 0, 1), uq = Math.min(u, 1), sg = P[4] * Q[4] + P[5] * Q[5] + P[6] * Q[6] + P[7] * Q[7] < 0 ? -1 : 1
+  const q = [0, 1, 2, 3].map(i => lerp(P[4 + i], sg * Q[4 + i], uq)), nq = Math.hypot(...q), fw = rotq(q.map(x => x / nq), [0, 0, -1])
+  const k = dt > 0 ? 1 / dt : 0, ex = (a, b, f) => a + (b - a) * f
+  return { x: ex(P[1], Q[1], u), y: lerp(P[2], Q[2], uq), z: ex(P[3], Q[3], u), yaw: Math.atan2(-fw[0], -fw[2]), vx: (Q[1] - P[1]) * k, vy: (Q[2] - P[2]) * k, vz: (Q[3] - P[3]) * k, w: 0 }
+}
+function boatCarryTracks() {
+  const live = new Set()
+  for (const [id, tr] of objTracks) {
+    const K = OBJECTS[tr[tr.length - 1]?.p[0]]
+    if (!K || !K.boat || !K.drive || !BOAT_SHAPES[K.model || K.name]) continue
+    const cid = 'zboat:' + id
+    live.add(cid)
+    if (carriers.has(cid)) continue
+    const S = BOAT_SHAPES[K.model || K.name], top = Math.max(S.d, ...S.deck.map(d => Math.max(d[1], d[4]))), hy = (top + 3.5) / 2, H = hullOf(K)
+    carrierAdd({ id: cid, pose: t => boatTrackPose(id, t) || { x: 0, y: -999, z: 0, yaw: 0, vx: 0, vy: 0, vz: 0, w: 0 }, volume: [[-H.at[0], hy - 1 - H.at[1], -H.at[2], S.b / 2 + 0.4, hy, S.l / 2 + 0.4]], parts: [{ tris: boatDeckTris(K) }], radius: S.l / 2 + 6, boat: id })
+  }
+  for (const [cid, k] of [...carriers]) if (k.boat !== undefined && !live.has(cid)) carrierDel(cid)
+}
 function boatCarrySweep() {
+  if (!isHost) return
   const live = new Set(objs.filter(o => o.body && o.K.boat && o.K.drive).map(o => 'zboat:' + o.id))
   for (const [id, k] of [...carriers]) if (k.boat !== undefined && !live.has(id)) carrierDel(id)
 }
 function waterTick(list, inputFor, dt) {
+  if (!isHost) boatCarryTracks()
   const W = floatWater()
   if (!W?.at || !objs.length) return
   const t = carrierT
@@ -45076,7 +45117,7 @@ function waterTick(list, inputFor, dt) {
     if (!o.body || o.heldBy !== undefined || o.away) continue
     const F = floatOf(o.K)
     if (!F) continue
-    if (o.K.boat && o.K.drive) boatCarry(o)
+    if (isHost && o.K.boat && o.K.drive) boatCarry(o)
     const p = o.body.getWorldTransform().getOrigin(), at = W.at(p.x(), p.z(), floatRec)
     if (!at || p.y() - o.R > at.level + 2) { if (isHost && F.wet && o.floodT !== undefined) o.floodT = undefined; continue }
     if (isHost && o.floodT === undefined && o.K.boat && o.K.model && !o.K.drive) o.floodT = t
