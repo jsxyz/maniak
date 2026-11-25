@@ -7300,6 +7300,7 @@ function faustRingsFrame() {
       }
       mesh.boundingSphere = sphere
     }
+    yield* faustRingWarm(KINDS.filter(k => pools[k].n > 0), real, set)
     for (const k of KINDS) {
       if (set[k]) { const on = pools[k].n > 0; set[k].visible = on; if (on) { set[k].material = real(k); set[k].frustumCulled = true } }
       if (other[k]) other[k].visible = false
@@ -7311,6 +7312,26 @@ function faustRingsFrame() {
     F.ringCounts = Object.fromEntries(Object.entries(pools).map(([k, P]) => [k, P.n]))
     yield 'frame'
   }, { valid: () => faustState === F && F.ringStamp === stamp }).catch(e => frameFailed('rings', e))
+}
+function* faustRingWarm(kinds, real, set) {
+  if (renderHeadless || !renderer?.compileAsync || !scene || !camera) return
+  const name = activeLook || 'plain'
+  if (name === 'ink') return
+  const R = realState, out = name === 'realistic' ? R?.t?.hdr || null : null, probe = new THREE.Group()
+  for (const k of kinds) {
+    const t = set[k]; if (!t) continue
+    const p = new THREE.InstancedMesh(t.geometry, real(k), 1)
+    p.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(3), 3)
+    p.castShadow = t.castShadow; p.receiveShadow = t.receiveShadow; p.frustumCulled = false; probe.add(p)
+  }
+  for (const withColor of [false, true]) {
+    const p = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), real('far'), 1)
+    if (withColor) p.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(3), 3)
+    p.frustumCulled = false; probe.add(p)
+  }
+  probe.traverse(n => { n.visible = true })
+  inkPrepare(probe)
+  yield* compileObjects(probe, camera, scene, warmSetup(name, out, R))
 }
 function faustRingsTick(points) {
   const F = faustState
@@ -12901,7 +12922,7 @@ function* compileObjects(root, cam = camera, target = scene, setup = null, lit =
   let batch = [], t0 = realNow(), made = 0
   for (const o of objects) {
     if (realNow() - t0 > 2) { yield batch.length ? Promise.all(batch) : undefined; batch = []; made = 0; t0 = realNow() }
-    const kind = [o.type, !!o.instanceColor, o.receiveShadow, o.geometry?.attributes.color?.itemSize, !!o.geometry?.attributes.skinIndex].join('/')
+    const kind = [o.type, !!o.isInstancedMesh, !!o.instanceColor, o.receiveShadow, o.geometry?.attributes.color?.itemSize, !!o.geometry?.attributes.skinIndex].join('/')
     const key = (Array.isArray(o.material) ? o.material : [o.material]).map(m => m?.uuid + ':' + m?.version).join(',') + '/' + kind
     if (seen.has(key)) continue
     seen.add(key)
@@ -20955,7 +20976,7 @@ function interiorWarmProbe() {
   if (typeof faustSewMats === 'function') interiorProbe.add(new THREE.Mesh(g, faustSewMats().brick))
   return interiorProbe
 }
-const lookKey = name => [name, settings.quality, settings.shadows, innerWidth, innerHeight, devicePixelRatio, GOV_LEVELS[govLevel].d, graphics.lost].join('/')
+const lookKey = name => (name === 'plain' ? [name, settings.quality, settings.shadows, graphics.lost] : [name, settings.quality, settings.shadows, innerWidth, innerHeight, devicePixelRatio, GOV_LEVELS[govLevel].d, graphics.lost]).join('/')
 function gpuState(target, fn) {
   const old = renderer.getRenderTarget(), face = renderer.getActiveCubeFace(), mip = renderer.getActiveMipmapLevel()
   const clear = renderer.autoClear, tone = renderer.toneMapping, xr = renderer.xr.enabled
@@ -22927,7 +22948,7 @@ function buildWorld() {
         const fresh = new Map(renderer.info.programs.slice(programsBefore).map(p => [p, []]))
         try { if (renderer.properties.has) s.traverse(o => { if (!o.material) return
           for (const m of Array.isArray(o.material) ? o.material : [o.material]) { const own = renderer.properties.has(m) && fresh.get(renderer.properties.get(m).currentProgram)
-            if (own && own.length < 2) own.push((m.name || m.type) + '@' + (o.name || o.parent?.name || o.type)) } }) } catch (e) {}
+            if (own && own.length < 2) own.push((m.name || m.type) + '@' + ([o.name, o.parent?.name, o.parent?.parent?.name].filter(Boolean).join('/') || o.type) + (o.isInstancedMesh ? ' x' + o.count + (o.instanceColor ? ' ic' : '') : '') + ' {' + [m.vertexColors ? 'vc' : '', m.map ? 'map' : '', o.receiveShadow ? 'rs' : '', m.transparent ? 'tr' : '', Object.keys(o.geometry?.attributes || {}).join(',')].filter(Boolean).join(' ') + '}') } }) } catch (e) {}
         for (const [p, own] of fresh) background.noteProgram((p.name || String(p.cacheKey).split(',')[0] || '?') + (own.length ? ' ' + own.join(' ') : '') + programWhy(p, fresh))
         background.sec(null)
       }
@@ -23041,6 +23062,68 @@ function placeChunk(cell, g) {
 const VIEW = { short: 0.6, normal: 1, far: 1.6 }
 const GOV_LEVELS = [{ s: 1, d: 1, v: 1 }, { s: 0.7, d: 1, v: 1 }, { s: 0.5, d: 1, v: 1 }, { s: 0.5, d: 0.8, v: 1 }, { s: 0.35, d: 0.67, v: 1 }, { s: 0.35, d: 0.67, v: 0.6 }, { s: 0.25, d: 0.5, v: 0.6 }]
 let govLevel = 0, govAt = 0
+function memReport() {
+  const pm = performance.memory, im = renderer?.info.memory || {}, ir = renderer?.info.render || {}
+  const tex = new Set(), geo = new Set(), bufs = new Set()
+  let texBytes = 0, geoBytes = 0, objs = 0
+  const addTex = t => {
+    if (!t || !t.isTexture || tex.has(t)) return
+    tex.add(t)
+    const im2 = t.image, w = im2?.width || im2?.videoWidth || 0, h = im2?.height || im2?.videoHeight || 0
+    texBytes += w * h * 4 * (t.generateMipmaps ? 1.33 : 1) * (t.isCubeTexture ? 6 : 1)
+  }
+  const addGeo = g => {
+    if (!g || geo.has(g)) return
+    geo.add(g)
+    const attrs = Object.values(g.attributes || {}).concat(g.index ? [g.index] : [])
+    for (const a of attrs) { const arr = a.array; if (arr && !bufs.has(arr)) { bufs.add(arr); geoBytes += arr.byteLength } }
+  }
+  scene?.traverse(o => {
+    objs++
+    addGeo(o.geometry)
+    if (o.instanceMatrix && !bufs.has(o.instanceMatrix.array)) { bufs.add(o.instanceMatrix.array); geoBytes += o.instanceMatrix.array.byteLength }
+    for (const m of [].concat(o.material || [])) for (const k in m) if (m[k] && m[k].isTexture) addTex(m[k])
+  })
+  const topTex = [...tex].map(t => { const i = t.image, w = i?.width || 0, h = i?.height || 0; return { MB: +(w * h * 4 * (t.generateMipmaps ? 1.33 : 1) * (t.isCubeTexture ? 6 : 1) / 1048576).toFixed(2), w, h, name: t.name || '', src: typeof i?.src === 'string' ? i.src.slice(-40) : i?.constructor?.name || '', mip: t.generateMipmaps, aniso: t.anisotropy } }).sort((x, y) => y.MB - x.MB).slice(0, 12)
+  return {
+    topTex,
+    usedJS: pm?.usedJSHeapSize, totalJS: pm?.totalJSHeapSize, limitJS: pm?.jsHeapSizeLimit,
+    geometries: im.geometries, textures: im.textures, calls: ir.calls, triangles: ir.triangles, objects: objs,
+    sceneTextures: tex.size, texMB: Math.round(texBytes / 1048576), sceneGeometries: geo.size, geoMB: Math.round(geoBytes / 1048576)
+  }
+}
+function sceneSplit(top) {
+  const out = new Map(), fr = new THREE.Frustum(), m4 = new THREE.Matrix4(), sph = new THREE.Sphere()
+  if (!scene || !camera) return null
+  m4.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); fr.setFromProjectionMatrix(m4)
+  const walk = (o, path, vis) => {
+    if (!o.visible) return
+    const nm = o.name && path.length < 3 ? path.concat(o.name) : path
+    if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.geometry) {
+      const g = o.geometry
+      let inView = true
+      if (o.frustumCulled) {
+        if (!g.boundingSphere) g.computeBoundingSphere()
+        if (g.boundingSphere) { sph.copy(o.boundingSphere || g.boundingSphere).applyMatrix4(o.matrixWorld); inView = fr.intersectsSphere(sph) }
+      }
+      if (inView) {
+        const n = o.isInstancedMesh ? o.count : 1
+        const per = g.index ? g.index.count : g.attributes.position ? g.attributes.position.count : 0
+        const tris = o.isMesh ? Math.floor(per / 3) * n : 0
+        const mt = [].concat(o.material || [])[0], md = mt ? (mt.name || mt.type) + (mt.vertexColors ? ' vc' : '') + (mt.map ? ' map' : '') + (mt.transparent ? ' tr' : '') + (mt.emissive && mt.emissive.getHex() ? ' em' : '') + (mt.side === 2 ? ' ds' : '') + (mt.vertexColors ? '' : ' #' + (mt.color ? mt.color.getHexString() : '')) : ''
+        const key = (nm.join('/') || o.type + ' ' + md) + (o.isInstancedMesh ? ' [inst]' : '')
+        const r = out.get(key) || { key, calls: 0, shadowCalls: 0, tris: 0, objs: 0 }
+        r.calls++; r.objs += n; r.tris += tris; if (o.castShadow) { r.shadowCalls++ }
+        out.set(key, r)
+      }
+    }
+    for (const c of o.children) walk(c, nm)
+  }
+  walk(scene, [])
+  const rows = [...out.values()].sort((a, b) => b.tris - a.tris)
+  return { totalCalls: rows.reduce((s, r) => s + r.calls, 0), totalTris: rows.reduce((s, r) => s + r.tris, 0), rows: rows.slice(0, top || 40) }
+}
+const govTierLog = [], infoLog = []
 const govWin = [], govLog = []
 GAME.perfScale = () => GOV_LEVELS[govLevel].s
 const GOV_THINK = [1, 1, 1, 1, 2, 3, 3], GOV_THINK_R = 40
@@ -23074,8 +23157,14 @@ function govern() {
   govWin.push([t, f.ms]); while (govWin.length && t - govWin[0][0] > 5000) govWin.shift()
   if (t - govAt < 1500) return
   const second = govWin.filter(([s]) => t - s <= 1000), slow = second.filter(([, m]) => m > 40).length
-  if (second.length >= 5 && slow >= second.length * 0.7 && govLevel < GOV_LEVELS.length - 1) return govSet(govLevel + 1, slow + ' of ' + second.length + ' frames over 40 ms', f.ms)
-  if (govLevel > 0 && t - govAt > 5000 && govWin.length >= 60 && govWin.every(([, m]) => m < 23)) govSet(govLevel - 1, govWin.length + ' frames under 23 ms', f.ms)
+  const govNext = govLevel === 2 || govLevel === 3 ? 4 : govLevel === 4 || govLevel === 5 ? 6 : govLevel + 1
+  if (second.length >= 5 && slow >= second.length * 0.7 && govLevel < GOV_LEVELS.length - 1 && (GOV_LEVELS[govNext].d === GOV_LEVELS[govLevel].d || t - govAt > 10000)) return govSet(govNext, slow + ' of ' + second.length + ' frames over 40 ms', f.ms)
+  if (govLevel === GOV_LEVELS.length - 1 && settings.quality === 'high' && !settings.qualityChosen && t - govAt > 4000 && govWin.length >= 40 && govWin.filter(([, m]) => m > 33).length >= govWin.length * 0.5) {
+    govTierLog.push({ i: pageLife.frames, t: Math.round(performance.now()), from: settings.quality, to: 'medium', why: govWin.filter(([, m]) => m > 33).length + ' of ' + govWin.length + ' frames over 33 ms at the lowest level', ms: f.ms })
+    settings.quality = 'medium'
+    return govSet(4, 'quality high>medium', f.ms)
+  }
+  if (govLevel > 0 && t - govAt > 10000 && govWin.length >= 60 && govWin.every(([, m]) => m < 23)) govSet(govLevel - 1, govWin.length + ' frames under 23 ms', f.ms)
 }
 let viewScale = 1
 const viewEnd = (k = viewScale) => LV.faust ? 2200 * k : Math.min(320 * Math.min(k, 1), ARENA * LV.theme.fog[2] * k)
@@ -29297,6 +29386,8 @@ function detectQuality() {
   else if (px >= 6) score -= 2
   else if (px >= 4) score -= 1
   if (IS_TOUCH) score -= 1
+  if (/\bintel\b/i.test(gpu) && !/\barc\b/i.test(gpu)) score -= 2
+  if (/\bradeon(\(tm\))?\s+graphics\b|\bradeon(\(tm\))?\s+\d{3}m\b|\bvega\s+\d{1,2}\b/i.test(gpu)) score -= 2
   return score >= 3 ? 'high' : score >= 1 ? 'medium' : 'low'
 }
 
@@ -32326,7 +32417,9 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   broadcast(url) { if (!isHost || !hookSend()) return false; return bcastSet(url ?? '') },
   players: () => isHost ? [...players.values()].map(c => ({ ...hookWho(c), kills: c.kills | 0, hp: Math.round(c.hp), dead: c.dead > 0, x: r2(c.x), y: r2(c.y), z: r2(c.z), yaw: Math.round((c.yaw ?? 0) * 1000) / 1000 })) : [],
   models: () => ({ ...modelDiag, files: Object.fromEntries(modelDiag.files), rigs: Object.fromEntries(modelDiag.rigs), cars: periodFleet && { ready: !!periodFleet.ready, failed: !!periodFleet.failed }, street: slKitJob && { done: !!slKitJob.done, failed: !!slKitJob.failed }, gpu: modelGpu() }),
-  perf: () => ({ drops: slDrops, dropsFrame: slDropFrame, lying: slLie.length, frozen: slFrozen.size, level: govLevel, ...GOV_LEVELS[govLevel], awake: govAwake(), bodies: objs.filter(o => o.body).length, who: simWho(), log: govLog.slice() }),
+  renderInfo: n => ({ frames: infoLog.slice(-(n || 60)), geometries: renderer?.info.memory.geometries, textures: renderer?.info.memory.textures, memory: memReport() }),
+  sceneSplit: n => sceneSplit(n),
+  perf: () => ({ tier: settings.quality, tierAuto: qualityAuto || null, tierChosen: settings.qualityChosen, tierLog: govTierLog.slice(), ratio: renderer?.getPixelRatio(), gpu: gpuName(), drops: slDrops, dropsFrame: slDropFrame, lying: slLie.length, frozen: slFrozen.size, level: govLevel, ...GOV_LEVELS[govLevel], awake: govAwake(), bodies: objs.filter(o => o.body).length, who: simWho(), log: govLog.slice() }),
   perfSet: n => govSet(clamp(n | 0, 0, GOV_LEVELS.length - 1), 'hook', 0),
   fps(n) { if (n !== undefined) fpsCap = +n >= 5 && +n <= 240 ? +n : 0; return fpsCap },
   telescreen: (n = 120) => teleState(n),
@@ -47321,6 +47414,7 @@ class Arena extends ENABLE3D.Scene3D {
   postRender() {
     pageLife.frames++
     const drawMs = drawT0 ? now() - drawT0 : 0
+    try { const r = renderer.info.render; infoLog.push([pageLife.frames, r.calls, r.triangles, renderer.info.programs?.length || 0]); if (infoLog.length > 400) infoLog.shift() } catch (e) {}
     try { background.frameEnd(pageLife.frames, drawMs, phase + (startingGame ? ' start' : ''), gpuQueueTick(pageLife.frames)); gpuTimerPoll() } catch (e) {}
     try { govern() } catch (e) {}
     if (drawT0) { msDraw = msDraw * 0.9 + drawMs * 0.1; drawT0 = 0 }
