@@ -1422,6 +1422,9 @@ OBJECTS.push(
   { name: 'Shelf unit', half: [0.65, 0.95, 0.18], mass: 5, bounce: 0.05, friction: 0.7, damp: [0.15, 0.4], hit: 1, color: 0x5a3a24, stripe: 0x8a6440, loot: 'shelf', dmg: 30 },
   { name: 'Bottle', half: [0.04, 0.15, 0.04], mass: 0.15, bounce: 0.2, friction: 0.4, damp: [0.05, 0.2], hit: 1, color: 0x2f5c3a, stripe: 0xc9b27a, loot: 'bottle', dmg: 6 },
   { name: 'Mannequin', half: [0.22, 0.78, 0.18], mass: 1.5, bounce: 0.1, friction: 0.6, damp: [0.1, 0.35], hit: 1, color: 0xd8cdb8, stripe: 0x2b333d, loot: 'mannequin', dmg: 14 })
+OBJECTS.push(
+  { name: 'Fence panel', half: [1.8, 1.1, 0.08], mass: 3.2, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0x5a4632, stripe: 0x252d37, prop: 'fence', dmg: 12, thrown: 14, hp: 3 },
+  { name: 'Tin panel', half: [1.8, 1.0, 0.06], mass: 3.6, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0x3a424b, stripe: 0x252d37, prop: 'tinfence', dmg: 14, thrown: 15, hp: 3 })
 OBJECTS.push({ name: 'Lamp post', half: [0.14, 0.14, 1.5], mass: 6, bounce: 0.05, friction: 0.6, damp: [0.15, 0.4], hit: 1, color: 0x252d37, stripe: 0x5c6671, piece: 'lamppost', across: 1, dmg: 40, thrown: 40, retire: o => dsLampPieceRetire(o) })
 const LAMP_PIECE = OBJECTS.length - 1
 const SIT_HIP = 0.29
@@ -3273,10 +3276,10 @@ function faustFeatTube(g, a, b, r0, r1, n, tint, turn, cap, dbl) {
     if ((cap & 2) && r0 > 1e-6) face(a, P0[i], P0[i + 1], [-wx, -wy, -wz])
   }
 }
-function faustFeatDraw(g, f) {
+function faustFeatDraw(g, f, ranges) {
   const at = (p, y) => { const [x, z] = faustFeatAt(f, p[0], p[2]); return [x, y, z] }
   for (const p of faustFeatParts(f)) {
-    if (p.b) { if (p.solid !== 2) { const [x, z] = faustFeatAt(f, p.b[0], p.b[2]), odd = f.q & 1; g.box(faustBox(x, p.b[1], z, odd ? p.b[5] : p.b[3], p.b[4], odd ? p.b[3] : p.b[5]), p.t, p.g) } }
+    if (p.b) { if (p.solid !== 2) { const [x, z] = faustFeatAt(f, p.b[0], p.b[2]), odd = f.q & 1, a0 = Math.round(g.count * 3); g.box(faustBox(x, p.b[1], z, odd ? p.b[5] : p.b[3], p.b[4], odd ? p.b[3] : p.b[5]), p.t, p.g); if (ranges && p.fence !== undefined) ranges[p.fence] = [ranges[p.fence] ? ranges[p.fence][0] : a0, Math.round(g.count * 3)] } }
     else if (p.u) faustFeatTube(g, at(p.u[0], p.u[0][1]), at(p.u[1], p.u[1][1]), p.r[0], p.r[1], p.n, p.t, p.turn, p.cap, p.dbl)
     else if (p.v) { const [a, b, c] = p.v.map(v => at(v, v[1])); g.tri(a, b, c, p.t); g.tri(a, c, b, p.t) }
   }
@@ -3306,9 +3309,10 @@ function faustFeatMesh(P) {
   for (const f of P.alleyFeat || []) faustFeatDraw(g, f)
   const meshes = []
   if (g.count) { const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true; mesh.userData.feat = 1; meshes.push(mesh) }
-  for (const f of P.sites || []) {
-    const s = faustBatch(14336, faustSitePicker(f.k)); faustFeatDraw(s, f)
-    if (s.count) { const mesh = new THREE.Mesh(s.geometry(), faustSurfaceMaterial(faustState, 'body')); mesh.receiveShadow = true; meshes.push(mesh) }
+  P.siteV = []
+  for (const [si, f] of (P.sites || []).entries()) {
+    const s = faustBatch(14336, faustSitePicker(f.k)), ranges = []; faustFeatDraw(s, f, ranges); P.siteV[si] = ranges
+    if (s.count) { const mesh = new THREE.Mesh(s.geometry(), faustSurfaceMaterial(faustState, 'body')); mesh.receiveShadow = true; mesh.userData.site = si; meshes.push(mesh) }
   }
   return meshes
 }
@@ -9585,9 +9589,19 @@ function faustSiteParts(f) {
   const P = [], T = FAUST_FEAT, V = FAUST_VAR, k = f.k, h = f.h
   const B = (cx, cy, cz, ex, ey, ez, t, g = 0, solid = 0) => P.push({ b: [cx, cy, cz, ex, ey, ez], t, g, solid })
   const U = (a, b, r0, r1, n, t, turn = 0, cap = 1, dbl = 0) => P.push({ u: [a, b], r: [r0, r1], n, t, turn, cap, dbl })
+  let fp = 0
   const fence = (height, t, g) => {
-    B(0, height / 2, -10.6, 10.7, height / 2, 0.08, t, 0, 1); B(-10.6, height / 2, 0, 0.08, height / 2, 10.6, t, 0, 1); B(10.6, height / 2, 0, 0.08, height / 2, 10.6, t, 0, 1)
-    B(-6.4, height / 2, 10.6, 4.3, height / 2, 0.08, t, 0, 1); B(6.4, height / 2, 10.6, 4.3, height / 2, 0.08, t, 0, 1)
+    const panel = (cx, cz, ex, ez) => {
+      const along = ex > ez, half = along ? ex : ez, n = Math.max(1, Math.ceil(half * 2 / 3.6)), w = half / n
+      for (let i = 0; i < n; i++) {
+        const o = -half + w * (2 * i + 1), id = fp++, X = along ? cx + o : cx, Z = along ? cz : cz + o, px = along ? cx + o + w : cx, pz = along ? cz : cz + o + w
+        P.push({ b: [X, height / 2, Z, along ? w : ex, height / 2, along ? ez : w], t, g: 0, solid: 1, fence: id })
+        P.push({ b: [X, height + (along ? 0.04 : 0.047), Z, along ? w : 0.15, 0.05, along ? 0.15 : w], t: 0x2a2018, g: 0, solid: 0, fence: id })
+        P.push({ b: [px, height / 2 + 0.06, pz, along ? 0.11 : 0.116, height / 2 + (along ? 0.1 : 0.107), along ? 0.11 : 0.116], t: 0x3a2c1e, g: 0, solid: 0, fence: id })
+      }
+    }
+    panel(0, -10.6, 10.7, 0.08); panel(-10.6, 0, 0.08, 10.6); panel(10.6, 0, 0.08, 10.6)
+    panel(-6.4, 10.6, 4.3, 0.08); panel(6.4, 10.6, 4.3, 0.08)
     for (const gx of [-2.1, 2.1]) B(gx, height / 2 + 0.2, 10.6, 0.1, height / 2 + 0.2, 0.1, 0x252d37, 0, 1)
     if (g) for (const gx of [-2.1, 2.1]) B(gx, height + 0.5, 10.6, 0.14, 0.1, 0.14, 0xff3322, 1.8)
   }
@@ -11330,7 +11344,7 @@ function* faustVisualSteps(c) {
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }
     else { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry); if (activeLook === 'realistic') realBoxes(mesh.geometry) }
   }
-  for (const feat of faustFeatMesh(P)) { if (feat.userData.feat) dsFeatsLook(c, feat.geometry); root.add(feat) }
+  for (const feat of faustFeatMesh(P)) { if (feat.userData.feat) dsFeatsLook(c, feat.geometry); else if (feat.userData.site !== undefined) dsFencesLook(c, feat); root.add(feat) }
   if (cones.p.length) root.add(faustCivicGlowMesh(cones))
   if (faustState.poolMaterial) for (const q of c.plan.ownLamps ?? faustLampOffsets(c.plan.diagonal)) {
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
@@ -41773,6 +41787,7 @@ function dsLookAgain(c, root) {
     if (!m.isMesh) continue
     if (m.userData.feat) dsFeatsLook(c, m.geometry)
     else if (m.material === stone) { dsLampLook(c, m.geometry); dsPropsLook(c, m.geometry) }
+    else if (m.userData.site !== undefined) dsFencesLook(c, m)
   }
 }
 const dsTagOf = f => { let h = 2166136261; for (const ch of f.k + ' ' + Math.round(f.x * 100) + ' ' + Math.round(f.z * 100)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return 1 + (h >>> 0) % 2047 }
@@ -43057,13 +43072,41 @@ GAME.destruction = {
 }
 
 const DS_PROP = 20
-const DS_PROP_HARD = { meter: 1, bin: 1, crate: 1, hydrant: 2, mailbox: 2, drum: 2, news: 3, bollard: 3, bust: 3, clockpost: 3, busstop: 3 }
+const DS_PROP_HARD = { fence: 1, tinfence: 1, meter: 1, bin: 1, crate: 1, hydrant: 2, mailbox: 2, drum: 2, news: 3, bollard: 3, bust: 3, clockpost: 3, busstop: 3 }
 const dsPropKey = (chunk, i) => DS_PROP * 4294967296 + chunk * 1024 + i
 const dsPropCache = new WeakMap()
 function dsPropSites(P) {
   let L = dsPropCache.get(P)
   if (!L) dsPropCache.set(P, L = (P.props || []).map((f, i) => { const boxes = faustFeatBoxes([f]); return { f, i, boxes, top: boxes.reduce((m, b) => Math.max(m, b.cy + b.ey), 0.4), hard: DS_PROP_HARD[f.k] ?? 3 } }))
+  if (!L.fenced) { L.fenced = true; L.push(...dsFencePanels(P, L.length)) }
   return L
+}
+function dsFencePanels(P, base) {
+  const out = []
+  ;(P.sites || []).forEach((f, si) => {
+    for (const p of faustFeatParts(f)) {
+      if (p.fence === undefined || !p.solid) continue
+      const box = faustFeatBox(f, p.b)
+      out.push({ f: { k: f.k === 'site_yard' ? 'tinfence' : 'fence', x: box.cx, z: box.cz, q: box.ex >= box.ez ? 0 : 1, s: 1, fence: [si, p.fence] }, i: base + out.length, boxes: [box], top: box.cy + box.ey, hard: 1 })
+    }
+  })
+  return out.slice(0, Math.max(0, 1024 - base))
+}
+function dsFencesLook(c, mesh) {
+  const st = dsState, F = faustState, V = c.plan?.siteV, g = mesh.geometry, si = mesh.userData.site
+  if (!st || !F || !V || !g?.attributes?.position) return
+  const pos = g.attributes.position, A = pos.array
+  let lo = Infinity, hi = -1
+  for (const r of st.chunks.get(c.ci * F.S + c.cj)?.recs.values() || []) {
+    const fz = r.kind === DS_PROP && r.p.f.fence
+    if (!fz || fz[0] !== si) continue
+    const v = V[si]?.[fz[1]]
+    if (!v) continue
+    for (let k = v[0]; k < v[1]; k++) { A[k * 3] = r.p.f.x; A[k * 3 + 1] = -50; A[k * 3 + 2] = r.p.f.z }
+    lo = Math.min(lo, v[0]); hi = Math.max(hi, v[1] - 1)
+  }
+  if (hi < 0) return
+  pos.addUpdateRange(lo * 3, (hi - lo + 1) * 3); pos.needsUpdate = true
 }
 function dsPropRecord(key) {
   const F = faustState, local = key - DS_PROP * 4294967296, chunk = Math.floor(local / 1024), i = local % 1024
@@ -43091,6 +43134,7 @@ function dsPropsLook(c, g) {
 function dsPropApply(rec) {
   const F = faustState, c = F.chunks.get(faustKey(rec.p.ci, rec.p.cj)), mesh = c?.visual?.children.find(m => m.isMesh && m.material === F.materials?.stone)
   if (mesh) dsPropsLook(c, mesh.geometry)
+  for (const m of c?.visual?.children || []) if (m.userData.site !== undefined) dsFencesLook(c, m)
   if (world) dsDropSlim(b => rec.p.s.boxes.some(q => dsSameBox(b, q)))
 }
 function dsPropUndo(rec) { const c = faustState.chunks.get(faustKey(rec.p.ci, rec.p.cj)); if (c?.visual) dsRelight(c) }
@@ -43100,6 +43144,7 @@ function dsPropFresh(rec) {
     for (let k = 0; k < 3; k++) burst('chip', x, y, z, dx, 0.8, dz, 0x9a9488, 0.8)
     burst('dust', x, 0.2, z, 0, 1, 0, 0xc9c0ae, 1)
     sfxPlay('Door rip', { x, y, z }, 'world', 0.8)
+    if (f.k === 'fence' || f.k === 'tinfence') { for (let k = 0; k < 12; k++) burst('chip', x, y + (k % 4 - 1.5) * 0.45, z, dx + (k - 6) * 0.12, 0.9, dz, f.k === 'fence' ? 0x9a7a52 : 0x9aa2aa, 2.6); burst('dust', x, y, z, 0, 1, 0, 0xc9c0ae, 2.4) }
   } catch (e) { failN[161]++ }
   if (f.k === 'hydrant') dsPropJet(f.x, f.z, rec.key)
 }
@@ -43340,6 +43385,9 @@ function propObjLook(K) {
     cyl(0, 1.2, 1.7, 0, 0.2, 0, 0x1b3324); cyl(0, 0.8, 1.5, 0, 1.2, 0, 0x2c4a37)
   } else if (K.prop === 'phone') {
     for (const x of [-0.55, 0.55]) { box(0.9, 2.2, 0.9, x, -0.08, 0, 0x2b333d); box(1.0, 0.16, 1.0, x, 1.1, 0, 0x9aa1a8); box(0.6, 1.2, 0.04, x, 0.12, 0.46, 0xffd7a0) }
+  } else if (K.prop === 'fence' || K.prop === 'tinfence') {
+    box(3.6, 2.2, 0.16, 0, 0, 0, K.color); box(3.62, 0.1, 0.3, 0, 1.15, 0, 0x2a2018); box(3.62, 0.1, 0.2, 0, 0.8, 0, 0x252d37); box(3.62, 0.1, 0.2, 0, -0.8, 0, 0x252d37)
+    for (let i = 1; i < 12; i++) box(0.025, 2.2, 0.17, -1.8 + i * 0.3, 0, 0, K.prop === 'fence' ? 0x2a2018 : 0x2b3037)
   } else if (K.prop === 'busstop') {
     box(3.4, 0.12, 1.24, 0, 1.2, 0, 0x3a424b); box(3.0, 0.03, 1.0, 0, 1.12, 0, 0xffe2b0); box(2.2, 0.08, 0.4, 0, -0.75, -0.25, 0x7a5a32)
     box(3.1, 0.06, 0.04, 0, 0.95, -0.45, 0x2b3a44); box(3.1, 0.12, 0.04, 0, -1.12, -0.45, 0x2b3a44); box(3.1, 0.02, 0.02, 0, -0.2, -0.45, 0x6f8fa0)
@@ -43749,6 +43797,13 @@ dsKindRegister(DS_FEAT, { record: dsFeatRecord, apply: dsFeatApply, undo: dsFeat
 dsKindRegister(DS_LOOT, { record: lootRecord, apply() {}, undo() {}, fresh() {} })
 dsKindRegister(DS_LOOT_RING, { record: lootRingRecord, apply() {}, undo() {}, fresh() {} })
 dsKindRegister(DS_LOOT_SITE, { record: lootSiteRecord, apply() {}, undo() {}, fresh() {} })
+function propBreak(o) {
+  if (!isHost) return
+  try { burst('chip', o.x, o.y, o.z, 0, 0.8, 1, 0x9a9488, 0.8); burst('dust', o.x, o.y, o.z, 0, 1, 0, 0xc9c0ae, 1); sfxPlay('Door rip', { x: o.x, y: o.y, z: o.z }, 'world', 0.8) } catch (e) { failN[167]++ }
+  delete o.propKey
+  lootRetire(o)
+}
+for (const K of OBJECTS) if (K.prop === 'fence' || K.prop === 'tinfence') K.breaks = propBreak
 dsPropKind()
 dsKindRegister(DS_PIECE, { record: dsPieceRecord, apply() {}, undo() {}, fresh() {} })
 dsLampPieceKind()
