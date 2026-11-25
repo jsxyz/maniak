@@ -38318,7 +38318,7 @@ function slDrawSkinned(kitm, p, d, tint, scale = 1, gone = 0) {
   if (tint) im.setColorAt(i, slCol.setRGB(tint[0], tint[1], tint[2]))
 }
 const SL_NUDGE = { char: 1.1, clear: 0.5, look: 1, lookMax: 10, hold: 0.35, out: 3, outCar: 4.5, back: 0.9, max: 2.6, moving: 0.15, offFrames: 30, acc: 14 }
-const SL_AVOID = { move: 0.4, idle: 0.62, still: 0.8, lookMax: 3, max: 1.1, out: 1.5, cell: 6, still_v: 0.05 }
+const SL_AVOID = { passes: 3, width: { d: 0.3, 4: 0.3, 5: 0.45 }, move: 0.4, idle: 0.62, still: 0.8, lookMax: 3, max: 1.1, out: 1.5, cell: 6, still_v: 0.05 }
 const slAv = { pool: [], n: 0, hash: new Map(), list: [], drawn: [], grid: new Map() }
 const slAvPt = () => ({ car: false, ped: true, x: 0, z: 0, r: 0, vx: 0, vz: 0, sp: 0, grp: 0, idle: false })
 function slAvoidBegin() { slAv.n = 0 }
@@ -38362,7 +38362,7 @@ function slAvoidList(ag, p, base) {
   return L
 }
 function slAvoidSeparate(frame, dt) {
-  const a = slAv, D = a.drawn, g = a.grid, R = 0.55, map = slState.nudge || (slState.nudge = new Map())
+  const a = slAv, D = a.drawn, g = a.grid, map = slState.nudge || (slState.nudge = new Map()), W = SL_AVOID.width
   for (const arr of g.values()) arr.length = 0
   for (const e of D) {
     if (e.f !== frame) continue
@@ -38370,24 +38370,30 @@ function slAvoidSeparate(frame, dt) {
     if (!arr) g.set(k, arr = [])
     arr.push(e)
   }
-  for (const e of D) {
+  let anyFr = false
+  for (const e of D) { if (e.f !== frame) continue; e.fr = !(frame - e.ag._sf <= 2); if (e.fr) anyFr = true }
+  for (let pass = 0; pass < (anyFr ? SL_AVOID.passes : 1); pass++) for (const e of D) {
     const ag = e.ag, p = e.p; if (e.f !== frame) continue
     const bi = Math.floor(p.x), bj = Math.floor(p.z)
     for (let i = bi - 1; i <= bi + 1; i++) for (let j = bj - 1; j <= bj + 1; j++) {
       const arr = g.get(slAvKey(i, j)); if (!arr) continue
       for (const o of arr) {
-        if (o.ag.id <= ag.id || o.pt.grp === e.pt.grp) continue
-        const q = o.p, dx = p.x - q.x, dz = p.z - q.z, d = Math.hypot(dx, dz); if (d >= R) continue
+        if (o.ag.id <= ag.id || o.pt.grp === e.pt.grp || pass && !e.fr && !o.fr) continue
+        const q = o.p, dx = p.x - q.x, dz = p.z - q.z, d = Math.hypot(dx, dz), R = (W[ag.kind] ?? W.d) + (W[o.ag.kind] ?? W.d); if (d >= R) continue
         const dg = ag.companion ? 1 : o.ag.companion ? 2 : 0; if (dg && ag.companion && o.ag.companion) continue
-        const ux = d < 1e-3 ? Math.cos(p.yaw || 0) : dx / d, uz = d < 1e-3 ? -Math.sin(p.yaw || 0) : dz / d, h = Math.min(dg ? R - d : (R - d) / 2, 3 * Math.min(dt || 0.017, 0.1))
+        const ux = d < 1e-3 ? Math.cos(p.yaw || 0) : dx / d, uz = d < 1e-3 ? -Math.sin(p.yaw || 0) : dz / d, cap = 3 * Math.min(dt || 0.017, 0.1), newE = e.fr, newO = o.fr
         for (const [m, s] of [[e, 1], [o, -1]]) {
           if (dg === 1 && m === e || dg === 2 && m === o) continue
+          const fresh = m === e ? newE : newO, other = m === e ? newO : newE
+          if (other && !fresh) continue
+          const h = fresh ? (dg || !other ? R - d : (R - d) / 2) : Math.min(dg ? R - d : (R - d) / 2, cap)
           const n = map.get(m.ag.id) || (map.set(m.ag.id, { x: 0, z: 0, f: frame, vx: 0, vz: 0 }), map.get(m.ag.id))
           n.x += ux * h * s; n.z += uz * h * s; n.f = frame; m.p.x += ux * h * s; m.p.z += uz * h * s; m.nd = n
         }
       }
     }
   }
+  for (const e of D) if (e.f === frame) e.ag._sf = frame
 }
 const slExtents = new WeakMap()
 function slCarExtent(K) {
