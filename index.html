@@ -45132,7 +45132,7 @@ function boatSpot(x, z, R = 120, l = 10, deep = 1.5) {
   }
   return null
 }
-const RIVER = { near: 380, away: 620, think: 2000, tows: 2, barge: 0.5, cruise: 4.5, keep: 7, ahead: 28, line: 9, pull: [2.2, 1.6], probe: 6, under: 0.5, warn: 30, clear: 160, gap: 25, room: 2, headroom: 0.25 }
+const RIVER = { near: 380, away: 620, think: 2000, tows: 2, barge: 0.5, cruise: 4.5, keep: 7, ahead: 28, line: 9, pull: [2.2, 1.6], probe: 6, under: 0.5, warn: 30, clear: 160, gap: 25, room: 2, headroom: 0.25, loop: 60 }
 const riverSumsOf = new WeakMap()
 function riverSums(C) {
   let L = riverSumsOf.get(C)
@@ -45155,6 +45155,17 @@ function riverNear(C, x, z, s0, span = 1e9) {
     if (d < bd) { bd = d; best = L[i - 1] + f * Math.sqrt(n2) }
   }
   return best
+}
+const riverChains = new WeakMap()
+function riverChain(body) {
+  if (body.centre) return body.centre
+  let C = riverChains.get(body)
+  if (C === undefined) {
+    const c = (GAME.faustland.water.plan?.bodies.find(b => b.id === body.id)?.caps || []).reduce((a, k) => !a || k[4] > a[4] ? k : a, null), R = c ? c[4] * 0.6 : 0
+    C = R >= RIVER.loop ? Array.from({ length: 33 }, (_, i) => [c[0] + Math.cos(i / 32 * 2 * Math.PI) * R, c[1] + Math.sin(i / 32 * 2 * Math.PI) * R]) : null
+    riverChains.set(body, C)
+  }
+  return C
 }
 function riverShut(C, W, s, dir, S, reach) {
   const L = riverSums(C).at(-1)
@@ -45188,13 +45199,13 @@ function boatClearSpan(o, h, S, level) {
   forceVec.setValue(0, 0, 0); o.body.setLinearVelocity(forceVec); o.body.setAngularVelocity(forceVec); o.body.activate()
 }
 function boatRiverAim(o, A, W) {
-  const body = W.bodies?.find(b => b.id === A.river), C = body?.centre
+  const body = W.bodies?.find(b => b.id === A.river), C = body && riverChain(body)
   if (!C || C.length < 2) return
   const S = BOAT_SHAPES[o.K.name], reach = RIVER.ahead + RIVER.warn
   A.s = riverNear(C, o.x, o.z, A.s ?? 0, 120)
   const shut = dir => riverShut(C, W, A.s, dir, S, reach) || riverBlocked(o, S, dir, C, A.s)
   if (!shut(A.dir)) A.hold = null
-  else if (o.tow === undefined && !shut(-A.dir)) { A.dir = -A.dir; A.hold = null }
+  else if (!shut(-A.dir)) { A.dir = -A.dir; A.hold = null }
   else A.hold ||= [o.x, o.z]
   const [x, z, dx, dz] = riverAt(C, A.s + A.dir * RIVER.ahead), tx = dx * A.dir, tz = dz * A.dir
   const deep = off => { const a = W.at(x - tz * off, z + tx * off, floatRec); return !!a && a.depth >= S.draft + 1 }
@@ -45222,7 +45233,7 @@ function boatsRiverTick(W, near) {
   for (const o of objs.filter(o => o.boatAI?.river !== undefined)) if (!near(o.x, o.z, RIVER.away) && !o.riders?.some(r => r !== undefined)) {
     const g = o.tow !== undefined && objs.find(b => b.id === o.tow); if (g) boatDrop(g); boatDrop(o) }
   for (const body of W.bodies) {
-    const C = body.kind === 'river' && body.centre
+    const C = riverChain(body)
     if (!C || C.length < 2) continue
     const spans = boatSpansOf(body)
     for (const o of objs) {
@@ -45233,7 +45244,7 @@ function boatsRiverTick(W, near) {
     }
     const have = objs.filter(o => o.boatAI?.river === body.id).length
     if (have >= RIVER.tows) continue
-    const fit = BOATS.fleet.river.filter(([k]) => boatClearsSpans(k, body.level))
+    const fit = (BOATS.fleet[body.kind] || []).filter(([k]) => VEHICLES.find(v => v.name === k)?.sail && (!spans.length || boatClearsSpans(k, body.level)))
     if (!fit.length) continue
     let pick = boatHash(LV.grow?.seed ?? 0, body.id + ':k:' + T) % fit.reduce((n, [, w]) => n + w, 0), kind = fit[0][0]
     for (const [k, w] of fit) { kind = k; if ((pick -= w) < 0) break }
@@ -45315,7 +45326,7 @@ function boatCrewBody(o, cause, dmg = 1000, thrower = null) {
   try { GAME.streetLife?.driverExit?.({ vehicleId: o.id, x: o.x + ux * b, z: o.z + uz * b, dx: ux, dz: uz, hit: { dmg, by, ux, uz, gun: -1, cause } }) } catch (e) { failN[172]++ }
 }
 const BOATS = { moor: 260, away: 420, think: 1000, lines: [1.2, 1.6, 2.5, 3.0],
-  fleet: { river: [['Rowboat', 4], ['Speedboat', 3], ['Tug', 2], ['Police launch', 1]], lake: [['Rowboat', 5], ['Speedboat', 3]],
+  fleet: { river: [['Rowboat', 4], ['Speedboat', 3], ['Tug', 2], ['Police launch', 1]], lake: [['Rowboat', 5], ['Speedboat', 3], ['Tug', 2]],
     reservoir: [['Rowboat', 3], ['Speedboat', 2]], bay: [['Rowboat', 3], ['Speedboat', 3], ['Tug', 2], ['Police launch', 1], ['Barge', 1]], channel: [] },
   wake: { speed: 1.5, every: 0.09, spray: 8 } }
 const boatMoored = new Map()
