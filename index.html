@@ -24888,7 +24888,7 @@ function rigReachAim(b, u, v) {
   b.quaternion.copy(reachQ[2])
 }
 const REACH = { chest: 0.4, depth: 1.0, lead: 0.6, ramp: 60, release: 100, slack: 1.8 }
-const LUNGE = { stop: 0.9, max: 0.65, ease: 80, bound: 0.5, hold: 0.65 }
+const LUNGE = { stop: 0.9, max: 0.65, ease: 80, bound: 0.5, hold: 0.65, pull: 0.2 }
 function holdTouch(a, t) {
   if (!(a.holdN > 0) || !(t >= (a.holdFrom ?? Infinity))) return
   a.holdN--
@@ -25086,7 +25086,8 @@ function rigAnimate(a, want, dt, t) {
   if (a.drawOff && P.x === a.drawOff[2] && P.y === a.drawOff[3] && P.z === a.drawOff[4]) { P.x -= a.drawOff[0]; P.y -= a.drawOff[5]; P.z -= a.drawOff[1] }
   let ox = 0, oy = 0, oz = 0
   if (lunge) { ox += lunge.x; oz += lunge.z }
-  if (a.holdPos && !(a.dying >= 0) && t < (a.holdTo || 0) + LUNGE.ease) { const f = t < a.holdTo ? 1 : 1 - (t - a.holdTo) / LUNGE.ease; ox += (a.holdPos[0] - P.x) * f; oz += (a.holdPos[1] - P.z) * f }
+  if (a.holdPos && !(a.dying >= 0) && t < (a.holdTo || 0) + LUNGE.ease) { const f = t < a.holdTo ? 1 : 1 - (t - a.holdTo) / LUNGE.ease; ox += (a.holdPos[0] - P.x) * f; oz += (a.holdPos[1] - P.z) * f
+    if (a.pull && a.struckFrom) { const ux = a.struckFrom[0] - a.holdPos[0], uz = a.struckFrom[1] - a.holdPos[1], un = Math.hypot(ux, uz) || 1; ox += ux / un * a.pull * f; oz += uz / un * a.pull * f } }
   const om = Math.hypot(ox, oz)
   const lb = LUNGE.bound + (LUNGE.hold - LUNGE.bound) * (a.holdFrom !== undefined && t >= a.holdFrom ? clamp(1 - (t - (a.holdTo || 0)) / REACH.release, 0, 1) : 0)
   if (om > lb) { ox *= lb / om; oz *= lb / om }
@@ -28039,7 +28040,7 @@ function strikeWeight(arc, t) {
     }
   }
   if (a) { a.holdTo = hold; a.holdFrom = hs; a.holdN = 2 }
-  if (hit) { hit.holdTo = hold; hit.holdFrom = hs; hit.holdN = 2; hit.snapPend = true; hit.struckAt = hs; hit.struckFrom = [f[0], f[2]]; hit.struckKnock = gun?.knock || 0; hit.holdPos = [hit.mesh.position.x, hit.mesh.position.z] }
+  if (hit) { hit.holdTo = hold; hit.holdFrom = hs; hit.holdN = 2; hit.pull = gun?.punch === 'jab' ? LUNGE.pull : 0; hit.snapPend = true; hit.struckAt = hs; hit.struckFrom = [f[0], f[2]]; hit.struckKnock = gun?.knock || 0; hit.holdPos = [hit.mesh.position.x, hit.mesh.position.z] }
   if (a && hit && gun?.melee && !gun.grip && (gun.punch === 'jab' || gun.punch === 'rise')) a.reach = { to: hit, at: hs, until: hold }
   return hit
 }
@@ -32971,7 +32972,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     if (conns.size) pushRoster()
     return { id: c.id, kind, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100) }
   },
-  hauntsOff() { let n = 0; for (const c of players.values()) if (!c.bot) { hauntNext.set(c.id, Infinity); n++ } return n },
+  haunt(on) { hauntOn = !!on; return hauntOn },
+  hauntsOff() { hauntOn = false; let n = 0; for (const c of players.values()) if (!c.bot) { hauntNext.set(c.id, Infinity); n++ } return n },
   clipAt(stage, pole) { SL_ROUTINE.force = stage || pole ? { stage, pole, t0: slNow() } : null; return SL_ROUTINE.force },
   stripAt(u) { SL_STRIP.force = Number.isFinite(u) ? Math.min(0.999, Math.max(0, u)) : null; return SL_STRIP.force },
   clubs: () => {
@@ -36627,7 +36629,42 @@ const HAUNT_CREWS = {
   marshalling: [['thug_guard', 'shooter', 'thug'], ['shooter', 'thug_guard', 'freak'], ['thug_guard', 'thug', 'shooter', 'thug_throw']],
 }
 const hauntCrews = new Map(), hauntNext = new Map(), hauntLog = []
-let hauntAcc = 0, hauntSerial = 0, hauntHw = null
+let hauntAcc = 0, hauntSerial = 0, hauntHw = null, hauntWarmN = 0, hauntWarmF = null, hauntOn = true
+const hauntBlocked = []
+const hauntBlockedAt = (x, z) => hauntBlocked.some(r => x > r[0] - 2 && x < r[2] + 2 && z > r[1] - 2 && z < r[3] + 2)
+const hauntQ = []
+function hauntWarm(F, p) {
+  if (hauntWarmF !== F) { hauntWarmF = F; hauntWarmN = 0 }
+  if (hauntWarmN >= 3) return false
+  const n = hauntWarmN++
+  if (n === 0) hauntHighway(p.x, p.y, p.z)
+  else if (n === 1) hauntStation(p.x, p.z)
+  else hauntIndustry(p.x, p.z)
+  return true
+}
+function hauntAdd(Q) {
+  const { K, kinds, at, yaw } = Q, n = Q.n++, kind = kinds[n], sx = Math.cos(yaw), sz = -Math.sin(yaw)
+  K.pend--
+  const i = HAUNT_ROWS[kind]?.find(r => !players.has(BOT_ID0 + r))
+  if (i !== undefined) {
+    const o = (n - (kinds.length - 1) / 2) * 1.1
+    const q = [[sx * o, sz * o], [-sx * o, -sz * o], [sz * o, -sx * o], [-sz * o, sx * o], [0, 0]].find(([dx, dz]) => { const t = staticRay(at.x + dx, at.y + 1.2, at.z + dz, 0, -1, 0, 2.4); return t < 2.4 && Math.abs(at.y + 1.2 - t - at.y) < 0.6 }) || [0, 0]
+    ENFORCER_AT = [at.x + q[0], at.y + 0.6, at.z + q[1], yaw]
+    const ab0 = realNow(), ok = addBot(i)
+    background.simAdd('hn add', realNow() - ab0)
+    ENFORCER_AT = null
+    if (ok) {
+      const c = players.get(BOT_ID0 + i)
+      c.prot = 0; c.ai.yaw = yaw; c.ai.lurk = c.hp; c.ai.crew = K.key
+      K.ids.push(c.id)
+    }
+  }
+  if (Q.n < kinds.length) return
+  hauntQ.shift()
+  if (!K.ids.length) { hauntCrews.delete(K.key); return }
+  hauntLog.push({ t: Math.round(K.at), env: K.env, kinds: K.ids.map(id => players.get(id).bot.haunt), x: r2(at.x), y: r2(at.y), z: r2(at.z), door: at.door, hidden: at.hidden, from: Q.from })
+  if (hauntLog.length > 40) hauntLog.shift()
+}
 function hauntHighway(x, y, z) {
   const F = faustState
   if (!F) return false
@@ -36676,7 +36713,8 @@ function hauntEnv(p) {
   const band = faustRingBand(F.seed, F.S, Math.floor(p.x / FAUST_RINGS.cell), Math.floor(p.z / FAUST_RINGS.cell))
   return band === 'city' ? 'urban' : band === 'urban' || band === 'suburb' || band === 'shanty' ? band : 'fields'
 }
-function hauntSpot(p, env) {
+const hauntSrch = new Map()
+function hauntSpotInit(p, env) {
   const foot = p.y - p.h - p.r, inside = env === 'interior' || env === 'club' || env === 'store', near = inside || env === 'roof'
   const [r0, r1] = near ? HAUNT.close : HAUNT.ring, A0 = near && inAt(p.x, foot, p.z), eye = eyeOf(p), cands = []
   if (!near && Math.abs(p.x) <= ARENA && Math.abs(p.z) <= ARENA) {
@@ -36685,10 +36723,15 @@ function hauntSpot(p, env) {
       cands.push({ x: l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, z: l.z + l.d + 0.9, door: true, yaw: Math.PI })
   }
   for (let k = 0; k < 20; k++) { const a = k / 20 * 2 * Math.PI, r = r0 + Math.random() * (r1 - r0); cands.push({ x: p.x + Math.sin(a) * r, z: p.z + Math.cos(a) * r }) }
-  let best = null, bs = -Infinity
-  for (const q of cands) {
-    const d = Math.hypot(q.x - p.x, q.z - p.z)
-    if (d < r0 || d > r1 + 4) continue
+  return { env, px: p.x, pz: p.z, foot, inside, near, r0, r1, A0, eye, cands, k: 0, best: null, bs: -Infinity }
+}
+function hauntSpot(p, env, budget = Infinity, S = hauntSpotInit(p, env)) {
+  const { px, pz, foot, inside, near, r0, r1, A0, eye, cands } = S
+  for (let n = 0; S.k < cands.length && n < budget;) {
+    const q = cands[S.k++]
+    const d = Math.hypot(q.x - px, q.z - pz)
+    if (d < r0 || d > r1 + 4 || hauntBlockedAt(q.x, q.z)) continue
+    n++
     const top = foot + (near ? 1.2 : 4), len = near ? 2.5 : 10, t = staticRay(q.x, top, q.z, 0, -1, 0, len)
     if (!(t < len)) continue
     const gy = top - t
@@ -36698,12 +36741,12 @@ function hauntSpot(p, env) {
     const A = inAt(q.x, gy, q.z)
     if (near ? !A || A.B !== A0.B || A.k !== A0.k || inside && !A.inside : A?.inside) continue
     const W = waterOf(q.x, q.z)
-    if (W && W.y > gy + 0.05 || env === 'water' && Math.abs(gy - foot) > 0.8) continue
-    const hx = q.x - p.x, hy = gy + 1.2 - eye, hz = q.z - p.z, hd = Math.hypot(hx, hy, hz) || 1, hidden = staticRay(p.x, eye, p.z, hx / hd, hy / hd, hz / hd, hd) < hd - 0.3
+    if (W && W.y > gy + 0.05 || S.env === 'water' && Math.abs(gy - foot) > 0.8) continue
+    const hx = q.x - px, hy = gy + 1.2 - eye, hz = q.z - pz, hd = Math.hypot(hx, hy, hz) || 1, hidden = staticRay(px, eye, pz, hx / hd, hy / hd, hz / hd, hd) < hd - 0.3
     const sc = (hidden ? 8 : 0) + (q.door ? 5 : 0) - Math.abs(d - (r0 + r1) / 2) * 0.3 + Math.random()
-    if (sc > bs) { bs = sc; best = { x: q.x, y: gy, z: q.z, door: !!q.door, hidden } }
+    if (sc > S.bs) { S.bs = sc; S.best = { x: q.x, y: gy, z: q.z, door: !!q.door, hidden } }
   }
-  return best
+  return S
 }
 function hauntTick(dt, all) {
   if (!isHost || !LV.faust || !faustState || (hauntAcc += dt) < HAUNT.every) return
@@ -36714,36 +36757,34 @@ function hauntTick(dt, all) {
     for (const id of K.ids) { const c = players.get(id); if (c && (c.ai.gone || !all.some(p => !p.bot && p.id < BOT_ID0 && Math.hypot(p.x - c.x, p.z - c.z) < HAUNT.keep))) { hauntGone(c, c.ai.gone || 'far'); dropBot(c); moved = true } }
     K.ids = K.ids.filter(id => players.get(id)?.ai?.crew === key)
     hauntHelp(K, T)
-    if (!K.ids.length) { hauntCrews.delete(key); hauntNext.set(K.owner, T + (HAUNT.gap[0] + Math.random() * (HAUNT.gap[1] - HAUNT.gap[0])) * 1000) }
+    if (!K.ids.length && !K.pend) { hauntCrews.delete(key); hauntNext.set(K.owner, T + (HAUNT.gap[0] + Math.random() * (HAUNT.gap[1] - HAUNT.gap[0])) * 1000) }
   }
-  let room = Math.min(HAUNT.cap, BOT_COUNT * 2) - [...hauntCrews.values()].reduce((n, K) => n + K.ids.length, 0)
+  if (hauntQ.length) { if (hauntCrews.has(hauntQ[0].K.key)) { hauntAdd(hauntQ[0]); moved = true } else hauntQ.shift() }
+  else if (humans.length && hauntWarm(faustState, humans[0])) return
+  for (const id of hauntSrch.keys()) if (!humans.some(h => h.id === id)) hauntSrch.delete(id)
+  let room = Math.min(HAUNT.cap, BOT_COUNT * 2) - [...hauntCrews.values()].reduce((n, K) => n + K.ids.length + (K.pend || 0), 0)
   for (const p of humans) {
     if (room < 2 || [...hauntCrews.values()].some(K => K.owner === p.id)) continue
     if (!hauntNext.has(p.id)) hauntNext.set(p.id, T + HAUNT.first * 1000)
     const seat = seatOf(p)
     if (hauntNext.get(p.id) > T || seat && speedOf(seat[0]) > 6) continue
-    const hs0 = realNow(), env = hauntEnv(p), list = HAUNT_CREWS[env], kinds = list[Math.random() * list.length | 0].slice(0, room), hs1 = realNow(), at = hauntSpot(p, env)
-    background.simAdd('hn env', hs1 - hs0); background.simAdd('hn spot', realNow() - hs1)
+    if (hauntQ.length) continue
+    const hs0 = realNow()
+    let S = hauntSrch.get(p.id), env = S?.env, kinds = S?.kinds
+    if (!S) { env = hauntEnv(p); const list = HAUNT_CREWS[env]; kinds = list[Math.random() * list.length | 0].slice(0, room); background.simAdd('hn env', realNow() - hs0) }
+    if (!hauntOn || hauntBlockedAt(p.x, p.z)) { hauntSrch.delete(p.id); hauntNext.set(p.id, T + HAUNT.retry * 1000); continue }
+    const hs1 = realNow()
+    S = hauntSpot(p, env, 5, S || hauntSpotInit(p, env))
+    S.kinds = kinds
+    background.simAdd('hn spot', realNow() - hs1)
+    if (S.k < S.cands.length) { hauntSrch.set(p.id, S); continue }
+    hauntSrch.delete(p.id)
+    const at = S.best
     if (!at) { hauntNext.set(p.id, T + HAUNT.retry * 1000); continue }
-    const key = 'h' + ++hauntSerial, K = { key, owner: p.id, env, ids: [], at: T, help: kinds.length < 3 ? 2 : 0 }, yaw = Math.atan2(-(p.x - at.x), -(p.z - at.z)), sx = Math.cos(yaw), sz = -Math.sin(yaw)
-    kinds.forEach((kind, n) => {
-      const i = HAUNT_ROWS[kind]?.find(r => !players.has(BOT_ID0 + r))
-      if (i === undefined) return
-      const o = (n - (kinds.length - 1) / 2) * 1.1
-      const q = [[sx * o, sz * o], [-sx * o, -sz * o], [sz * o, -sx * o], [-sz * o, sx * o], [0, 0]].find(([dx, dz]) => { const t = staticRay(at.x + dx, at.y + 1.2, at.z + dz, 0, -1, 0, 2.4); return t < 2.4 && Math.abs(at.y + 1.2 - t - at.y) < 0.6 }) || [0, 0]
-      ENFORCER_AT = [at.x + q[0], at.y + 0.6, at.z + q[1], yaw]
-      const ab0 = realNow(), ok = addBot(i)
-      background.simAdd('hn add', realNow() - ab0)
-      ENFORCER_AT = null
-      if (!ok) return
-      const c = players.get(BOT_ID0 + i)
-      c.prot = 0; c.ai.yaw = yaw; c.ai.lurk = c.hp; c.ai.crew = key
-      K.ids.push(c.id)
-    })
-    if (!K.ids.length) continue
-    hauntCrews.set(key, K); room -= K.ids.length; moved = true
-    hauntLog.push({ t: Math.round(T), env, kinds: K.ids.map(id => players.get(id).bot.haunt), x: r2(at.x), y: r2(at.y), z: r2(at.z), door: at.door, hidden: at.hidden, from: [r2(p.x), r2(p.z)] })
-    if (hauntLog.length > 40) hauntLog.shift()
+    kinds = kinds.slice(0, room)
+    if (kinds.length < 2) continue
+    const key = 'h' + ++hauntSerial, K = { key, owner: p.id, env, ids: [], at: T, help: kinds.length < 3 ? 2 : 0, pend: kinds.length }, yaw = Math.atan2(-(S.px - at.x), -(S.pz - at.z))
+    hauntCrews.set(key, K); hauntQ.push({ K, kinds, at, yaw, n: 0, from: [r2(S.px), r2(S.pz)] }); room -= kinds.length
   }
   if (moved && conns.size) pushRoster()
 }
