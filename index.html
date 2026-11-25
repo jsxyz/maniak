@@ -2984,6 +2984,7 @@ function faustFeatParts(f) {
     B(0, 0.25 * k, 0, 3.6 * k, 0.25 * k, 3.6 * k, 0x353b44, 0, 1); B(0, 0.75 * k, 0, 2.9 * k, 0.25 * k, 2.9 * k, 0x454b54, 0, 1); B(0, 1.45 * k, 0, 2.3 * k, 0.45 * k, 2.3 * k, 0x5f656d, 0, 1)
     U([0, 1.9 * k, 0], [0, 22 * k, 0], 2.12 * k, 1.27 * k, 4, 0xc2c8cd, 0.5); U([0, 22 * k, 0], [0, 25 * k, 0], 1.27 * k, 0, 4, T.gold, 0.5)
     B(0, 22 * k, 0, 0.95 * k, 0.12 * k, 0.95 * k, T.gold, 1.5); B(0, 11.9 * k, 0, 1.45 * k, 10 * k, 1.45 * k, 0, 0, 2)
+    if (f.lit) { B(0, 25.5 * k, 0, 0.6 * k, 0.6 * k, 0.6 * k, T.warm, 3); B(0, 2.6 * k, 0, 2.25 * k, 0.08 * k, 2.25 * k, T.warm, 1.6); for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) B(sx * 3.2 * k, 0.56 * k, sz * 3.2 * k, 0.22 * k, 0.06 * k, 0.22 * k, T.warm, 2.2) }
     for (const [sx, sz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) B(sx * 2.32 * k, 1.45 * k, sz * 2.32 * k, sx ? 0.02 * k : 1.4 * k, 0.25 * k, sx ? 1.4 * k : 0.02 * k, 0x4a3b24, 0.3)
   } else if (f.k === 'fountain') {
     const R = 5.2 * k
@@ -3947,7 +3948,7 @@ function faustNetKerbs(g, P, X, Z) {
 }
 function faustEtoileGarden(seed, S, gx, gz, NC, net) {
   const K = FAUST_NET, X = gx * 96, Z = gz * 96, out = [], rail = net.rail.byCell.get(faustKey(gx + S / 2, gz + S / 2)) || []
-  if (!gx && !gz) out.push({ k: 'obelisk', x: 0, z: 0, s: 1.9, q: 0, h: 0 })
+  if (!gx && !gz) out.push({ k: 'obelisk', x: 0, z: 0, s: 1.9, q: 0, h: 0, lit: 1 })
   const inPad = (x, z) => x < X || z < Z || x > X + 96 || z > Z + 96 || NC.pads.some(p => {
     if (z < p[1] || z > p[3]) return false
     if (p.length <= 4) return x >= p[0] && x <= p[2]
@@ -4001,10 +4002,11 @@ function faustNetGround(g, P, X, Z) {
     const t0 = end(0) ? 12 : 2, t1 = end(1) ? L - 12 : L - 2
     const mo = r.width < 20 ? -1.35 : 0
     if (r.width >= 12 && !r.oneway) for (let t = t0; t + 2.4 <= t1; t += 12) quad([a[0] + u[0] * t + n[0] * mo, a[1] + u[1] * t + n[1] * mo], u, n, 2.4, 0.12, 0.012, 0xb4a77d)
-    if (r.oneway && t1 - t0 > 1) for (const k of [-1, 1]) { faustNetLine(quad, nr, r, a, u, n, k * (r.width / 2 - 0.7), 0.15, t0, t1, 0xadb0ad); faustNetLine(quad, nr, r, a, u, n, k * 2.2, 0.12, t0, t1, 0xadb0ad, true) }
+    if (r.oneway && t1 - t0 > 1) for (const k of [-1, 1]) { faustNetLine(quad, nr, r, a, u, n, k * (r.width / 2 - 0.8), 0.3, t0, t1, 0xadb0ad); faustNetLine(quad, nr, r, a, u, n, k * 2.2, 0.12, t0, t1, 0xadb0ad, true) }
     if (r.width >= 12 && !r.oneway && t1 - t0 > 1) for (const k of r.width < 20 ? [1] : [-1, 1]) faustNetLine(quad, nr, r, a, u, n, k * (r.width / 2 - 2.5), 0.1, t0, t1, 0x9a9d9a)
-    if (r.width >= 8) for (const k of [0, 1]) if (net?.zebra(k ? r.b[0] : r.a[0], k ? r.b[2] : r.a[2])) {
-      const t = k ? L - 4.5 : 4.5, dir = k ? -1 : 1
+    const faustRingMouth = k => !r.oneway && Math.abs(Math.hypot(k ? r.b[0] : r.a[0], k ? r.b[2] : r.a[2]) - FAUST_NET.ring) < 2
+    if (r.width >= 8) for (const k of [0, 1]) if (net?.zebra(k ? r.b[0] : r.a[0], k ? r.b[2] : r.a[2]) || faustRingMouth(k)) {
+      const e = faustRingMouth(k) ? FAUST_NET.ringW / 2 + 2.5 : 4.5, t = k ? L - e : e, dir = k ? -1 : 1
       for (let o = -r.width / 2 + 1; o <= r.width / 2 - 1; o += 1.6) quad([a[0] + u[0] * t + n[0] * o, a[1] + u[1] * t + n[1] * o], [u[0] * dir, u[1] * dir], n, 3, 0.55, 0.012, 0xadb0ad)
     }
   }
