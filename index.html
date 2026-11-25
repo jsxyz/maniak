@@ -12811,7 +12811,8 @@ const background = (() => {
     if (!rush && !soft && (gpuLast.links || gpuLast.upKB > UPLOAD_KB)) { stats.rests = (stats.rests || 0) + 1; gpuLast = gpuNone; return }
     if (!soft && fenceOn && signaledFrame < gateFrame && gateHeld < 120 && realNow() - gateAt < 100) { gateHeld++; stats.gated = (stats.gated || 0) + 1; return }
     gateHeld = 0
-    while (realNow() - start < cap || !steps) {
+    let extraCap = 0
+    while (realNow() - start < Math.max(cap, extraCap) || !steps) {
       const list = [...jobs.values()].sort((a, b) => b.priority - a.priority || a.order - b.order)
       let next = null
       for (const j of list) {
@@ -12819,6 +12820,7 @@ const background = (() => {
         if (!j.waiting && !deferred.has(j) && !(j.gpu && (graphics.state === 'lost' || renderer?.getContext().isContextLost()))) { next = j; break }
       }
       if (!next) break
+      if (next.cap > extraCap && !hostLoading && !slow) extraCap = next.cap
       const j = next, t = realNow(), progs0 = renderer?.info.programs?.length || 0; current = j; j.n = (j.n || 0) + 1
       try {
         j.gen ||= typeof j.steps === 'function' ? j.steps() : j.steps
@@ -12843,9 +12845,9 @@ const background = (() => {
     stats,
     get pending() { return [...jobs.keys()] },
     get jobs() { return [...jobs.values()].map(j => j.key + (j.phase ? '/' + j.phase : '') + ':' + (j.n || 0) + (j.waiting ? 'w' : '') + ' ' + Math.round((performance.now() - j.t0) / 1000) + 's') },
-    run(key, steps, { valid, priority = 0, gpu = false } = {}) {
+    run(key, steps, { valid, priority = 0, gpu = false, cap = 0 } = {}) {
       if (jobs.has(key)) return jobs.get(key).promise
-      const j = { key, steps, valid, priority, gpu, order: ++order, t0: performance.now() }
+      const j = { key, steps, valid, priority, gpu, cap, order: ++order, t0: performance.now() }
       j.promise = new Promise((resolve, reject) => Object.assign(j, { resolve, reject }))
       jobs.set(key, j); schedule(); return j.promise
     },
@@ -47340,7 +47342,7 @@ const MAP_FONT = "'Futura','Century Gothic','Josefin Sans','Trebuchet MS',ui-san
 const MAP_HAND = "'Maniak Hand','Marker Felt','Comic Sans MS',cursive"
 const MAP_HAND_FONT = { family: 'Maniak Hand', url: 'https://cdn.jsdelivr.net/npm/@fontsource/permanent-marker@5.3.0/files/permanent-marker-latin-400-normal.woff2',
   sri: 'sha384-vT5xTr25YOIF7ASHObdDkQnLzyunaZ1r9FRHtYCen88HCgzujW8tWPo6rzU2vt77' }
-const MAP_ZOOM = { max: 3, fit: 0.72 }, MAP_MS = { repaint: 160, warm: 4000, free: 20000 }
+const MAP_ZOOM = { max: 3, fit: 0.72 }, MAP_MS = { repaint: 160, warm: 0, free: 20000 }
 const MAP_NATIVE = new Set(['highways', 'channels', 'water', 'rings'])
 const MAP_WORDS = ['Aurora', 'Meridian', 'Zenith', 'Orchid', 'Cobalt', 'Lantern', 'Marlowe', 'Verity', 'Halcyon', 'Sable', 'Garnet', 'Vesper', 'Quill', 'Ember', 'Pelham', 'Corbin', 'Dunmore', 'Larkin', 'Ashby', 'Fenwick', 'Gilded', 'Hartley', 'Ivory',
   'Juniper', 'Kestrel', 'Linden', 'Mercer', 'Nolan', 'Onyx', 'Prism', 'Radiant', 'Sterling', 'Tiber', 'Umber', 'Vandyke', 'Whitlock', 'Yarrow', 'Alder', 'Beacon', 'Crescent', 'Eclipse', 'Fairmont', 'Galena', 'Harlan', 'Iris', 'Jasper', 'Kingsley',
@@ -47603,7 +47605,7 @@ function mapEnsure() {
   if (!key || !LV.faust || mapData?.key === key || mapJobKey === key) return
   mapJobKey = key; mapData = null; mapCache = null
   const [seed, S] = key.split(' ').map(Number)
-  background.run('map plan', function* () { mapData = yield* mapBuildSteps(seed, S); mapCache = null; mapWorkerStart() }, { valid: () => mapKey() === key })
+  background.run('map plan', function* () { mapData = yield* mapBuildSteps(seed, S); mapCache = null; mapWorkerStart() }, { valid: () => mapKey() === key, priority: 1, cap: 8 })
     .catch(e => { console.warn('map:', e?.message || e); mapJobKey = '' }).finally(() => { if (mapJobKey === key && !mapData) mapJobKey = '' })
 }
 
@@ -48224,7 +48226,8 @@ function mapWorkerMain() {
         mapSize = m.size; mapMe = m.me; mapPlaces = new Map(m.places)
         const cv = new OffscreenCanvas(Math.round(m.CW * m.sc), Math.round(m.CH * m.sc)), g = cv.getContext('2d', { willReadFrequently: true })
         const it = mapPaintSteps(g, D, m.v, m.CW, m.CH, m.sc)
-        while (!it.next().done);
+        let t0 = performance.now()
+        for (;;) { if (it.next().done) break; if (m.rest && performance.now() - t0 >= m.slice) { await new Promise(r => setTimeout(r, m.rest)); t0 = performance.now() } }
         const bmp = cv.transferToImageBitmap()
         self.postMessage({ t: 'done', id: m.id, bmp }, [bmp])
       }
@@ -48287,7 +48290,7 @@ function mapWorkerStart() {
 function mapWorkerPost(v, CW, CH, W0, H0, dpr) {
   const sc = Math.min(dpr, Math.sqrt((mapLowOn() ? 1.7e6 : 4.2e6) / (CW * CH))) || 1, C = mapCache
   mapWJob = { id: ++mapWId, v, CW, CH, W0, H0, wasDirty: !!(C && C.dirty) }
-  mapWorker.postMessage({ t: 'paint', id: mapWId, v, CW, CH, sc, size: { W: mapSize.W, H: mapSize.H }, me: mapMe ? { x: mapMe.x, z: mapMe.z } : null, places: [...mapPlaces] })
+  mapWorker.postMessage({ t: 'paint', id: mapWId, v, CW, CH, sc, size: { W: mapSize.W, H: mapSize.H }, me: mapMe ? { x: mapMe.x, z: mapMe.z } : null, places: [...mapPlaces], slice: 6, rest: mapLowOn() ? 6 : 0 })
 }
 function mapPrewarm() {
   if (!mapWReady || mapWJob || mapOpen || mapCache || !mapData) return
