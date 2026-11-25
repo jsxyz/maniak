@@ -45593,27 +45593,31 @@ const boatTrisCache = new Map()
 function boatDeckTris(K) {
   const name = K.model || K.name
   if (boatTrisCache.has(name)) return boatTrisCache.get(name)
-  const S = BOAT_SHAPES[name], H = hullOf(K), tris = []
-  const box = (x0, y0, z0, x1, y1, z1) => {
-    const c = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]].map(p => [p[0] - H.at[0], p[1] - H.at[1], p[2] - H.at[2]])
-    for (const f of [[0, 3, 2, 1], [4, 5, 6, 7], [0, 4, 7, 3], [1, 2, 6, 5], [3, 7, 6, 2], [0, 1, 5, 4]]) tris.push([c[f[0]], c[f[1]], c[f[2]]], [c[f[0]], c[f[2]], c[f[3]]])
-  }
-  const hw = S.b / 2 * 0.85, hl = S.l / 2 * 0.9
-  box(-hw, S.d - 0.5, -hl, hw, S.d, hl)
-  for (const d of S.deck) box(d[0], d[1], d[2], d[3], d[4], d[5])
+  const H = hullOf(K), tris = []
+  const h = new QuickHull().setFromPoints(H.pts.map(p => new THREE.Vector3(...p)))
+  for (const f of h.faces) { const v = []; let e = f.edge; do { v.push(e.head().point.toArray()); e = e.next } while (e !== f.edge); for (let i = 1; i + 1 < v.length; i++) tris.push([v[0], v[i], v[i + 1]]) }
   boatTrisCache.set(name, tris)
   return tris
 }
 function boatTrackPose(id, t) {
   const tr = objTracks.get(id)
   if (!tr || !tr.length) return null
-  let j = 0
-  while (j < tr.length && tr[j].t < t) j++
-  const n = tr.length, end = j >= n && n > 1, a = end ? tr[n - 2] : tr[Math.max(0, j - 1)], b = end ? tr[n - 1] : tr[Math.min(j, n - 1)], P = a.p, Q = b.p, dt = (b.t - a.t) / 1000
-  const span = b.t - a.t, u = span === 0 ? 1 : end ? Math.min((t - a.t) / span, 1 + 600 / span) : clamp((t - a.t) / span, 0, 1), uq = Math.min(u, 1), sg = P[4] * Q[4] + P[5] * Q[5] + P[6] * Q[6] + P[7] * Q[7] < 0 ? -1 : 1
+  const n = tr.length, last = tr[n - 1]
+  let a, b, u
+  if (t > last.t && n > 1) {
+    let i = n - 2
+    while (i > 0 && last.t - tr[i].t < 150) i--
+    a = tr[i]; b = last; u = 1 + Math.min(t - last.t, 300) / Math.max(1, last.t - tr[i].t)
+  } else {
+    let j = 0
+    while (j < n && tr[j].t < t) j++
+    a = tr[Math.max(0, j - 1)]; b = tr[Math.min(j, n - 1)]
+    u = b.t === a.t ? 1 : clamp((t - a.t) / (b.t - a.t), 0, 1)
+  }
+  const P = a.p, Q = b.p, sg = P[4] * Q[4] + P[5] * Q[5] + P[6] * Q[6] + P[7] * Q[7] < 0 ? -1 : 1, uq = Math.min(u, 1)
   const q = [0, 1, 2, 3].map(i => lerp(P[4 + i], sg * Q[4 + i], uq)), nq = Math.hypot(...q), fw = rotq(q.map(x => x / nq), [0, 0, -1])
-  const k = dt > 0 ? 1 / dt : 0, ex = (a, b, f) => a + (b - a) * f
-  return { x: ex(P[1], Q[1], u), y: lerp(P[2], Q[2], uq), z: ex(P[3], Q[3], u), yaw: Math.atan2(-fw[0], -fw[2]), vx: (Q[1] - P[1]) * k, vy: (Q[2] - P[2]) * k, vz: (Q[3] - P[3]) * k, w: 0 }
+  const k = b.t > a.t ? 1000 / (b.t - a.t) : 0, ex = (p, r) => p + (r - p) * u
+  return { x: ex(P[1], Q[1]), y: lerp(P[2], Q[2], uq), z: ex(P[3], Q[3]), yaw: Math.atan2(-fw[0], -fw[2]), vx: (Q[1] - P[1]) * k, vy: (Q[2] - P[2]) * k, vz: (Q[3] - P[3]) * k, w: 0 }
 }
 function boatCarryTracks() {
   const live = new Set()
