@@ -14286,7 +14286,7 @@ function runUpWall(c, inp, spd, wx, wz, dt) {
   return [0, Math.min(c.vy, RUN_OFF), 0]
 }
 const REEL_POSE = { heave: 180, fly: 2.5, brace: 1.8, lean: 0.85 }
-const MANTLE = { auto: true, tap: 0.6, low: 0.4, high: 1.3, clear: 2.05, drop: 3, lift: 0.08, slow: 3.5, rise: [0.08, 0.09], aim: 0.8, slip: 0.3 }
+const MANTLE = { auto: true, tap: 0.6, low: 0.4, high: 1.3, clear: 2.05, drop: 3, lift: 0.08, slow: 7, rise: [0.08, 0.09], time: [0.08, 0.16], aim: 0.8, slip: 0.3 }
 const MANTLE_POSE = { hip: 0.33, lean: [0.48, 0.38, 0.24, 0.85], lead: [0.4, 0.5, 0.22], trail: [0.2, 0.45, 0.26], shrug: 0.55, roll: 0.35, let: 0.15, letArms: 180, letLegs: 240,
   armsIn: 120, tuckIn: [60, 200], mount: { hip: 0.7, lean: 0.5, lead: [0.28, 0.6, 0.08], let: 120 } }
 const mantleHit = []
@@ -14320,18 +14320,18 @@ function mantleTick(c, inp, wx, wz, m, CX, CZ) {
   if (busy || c.bot || !c.grounded || !GAME.participantOf(c)?.mantle || c.springT > 0 || c.airT > 0 || c.hop || c.hayT > 0) return
   const press = inp.j && !c.jAir && !c.jLock, push = K.auto && m > 0.5
   if (!press && !push) return
-  const fx = m > 0.5 ? wx / m : -Math.sin(inp.yaw), fz = m > 0.5 ? wz / m : -Math.cos(inp.yaw), riseAt = dy => K.rise[0] + K.rise[1] * dy
+  const fx = m > 0.5 ? wx / m : -Math.sin(inp.yaw), fz = m > 0.5 ? wz / m : -Math.cos(inp.yaw), riseAt = dy => K.rise[0] + K.rise[1] * dy, timeAt = dy => K.time[0] + K.time[1] * dy
   const along = Math.max(0, ((c.vx || 0) - CX) * fx + ((c.vz || 0) - CZ) * fz)
   const P = mantleProbe(c, fx, fz, c.r + Math.max(press ? K.tap : 0, push ? along * riseAt(K.high + K.lift) + 0.1 : 0))
   if (!P) return
   const [s, top, w] = P, dy = top + K.lift - (c.y - c.h - c.r), gap = Math.max(0, s - c.r - 0.02), vh = Math.max(along, K.slow)
   if (!press && gap > Math.max(0.05, along * riseAt(dy))) return
-  const tr = press || along < 1 ? riseAt(dy) : Math.max(0.8 * riseAt(dy), Math.min(riseAt(dy), gap / along))
+  const tr = press || along < 1 ? timeAt(dy) : Math.max(0.8 * timeAt(dy), Math.min(timeAt(dy), gap / along))
   c.mantle = [0, tr, ((w ? s + w + c.r + 0.05 : s + c.r + 0.1) - gap) / vh, c.x, c.y, c.z, fx, fz, gap, vh, dy, w ? 0 : 1, top]
 }
 function mantleAt(M, u) {
   const [, tr, , x0, y0, z0, fx, fz, gap, vh, dy] = M, k = Math.min(u, tr) / tr, a = u < tr ? gap * k : gap + vh * (u - tr)
-  return [x0 + fx * a, y0 + dy * (1 - (1 - k) * (1 - k)), z0 + fz * a]
+  return [x0 + fx * a, y0 + dy * k * k * (3 - 2 * k), z0 + fz * a]
 }
 function mantleV(c, CV, dt) {
   const M = c.mantle
@@ -15130,7 +15130,7 @@ function swimTick(c, inp, wx, wz, dt, J) {
       if (e >= 0 && e < SWIM.reach && staticRay(c.x, feet + 0.3, c.z, nx, 0, nz, c.r + 0.5, climbHit, RAY_GROUP) < c.r + 0.5 && Math.abs(climbHit[4]) < 0.5) {
         const P = c.bot ? null : mantleProbe(c, nx, nz, c.r + 0.4)
         if (P) {
-          const [s2, top, w] = P, K = MANTLE, dy = top + K.lift - feet, gap = Math.max(0, s2 - c.r - 0.02), tr = K.rise[0] + K.rise[1] * dy
+          const [s2, top, w] = P, K = MANTLE, dy = top + K.lift - feet, gap = Math.max(0, s2 - c.r - 0.02), tr = K.time[0] + K.time[1] * dy
           c.mantle = [0, tr, ((w ? s2 + w + c.r + 0.05 : s2 + c.r + 0.1) - gap) / K.slow, c.x, c.y, c.z, nx, nz, gap, K.slow, dy, w ? 0 : 1, top]
           return false
         }
