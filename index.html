@@ -39423,7 +39423,7 @@ const DESTRUCT = {
   body: 9, blastMax: 24, panicMs: 1500, panicR: 24,
   object: 8, trafficCrash: 13,
   slots: 4096, probes: 8, tableCells: 3,
-  pool: { low: 160, medium: 320, high: 640 }, perPane: { low: 9, medium: 15, high: 24 }, life: [5, 9], fresh: 3000,
+  pool: { low: 320, medium: 640, high: 1280 }, perPane: { low: 9, medium: 15, high: 24 }, burst: [1, 1.5, 2.2, 3.2], rim: { n: 7, life: [240, 300] }, life: [5, 9], fresh: 3000,
 }
 const DS_KIND = { pane: 1, lamp: 2, post: 3, signal: 4, pole: 5 }
 const dsHash = n => cityHash((n ^ 0x2f6b3c1d) >>> 0)
@@ -40437,7 +40437,7 @@ function dsFarMaterial() {
   return m
 }
 
-const DS_SH = 16
+const DS_SH = 18
 let dsFx = null
 function dsFxKit() {
   if (dsFx) return dsFx
@@ -40465,27 +40465,58 @@ function dsFxClear() { if (dsFx) { dsFx.live = 0; dsFx.mesh.count = 0 } }
 function dsFxPane(rec) {
   const K = dsFxKit()
   if (!K) return
-  const p = rec.p, R = p.rect, f = p.f, rng = genRng(dsHash(rec.key ^ Math.round(Number.isFinite(rec.t) ? rec.t : 0))), info = rec.info
+  const p = rec.p, R = p.rect, f = p.f, rng = genRng(dsHash(rec.key ^ Math.round(Number.isFinite(rec.t) ? rec.t : 0))), info = rec.info, S = K.S
   const power = info & 3, inside = info >> 2 & 1, su = (info >> 3 & 7) / 7, sv = (info >> 6 & 7) / 7
-  const n = DESTRUCT.perPane[settings.quality] || DESTRUCT.perPane.medium, out = inside ? 1 : 0.35, kick = [1, 1.4, 2.2, 4][power]
+  const n = Math.min(72, Math.round((DESTRUCT.perPane[settings.quality] || DESTRUCT.perPane.medium) * DESTRUCT.burst[power])), out = inside ? 1 : 0.35, kick = [1, 1.4, 2.2, 4][power]
   const hitA = R.a0 + (R.a1 - R.a0) * su, hitY = R.y0 + (R.y1 - R.y0) * sv
+  const take = () => {
+    if (K.live < K.cap) return K.live++
+    let s = 0
+    for (let j = 1; j < K.cap; j++) if (S[j * DS_SH + 13] / S[j * DS_SH + 14] > S[s * DS_SH + 13] / S[s * DS_SH + 14]) s = j
+    return s
+  }
+  const at = (a, y, off) => f.axis ? [f.plane + f.side * off, y, a] : [a, y, f.plane + f.side * off]
   for (let i = 0; i < n; i++) {
-    let s
-    if (K.live < K.cap) s = K.live++
-    else { s = 0; for (let j = 1; j < K.cap; j++) if (K.S[j * DS_SH + 13] / K.S[j * DS_SH + 14] > K.S[s * DS_SH + 13] / K.S[s * DS_SH + 14]) s = j }
-    const o = s * DS_SH, a = R.a0 + (R.a1 - R.a0) * rng(), y = R.y0 + (R.y1 - R.y0) * rng(), off = 0.06 + 0.05 * rng()
+    const s = take(), o = s * DS_SH, a = R.a0 + (R.a1 - R.a0) * rng(), y = R.y0 + (R.y1 - R.y0) * rng(), off = 0.06 + 0.05 * rng()
     const x = f.axis ? f.plane + f.side * off : a, z = f.axis ? a : f.plane + f.side * off
-    const ra = a - hitA, ry = y - hitY, rl = Math.hypot(ra, ry) || 1, sp = kick * (0.6 + rng() * 0.9)
+    const ra = a - hitA, ry = y - hitY, rl = Math.hypot(ra, ry) || 1, sp = kick * (0.6 + rng() * 0.9), base = 0.75 + 0.35 * rng()
     const va = ra / rl * sp * 0.7 + (rng() - 0.5), vo = (out + rng() * 0.8) * kick * f.side, vy = ry / rl * sp * 0.5 + rng() * 1.2
-    const S = K.S
     S[o] = x; S[o + 1] = y; S[o + 2] = z
     S[o + 3] = f.axis ? vo : va; S[o + 4] = vy; S[o + 5] = f.axis ? va : vo
     S[o + 6] = rng() * 6.28; S[o + 7] = rng() * 6.28; S[o + 8] = rng() * 6.28
     S[o + 9] = (rng() - 0.5) * 18; S[o + 10] = (rng() - 0.5) * 18; S[o + 11] = (rng() - 0.5) * 18
-    S[o + 12] = 0.07 + 0.2 * rng() * rng() + (i === 0 ? 0.12 : 0); S[o + 13] = 0
-    S[o + 14] = DESTRUCT.life[0] + (DESTRUCT.life[1] - DESTRUCT.life[0]) * rng()
+    S[o + 12] = 0.1 + (0.14 + 0.06 * power) * rng() * rng() + (i < 3 ? 0.14 : 0); S[o + 13] = 0
+    S[o + 14] = 2.2 + 2.4 * rng()
     S[o + 15] = dsFloor(p, x + S[o + 3] * 0.8, y, z + S[o + 5] * 0.8)
-    K.mesh.setColorAt(s, K.col.setScalar(0.75 + 0.35 * rng()))
+    S[o + 16] = base; S[o + 17] = 0
+    K.mesh.setColorAt(s, K.col.setScalar(base * 3.6))
+  }
+  const star = 7 + power * 2, W = R.a1 - R.a0
+  for (let k = 0; k < star; k++) {
+    const s = take(), o = s * DS_SH, ang = k / star * 6.2832 + (rng() - 0.5) * 1.0, len = W * (0.08 + 0.5 * rng() * rng() + 0.1 * rng()), c = Math.cos(ang), d = Math.sin(ang)
+    const a = Math.max(R.a0, Math.min(R.a1, hitA + c * len * 0.5)), y = Math.max(R.y0, Math.min(R.y1, hitY + d * len * 0.5)), q = at(a, y, 0.03)
+    S[o] = q[0]; S[o + 1] = q[1]; S[o + 2] = q[2]
+    S[o + 3] = S[o + 4] = S[o + 5] = 0
+    S[o + 6] = 0; S[o + 7] = f.axis ? 1.5708 : 0; S[o + 8] = ang
+    S[o + 9] = S[o + 10] = S[o + 11] = 0
+    S[o + 12] = len; S[o + 13] = 0; S[o + 14] = 0.14 + 0.1 * rng(); S[o + 15] = q[1]
+    S[o + 16] = 1.8; S[o + 17] = 0.07
+    K.mesh.setColorAt(s, K.col.setScalar(5))
+  }
+  if (K.live < K.cap * 0.75) for (let k = 0; k < DESTRUCT.rim.n; k++) {
+    const s = take(), o = s * DS_SH, e = Math.floor(rng() * 4), h = 0.2 + 0.24 * rng()
+    let a, y, rz
+    if (e === 0) { a = R.a0 + W * (0.05 + 0.9 * rng()); y = R.y1 - h * 0.45; rz = 3.1416 + (rng() - 0.5) * 0.5 }
+    else if (e === 1) { a = R.a0 + W * (0.05 + 0.9 * rng()); y = R.y0 + h * 0.45; rz = (rng() - 0.5) * 0.5 }
+    else { a = e === 2 ? R.a0 + h * 0.45 : R.a1 - h * 0.45; y = R.y0 + (R.y1 - R.y0) * (0.1 + 0.8 * rng()); rz = (e === 2 ? -1.5708 : 1.5708) + (rng() - 0.5) * 0.5 }
+    const q = at(a, y, 0.012)
+    S[o] = q[0]; S[o + 1] = q[1]; S[o + 2] = q[2]
+    S[o + 3] = S[o + 4] = S[o + 5] = 0
+    S[o + 6] = 0; S[o + 7] = f.axis ? 1.5708 : 0; S[o + 8] = rz
+    S[o + 9] = S[o + 10] = S[o + 11] = 0
+    S[o + 12] = h; S[o + 13] = 0; S[o + 14] = DESTRUCT.rim.life[0] + (DESTRUCT.rim.life[1] - DESTRUCT.rim.life[0]) * rng(); S[o + 15] = q[1]
+    S[o + 16] = 1.4; S[o + 17] = 0
+    K.mesh.setColorAt(s, K.col.setScalar(4.2))
   }
   K.mesh.instanceColor.needsUpdate = true
   try { sfxPlay('Glass break', { x: p.at[0], y: p.at[1], z: p.at[2] }, 'world', Math.min(1, 0.6 + 0.15 * power)) } catch (e) {}
@@ -40506,7 +40537,7 @@ function dsFxBurst(o) {
     S[q + 3] = v[0] * k + (rng() - 0.5) * 2.4; S[q + 4] = v[1] * k + rng() * 1.6; S[q + 5] = v[2] * k + (rng() - 0.5) * 2.4
     S[q + 6] = rng() * 6.28; S[q + 7] = rng() * 6.28; S[q + 8] = rng() * 6.28
     S[q + 9] = (rng() - 0.5) * 18; S[q + 10] = (rng() - 0.5) * 18; S[q + 11] = (rng() - 0.5) * 18
-    S[q + 12] = s0 + (s1 - s0) * rng(); S[q + 13] = 0; S[q + 14] = DESTRUCT.life[0] + (DESTRUCT.life[1] - DESTRUCT.life[0]) * rng(); S[q + 15] = floor
+    S[q + 12] = s0 + (s1 - s0) * rng(); S[q + 13] = 0; S[q + 14] = DESTRUCT.life[0] + (DESTRUCT.life[1] - DESTRUCT.life[0]) * rng(); S[q + 15] = floor; S[q + 16] = 0; S[q + 17] = 0
     K.mesh.setColorAt(s, K.col.setScalar(0.75 + 0.35 * rng()))
   }
   K.mesh.instanceColor.needsUpdate = true
@@ -40526,7 +40557,7 @@ function dsFxLamp(rec) {
     S[o + 3] = Math.cos(a) * sp; S[o + 4] = -rng() * 1.5; S[o + 5] = Math.sin(a) * sp
     S[o + 6] = rng() * 6.28; S[o + 7] = rng() * 6.28; S[o + 8] = rng() * 6.28
     S[o + 9] = (rng() - 0.5) * 20; S[o + 10] = (rng() - 0.5) * 20; S[o + 11] = (rng() - 0.5) * 20
-    S[o + 12] = 0.04 + 0.09 * rng(); S[o + 13] = 0; S[o + 14] = DESTRUCT.life[0] + (DESTRUCT.life[1] - DESTRUCT.life[0]) * rng(); S[o + 15] = 0.05
+    S[o + 12] = 0.04 + 0.09 * rng(); S[o + 13] = 0; S[o + 14] = DESTRUCT.life[0] + (DESTRUCT.life[1] - DESTRUCT.life[0]) * rng(); S[o + 15] = 0.05; S[o + 16] = 0; S[o + 17] = 0
     K.mesh.setColorAt(s, K.col.setRGB(0.95, 0.85 + 0.1 * rng(), 0.7))
   }
   K.mesh.instanceColor.needsUpdate = true
@@ -40555,7 +40586,7 @@ function dsFxStep(dt) {
       s--; continue
     }
     const floor = S[o + 15]
-    if (S[o + 1] > floor + 1e-3 || Math.abs(S[o + 4]) > 0.05) {
+    if (!S[o + 17] && (S[o + 1] > floor + 1e-3 || Math.abs(S[o + 4]) > 0.05)) {
       S[o + 4] -= g * dt
       S[o] += S[o + 3] * dt; S[o + 1] += S[o + 4] * dt; S[o + 2] += S[o + 5] * dt
       S[o + 6] += S[o + 9] * dt; S[o + 7] += S[o + 10] * dt; S[o + 8] += S[o + 11] * dt
@@ -40565,8 +40596,9 @@ function dsFxStep(dt) {
         else { S[o + 4] = 0; S[o + 3] = S[o + 5] = 0; S[o + 9] = S[o + 10] = S[o + 11] = 0; S[o + 6] = Math.PI / 2; S[o + 8] = 0 }
       }
     }
-    const life = S[o + 14], left = life - S[o + 13], k = S[o + 12] * Math.min(1, left / 1.2)
-    M.position.set(S[o], S[o + 1], S[o + 2]); M.rotation.set(S[o + 6], S[o + 7], S[o + 8]); M.scale.setScalar(k)
+    const life = S[o + 14], left = life - S[o + 13], k = S[o + 12] * Math.min(1, left / (S[o + 17] ? 0.08 : 1.2)), age = S[o + 13]
+    if (S[o + 16] && age < 0.3) K.mesh.setColorAt(s, K.col.setScalar(S[o + 16] * (1 + 2.6 * (1 - age / 0.3) ** 2)))
+    M.position.set(S[o], S[o + 1], S[o + 2]); M.rotation.set(S[o + 6], S[o + 7], S[o + 8]); S[o + 17] ? M.scale.set(k, k * S[o + 17], k) : M.scale.setScalar(k)
     M.updateMatrix(); K.mesh.setMatrixAt(s, M.matrix)
   }
   K.mesh.count = K.live
