@@ -1124,6 +1124,7 @@ const PARTICLES = {
   spark: { n: 12, life: [0.18, 0.4], speed: [5, 12], size: [0.1, 0.16], cone: 1, fall: 12, grow: 0.4, add: true, cell: 0, stretch: 0.07, hot: 0.55 },
   puff: { round: true, n: 4, life: [0.35, 0.7], speed: [0.3, 1.2], size: [0.18, 0.3], cone: 1.4, fall: -0.6, grow: 3, cell: 0, color: 0x8a8378 },
   chip: { n: 16, life: [0.35,0.75], speed: [2,6], size: [0.04,0.09], cone: 1.2, fall: 14, grow: 0.8, cell: 0, color: 0x9a9488 },
+  splinter: { hard: true, n: 12, life: [0.5, 1], speed: [2.5, 6], size: [0.05, 0.11], cone: 1.3, fall: 14, grow: 0.6, cell: 0 },
   dust: { round: true, n: 6, life: [0.45, 0.85], speed: [0.6, 1.8], size: [0.22, 0.36], cone: 1.2, fall: -0.4, grow: 2.6, cell: 0, color: 0xc9c0ae },
   blood: { n: 10, life: [0.4, 0.9], speed: [2.2, 7.5], size: [0.05, 0.11], cone: 0.6, fall: 16, grow: 0.5, cell: 0, stretch: 0.06 },
   bloodfine: { n: 14, life: [0.25, 0.6], speed: [3, 9], size: [0.03, 0.06], cone: 0.9, fall: 14, grow: 0.4, cell: 0, stretch: 0.05 },
@@ -29084,6 +29085,12 @@ function puffTex() {
   puffMap = new THREE.DataTexture(d, N, N); puffMap.magFilter = puffMap.minFilter = THREE.LinearFilter; puffMap.needsUpdate = true
   return puffMap
 }
+let solidMap = null
+function solidTex() {
+  if (solidMap) return solidMap
+  solidMap = new THREE.DataTexture(new Uint8Array(64).fill(255), 4, 4); solidMap.needsUpdate = true
+  return solidMap
+}
 function glowTex() {
   if (glowMap) return glowMap
   const N = 64, d = new Uint8Array(16 * N * N)
@@ -29199,10 +29206,10 @@ function particlesOf(Q) {
     const sys = new Q.ParticleSystem({ duration: 1, looping: true, worldSpace: true, emissionOverTime: new Q.ConstantValue(0),
       startLife: new Q.IntervalValue(...P.life), startSpeed: new Q.IntervalValue(...P.speed), startSize: new Q.IntervalValue(...P.size), startColor: color,
       shape: new Q.ConeEmitter({ radius: 0.02, angle: P.cone, thickness: 1 }),
-      material: new THREE.MeshBasicMaterial({ map: P.round ? puffTex() : glowTex(), transparent: true, depthWrite: false, toneMapped: false,
+      material: new THREE.MeshBasicMaterial({ map: P.hard ? solidTex() : P.round ? puffTex() : glowTex(), transparent: true, depthWrite: false, toneMapped: false,
         blending: P.add ? THREE.AdditiveBlending : THREE.NormalBlending }),
       renderMode: P.stretch ? Q.RenderMode.StretchedBillBoard : Q.RenderMode.BillBoard, speedFactor: P.stretch,
-      uTileCount: P.round ? 1 : 2, vTileCount: P.round ? 1 : 2, startTileIndex: new Q.ConstantValue(P.round ? 0 : 2 - (P.cell & 2) + (P.cell & 1)),
+      uTileCount: P.round || P.hard ? 1 : 2, vTileCount: P.round || P.hard ? 1 : 2, startTileIndex: new Q.ConstantValue(P.round || P.hard ? 0 : 2 - (P.cell & 2) + (P.cell & 1)),
       behaviors: [new Q.ColorOverLife(new Q.Gradient([[new Q.Vector3(1, 1, 1), 0], [new Q.Vector3(1, 1, 1), 1]], [[1, 0], [0, 1]])),
         new Q.SizeOverLife(new Q.PiecewiseBezier([[new Q.Bezier(1, 1 + (g - 1) / 3, 1 + 2 * (g - 1) / 3, g), 0]])),
         ...P.fall ? [new Q.ApplyForce(new Q.Vector3(0, -1, 0), new Q.ConstantValue(P.fall))] : []] })
@@ -43144,7 +43151,7 @@ function dsPropFresh(rec) {
     for (let k = 0; k < 3; k++) burst('chip', x, y, z, dx, 0.8, dz, 0x9a9488, 0.8)
     burst('dust', x, 0.2, z, 0, 1, 0, 0xc9c0ae, 1)
     sfxPlay('Door rip', { x, y, z }, 'world', 0.8)
-    if (f.k === 'fence' || f.k === 'tinfence') { for (let k = 0; k < 12; k++) burst('chip', x, y + (k % 4 - 1.5) * 0.45, z, dx + (k - 6) * 0.12, 0.9, dz, f.k === 'fence' ? 0x9a7a52 : 0x9aa2aa, 2.6); burst('dust', x, y, z, 0, 1, 0, 0xc9c0ae, 2.4) }
+    if (f.k === 'fence' || f.k === 'tinfence') { for (let k = 0; k < 12; k++) burst('splinter', x, y + (k % 4 - 1.5) * 0.45, z, dx + (k - 6) * 0.12, 0.9, dz, f.k === 'fence' ? 0x7a5c3c : 0x7a828a, 1.6); burst('dust', x, y, z, 0, 1, 0, 0x8a7a66, 1.4) }
   } catch (e) { failN[161]++ }
   if (f.k === 'hydrant') dsPropJet(f.x, f.z, rec.key)
 }
@@ -43408,7 +43415,7 @@ function propObjLook(K) {
   const geo = new T.BufferGeometry()
   geo.setAttribute('position', new T.BufferAttribute(P, 3)); geo.setAttribute('normal', new T.BufferAttribute(N, 3))
   if (colored) geo.setAttribute('color', new T.BufferAttribute(C, 3))
-  const m = new T.InstancedMesh(geo, new T.MeshStandardMaterial(colored ? { vertexColors: true, roughness: 0.55, metalness: 0.15 } : { color: K.color, roughness: 0.5, metalness: 0.15 }), OBJ_MAX)
+  const m = new T.InstancedMesh(geo, new T.MeshStandardMaterial(colored ? { vertexColors: true, roughness: K.prop === 'fence' || K.prop === 'tinfence' ? 0.95 : 0.55, metalness: K.prop === 'fence' || K.prop === 'tinfence' ? 0 : 0.15 } : { color: K.color, roughness: 0.5, metalness: 0.15 }), OBJ_MAX)
   m.castShadow = m.receiveShadow = true
   depthFor(m)
   return m
