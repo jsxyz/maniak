@@ -16750,7 +16750,7 @@ function chaseStep(o, inp) {
   if (chase.v > 3 && chase.idle > LOOK_REST) { const k = Math.exp(-dt / 250); chase.look *= k; inp.pitch *= k }
   chase.inYaw = inp.yaw; chase.inPitch = inp.pitch; chase.x = o.x; chase.z = o.z; chase.t = now_
 }
-const CAR_CAM = { low: 0.05, floor: 0.75, sinkBy: 0.5, clear: 0.6 }
+const CAR_CAM = { low: 0.05, floor: 0.75, sinkBy: 0.5, clear: 0.6, back: 1.1, up: 0.8, upL: 0.08, ahead: 0.6, drop: 0.35 }
 const chaseTurn = inp => chase.inYaw === chase.inYaw ? wrapPi(inp.yaw - chase.inYaw) : 0
 function vehicleCamera(o, me, inp, cam, firstPerson) {
   if (o.V?.fly) return planeCamera(o, me, inp, cam, firstPerson)
@@ -16772,8 +16772,8 @@ function vehicleCamera(o, me, inp, cam, firstPerson) {
   }
   const off = drawnOff, L = V.camL || V.l || 2 * o.R, H = V.h || o.R, x0 = X + off[0], z0 = Z + off[2]
   const ground = Y + off[1] + o.low, py = ground + H
-  const pull = 1 + drive(V, 'chase') * clamp(chase.v / V.speed, 0, 1), up = (1.5 + 0.15 * L) * pull
-  const wantBack = 1.3 * L * pull + chase.lag, tf = frameT || now(), fdt = chase.camT === chase.camT ? clamp((tf - chase.camT) / 1000, 0, 0.25) : -1
+  const pull = 1 + drive(V, 'chase') * clamp(chase.v / V.speed, 0, 1), up = (CAR_CAM.up + CAR_CAM.upL * L) * pull
+  const wantBack = CAR_CAM.back * L * pull + chase.lag, tf = frameT || now(), fdt = chase.camT === chase.camT ? clamp((tf - chase.camT) / 1000, 0, 0.25) : -1
   if (fdt < 0 || !(chase.camB === chase.camB)) { chase.camB = wantBack; chase.camBV = 0 }
   else { const w = CHASE_CAM.w, e = chase.camB - wantBack, g = chase.camBV + w * e, k = Math.exp(-w * fdt)
     chase.camB = wantBack + (e + g * fdt) * k; chase.camBV = (chase.camBV - w * g * fdt) * k }
@@ -16792,7 +16792,7 @@ function vehicleCamera(o, me, inp, cam, firstPerson) {
     if (drop > 0) cy -= camBlock(cx, cy, cz, 0, -1, 0, drop + CAM.pad)
   }
   cy = Math.max(cy, FLOOR_TOP + 0.35)
-  const lx = x0 + sx * L - cx, ly = py - cy, lz = z0 + sz * L - cz, lh = Math.hypot(lx, lz) || 1
+  const lx = x0 + sx * L * CAR_CAM.ahead - cx, ly = py - cy - H * CAR_CAM.drop, lz = z0 + sz * L * CAR_CAM.ahead - cz, lh = Math.hypot(lx, lz) || 1
   const p0 = Math.atan2(ly, lh), p = p0 + (PITCH_MAX - p0) * s, ch = Math.cos(p)
   const dx = lx / lh * ch, dy = Math.sin(p), dz = lz / lh * ch
   cam.position.set(cx, cy, cz)
@@ -16839,8 +16839,26 @@ function placeTrack(meD) {
   camPlace.p = at(camPlace.off); camPlace.t = at(camPlace.look)
 }
 let heldF = 1
+const camCut = { key: '', p: [0, 0, 0], off: [0, 0, 0], vel: [0, 0, 0], at: NaN }, camDir = new THREE.Vector3(), CAM_GLIDE = 4, jackSeating = me => !!me.parts?.jack && !me.parts.jack.fit
 function updateCamera(me, inp, cam, firstPerson) {
-  const seat = !(me.dead > 0) && seatOf(me)
+  const C = camCut, tf = frameT || now(), v = !(me.dead > 0) && (!jackSeating(me) && seatOf(me)?.[0] || rideOf(me))
+  const key = firstPerson ? 'first' : v ? 'v' + v.id : airPilots.size && airHeld(me) ? 'air' : 'foot'
+  if (C.key[0] === 'v' && key === 'foot' && carCamLast && now() - carCamLast.at < 200) inp.yaw = carCamLast.yaw
+  const r = cameraFrame(me, inp, cam, firstPerson), p = cam.position, dt = Number.isFinite(C.at) ? clamp((tf - C.at) / 1000, 0, 0.1) : 0, w = CAM_GLIDE, e = Math.exp(-w * dt)
+  const D = cam.getWorldDirection(camDir), L = clamp(Math.hypot(p.x - me.x, p.y - me.y, p.z - me.z), 2, 30), tx = p.x + D.x * L, ty = p.y + D.y * L, tz = p.z + D.z * L
+  if (Number.isFinite(C.at) && key !== C.key && key !== 'first' && C.key !== 'first' && Math.hypot(C.p[0] - p.x, C.p[1] - p.y, C.p[2] - p.z) > 1) { C.off = [C.p[0] - p.x, C.p[1] - p.y, C.p[2] - p.z]; C.vel = [0, 0, 0] }
+  else for (let i = 0; i < 3; i++) { const x = C.off[i], u = C.vel[i] + w * x; C.off[i] = (x + u * dt) * e; C.vel[i] = (C.vel[i] - w * u * dt) * e }
+  if (!C.off.every(Number.isFinite)) { C.off = [0, 0, 0]; C.vel = [0, 0, 0] }
+  p.set(p.x + C.off[0], p.y + C.off[1], p.z + C.off[2])
+  if (C.off.some(c => Math.abs(c) > 1e-3)) {
+    const hx = tx - p.x, hz = tz - p.z, hh = Math.hypot(hx, hz), pitch = clamp(Math.atan2(ty - p.y, hh), -0.5, 0.5)
+    cam.lookAt(hh > 0.5 ? tx : p.x - Math.sin(inp.yaw) * 4, p.y + Math.tan(pitch) * Math.max(hh, 0.5), hh > 0.5 ? tz : p.z - Math.cos(inp.yaw) * 4)
+  }
+  Object.assign(C, { key, p: [p.x, p.y, p.z], at: tf })
+  return r
+}
+function cameraFrame(me, inp, cam, firstPerson) {
+  const seat = !(me.dead > 0) && !jackSeating(me) && seatOf(me)
   if (seat) { followCam.at = NaN; return vehicleCamera(seat[0], me, inp, cam, firstPerson) }
   const rd = !(me.dead > 0) && rideOf(me)
   if (rd) { followCam.at = NaN; return vehicleCamera(rd, me, inp, cam, firstPerson) }
