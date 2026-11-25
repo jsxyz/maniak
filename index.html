@@ -15606,6 +15606,13 @@ function swapTo(c, m) {
 }
 
 
+const SEE_NEAR = 15, SEE_HYST = 2, SEE_EVERY = 0.125
+function botSees(b, c, dist, dt) {
+  const ai = b.ai, near = dist < (ai.seeNear ? SEE_NEAR + SEE_HYST : SEE_NEAR)
+  ai.seeNear = near
+  if (near || ai.seeId !== c.id || (ai.seeT -= dt) <= 0) { ai.seeV = clearLine(b, c); ai.seeId = c.id; ai.seeT = SEE_EVERY * (0.75 + Math.random() * 0.5) }
+  return ai.seeV
+}
 function clearLine(b, t) {
   const ox = b.x, oy = b.y + b.h * 0.55, oz = b.z
   const tx = t.x - ox, ty = (t.y + t.h * 0.3) - oy, tz = t.z - oz
@@ -15869,7 +15876,7 @@ function botThink(b, all, dt) {
     if (i < 0 || low(i) > best) break
     const c = all[i]
     let score = d[i]
-    const seen = clearLine(b, c)
+    const seen = botSees(b, c, d[i], dt)
     if (!seen) score += 60
     if (c.id === ai.tgt) score *= STICKY_GAIN
     if (score < best || (score === best && i < at)) { best = score; tgt = c; at = i; sees = seen }
@@ -15938,7 +15945,8 @@ function botThink(b, all, dt) {
     const probe = Math.min(3.2, lead)
     const ux = dx / lead, uz = dz / lead
     const ray = y => { const t = staticRay(b.x, y, b.z, ux, 0, uz, 8); return t > 0.01 && t < 8 ? t : Infinity }
-    const low = ray(foot + 0.45)
+    const low = ai.probeHold ? ai.probeLow : ray(foot + 0.45)
+    ai.probeLow = low; ai.probeHold = !ai.probeHold
     if (low < probe && air) ai.hop = true
     else if (low < probe) {
       if (plan && (along || plan.there) && up > 0.4) {
