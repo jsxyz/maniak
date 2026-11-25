@@ -2925,7 +2925,7 @@ function railCar(route, k, j, tMs, out = {}) {
   out.end = j === 0 ? 1 : j === K.n - 1 ? -1 : 0
   return out
 }
-const faustObeliskLamp = 0xfdb347
+const faustObeliskLamp = 0xfdb347, faustObeliskPad = 0xce8a3a
 const FAUST_FEAT = { loop: [23, 28], lamps: [[9, 0], [-9, 0], [0, 9], [0, -9], [32, 32], [-32, 32], [32, -32], [-32, -32]],
   stone: 0x6f767f, pale: 0x9aa1a8, dark: 0x3c4450, iron: 0x2b333d, bronze: 0x4d5c52, gold: 0xc9a85a, water: 0x2f6a8c, warm: 0xffd7a0,
   leaf: 0x2f4a3b, leaves: [0x24402f, 0x2c4a37, 0x3b5236, 0x6b4a2a], bark: 0x3b332a, grass: 0x35452f, path: 0x7d8288, void: 0x07090c, earth: 0x2a2a22, wood: 0x4a3a2c, post: 0x2a3a52, red: 0x7a2f2a }
@@ -3017,7 +3017,7 @@ function faustFeatParts(f) {
     B(0, 0.25 * k, 0, 3.6 * k, 0.25 * k, 3.6 * k, 0x353b44, 0, 1); B(0, 0.75 * k, 0, 2.9 * k, 0.25 * k, 2.9 * k, 0x454b54, 0, 1); B(0, 1.45 * k, 0, 2.3 * k, 0.45 * k, 2.3 * k, 0x5f656d, 0, 1)
     U([0, 1.9 * k, 0], [0, 22 * k, 0], 2.12 * k, 1.27 * k, 4, 0xc2c8cd, 0.5); U([0, 22 * k, 0], [0, 25 * k, 0], 1.27 * k, 0, 4, T.gold, 0.5)
     B(0, 22 * k, 0, 0.95 * k, 0.12 * k, 0.95 * k, T.gold, 1.5); B(0, 11.9 * k, 0, 1.45 * k, 10 * k, 1.45 * k, 0, 0, 2)
-    if (f.lit) { const L = faustObeliskLamp; B(0, 25.5 * k, 0, 0.85 * k, 0.85 * k, 0.85 * k, L, 1.3); B(0, 2.6 * k, 0, 2.25 * k, 0.14 * k, 2.25 * k, L, 1.1); for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) B(sx * 3.25 * k, 0.62 * k, sz * 3.25 * k, 0.3 * k, 0.12 * k, 0.3 * k, L, 1.2, 1) }
+    if (f.lit) { const L = faustObeliskLamp; B(0, 25.5 * k, 0, 0.85 * k, 0.85 * k, 0.85 * k, L, 1.3); B(0, 2.6 * k, 0, 2.25 * k, 0.14 * k, 2.25 * k, L, 1.1); for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) B(sx * 3.25 * k, 0.62 * k, sz * 3.25 * k, 0.3 * k, 0.12 * k, 0.3 * k, faustObeliskPad, 1.2, 1) }
     for (const [sx, sz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) B(sx * 2.32 * k, 1.45 * k, sz * 2.32 * k, sx ? 0.02 * k : 1.4 * k, 0.25 * k, sx ? 1.4 * k : 0.02 * k, 0x4a3b24, 0.3)
   } else if (f.k === 'fountain') {
     const R = 5.2 * k
@@ -4056,6 +4056,11 @@ function faustNetLine(quad, nr, r, a, u, n, e, w, t0, t1, col, dash) {
     if (!ok && s !== null) { quad(at(s), u, n, t - s, w, 0.012, col); s = null }
   }
 }
+function faustZebraSet(nr, r, p, L) {
+  let h = 0
+  for (const q of nr) if (q[5].id !== r.id && (Math.hypot(q[0] - p[0], q[1] - p[2]) < 1 || Math.hypot(q[2] - p[0], q[3] - p[2]) < 1)) h = Math.max(h, q[4])
+  return Math.max(4.5, Math.min(h + 1, L / 2 - 3))
+}
 function faustNetGround(g, P, X, Z) {
   const garden = P.centralPlaza, tint = P.park ? FAUST_FEAT.grass : P.net === 'quarter' || P.net === 'close' ? 0x5f5c57 : P.plaza ? 0x5d626a : 0x737983
   for (const p of P.pads) {
@@ -4082,7 +4087,7 @@ function faustNetGround(g, P, X, Z) {
     if (r.width >= 12 && !r.oneway && t1 - t0 > 1) for (const k of r.width < 20 ? [1] : [-1, 1]) faustNetLine(quad, nr, r, a, u, n, k * (r.width / 2 - 2.5), 0.1, t0, t1, 0x9a9d9a)
     const faustRingMouth = k => !r.oneway && Math.abs(Math.hypot(k ? r.b[0] : r.a[0], k ? r.b[2] : r.a[2]) - FAUST_NET.ring) < 2
     if (r.width >= 8) for (const k of [0, 1]) if (net?.zebra(k ? r.b[0] : r.a[0], k ? r.b[2] : r.a[2]) || faustRingMouth(k)) {
-      const e = faustRingMouth(k) ? FAUST_NET.ringW / 2 + 2.5 : 4.5, t = k ? L - e : e, dir = k ? -1 : 1
+      const e = faustRingMouth(k) ? FAUST_NET.ringW / 2 + 2.5 : faustZebraSet(nr, r, k ? r.b : r.a, L), t = k ? L - e : e, dir = k ? -1 : 1
       for (let o = -r.width / 2 + 1; o <= r.width / 2 - 1; o += 1.6) quad([a[0] + u[0] * t + n[0] * o, a[1] + u[1] * t + n[1] * o], [u[0] * dir, u[1] * dir], n, 3, 0.55, 0.012, 0xadb0ad)
     }
   }
