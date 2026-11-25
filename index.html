@@ -38567,26 +38567,28 @@ function slCarExtent(K) {
   return e
 }
 function slPushers(obl, dt, near, R) {
-  const st = slState, P = [], seen = st.carSeen || (st.carSeen = new Map()), h = Math.max(dt || 0, 1e-3), N = SL_NUDGE
+  const st = slState, P = slPushP, seen = st.carSeen || (st.carSeen = new Map()), h = Math.max(dt || 0, 1e-3), N = SL_NUDGE
   const cs = st.charSeen || (st.charSeen = new Map())
+  P.length = 0
+  const pusher = () => slPushPool[P.length] || (slPushPool[P.length] = { car: false, veh: false, x: 0, z: 0, r: 0, vx: 0, vz: 0, sp: 0, fx: 0, fz: 0, back: 0, ahead: 0, w: 0, still: false })
   for (const [id, a] of avatars) {
     const m = a.mesh; if (!(id >= 0 && m?.visible && near(m.position.x, m.position.z, R))) continue
     const x = m.position.x, z = m.position.z
-    let s = cs.get(id); if (!s || s.f !== st.frame - 1 || Math.abs(x - s.x) + Math.abs(z - s.z) > 4) s = { x, z, vx: 0, vz: 0 }
+    let s = cs.get(id); if (!s) cs.set(id, s = { x, z, vx: 0, vz: 0, f: 0 }); else if (s.f !== st.frame - 1 || Math.abs(x - s.x) + Math.abs(z - s.z) > 4) { s.x = x; s.z = z; s.vx = 0; s.vz = 0 }
     const k = Math.min(1, h * 8), vx = s.vx + ((x - s.x) / h - s.vx) * k, vz = s.vz + ((z - s.z) / h - s.vz) * k
-    cs.set(id, { x, z, vx, vz, f: st.frame })
-    P.push({ car: false, veh: !!players.get(id)?.seat && !!seatOf(players.get(id)), x, z, r: N.char, vx, vz, sp: Math.hypot(vx, vz) })
+    s.x = x; s.z = z; s.vx = vx; s.vz = vz; s.f = st.frame
+    const u = pusher(); u.car = false; u.veh = !!players.get(id)?.seat && !!seatOf(players.get(id)); u.x = x; u.z = z; u.r = N.char; u.vx = vx; u.vz = vz; u.sp = Math.hypot(vx, vz); P.push(u)
   }
   for (const o of obl || []) {
     if (!vehicleOf(o.K) || !near(o.x, o.z, R)) continue
-    let s = seen.get(o.id); if (!s || s.f !== st.frame - 1) s = { x: o.x, z: o.z, vx: 0, vz: 0 }
+    let s = seen.get(o.id); if (!s) seen.set(o.id, s = { x: o.x, z: o.z, vx: 0, vz: 0, f: 0 }); else if (s.f !== st.frame - 1) { s.x = o.x; s.z = o.z; s.vx = 0; s.vz = 0 }
     const k = Math.min(1, h * 8), vx = s.vx + ((o.x - s.x) / h - s.vx) * k, vz = s.vz + ((o.z - s.z) / h - s.vz) * k
-    seen.set(o.id, { x: o.x, z: o.z, vx, vz, f: st.frame })
+    s.x = o.x; s.z = o.z; s.vx = vx; s.vz = vz; s.f = st.frame
     const v = Math.hypot(vx, vz), q = o.q || [0, 0, 0, 1]
     let fx = vx / v, fz = vz / v
     if (!(v > 0.5)) { fx = -2 * (q[0] * q[2] + q[3] * q[1]); fz = -(1 - 2 * (q[0] * q[0] + q[1] * q[1])); const n = Math.hypot(fx, fz) || 1; fx /= n; fz /= n }
     const [ex, ez] = slCarExtent(o.K), back = ez + 0.3, ahead = back + (v > 0.5 ? Math.min(v * N.look, N.lookMax) : 0), w = ex + 0.3 + N.clear
-    P.push({ car: true, x: o.x, z: o.z, fx, fz, back, ahead, w, r: Math.max(ahead, back) + w, still: !(v > 0.5) })
+    const u = pusher(); u.car = true; u.x = o.x; u.z = o.z; u.fx = fx; u.fz = fz; u.back = back; u.ahead = ahead; u.w = w; u.r = Math.max(ahead, back) + w; u.still = !(v > 0.5); P.push(u)
   }
   if (st.frame % 120 === 0) {
     for (const [id, s] of seen) if (st.frame - s.f > 60) seen.delete(id)
@@ -38704,6 +38706,7 @@ function slNudge(ag, p, pushers, cell, dt) {
   p.x += nx; p.z += nz
   return n
 }
+const slDrawD = { qd: -1, D: null }, slPushP = [], slPushPool = []
 function slFrame(t, dt, obl) {
   if (!LV.faust || !faustState || renderHeadless) return
   if (!slState || slState.seed !== faustState.seed || slState.S !== faustState.S) slReset()
@@ -38717,7 +38720,7 @@ function slFrame(t, dt, obl) {
   cam.updateMatrixWorld(); slPM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); slFrus.setFromProjectionMatrix(slPM)
   slDropFrame = slDrops - slDropPrev; slDropPrev = slDrops; slVw.ok = true; slVw.x = cam.position.x; slVw.z = cam.position.z; slLie.length = 0; slRetire(st, T)
   for (const c of kit.root.children) if (c.isInstancedMesh) c.count = 0
-  const qn = (STREET.quality[settings.quality] ?? 1) * (STREET.scale ?? 1), qd = STREET.qualityDraw[settings.quality] ?? 1, D = Object.fromEntries(Object.entries(STREET.draw).map(([k, v]) => [k, v * qd]))
+  const qn = (STREET.quality[settings.quality] ?? 1) * (STREET.scale ?? 1), qd = STREET.qualityDraw[settings.quality] ?? 1, D = slDrawD.qd === qd ? slDrawD.D : (slDrawD.qd = qd, slDrawD.D = Object.fromEntries(Object.entries(STREET.draw).map(([k, v]) => [k, v * qd])))
   const cx = cam.position.x, cz = cam.position.z, A = st.S * 48, seen = (x, y, z, r) => slFrus.intersectsSphere(slSph.set(slV.set(x, y, z), r))
   const near = (x, z, R) => Math.abs(x - cx) < R && Math.abs(z - cz) < R && Math.hypot(x - cx, z - cz) < R
   const pushers = slPushers(obl, dt, near, D.ped + 12)
