@@ -2978,6 +2978,11 @@ function faustFeatParts(f) {
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (let i = 0; i < n; i++) {
       const u = (i + 0.5) / n; B(sx * (a + (h - a) * u - 0.41), m, sz * (h + (a - h) * u - 0.41), w, e, w, 0, 0, 2) }
   }
+  const water = (Rw, y, t, gl, n = 16) => {
+    const a = 0.924 * Rw, h = 0.383 * Rw, dz = (a - h) / n
+    B(0, y, 0, a, 0.005, h, t, gl)
+    for (const s of [-1, 1]) for (let i = 0; i < n; i++) B(0, y, s * (h + (i + 0.5) * dz), 1.307 * Rw - h - (i + 1) * dz, 0.005, dz / 2, t, gl)
+  }
   const ball = (x, y, z, r, t) => { for (const [y0, y1, r0, r1] of [[-1, -0.7, 0, 0.714], [-0.7, 0, 0.714, 1], [0, 0.7, 1, 0.714], [0.7, 1, 0.714, 0]]) U([x, y + y0 * r, z], [x, y + y1 * r, z], r0 * r, r1 * r, 8, t) }
   if (f.k === 'statue') {
     B(0, 0.25 * k, 0, 4 * k, 0.25 * k, 4 * k, 0x353b44, 0, 1); B(0, 0.75 * k, 0, 3.3 * k, 0.25 * k, 3.3 * k, 0x454b54, 0, 1)
@@ -3015,7 +3020,7 @@ function faustFeatParts(f) {
   } else if (f.k === 'fountain') {
     const R = 5.2 * k
     oct(R, 0, 0.7 * k, T.stone, 0); basin(R, 0.7 * k, 1.15 * k); U([0, 0.7 * k, 0], [0, 1.15 * k, 0], R, R, 8, T.pale, 0.5, 0, 1)
-    for (const [ex, ez] of [[0.924 * (R - 0.4 * k), 0.383 * (R - 0.4 * k)], [0.383 * (R - 0.4 * k), 0.924 * (R - 0.4 * k)], [0.653 * (R - 0.4 * k), 0.653 * (R - 0.4 * k)]]) B(0, 0.75 * k, 0, ex, 0.005, ez, T.water, 0.6)
+    water(R - 0.4 * k, 0.75 * k, T.water, 0.6)
     U([0, 0.7 * k, 0], [0, 3.4 * k, 0], 1.1 * k, 0.8 * k, 8, 0xb4bac0, 0.5); U([0, 3.4 * k, 0], [0, 4 * k, 0], 1.2 * k, 3 * k, 8, 0xb4bac0, 0.5, 3)
     for (const a of [-1, 1]) for (const b of [-1, 1]) B(a * 0.8 * k, 2 * k, b * 0.8 * k, 0.07 * k, 1.1 * k, 0.07 * k, T.warm, 1)
     for (const [ex, ez] of [[2.6 * k, 1.08 * k], [1.08 * k, 2.6 * k], [1.84 * k, 1.84 * k]]) B(0, 4.03 * k, 0, ex, 0.005, ez, T.water, 0.6)
@@ -3106,7 +3111,7 @@ function faustFeatParts(f) {
     const R = 4.4
     B(0, 0.05, 0, 36, 0.005, 1.4, T.path); B(0, 0.05, 0, 1.4, 0.005, 36, T.path)
     oct(R, 0, 0.5, 0x8a9099, 0); basin(R, 0.5, 0.9); U([0, 0.5, 0], [0, 0.9, 0], R, R, 8, T.pale, 0.5, 0, 1)
-    for (const [ex, ez] of [[0.924 * (R - 0.4), 0.383 * (R - 0.4)], [0.383 * (R - 0.4), 0.924 * (R - 0.4)], [0.653 * (R - 0.4), 0.653 * (R - 0.4)]]) B(0, 0.58, 0, ex, 0.005, ez, 0x07181c, 0.12)
+    water(R - 0.4, 0.58, 0x07181c, 0.12)
     B(1.4, 0.6, -0.9, 0.4, 0.005, 0.1, 0xbfefff, 1.6); B(-1.1, 0.6, 1.5, 0.3, 0.005, 0.08, 0xbfefff, 1.6); B(-0.4, 0.6, -2.2, 0.35, 0.005, 0.08, 0xbfefff, 1.4)
     U([0, 0.5, 0], [0, 5, 0], 0.3, 0, 8, T.gold, 0.5); B(0, 5.05, 0, 0.22, 0.22, 0.22, T.warm, 1.8)
   } else if (f.k === 'tree') {
@@ -9174,6 +9179,10 @@ function faustDropQueue(F) {
     }
   }, { priority: 1, valid: () => faustState === F }).catch(e => frameFailed('city', e)).finally(() => { F.dropJob = null; if (faustState === F) faustDropQueue(F) })
 }
+function faustNearPriority(c, viewPoint) {
+  const dx = Math.max(Math.abs(c.ci * 96 - ARENA + 48 - viewPoint[0]) - 48, 0), dz = Math.max(Math.abs(c.cj * 96 - ARENA + 48 - viewPoint[1]) - 48, 0), d = Math.hypot(dx, dz)
+  return d < 60 ? 0.5 : d < 150 ? 0.25 : 0
+}
 function faustStream(points, viewPoint) {
   const F = faustState, t = realNow(), cell = v => Math.floor((v + ARENA) / 96)
   if (F.frameStamp !== last) { F.frameStamp = last; F.frameWork = 0 }
@@ -9204,7 +9213,7 @@ function faustStream(points, viewPoint) {
   if (F.materials) {
     for (const c of F.selection.visuals.splice(0)) background.run('city:' + c.key, function* () {
       yield* faustVisualSteps(c)
-    }, { valid: () => faustState === F && F.chunks.get(c.key) === c && !!F.selection?.drawn.has(c.key) })
+    }, { priority: faustNearPriority(c, viewPoint), valid: () => faustState === F && F.chunks.get(c.key) === c && !!F.selection?.drawn.has(c.key) })
       .catch(e => frameFailed('city preparation', e))
   }
   const work = realNow() - t
