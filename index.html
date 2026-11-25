@@ -22929,7 +22929,7 @@ const realOverride = {}
 const REAL_GRADE = { exposure: 2.0, bloom: 0.5, threshold: 0.9, saturation: 0.8, shadows: [0.9, 1.0, 1.12],
   highlights: [1.07, 1.0, 0.9], vignette: 0.5, grain: 0.018, ao: 0.9, ssr: 1, shafts: 1, beams: 0.33 }
 const REAL_SKY = { moon: [-28, 18, 14], moonColor: 0xb8d3ff, moonLight: 1.4, hemi: 0.06, fog: 0x1a1e27, fogDensity: 0.003,
-  fogHeight: 90 }
+  fogHeight: 90, bounce: 0.3, road: 1.5 }
 const REAL_LAYERS = ['stone', 'brick', 'concrete', 'asphalt', 'setts', 'granite']
 const REAL_FILES = {
   stone: ['real_stone_c.56b7c34a.webp', 'real_stone_n.82c6a8ce.webp'],
@@ -23305,14 +23305,14 @@ RealSurf realSurface() {
     fs = swap(fs, '#include <metalnessmap_fragment>', 'float metalnessFactor = realS.metal;')
     fs = swap(fs, '#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(realS.normal, 0.0)).xyz);')
     fs = swap(fs, '#include <emissivemap_fragment>', 'totalEmissiveRadiance = realS.emit;')
-    fs = swap(fs, '#include <aomap_fragment>', '#include <aomap_fragment>\n reflectedLight.indirectDiffuse *= realS.ao; reflectedLight.indirectSpecular *= realS.ao; reflectedLight.directDiffuse *= mix(1.0, realS.ao, 0.5);')
+    fs = swap(fs, '#include <aomap_fragment>', `#if defined(REAL_ORNAMENT) || defined(REAL_GROUND)\n float realBounce = ${REAL_SKY.bounce.toFixed(4)} * (abs(vRealKind - ${REAL_KIND.asphalt.toFixed(1)}) < 0.5 ? ${REAL_SKY.road.toFixed(2)} : 1.0) * smoothstep(0.5, 0.8, normalize(vRealN).y);\n reflectedLight.indirectDiffuse += BRDF_Lambert(diffuseColor.rgb) * vec3(1.0, 0.88, 0.74) * realBounce;\n#endif\n` + '#include <aomap_fragment>\n reflectedLight.indirectDiffuse *= realS.ao; reflectedLight.indirectSpecular *= realS.ao; reflectedLight.directDiffuse *= mix(1.0, realS.ao, 0.5);')
     fs = swap(fs, '#include <opaque_fragment>', '#include <opaque_fragment>\n gl_FragColor.a = 1.0 - realS.reflect;')
     shader.vertexShader = vs; shader.fragmentShader = fs
     if (kind === 'far') faustSpireShader(shader)
   }
   if (kind === 'far') m.defaultAttributeValues = { ...m.defaultAttributeValues, faustSpire: [0] }
   if (kind === 'ornament') m.defaultAttributeValues = { ...m.defaultAttributeValues, faustLayer: [-1] }
-  m.customProgramCacheKey = () => 'real-city-' + kind + '-4'
+  m.customProgramCacheKey = () => 'real-city-' + kind + '-5|' + REAL_SKY.bounce + '|' + REAL_SKY.road
   return m
 }
 function realBoxes(g) {
