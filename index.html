@@ -45038,7 +45038,7 @@ function boatSpot(x, z, R = 120, l = 10, deep = 1.5) {
   }
   return null
 }
-const RIVER = { near: 380, away: 620, think: 2000, tows: 2, barge: 0.5, cruise: 4.5, keep: 7, ahead: 28, line: 9, pull: [2.2, 1.6], probe: 6, under: 0.5, warn: 30, clear: 160, gap: 25, room: 2 }
+const RIVER = { near: 380, away: 620, think: 2000, tows: 2, barge: 0.5, cruise: 4.5, keep: 7, ahead: 28, line: 9, pull: [2.2, 1.6], probe: 6, under: 0.5, warn: 30, clear: 160, gap: 25, room: 2, headroom: 0.25 }
 const riverSumsOf = new WeakMap()
 function riverSums(C) {
   let L = riverSumsOf.get(C)
@@ -45071,11 +45071,27 @@ function riverShut(C, W, s, dir, S, reach) {
 function riverBlocked(o, S, dir, C, s) {
   const [, , dx, dz] = riverAt(C, s), ux = dx * dir, uz = dz * dir
   for (const b of objs) {
-    if (b === o || !b.K.boat || b.id === o.tow) continue
+    if (b === o || !b.K.boat || b.id === o.tow || b.K.model || boatSunk(b)) continue
     const Sb = BOAT_SHAPES[b.K.model || b.K.name] || S, ax = b.x - o.x, az = b.z - o.z, along = ax * ux + az * uz, side = Math.abs(az * ux - ax * uz)
     if (along > 0 && along < (S.l + Sb.l) / 2 + RIVER.gap && side < (S.b + Sb.b) / 2 + RIVER.room) return true
   }
   return false
+}
+const boatRise = S => Math.max(S.d, ...S.deck.map(d => Math.max(d[1], d[4]))) - S.draft
+const boatClearsSpans = (name, level) => { const S = BOAT_SHAPES[name]; return !!S && FAUST_CHAN.ground - FAUST_CHAN.thick - level - RIVER.headroom >= boatRise(S) }
+const boatSpansOf = body => GAME.faustland.channels.plan()?.list.find(c => c.id === body.channel)?.bridges || []
+function boatInSpan(spans, x, z, reach) {
+  for (const b of spans) {
+    const L = Math.hypot(b.b[0] - b.a[0], b.b[1] - b.a[1]), ex = (b.b[0] - b.a[0]) / L, ez = (b.b[1] - b.a[1]) / L, ax = x - b.a[0], az = z - b.a[1], al = ax * ex + az * ez, la = -ax * ez + az * ex
+    if (al > -reach && al < L + reach && Math.abs(la) < b.half + reach) return { b, la, nx: -ez, nz: ex }
+  }
+  return null
+}
+function boatClearSpan(o, h, S, level) {
+  const la = h.la || 1, to = Math.sign(la) * (h.b.half + S.l / 2 + 2), hull = hullOf(o.K), p = o.body.getWorldTransform().getOrigin()
+  posVec.setValue(p.x() + (to - h.la) * h.nx, level - S.draft + (hull?.at[1] ?? 0) + 0.02, p.z() + (to - h.la) * h.nz)
+  const t = o.body.getWorldTransform(); t.setOrigin(posVec); o.body.setWorldTransform(t); o.body.getMotionState().setWorldTransform(t)
+  forceVec.setValue(0, 0, 0); o.body.setLinearVelocity(forceVec); o.body.setAngularVelocity(forceVec); o.body.activate()
 }
 function boatRiverAim(o, A, W) {
   const body = W.bodies?.find(b => b.id === A.river), C = body?.centre
@@ -45114,25 +45130,37 @@ function boatsRiverTick(W, near) {
   for (const body of W.bodies) {
     const C = body.kind === 'river' && body.centre
     if (!C || C.length < 2) continue
+    const spans = boatSpansOf(body)
+    for (const o of objs) {
+      const name = o.K.model || o.K.name, S = o.K.boat && o.body && BOAT_SHAPES[name]
+      if (!S || boatClearsSpans(name, body.level)) continue
+      const h = boatInSpan(spans, o.x, o.z, 0)
+      if (h) boatClearSpan(o, h, S, body.level)
+    }
     const have = objs.filter(o => o.boatAI?.river === body.id).length
     if (have >= RIVER.tows) continue
+    const fit = BOATS.fleet.river.filter(([k]) => boatClearsSpans(k, body.level))
+    if (!fit.length) continue
+    let pick = boatHash(LV.grow?.seed ?? 0, body.id + ':k:' + T) % fit.reduce((n, [, w]) => n + w, 0), kind = fit[0][0]
+    for (const [k, w] of fit) { kind = k; if ((pick -= w) < 0) break }
+    const S = BOAT_SHAPES[kind]
     const Ls = riverSums(C).at(-1), live = [...players.values()].filter(c => !(c.dead > 0)), boats = objs.filter(o => o.K.boat)
     let best = -1, bd = -1
     for (let s0 = 30; s0 < Ls - 30; s0 += 25) {
       const [x, z] = riverAt(C, s0), pd = Math.min(Infinity, ...live.map(c => Math.hypot(c.x - x, c.z - z)))
       if (pd < 100 || pd > 300) continue
       const od = Math.min(Infinity, ...boats.map(o => Math.hypot(o.x - x, o.z - z)))
-      if (od < 60) continue
+      if (od < 60 || boatInSpan(spans, x, z, S.l / 2 + 3)) continue
       if (od > bd) { bd = od; best = s0 }
     }
     if (best < 0) continue
-    const towing = (boatHash(LV.grow?.seed ?? 0, body.id + ':b:' + T) % 100) / 100 < RIVER.barge
+    const towing = kind === 'Tug' && (boatHash(LV.grow?.seed ?? 0, body.id + ':b:' + T) % 100) / 100 < RIVER.barge
     const dir = towing ? -1 : boatHash(LV.grow?.seed ?? 0, body.id + ':' + T) & 1 ? 1 : -1, [cx, cz, ux, uz] = riverAt(C, best), tx = ux * dir, tz = uz * dir
-    if (riverShut(C, W, best, dir, BOAT_SHAPES.Tug, RIVER.clear) || towing && riverShut(C, W, best, -dir, BOAT_SHAPES.Barge, BOAT_SHAPES.Tug.l + RIVER.line + BOAT_SHAPES.Barge.l)) continue
+    if (riverShut(C, W, best, dir, S, RIVER.clear) || towing && riverShut(C, W, best, -dir, BOAT_SHAPES.Barge, BOAT_SHAPES.Tug.l + RIVER.line + BOAT_SHAPES.Barge.l)) continue
     const x = cx - tz * RIVER.keep, z = cz + tx * RIVER.keep, h = Math.atan2(-tx, -tz)
     const at = W.at(x, z, floatRec)
-    if (!at || at.depth < BOAT_SHAPES.Tug.draft + 1) continue
-    const tug = GAME.boats.add('Tug', { x, z, yaw: h, level: at.level }, boatFreeId())
+    if (!at || at.depth < S.draft + 1) continue
+    const tug = GAME.boats.add(kind, { x, z, yaw: h, level: at.level }, boatFreeId())
     if (!tug) continue
     tug.boatAI = { river: body.id, dir, s: best, speed: RIVER.cruise, stop: 0 }; tug.loose = true; tug.crew = boatCrewNew(tug)
     if (towing) {
@@ -45174,13 +45202,17 @@ function boatHijackTick(o) {
   heatCrime(p, 'hijack', o.x, o.z, 1, !!(o.crew && !o.crew.dead))
   if (o.crew && !o.crew.dead) tell(p.id, '§7You take the helm. The crew are thrown overboard.', 'a')
 }
+function boatSunk(o) {
+  const F = floatOf(o.K)
+  return o.floodT !== undefined && !!F && (carrierT - o.floodT) / 1000 > F.float + F.sink
+}
 function boatCrewTick(o) {
   const C = o.crew
   if (!C) return
   if (o.riders?.[0] !== undefined) { boatCrewBody(o, 6, C.dead ? 1000 : 20, players.get(o.riders[0])); o.crew = null; return }
   if (o.V && o.hp < C.was) boatCrewHit(o, (C.was - o.hp) * BOAT_CREW.share, o.by !== undefined ? players.get(o.by) : null)
   C.was = o.hp
-  const F = floatOf(o.K), sunk = o.floodT !== undefined && F && (carrierT - o.floodT) / 1000 > F.float + F.sink
+  const sunk = boatSunk(o)
   if (!o.V || sunk) { if (!C.dead) { C.dead = true; C.hp = 0 } boatCrewBody(o, !o.V ? 5 : 6); o.crew = null }
 }
 function boatCrewBody(o, cause, dmg = 1000, thrower = null) {
