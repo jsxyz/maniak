@@ -47983,10 +47983,23 @@ function mapWorkerMain() {
 function mapWorkerSource() {
   const fns = { mapPaintSteps, mapLabeler, mapHandWidth, mapTag, mapText, mapInk, mapLoopPts, mapArrowInk, mapPoly, mapStrings, mapWrap, mapPin, mapIcon, mapEllPts, mapAlong, mapLegendBox, mapHandSp, mapRng, mapHash, mapSeedAt, mapWorld, mapUi, faustMix, cityHash, clamp }
   const cs = { MAP_PAL, MAP_LOT, MAP_LINES, MAP_DISTRICTS, MAP_HAND, MAP_HAND_FONT, FAUST_FIELDS, FAUST_CHAN }
-  let out = 'let mapSize = { W: 0, H: 0, dpr: 1 }, mapMe = null, mapPlaces = new Map(), D = null\nconst mapLayers = [], FAUST = { world: 0 }\n'
-  for (const n in cs) out += 'const ' + n + ' = ' + JSON.stringify(cs[n]) + '\n'
-  for (const n in fns) { const t = fns[n].toString(); out += (/^(async\s+)?function/.test(t) ? t : 'const ' + n + ' = ' + t) + '\n' }
-  return out + ';(' + mapWorkerMain.toString() + ')()\n'
+  const own = new Set(['mapSize', 'mapMe', 'mapPlaces', 'mapLayers', 'FAUST', 'mapWorkerMain', 'mapWorkerSource'])
+  const parts = []
+  const addFn = (n, f) => { const t = f.toString(); parts.push(/^(async\s+)?function/.test(t) ? t : 'const ' + n + ' = ' + t); own.add(n) }
+  const addConst = (n, v) => { parts.push('const ' + n + ' = ' + JSON.stringify(v)); own.add(n) }
+  for (const n in fns) addFn(n, fns[n])
+  for (const n in cs) addConst(n, cs[n])
+  for (let pass = 0; pass < 4; pass++) {
+    const text = parts.join('\n'), want = new Set(text.match(/\b(?:map[A-Z]\w*|MAP_\w+|faust[A-Z]\w*|FAUST_\w+|city[A-Z]\w*)\b/g) || []); let added = 0
+    for (const n of want) {
+      if (own.has(n)) continue
+      let v; try { v = eval(n) } catch (e) { continue }
+      if (typeof v === 'function') { addFn(n, v); added++ }
+      else if (v !== null && v !== undefined && typeof v !== 'symbol') { const j = JSON.stringify(v); if (j && j.length < 400000) { addConst(n, v); added++ } }
+    }
+    if (!added) break
+  }
+  return 'let mapSize = { W: 0, H: 0, dpr: 1 }, mapMe = null, mapPlaces = new Map(), D = null\nconst mapLayers = [], FAUST = { world: 0 }\n' + parts.join('\n') + '\n;(' + mapWorkerMain.toString() + ')()\n'
 }
 function mapWorkerKill() {
   if (mapWorker) { mapWorker.terminate(); mapWorker = null }
