@@ -15173,6 +15173,7 @@ function deadWater(c) {
 }
 function applyIntent(c, inp, dt) {
   if (airPilots.size && airHeld(c)) inp = { ...inp, f: 0, r: 0, j: false, sprint: false, descend: false }
+  if (c.parts?.jack) inp = { ...inp, f: c.parts.jack.go ? 1 : 0, r: 0, j: false, sprint: false, descend: false, ...c.parts.jack.yaw !== undefined && { yaw: c.parts.jack.yaw } }
   apT = realNow()
   if (!c.body) { attachBody(c); apLap('ai attach') }
   c.jEdge = !!inp.j && !c.jWas; c.jWas = !!inp.j; if (!inp.j) c.jUsed = false
@@ -17459,6 +17460,7 @@ function liftUp(o, c) {
 function carryStep(c, inp, dt) {
   c.useT = Math.max(0, (c.useT || 0) - dt)
   c.threw = false
+  if (c.parts?.jack) jackTick(c, inp, dt)
   const s = seatOf(c)
   if (s && (c.dead > 0 || inp.use && c.useT <= 0)) { c.useT = USE_S; return leave(c, ...s) }
   if (s) return
@@ -17652,6 +17654,7 @@ function clearSeat(c) {
 }
 function hijackOf(c, o, i) {
   if (c.bot || i < 0 || !o.V || o.V.fly || o.K.boat || o.k === MC_K || o.jackedBy === c.id || mcOwn.get(c.id)?.car === o.id) return 0
+  if (o.jackDriver) return 2
   if (o.traffic?.driver) return 2
   return !i && o.riders[0] === undefined && !o.crew ? 1 : 0
 }
@@ -19318,6 +19321,7 @@ function trafficTick(dt, all) {
         if (a.follow && (a.replan -= dt) <= 0) { a.replan = 2; const r0 = performance.now(); trafficDriveTo(o,a.follow,{follow:true,driver:a.driver,speed:a.cruise,urgent:a.urgent}); repMs += performance.now() - r0 }
         if (o.hp < a.hp - 0.1) a.flee = 12
         a.hp = o.hp; a.flee = Math.max(0, a.flee - dt)
+        if (o.jackHold && o.kin) kinOff(o)
         let dMin = Infinity; for (const p of people) dMin = Math.min(dMin, Math.hypot(o.x - p.x, o.z - p.z))
         if (!people.length) dMin = 0
         if (o.kin) { if (dMin < TRAFFIC.kinIn || trafficKinHold(o, a) || movers.some(p => Math.hypot(p.x - o.x, p.z - o.z) < 20 + speedOf(p) * 0.6)) kinOff(o) }
@@ -19336,6 +19340,7 @@ function trafficTick(dt, all) {
         }
         if (o.kin) { const t0 = performance.now(); trafficKinStep(o, a, dt, lane ||= trafficKinLane(T)); kinMs += performance.now() - t0; kinN++ }
         else {
+        if (o.jackHold) a.input = { f: 0, r: 0, j: true }
         const driver = { id: -1000 - o.id, seat: [o, 0] }, saved = o.riders[0]
         o.riders[0] = driver.id; const t0 = performance.now(); driveStep(driver, a.input); driveMs += performance.now() - t0; o.riders[0] = saved
         }
@@ -28045,6 +28050,7 @@ function carKind() {
   carKindDone = true
   for (const K of OBJECTS.filter(carDoorRow)) {
     GAME.parts.kind(K.name, { of: 'object', mass: K.mass, grab: { grip: 'chest' }, throw: {}, punt: {} })
+    PARTS[K.name].grab = { ...PARTS[K.name].grab, grip: 'side' }
     GAME.parts.kind(K.name + ' on its car', { of: 'attached', mass: K.mass, rip: { pull: 0.45, gives: K.name } }, {
       near: (c, reach) => objs.flatMap(o => o.V && vehicleOf(o.K)?.name === K.doorOf && Math.hypot(o.x - c.x, o.z - c.z) < reach + 4 ? carDoorsOf(o).filter(d => d.on && d.id === K.door)
         .map(d => ({ ref: { o, bit: d.bit }, at: d.at, gap: Math.hypot(d.at[0] - c.x, d.at[2] - c.z) - c.r - 0.3, R: 0.6, mass: K.mass })).filter(g => g.gap <= reach) : []),
@@ -36036,12 +36042,14 @@ function partsNear(c, verb, reach = GRAB.reach) {
     let list = []; try { list = A.near(c, reach) || [] } catch (e) { console.warn('parts near', kind, e) }
     for (const inst of list) out.push({ kind, src: 'attached', ...inst, gap: inst.gap ?? 0 })
   }
+  if (verb === 'pull') { const door = out.filter(g => g.src === 'attached' && g.kind.endsWith(' on its car') && g.gap + c.r + 0.3 <= JACK.flank).sort((a, b) => a.gap - b.gap)[0]; if (door) return [door] }
   return out.sort((a, b) => a.gap - b.gap)
 }
 const partsAllows = (P, verb) => !!P && (verb === 'grab' ? !!P.grab && !P.grab.pull : verb === 'pull' ? !!(P.grab?.pull || P.rip) : !!P[verb])
 const partsUnit = (x, y, z) => { const n = Math.hypot(x, y, z) || 1; return [x / n, y / n, z / n] }
 
 function partsHoldAt(x, y, z, yaw, C, grip, R, out = [0, 0, 0]) {
+  if (grip === 'side') { const k = C.r / 0.48; out[0] = x + (Math.cos(yaw) * 0.5 - Math.sin(yaw) * 0.1) * k; out[1] = y - 0.25 * k; out[2] = z + (-Math.sin(yaw) * 0.5 - Math.cos(yaw) * 0.1) * k; return out }
   const fx = -Math.sin(yaw), fz = -Math.cos(yaw), k = C.r / 0.48
   const f = (grip === 'scruff' ? 0.6 : 0.42 + R * 0.3) * k, up = (grip === 'scruff' ? 0.24 : 0.32) * k
   out[0] = x + fx * f; out[1] = y + up; out[2] = z + fz * f
@@ -36143,9 +36151,11 @@ function partsStep(c, inp, dt) {
     if (A === 3 && S.age >= GRAB.rip && !S.done) { S.done = true; partsPullDone(c, S) }
     if (A === 6 && !S.done && S.age >= HAMMER.T) { S.done = true; if (held) goreHammerLaunch(c, held) }
     c.threw = true
+    if (A >= 8) { if (S.age >= JACK.len[A - 8]) { S.act = 0; S.age = 0 } else return true }
     if (S.age >= (P ? P.done : A === 3 ? GRAB.rip + 0.2 : A === 5 ? CLUB.swing : A === 6 ? HAMMER.T + 0.25 : A === 7 ? GRAB.slam.done : GRAB.grabS)) { S.act = 0; S.age = 0 }
     else if (A !== 4) return true
   }
+  if (S.jack) return true
   if (held) {
     c.threw = !!(fire || alt)
     const person = held.src === 'char' || held.src === 'street' && held.kind === 'passerby', limb = held.src === 'object' && !!held.ref.K.limb, cover = held.src === 'object' && !!held.ref.K.cover
@@ -36155,6 +36165,7 @@ function partsStep(c, inp, dt) {
       return true
     }
     if (useEdge && c.useT <= 0) { if (person) { S.rip = 0; S.ripGrab = false } else { c.useT = USE_S; partsLetGo(c, held, 'drop') } }
+    else if (fire && c.useT <= 0 && !inp.sprint && held.src === 'object' && carDoorRow(held.ref.K)) { Object.assign(S, { act: 5, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S; held.ref.doorHit = null }
     else if (fire && c.useT <= 0) { Object.assign(S, person && !inp.sprint ? { act: 7, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : cover && !inp.sprint ? { act: 6, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : limb && !inp.sprint ? { act: 5, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) } : { act: 1, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R), pt: puntPoint(c) }); c.useT = USE_S; if (limb) held.ref.clubHit = null }
     else if (alt && c.useT <= 0) { Object.assign(S, { act: 2, age: 0, done: false, R: held.R, grip: partsGrip(held.kind, held.R) }); c.useT = USE_S }
     return true
@@ -36180,6 +36191,7 @@ function partsStep(c, inp, dt) {
     const tapped = S.press < GRAB.pull && !S.pulled
     S.press = -1; S.pulled = false
     if (tapped && !S.car && typeof faustSewTap === 'function' && faustSewTap(c)) { c.useT = USE_S; return true }
+    if (S.car && objs.includes(S.car) && seat(S.car) && jackable(c, S.car) && jackStart(c, S, S.car, inp)) return true
     if (S.car && objs.includes(S.car) && seat(S.car)) { c.useT = USE_S; sit(c, S.car, S.car.riders.findIndex((r, i) => r === undefined && fits(c, S.car, i))) }
     else if (isHost && objs.some(p => p.V && p.riders.includes(undefined) && objGap(c, p) <= 1.5)) { c.useT = USE_S; tell(c.id, '§7' + enemyName(GAME.participant(c.id, c.cid).name) + " doesn't fit", 'a') }
     return true
@@ -36200,6 +36212,153 @@ function partsPullDone(c, S) {
   if (!o) return
   partsEmit('rip', o, p, c)
   if (canLift(c, o)) liftUp(o, c)
+}
+const JACK = { flank: 1.5, ripAt: 0.45, flingAt: 0.40, slamAt: 0.25, speed: 8.5, lift: 4.5, stand: 0.65, near: 0.3, hand: 0.35, walk: 6, len: [0.65, 0.70, 0.50, 0.45], clips: ['jack_rip', 'jack_fling', 'jack_enter', 'jack_slam'] }
+const partsBoneHand = new Map(), jackV = new THREE.Vector3()
+const jackKeys = inp => ({ f: Math.sign(inp.f || 0), r: Math.sign(inp.r || 0), j: !!inp.j, fire: !!(inp.pf ?? inp.fire), alt: !!(inp.pa ?? inp.alt), sprint: !!inp.sprint })
+const jackDoors = (c, o) => carDoorsOf(o).filter(d => d.on && d.seat === 0).sort((a, b) => Math.hypot(a.at[0] - c.x, a.at[2] - c.z) - Math.hypot(b.at[0] - c.x, b.at[2] - c.z))
+const jackBoneAt = o => { if (o.heldBy === undefined && !objHeld.has(o.id) || !carDoorRow(o.K)) return null; const b = partsBoneHand.get(o.heldBy ?? objHeld.get(o.id)); return b && performance.now() - b[3] < 120 ? b : null }
+function partsJackRig(a, R, M, t, code, age) {
+  const clip = rigClip(M, JACK.clips[code - 8])
+  if (clip && age < clip.duration) R.over = { clip, t0: 0, at: t - age * 1000, clock: age, full: code !== 11, parts: true }
+  else if (R.over?.parts) R.over = null
+  jackHandStore(a, R, code === 11 || code === 10 && age >= JACK.hand ? 'hand_l' : 'hand_r')
+}
+function jackHandStore(a, R, bone = 'hand_r') {
+  const hb = R.bones.get(bone)
+  if (!hb) return
+  a.mesh.updateMatrixWorld(true); hb.getWorldPosition(jackV)
+  partsBoneHand.set(a.partsId, [jackV.x, jackV.y, jackV.z, performance.now()])
+}
+function jackable(c, o) {
+  if (c.bot || !o?.V || o.V.fly || o.K.boat || o.k === MC_K || mcOwn.get(c.id)?.car === o.id || o.heldBy !== undefined || c.dead > 0) return false
+  const driven = isHost ? !!o.traffic?.driver : trafficRemote.get(o.id)?.[1] === 1
+  return driven && jackDoors(c, o).length > 0
+}
+function jackStart(c, S, o, inp) {
+  const d = jackDoors(c, o)[0]
+  if (!d) return false
+  S.jack = { car: o, bit: d.bit, phase: -1, t: 0, ripped: false, thrown: false, fit: false, door: null, k0: jackKeys(inp), use: false, go: false, yaw: undefined, from: null, way: null, wi: 0 }
+  c.useT = USE_S
+  if (isHost) o.jackHold = true
+  return true
+}
+function jackRip(c, J) {
+  if (!isHost) return
+  const door = carRip(c, J.car, J.bit)
+  if (door) J.door = door; else J.fail = true
+}
+function jackEnd(c, S, J, flee) {
+  S.jack = null; S.act = 0; S.age = 0; S.pull = null; S.done = true
+  c.useT = USE_S
+  const o = J.car
+  if (!isHost || !o) return
+  o.jackHold = false
+  if (flee && o.traffic) o.traffic.flee = 12
+}
+function jackTick(c, inp, dt) {
+  const S = c.parts, J = S.jack, o = J.car
+  if (!objs.includes(o) || c.dead > 0 || J.fail) return jackEnd(c, S, J, true)
+  if (J.phase < 3 && !J.thrown) {
+    const k = jackKeys(inp), n = J.k0
+    const fresh = (k.f && k.f !== n.f) || (k.r && k.r !== n.r) || (k.j && !n.j) || (k.fire && !n.fire) || (k.alt && !n.alt) || (k.sprint && !n.sprint) || (inp.use && !J.use)
+    if (!k.f) n.f = 0
+    if (!k.r) n.r = 0
+    n.j = n.j && k.j; n.fire = n.fire && k.fire; n.alt = n.alt && k.alt; n.sprint = n.sprint && k.sprint
+    if (fresh) return jackEnd(c, S, J, true)
+  }
+  if (J.phase === -1) {
+    const d = carDoorsOf(o).find(d => d.bit === J.bit)
+    if (!d) return jackEnd(c, S, J, true)
+    const shape = VEHICLE_SHAPES[vehicleOf(o.K)?.name], hw = (shape?.w ?? 2) / 2, hl = (shape?.l ?? 5) / 2, R = rotq(o.q, [1, 0, 0]), Fw = rotq(o.q, [0, 0, -1])
+    if (!J.way) {
+      const rx = (c.x - o.x) * R[0] + (c.z - o.z) * R[2], zf = (c.x - o.x) * Fw[0] + (c.z - o.z) * Fw[2], end = zf >= 0 ? 1 : -1
+      J.way = rx > 0 ? [1, -1].map(sd => [o.x + R[0] * sd * (hw + 1) + Fw[0] * end * (hl + 1.2), o.z + R[2] * sd * (hw + 1) + Fw[2] * end * (hl + 1.2)]) : []
+    }
+    const last = J.wi >= J.way.length, tx = last ? d.at[0] + d.out[0] * JACK.stand : J.way[J.wi][0], tz = last ? d.at[2] + d.out[2] * JACK.stand : J.way[J.wi][1], gx = tx - c.x, gz = tz - c.z, far = Math.hypot(gx, gz)
+    J.t += dt
+    if (!last && far < 0.7) J.wi++
+    J.go = (last ? far > JACK.near : true) && J.t < JACK.walk
+    J.yaw = J.go ? Math.atan2(-gx, -gz) : Math.atan2(c.x - d.at[0], c.z - d.at[2])
+    if (!J.go) { J.phase = 0; Object.assign(S, { act: 8, age: 0, done: true, grip: 'side', R: 0.5, pull: null }) }
+  }
+  else if (J.phase === 0) {
+    if (S.act === 8 && !J.ripped && S.age >= JACK.ripAt) { J.ripped = true; jackRip(c, J) }
+    else if (!S.act) { J.phase = 1; Object.assign(S, { act: 9, age: 0, done: true, grip: 'scruff', R: 0.4, pull: null }) }
+  }
+  else if (J.phase === 1) {
+    if (S.act === 9 && !J.thrown && S.age >= JACK.flingAt) { J.thrown = true; if (isHost) jackThrow(c, o, J) }
+    else if (!S.act) { J.phase = 2; J.from = [c.x, c.y, c.z]; if (isHost) o.jackDriver = true; Object.assign(S, { act: 10, age: 0, done: true, grip: 'side', R: 0.5, pull: null }) }
+  }
+  else if (J.phase === 2) {
+    const p = seatAt(o, onSeat(o.V.seats[0], c)), u = clamp(S.age / JACK.len[2], 0, 1), e = u * u * (3 - 2 * u), f = rotq(o.q, [0, 0, -1])
+    const x = J.from[0] + (p[0] - J.from[0]) * e, y = J.from[1] + (p[1] - J.from[1]) * e, z = J.from[2] + (p[2] - J.from[2]) * e
+    teleportBody(c.body, x, y, z, null, [0, 0, 0])
+    Object.assign(c, { x, y, z, vx: 0, vy: 0, vz: 0, yaw: Math.atan2(-f[0], -f[2]) }); J.yaw = c.yaw
+    if (!S.act) { sit(c, o, 0); J.phase = 3; J.yaw = undefined; Object.assign(S, { act: 11, age: 0, done: true, grip: 'side', R: 0.5, pull: null }) }
+  }
+  else if (J.phase === 3) {
+    if (S.act === 11) { S.age += dt; if (S.age >= JACK.len[3]) { S.act = 0; S.age = 0 } }
+    if (S.act === 11 && !J.fit && S.age >= JACK.slamAt) { J.fit = true; if (isHost) jackFit(c, o, J) }
+    else if (!S.act || !seatOf(c)) { if (!J.fit && isHost) jackFit(c, o, J); jackEnd(c, S, J, false) }
+  }
+}
+function jackThrow(c, o, J) {
+  const d = carDoorsOf(o).find(d => d.bit === J.bit)
+  if (!d || !slState) return
+  const T = Math.round(tickAt || now()), ux = d.out[0], uz = d.out[2], n = Math.hypot(ux, uz) || 1, dx = ux / n, dz = uz / n
+  const at = [d.at[0] + dx * 0.3, d.at[1] + 0.3, d.at[2] + dz * 0.3], id = 0x200000 + (++slState.exitN % 4096), [x2, z2] = slRunTo(at[0], at[2], dx, dz, 24)
+  const r0 = slAddRec([SL_REC.exit, id, T, slR2(at[0]), slR2(at[2]), slR2(x2), slR2(z2), slHash(o.id | 0, T | 0) % 3]), e = r0 && slState.exits.get(r0.key)
+  if (o.traffic) o.traffic.driver = false
+  if (!e) return
+  const H = partsCentre(e.ag, 0), v = [dx * JACK.speed + (c.vx || 0) * 0.3, JACK.lift, dz * JACK.speed + (c.vz || 0) * 0.3]
+  at[1] = Math.max(at[1], H + 0.05)
+  const r = partsFling(e.ag, at, v, T + 1, 0, c.id, H)
+  if (!r) return
+  const gi = FLUNG_G()
+  slHurt(e.ag, { x: at[0], z: at[2], down: false }, dx, dz, 0, c, T + 1, 0, GUNS[gi].dmg * 0.5, gi, 3)
+  partsFlights.push({ ag: e.ag, rec: r, by: c.id, struck: new Set([c.id]), how: 'throw', wall: r.wall })
+  slPanic(at[0], at[2], T)
+}
+const DOOR_CLUB = { limb: { len: 0.9 } }, DOOR_SWING = { dmg: 30, reach: 0.55 }
+function doorSwingTick(all, dt, credit) {
+  if (!isHost) return
+  const T = tickAt || now()
+  for (const o of objs) {
+    if (o.heldBy === undefined || !carDoorRow(o.K)) continue
+    const c = players.get(o.heldBy), S = c?.parts
+    if (!S || S.act !== 5 || S.age < CLUB.hit[0] || S.age > CLUB.hit[1]) { o.doorAt = null; if (!S || S.act !== 5) o.doorHit = null; continue }
+    const tip = [o.x, o.y, o.z], was = o.doorAt || tip, sp = Math.hypot(tip[0] - was[0], tip[1] - was[1], tip[2] - was[2]) / dt
+    o.doorAt = tip
+    const hit = o.doorHit ||= new Set([c.id]), D = DOOR_SWING.dmg * clamp(sp / CLUB.speed, 0.6, 1.5), mv = Math.hypot(tip[0] - was[0], tip[2] - was[2])
+    const ux = mv > 0.02 ? (tip[0] - was[0]) / mv : -Math.sin(c.yaw), uz = mv > 0.02 ? (tip[2] - was[2]) / mv : -Math.cos(c.yaw)
+    const G = { ...GUNS[gunNamed('Punt')], name: 'Car door', dmg: D, knock: clamp(D * 0.25, 4, 14), special: true }
+    for (const v of all) {
+      if (hit.has(v.id) || v.dead > 0 || v.prot > 0 || seatOf(v) || v.grabBy !== undefined) continue
+      if (partsSegDist(was, tip, [v.x, v.y - v.h, v.z], [v.x, v.y + v.h, v.z]) > v.r + DOOR_SWING.reach) continue
+      hit.add(v.id)
+      strike(c, v, G, ux, 0.25, uz)
+      goreFx(0, v.x, v.y, v.z, ux, 0.2, uz, 1)
+      if (downed(v) && credit) credit(c.id, c)(v, G)
+    }
+    if (slState && LV.faust && tip[1] < 2.6) slAround(tip[0], tip[2], 2.5, T, (ag, p) => {
+      if (p.down || hit.has('s' + ag.id)) return
+      if (partsSegDist([was[0], 0, was[2]], [tip[0], 0, tip[2]], [p.x, 0, p.z], [p.x, 0, p.z]) > 0.35 + DOOR_SWING.reach) return
+      hit.add('s' + ag.id); slKnock(ag, p, ux, uz, Math.max(1, D * 0.05), c, T, undefined, undefined, undefined, D, gunNamed('Punt'), 1)
+      goreFx(0, p.x, 1.1, p.z, ux, 0.2, uz, 1)
+    })
+  }
+}
+function jackFit(c, o, J) {
+  o.jackDriver = false; o.jackHold = false
+  const door = J.door
+  if (door && objs.includes(door)) {
+    holdBy(door, null); dropObject(door); objs.splice(objs.indexOf(door), 1)
+    for (const sent of objSent.values()) sent.delete(door.id)
+    trafficState?.departures.push({ id: door.id, until: trafficClock() + 12 }); delete objSeeds[door.id]
+  }
+  const was = carPartOf(o)
+  carPartSet(o, (was?.m || 0) & ~J.bit, was ? was.l : [])
 }
 function partsFreeId() {
   if (objs.length >= OBJ_MAX) return -1
@@ -36390,6 +36549,7 @@ function partsFlightV(c, mx, vy, mz) {
   return [c.vx, c.vy, c.vz]
 }
 function partsAfter(all, dt, credit) {
+  doorSwingTick(all, dt, credit)
   const T = tickAt || now(), FG = GUNS[FLUNG_G()]
   for (const h of all) {
     const P = h.punted
@@ -36766,10 +36926,15 @@ function armCarry(a, R, hold, w) {
 function partsRig(a, R, M, t) {
   if (bodyOf(a.spec.model) !== 'maniak') return
   const act = a.partsAct || 0, code = Math.floor(act / 4), age = act - code * 4, hold = partsHoldsDrawn.get(a.partsId)
+  if (code >= 8 && code <= 11) return partsJackRig(a, R, M, t, code, age)
   const arms = !!hold?.at && hold.grip === 'overhead' && !hold.at.K.cover && !hold.at.K.limb && R.lod < 2, dt = Math.min(0.1, Math.max(0, t - (R.carryT ?? t)) / 1000)
   R.carryT = t
   R.carryW = clamp((R.carryW || 0) + (arms && !code ? dt / ARM_CARRY.ease : -dt / ARM_CARRY.out), 0, 1)
   if (arms && R.carryW > 0) { const e = R.carryW; armCarry(a, R, hold, e * e * (3 - 2 * e)) }
+  if (hold?.grip === 'side' && !code) {
+    const jc = rigClip(M, JACK.clips[0])
+    if (jc) { rigPose(R, jc, jc.duration - 0.02, 1, RIG_UPPER); jackHandStore(a, R); if (R.over?.parts) R.over = null; return }
+  }
   if (hold && !code) {
     const clip = rigClip(M, hold.grip === 'scruff' ? PARTS_CLIPS.scruff : hold.grip === 'overhead' ? PARTS_CLIPS.over : PARTS_CLIPS.hold)
     if (clip) rigPose(R, clip, (t / 1000) % clip.duration, 1, RIG_UPPER)
@@ -36799,6 +36964,7 @@ function partsCarryAt(id, x, y, z, yaw, C, grip, R, out = [0, 0, 0]) {
 }
 function partsHand(c, o) {
   if (o.K.carry || !GAME.participantOf(c)?.grab) return null
+  if (carDoorRow(o.K) && partsActOf(c.id)[0] === 5) return clubPose(DOOR_CLUB, c.id, c.x, c.y, c.z, c.yaw, c).p
   if (o.K.limb) return clubPose(o.K, c.id, c.x, c.y, c.z, c.yaw, c).p
   if (o.K.cover && partsActOf(c.id)[0] === 6) return hammerPose(c.id, c.x, c.y, c.z, c.yaw, c).p          // and the whirled cover
   const grip = partsGrip(partsObjectKind(c, o) || 'object', o.R || objR(o.K)), [k] = partsActOf(c.id)
@@ -36808,6 +36974,8 @@ function partsHand(c, o) {
 }
 function partsDrawHand(o, p, C) {
   if (o.K.carry || !C?.grab) return null
+  if (carDoorRow(o.K)) { const b = jackBoneAt(o); if (b) return [b[0], b[1] - 0.35, b[2]] }
+  if (carDoorRow(o.K) && partsActOf(p.id)[0] === 5) return clubPose(DOOR_CLUB, p.id, p.x, p.y, p.z, p.yaw, C).p
   if (o.K.limb) return clubPose(o.K, p.id, p.x, p.y, p.z, p.yaw, C).p
   if (o.K.cover && partsActOf(p.id)[0] === 6) return hammerPose(p.id, p.x, p.y, p.z, p.yaw, C).p
   const grip = partsGrip(partsKindOf(o), objR(o.K)), [k] = partsActOf(p.id)
@@ -37380,6 +37548,8 @@ RIG_FILES.maniak_slam = 'maniak_slam.1b0d9406.glb'
 MODELS.maniak.anims = [...[MODELS.maniak.anims].flat(), RIG_FILES.maniak_slam]
 RIG_FILES.maniak_swim = 'maniak_swim.1be46811.glb'
 MODELS.maniak.anims.push(RIG_FILES.maniak_swim)
+RIG_FILES.maniak_jack = 'maniak_jack.1ad1d099.glb'
+MODELS.maniak.anims.push(RIG_FILES.maniak_jack)
 MODELS.maniak.clips.swimIdle = 'maniak_swim_idle'; MODELS.maniak.clips.swim = 'maniak_swim'; MODELS.maniak.clips.swimDive = 'maniak_swim_dive'
 MODELS.maniak.clips.swimUp = MODELS.maniak.clips.climb
 {
@@ -47154,6 +47324,8 @@ function drawnPose(e) {
   return [e.x + (p[0] - e.x) * k, e.y + (p[1] - e.y) * k, e.z + (p[2] - e.z) * k]
 }
 function drawnObj(o) {
+  const jb = jackBoneAt(o)
+  if (jb) { const d = { ...o, x: jb[0], y: jb[1] - 0.35, z: jb[2] }; objDrawn.set(o, d); return d }
   const P = drawnPose(o)
   if (!P) return o
   const d = { ...o, x: P[0], y: P[1], z: P[2], q: nlerp(prevPose.get(o).slice(3, 7), o.q, drawAlpha), of: o }
