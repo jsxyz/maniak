@@ -13915,7 +13915,7 @@ function reel(c, dt) {
   const q = t.hub.getWorldTransform().getRotation(), [px, py, pz] = rotq([-q.x(), -q.y(), -q.z(), q.w()], [(c.x - a[0]) * t.len / d, (c.y - a[1]) * t.len / d, (c.z - a[2]) * t.len / d])
   posVec.setValue(px, py, pz); t.k.setPivotA(posVec)
 }
-const RAPPEL = { links: 3.5, face: 0.48, body: 0.98, lean: 0.5, reach: 0.45, keep: 9, run: 3.2, sprint: 5.6, acc: 12, press: 0.6, slide: 2.2, swing: 10, min: 1.6, hop: 4.5, leap: [6.5, 15], lift: [1.5, 3.5], smash: 3.5, more: 7, wide: 0.45, enter: 1.2, drop: 1.8, find: 3 }
+const RAPPEL = { links: 3.5, face: 0.48, body: 0.98, lean: 0.5, reach: 0.45, keep: 9, run: 3.2, sprint: 5.6, acc: 12, press: 0.6, slide: 2.2, swing: 10, min: 1.6, hop: 4.5, leap: [6.5, 15], lift: [1.5, 3.5], smash: 3.5, more: 7, wide: 0.45, enter: 1.2, drop: 1.8, find: 3, near: 2 }
 const rpHit = []
 const rappelMax = c => { const S = chainSpec(c); return (S ? S.range + S.extra : 60) - (c.rappel?.over || 0) }
 function chainSet(c, L) {
@@ -13962,7 +13962,7 @@ function rappelOpen(c, n, s) {
 }
 function rappelSmash(c, R, W, vin, dt) {
   if (!LV.faust || !dsCheck()) return false
-  if (W && vin > RAPPEL.smash && W.t - c.r < vin * dt * 2 + 0.15) {
+  if (W && vin > RAPPEL.smash && W.t - c.r < Math.max(vin * dt * 2 + 0.15, RAPPEL.reach)) {
     const p = dsPaneAt(W.p[0], W.p[1], W.p[2], W.n[0], W.n[1])
     if (p && dsBreak(DS_KIND.pane, p.key, dsInfo(p, 2, 0, p.along, W.p[1]))) {
       R.hit = vin
@@ -14015,6 +14015,7 @@ function rappelTick(c, inp, dt, g) {
   }
   if (W) Object.assign(R, { n: W.n, p: W.p, on: W.on && !(R.away > 0) })
   else R.on = false
+  R.near = !!W && W.t < c.r + RAPPEL.near
   R.away = Math.max(0, (R.away || 0) - dt); const h0 = R.hopT || 0; R.hopT = Math.max(0, h0 - dt); R.swingT = h0 > 0 && R.hopT === 0 ? 0.9 : Math.max(0, (R.swingT || 0) - dt)
   c.rappel = R
   let n = R.n
@@ -14044,7 +14045,7 @@ function rappelTick(c, inp, dt, g) {
 }
 const rappelYaw = v => Array.isArray(v) && v[0] === 3 && v[75] >= 2 ? Math.atan2(v[76], v[77]) : undefined
 const rappelMove = v => Array.isArray(v) && v[0] === 3 && v[75] >= 2 ? v[78] >> 1 : undefined
-const rappelPack = c => { const R = c.rappel, E = R?.edge; return [R?.n ? (c.rpT > 0 ? 3 : R.on || R.hopT > 0 || R.swingT > 0 ? 2 : 1) : 0, r4(R?.n?.[0] || 0), r4(R?.n?.[1] || 0), (E ? 1 : 0) + 2 * (c.rpT > 0 ? 6 : R?.hopT > 0 ? 5 : R?.swingT > 0 ? 7 : R?.mv || 0), ...(E || [0, 0, 0]).map(r2)] }
+const rappelPack = c => { const R = c.rappel, E = R?.edge; return [R?.n ? (c.rpT > 0 ? 3 : R.on || R.near || R.hopT > 0 || R.swingT > 0 ? 2 : 1) : 0, r4(R?.n?.[0] || 0), r4(R?.n?.[1] || 0), (E ? 1 : 0) + 2 * (c.rpT > 0 ? 6 : R?.hopT > 0 ? 5 : R?.swingT > 0 ? 7 : R?.mv || 0), ...(E || [0, 0, 0]).map(r2)] }
 function untie(c) {
   if (c.tie) { world.removeConstraint(c.tie.k); world.removeRigidBody(c.tie.hub); A.destroy(c.tie.k); A.destroy(c.tie.hub); A.destroy(c.tie.ms) }
   c.tie = null; c.web = 0
