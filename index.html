@@ -32242,7 +32242,7 @@ const probeApi = Object.freeze({
   },
 })
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
-  mapPerf: { trace: on => (mapTrace = on ? [] : null), log: () => mapTrace, low: on => { mapLow = !!on; mapCache = null }, get isLow() { return mapLowOn() } },
+  mapPerf: { trace: on => (mapTrace = on ? [] : null), log: () => mapTrace, low: on => { mapLow = !!on; mapCache = null }, get isLow() { return mapLowOn() }, worker: on => { if (on === undefined) return !!(mapWorker && mapWReady); if (on) mapWorkerStart(); else mapWorkerKill() } },
   log: () => gameLog.map(line => ({ ...line })),
   look: name => GAME.look.set(name),
   shaderCheck,
@@ -47299,7 +47299,7 @@ function mapEnsure() {
   if (!key || !LV.faust || mapData?.key === key || mapJobKey === key) return
   mapJobKey = key; mapData = null; mapCache = null
   const [seed, S] = key.split(' ').map(Number)
-  background.run('map plan', function* () { mapData = yield* mapBuildSteps(seed, S); mapCache = null }, { valid: () => mapKey() === key })
+  background.run('map plan', function* () { mapData = yield* mapBuildSteps(seed, S); mapCache = null; mapWorkerStart() }, { valid: () => mapKey() === key })
     .catch(e => { console.warn('map:', e?.message || e); mapJobKey = '' }).finally(() => { if (mapJobKey === key && !mapData) mapJobKey = '' })
 }
 
@@ -47904,8 +47904,90 @@ function mapCarAt() {
   for (const o of objs) if (o.k === K && me) { const d = Math.hypot(o.x - me.x, o.z - me.z); if (d < bd) { bd = d; best = o } }
   return best ? { x: best.x, z: best.z } : null
 }
+let mapWorker = null, mapWReady = false, mapWJob = null, mapWId = 0
+function mapWorkerMain() {
+  self.onmessage = async e => {
+    const m = e.data
+    try {
+      if (m.t === 'init') {
+        D = m.D; D.band.cv = m.bandBmp; FAUST.world = m.world
+        try {
+          const r = await fetch(MAP_HAND_FONT.url, { integrity: MAP_HAND_FONT.sri, mode: 'cors' }), f = new FontFace(MAP_HAND_FONT.family, await r.arrayBuffer())
+          await f.load(); self.fonts.add(f)
+        } catch (er) {}
+        self.postMessage({ t: 'ready' })
+      } else if (m.t === 'paint') {
+        mapSize = m.size; mapMe = m.me; mapPlaces = new Map(m.places)
+        const cv = new OffscreenCanvas(Math.round(m.CW * m.sc), Math.round(m.CH * m.sc)), g = cv.getContext('2d', { willReadFrequently: true })
+        const it = mapPaintSteps(g, D, m.v, m.CW, m.CH, m.sc)
+        while (!it.next().done);
+        const bmp = cv.transferToImageBitmap()
+        self.postMessage({ t: 'done', id: m.id, bmp }, [bmp])
+      }
+    } catch (er) { self.postMessage({ t: 'err', e: String(er && er.stack || er) }) }
+  }
+}
+function mapWorkerSource() {
+  const fns = { mapPaintSteps, mapLabeler, mapHandWidth, mapTag, mapText, mapInk, mapLoopPts, mapArrowInk, mapPoly, mapStrings, mapWrap, mapPin, mapIcon, mapEllPts, mapAlong, mapLegendBox, mapHandSp, mapRng, mapHash, mapSeedAt, mapWorld, mapUi, faustMix, cityHash, clamp }
+  const cs = { MAP_PAL, MAP_LOT, MAP_LINES, MAP_DISTRICTS, MAP_HAND, MAP_HAND_FONT, FAUST_FIELDS, FAUST_CHAN }
+  let out = 'let mapSize = { W: 0, H: 0, dpr: 1 }, mapMe = null, mapPlaces = new Map(), D = null\nconst mapLayers = [], FAUST = { world: 0 }\n'
+  for (const n in cs) out += 'const ' + n + ' = ' + JSON.stringify(cs[n]) + '\n'
+  for (const n in fns) { const t = fns[n].toString(); out += (/^(async\s+)?function/.test(t) ? t : 'const ' + n + ' = ' + t) + '\n' }
+  return out + ';(' + mapWorkerMain.toString() + ')()\n'
+}
+function mapWorkerKill() {
+  if (mapWorker) { mapWorker.terminate(); mapWorker = null }
+  mapWReady = false; mapWJob = null
+  if (mapCacheCv && mapCacheCv.close) { mapCacheCv.close(); mapCacheCv = null; mapCache = null }
+}
+function mapWorkerStart() {
+  mapWorkerKill()
+  if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || !mapData) return
+  try {
+    const url = URL.createObjectURL(new Blob([mapWorkerSource()], { type: 'text/javascript' })), w = new Worker(url), key = mapData.key
+    URL.revokeObjectURL(url); mapWorker = w
+    w.onerror = e => { console.warn('map worker:', e.message || e); if (mapWorker === w) mapWorkerKill() }
+    w.onmessage = e => {
+      const m = e.data
+      if (mapWorker !== w) { if (m.bmp) m.bmp.close(); return }
+      if (m.t === 'ready') { mapWReady = true; mapPaintJob = null; mapPrewarm() }
+      else if (m.t === 'err') { console.warn('map worker:', m.e); mapWorkerKill() }
+      else if (m.t === 'done') {
+        const j = mapWJob; mapWJob = null
+        if (!j || mapData?.key !== key) { m.bmp.close(); return }
+        const C = mapCache, old = mapCacheCv
+        mapCacheCv = m.bmp; if (old && old.close) old.close()
+        mapCache = { cx: j.v.cx, cz: j.v.cz, k: j.v.k, CW: j.CW, CH: j.CH, W0: j.W0, H0: j.H0, dirty: !!(C && C.dirty && !j.wasDirty) }
+      }
+    }
+    const D0 = { ...mapData }; delete D0.str; for (const n in D0) if (typeof D0[n] === 'function') delete D0[n]; D0.band = { nr: D0.band.nr, C: D0.band.C, bands: D0.band.bands }
+    createImageBitmap(mapData.band.cv).then(bmp => { if (mapWorker === w) w.postMessage({ t: 'init', D: D0, bandBmp: bmp, world: mapWorld() }, [bmp]) })
+  } catch (e) { console.warn('map worker:', e?.message || e); mapWorkerKill() }
+}
+function mapWorkerPost(v, CW, CH, W0, H0, dpr) {
+  const sc = Math.min(dpr, Math.sqrt((mapLowOn() ? 1.7e6 : 4.2e6) / (CW * CH))) || 1, C = mapCache
+  mapWJob = { id: ++mapWId, v, CW, CH, W0, H0, wasDirty: !!(C && C.dirty) }
+  mapWorker.postMessage({ t: 'paint', id: mapWId, v, CW, CH, sc, size: { W: mapSize.W, H: mapSize.H }, me: mapMe ? { x: mapMe.x, z: mapMe.z } : null, places: [...mapPlaces] })
+}
+function mapPrewarm() {
+  if (!mapWReady || mapWJob || mapOpen || mapCache || !mapData) return
+  const me = mapMe || selfChar(); if (!me) return
+  const W = innerWidth, H = innerHeight, keepSize = mapSize, keepView = { ...mapView }
+  mapSize = { W, H, dpr: 0 }; mapGoMe(); const v = { cx: mapView.cx, cz: mapView.cz, k: mapView.k }
+  mapSize = keepSize; Object.assign(mapView, keepView)
+  const margin = Math.round(0.22 * Math.max(W, H))
+  mapWorkerPost(v, W + 2 * margin, H + 2 * margin, W, H, mapLowOn() ? 1 : Math.min(window.devicePixelRatio || 1, 2))
+}
+function mapWorkerDrive(V, CW, CH, dpr, margin, now) {
+  const C = mapCache
+  if (V.k !== mapKSeen) { mapKSeen = V.k; mapKAt = now }
+  let want = !C || C.dirty
+  if (C && !want) want = Math.abs(C.k - V.k) > 1e-9 ? now - mapKAt >= 140 : Math.abs(C.cx - V.cx) * V.k > margin * 0.6 || Math.abs(C.cz - V.cz) * V.k > margin * 0.6
+  if (want && !mapWJob) mapWorkerPost({ cx: V.cx, cz: V.cz, k: V.k }, CW, CH, mapSize.W, mapSize.H, dpr)
+}
 let mapPaintJob = null, mapBackCv = null, mapKSeen = -1, mapKAt = 0, mapTrace = null
 function mapPaintDrive(V, CW, CH, dpr, margin, now) {
+  if (mapWorker && mapWReady && !mapLayers.some(L => L.static)) return mapWorkerDrive(V, CW, CH, dpr, margin, now)
   const C = mapCache
   if (V.k !== mapKSeen) { mapKSeen = V.k; mapKAt = now }
   let want = !C || C.dirty
@@ -47933,7 +48015,7 @@ function mapFrame(now) {
   const cv = el('#map-cv'), W = cv.clientWidth, H = cv.clientHeight
   if (!W || !H) return
   const dpr = mapLowOn() ? 1 : Math.min(window.devicePixelRatio || 1, 2)
-  if (mapSize.W !== W || mapSize.H !== H || mapSize.dpr !== dpr) { mapSize = { W, H, dpr }; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); mapCache = null; mapChrome = null; mapClampView() }
+  if (mapSize.W !== W || mapSize.H !== H || mapSize.dpr !== dpr) { mapSize = { W, H, dpr }; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); if (!mapCache || mapCache.W0 !== W || mapCache.H0 !== H) mapCache = null; mapChrome = null; mapClampView() }
   const g = mapCtx ||= cv.getContext('2d'), V = mapView
   g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = MAP_PAL.ink; g.fillRect(0, 0, cv.width, cv.height)
   if (!mapData) {
@@ -48013,7 +48095,8 @@ function mapGoCity() { mapView.cx = 0; mapView.cz = 0; mapView.k = Math.min(mapS
 function mapGoWorld() { mapView.cx = 0; mapView.cz = 0; mapView.k = 0; mapClampView() }
 function mapRelease() {
   if (mapOpen) return
-  for (const c of [mapCacheCv, mapChromeCv, mapBackCv]) if (c) { c.width = 0; c.height = 0 }
+  if (mapWorker && mapWReady) { if (mapChromeCv) { mapChromeCv.width = 0; mapChromeCv.height = 0 } mapChrome = null; mapCtx = null; mapChromeCv = null; return }
+  for (const c of [mapCacheCv, mapChromeCv, mapBackCv]) if (c && !c.close) { c.width = 0; c.height = 0 }
   mapCache = null; mapChrome = null; mapCtx = null; mapCacheCv = null; mapChromeCv = null; mapBackCv = null; mapPaintJob = null
 }
 function openMap() {
