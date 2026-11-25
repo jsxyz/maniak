@@ -37262,11 +37262,11 @@ function fitRows() {
 
 const STREET_FILES = { anims: 'anims_street.ae18f90f.glb', bike: 'bike.9b59aabf.glb', pram: 'pram.4b8575f8.glb', stagger: 'anims_stagger.e55892dd.glb', baby: 'baby.d56501e1.glb', dog: 'dog.f8b8105a.glb', pigeon: 'pigeon.b13d236f.glb' }
 const STREET = {
-  density: { core: 40, civic: 31, tenement: 25, industrial: 6, plaza: 24 }, quality: { low: 0.34, medium: 0.45, high: 1 },
+  density: { core: 40, civic: 31, tenement: 25, industrial: 6, plaza: 24 }, avoidR: 60,
   share: { idle: 0.2, junction: 0.26, pram: 0.08, dog: 0.08 }, strays: 0.5, flocks: [1, 3], cyclistGap: 150,
   walk: [1.2, 1.55], cross: 1.95, pram: 1.05, run: 4.4, ride: [4.4, 5.8], dogWalk: 1.0,
   lod: [12, 30, 60], draw: { ped: 140, bike: 120, pram: 75, dog: 60, pigeon: 45, flock: 350 },
-  qualityLod: { low: [6, 16, 40], medium: [10, 24, 50] }, qualityDraw: { low: 0.7, medium: 0.85 },
+  qualityLod: { low: [6, 16, 40], medium: [10, 24, 50] },
   hostR: 70, scareR: 15, pigeonR: 3.4, carR: 7, brushR: 1.4, fleeS: 7, backS: 45, lieS: 2.4, getupS: 1.5, knockS: 0.55, bodyS: 120, deadS: 600,
   repeat: 3, refreshMs: 2000, keepMs: 60000,
   signal: { cycle: 24, red: { x: [10, 24], z: [20, 34] }, go: 2.2 },
@@ -39190,12 +39190,13 @@ function slDrawSkinned(kitm, p, d, tint, scale = 1, gone = 0) {
 }
 const SL_NUDGE = { char: 1.1, clear: 0.5, look: 1, lookMax: 10, hold: 0.35, out: 3, outCar: 4.5, back: 0.9, max: 2.6, moving: 0.15, offFrames: 30, acc: 14 }
 const SL_AVOID = { passes: 3, width: { d: 0.3, 4: 0.3, 5: 0.45 }, move: 0.4, idle: 0.62, still: 0.8, lookMax: 3, max: 1.1, out: 1.5, cell: 6, still_v: 0.05 }
-const slAv = { pool: [], n: 0, hash: new Map(), list: [], drawn: [], grid: new Map() }
+const slAv = { pool: [], n: 0, hash: new Map(), list: [], drawn: [], grid: new Map(), cx: 0, cz: 0, far2: Infinity }
 const slAvPt = () => ({ car: false, ped: true, x: 0, z: 0, r: 0, vx: 0, vz: 0, sp: 0, grp: 0, idle: false })
 function slAvoidBegin() { slAv.n = 0 }
 function slAvoidPose(ag, T) {
   const a = slAv, e = a.pool[a.n] || (a.pool[a.n] = { p: SL_POSE(), pt: slAvPt(), pt2: slAvPt(), f: -1, two: false, dogF: -1, dogX: 0, dogZ: 0, ag: null })
   a.n++; e.ag = ag; ag._av = e; e.f = -1; e.two = false; slPose(ag, T, e.p)
+  e.bx = e.p.x; e.bz = e.p.z; e.far = (e.p.x - a.cx) ** 2 + (e.p.z - a.cz) ** 2 > a.far2
   return e
 }
 const slAvKey = (i, j) => (i + 4096) * 8192 + (j + 4096)
@@ -39210,7 +39211,7 @@ function slAvoidIndex(frame) {
   for (const arr of a.hash.values()) arr.length = 0
   for (let i = 0; i < a.n; i++) {
     const e = a.pool[i], ag = e.ag, p = e.p
-    if (ag.kind === SL_K.exit || p.hidden || p.scale <= 0.01 || p.rec || p.down) continue
+    if (ag.kind === SL_K.exit || e.far || p.hidden || p.scale <= 0.01 || p.rec || p.down) continue
     const own = ag.companion?._av, q = own && own.f === frame ? own.p : p, v = q.v || 0, idle = !(v > SL_AVOID.still_v), vx = idle ? 0 : Math.sin(q.yaw) * v, vz = idle ? 0 : Math.cos(q.yaw) * v
     const grp = ag.companion ? ag.companion.id : ag.id
     e.f = frame; e.bx = p.x; e.bz = p.z
@@ -39310,6 +39311,11 @@ function slNudgeFade(map, id, n, p, step) {
   const e = Math.hypot(n.x, n.z)
   if (e <= step || slState.frame - n.f > SL_NUDGE.offFrames) { map.delete(id); return null }
   const f = 1 - step / e; n.x *= f; n.z *= f; n.f = slState.frame; p.x += n.x; p.z += n.z; return n
+}
+function slNudgeFar(ag, p, dt) {
+  const map = slState.nudge || (slState.nudge = new Map())
+  ag._nf = slState.frame
+  return slNudgeFade(map, ag.id, map.get(ag.id), p, SL_NUDGE.outCar * Math.min(Math.max(dt || 0, 0), 0.1))
 }
 function slNudge(ag, p, pushers, cell, dt) {
   const st = slState, map = st.nudge || (st.nudge = new Map()), N = SL_NUDGE, h = Math.min(Math.max(dt || 0, 0), 0.1)
@@ -39412,7 +39418,7 @@ function slNudge(ag, p, pushers, cell, dt) {
   p.x += nx; p.z += nz
   return n
 }
-const slDrawD = { qd: -1, D: null }, slPushP = [], slPushPool = []
+const slPushP = [], slPushPool = []
 function slFrame(t, dt, obl) {
   if (!LV.faust || !faustState || renderHeadless) return
   if (!slState || slState.seed !== faustState.seed || slState.S !== faustState.S) slReset()
@@ -39426,7 +39432,7 @@ function slFrame(t, dt, obl) {
   cam.updateMatrixWorld(); slPM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); slFrus.setFromProjectionMatrix(slPM)
   slDropFrame = slDrops - slDropPrev; slDropPrev = slDrops; slVw.ok = true; slVw.x = cam.position.x; slVw.z = cam.position.z; slLie.length = 0; slRetire(st, T)
   for (const c of kit.root.children) if (c.isInstancedMesh) c.count = 0
-  const qn = (STREET.quality[settings.quality] ?? 1) * (STREET.scale ?? 1), qd = STREET.qualityDraw[settings.quality] ?? 1, D = slDrawD.qd === qd ? slDrawD.D : (slDrawD.qd = qd, slDrawD.D = Object.fromEntries(Object.entries(STREET.draw).map(([k, v]) => [k, v * qd])))
+  const qn = STREET.scale ?? 1, D = STREET.draw
   const cx = cam.position.x, cz = cam.position.z, A = st.S * 48, seen = (x, y, z, r) => slFrus.intersectsSphere(slSph.set(slV.set(x, y, z), r))
   const near = (x, z, R) => Math.abs(x - cx) < R && Math.abs(z - cz) < R && Math.hypot(x - cx, z - cz) < R
   const pushers = slPushers(obl, dt, near, D.ped + 12)
@@ -39442,7 +39448,7 @@ function slFrame(t, dt, obl) {
   for (const c of slSubCellsIn(cx - D.ped - 10, cz - D.ped - 10, cx + D.ped + 10, cz + D.ped + 10, [])) if (seen(c.X + 75, 10, c.Z + 75, 110)) cellsNear.push(c)
   const lineR = slLineRiders; lineR.length = 0
   for (const L of slLinesNear(cx, cz, D.bike)) for (const ag of L.riders) { if (slRnd(ag.id, 77) >= qn && !st.byId.has(ag.id)) { ag._av = null; continue } ag.line = L; lineR.push(ag) }
-  slAvoidBegin()
+  slAvoidBegin(); slAv.cx = cx; slAv.cz = cz; slAv.far2 = STREET.avoidR * STREET.avoidR
   for (const cell of cellsNear) for (const ag of cell.agents) { if (ag.rank >= qn && !ag.venue && !st.byId.has(ag.id)) ag._av = null; else slAvoidPose(ag, T) }
   for (const ag of lineR) slAvoidPose(ag, T)
   slAvoidIndex(st.frame)
@@ -39451,12 +39457,12 @@ function slFrame(t, dt, obl) {
     const e = ag._av; if (!e) continue
     const p = e.p; e.nd = null
     if (p.hidden || p.scale <= 0.01 || !(ag.kind === SL_K.cyclist ? near(p.x, p.z, D.bike) && seen(p.x, 1, p.z, 2.4) : near(p.x, p.z, D.ped) && seen(p.x, 1, p.z, 2.2))) continue
-    e.nd = slNudge(ag, p, slAvoidList(ag, p, pushers), cell, dt); e.dr = st.frame; slAv.drawn.push(e)
+    e.nd = e.far ? slNudgeFar(ag, p, dt) : slNudge(ag, p, slAvoidList(ag, p, pushers), cell, dt); e.dr = st.frame; slAv.drawn.push(e)
   }
   for (const ag of lineR) {
     const e = ag._av, p = e.p; e.nd = null
     if (p.hidden || p.scale <= 0.01 || p.rec || !near(p.x, p.z, D.bike) || !seen(p.x, 1, p.z, 2.4)) continue
-    e.nd = slNudge(ag, p, slAvoidList(ag, p, pushers), slLineCell, dt); e.dr = st.frame; slAv.drawn.push(e)
+    e.nd = e.far ? slNudgeFar(ag, p, dt) : slNudge(ag, p, slAvoidList(ag, p, pushers), slLineCell, dt); e.dr = st.frame; slAv.drawn.push(e)
   }
   slAvoidSeparate(st.frame, dt)
   for (const cell of cellsNear) {
