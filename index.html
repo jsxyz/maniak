@@ -21437,6 +21437,7 @@ function onRigLoaded(M, gltf, anims, priority = 2) {
   yield* warmSceneSteps(activeLook || 'plain', [root])
   M.proto = root
   rebuildAvatars()
+  yield* warmSceneSteps(activeLook || 'plain', [rigWarmProbe(M)])
   }, { gpu: true, priority })
 }
 function* rigBuildSteps(M, gltf, anims) {
@@ -22164,11 +22165,12 @@ function buildScenery(boxes, unit = ARENA / 72) {
 let lookPending = null, lookPreparedKey = '', lookSerial = 0, warmDepth = null, inkWarmNormal = null, inkWarmTarget = null, warmShadowTarget = null, interiorProbe = null
 const DEPTH_SIDE = { [THREE.FrontSide]: THREE.BackSide, [THREE.BackSide]: THREE.FrontSide, [THREE.DoubleSide]: THREE.DoubleSide }
 let rigProbe = null, rigProbeSig = ''
-function rigWarmProbe() {
-  const specs = [...CHARS, ...BOTS].filter(C => MODELS[C.model || 'man']?.kind === 'rig' && MODELS[C.model || 'man'].proto)
+function rigWarmProbe(only) {
+  const specs = [...CHARS, ...BOTS].filter(C => MODELS[C.model || 'man']?.kind === 'rig' && MODELS[C.model || 'man'].proto && (!only || MODELS[C.model || 'man'] === only))
   const sig = specs.map(C => C.model || 'man').join()
-  if (rigProbe && sig === rigProbeSig) return rigProbe
-  rigProbeSig = sig; rigProbe = new THREE.Group(); rigProbe.name = 'rig probe'
+  if (!only && rigProbe && sig === rigProbeSig) return rigProbe
+  const grp = new THREE.Group(); grp.name = 'rig probe'
+  if (!only) { rigProbeSig = sig; rigProbe = grp }
   const seen = new Set()
   for (const C of specs) {
     const M = MODELS[C.model || 'man'], B = bonesOf(C), key = (C.model || 'man') + '|' + JSON.stringify(B ?? null) + '|' + JSON.stringify(C.rig ?? null)
@@ -22180,10 +22182,10 @@ function rigWarmProbe() {
       mesh.add(inst)
       if (C.rig) rigDress(mesh, inst, rigParts(inst, P).bones, C.rig)
       mesh.traverse(n => { const m = n.material; if (!m || Array.isArray(m)) return; if (!m.userData.ghostDither) ghostMaterial(m); if (soft && ![...rigAcc.mat.values()].includes(m)) { m.transparent = true; m.depthWrite = false } })
-      rigProbe.add(mesh)
+      grp.add(mesh)
     } catch (e) { failN[24]++ }
   }
-  return rigProbe
+  return grp
 }
 function interiorWarmProbe() {
   if (interiorProbe || !LV?.faust || typeof inMaterials !== 'function') return interiorProbe
@@ -46089,6 +46091,23 @@ function boatStandIn(K) {
   }
   return boatStands.get(K.name)
 }
+const BOAT_LIDS = { Speedboat: [-0.9, 1.7], Rowboat: [-1.9, 1.9] }, boatLids = new Map()
+function boatLid(name) {
+  const S = BOAT_SHAPES[name], span = BOAT_LIDS[name]
+  if (!S || !span) return null
+  if (!boatLids.has(name)) {
+    const pos = [], y = S.d - 0.02, n = 12
+    for (let i = 0; i < n; i++) {
+      const z0 = span[0] + (span[1] - span[0]) * i / n, z1 = span[0] + (span[1] - span[0]) * (i + 1) / n, w0 = 0.96 * boatHalf(S, z0), w1 = 0.96 * boatHalf(S, z1)
+      pos.push(-w0, y, z0, w0, y, z0, w1, y, z1, -w0, y, z0, w1, y, z1, -w1, y, z1)
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.userData.shared = true
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide, alphaTest: 0.01 }))
+    m.renderOrder = 0.4; m.frustumCulled = false; m.name = 'water lid'
+    boatLids.set(name, m)
+  }
+  return boatLids.get(name).clone()
+}
 function boatModel(o, K, H) {
   const name = K.model || K.name, style = BOAT_STYLES[name], F = boatFleet, wreck = !K.drive && !!K.model
   if (!F?.ready || !style) { const m = boatStandIn(K).clone(); m.castShadow = m.receiveShadow = true; return { root: m, lods: [m], parts: [{}], file: false } }
@@ -46100,6 +46119,7 @@ function boatModel(o, K, H) {
     m.traverse(c => { if (c.isMesh) { c.material = mat; c.castShadow = /lod0|wreck/.test(n); c.receiveShadow = true } })
     m.position.set(-H.at[0], -H.at[1], -H.at[2]); m.visible = !lods.length
     root.add(m); lods.push(m)
+    if (!wreck && !/lod2$/.test(n)) { const f = boatLid(name); if (f) m.add(f) }
   }
   const parts = lods.map(m => ({ props: m.children.filter(c => /^prop/.test(c.name)), rudder: m.getObjectByName('rudder'), oars: ['oar_l', 'oar_r'].map(k => m.getObjectByName(k)).filter(Boolean) }))
   return { root, lods, parts, file: true }
@@ -47932,7 +47952,7 @@ function waterPick(mesh) {
   if (on && activeLook === 'ink') inkPrepare(mesh)
 }
 function waterDress(mesh, info) {
-  mesh.castShadow = false; waterMeshes.add(mesh); waterPick(mesh)
+  mesh.castShadow = false; mesh.renderOrder = 0.5; waterMeshes.add(mesh); waterPick(mesh)
   FAUST_WATER.waves.drawn = Object.values(WATER_LOOKS).every(Boolean)
 }
 FAUST_WATER.dress = waterDress
