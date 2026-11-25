@@ -14245,7 +14245,11 @@ function applyIntent(c, inp, dt) {
     const team = GAME.death.down(c, dt)
     c.dead -= dt
     moveReset(c)
-    if (!deadWater(c)) c.body.setLinearVelocity(zeroVec)
+    if (c.knT > 0 && !deadWater(c)) { const k = c.knT / KNOCK_S, v = c.body.getLinearVelocity(); velVec.setValue(c.knx * k, v.y(), c.knz * k); c.body.setLinearVelocity(velVec); c.knT -= dt }
+    else {
+      if (!deadWater(c)) c.body.setLinearVelocity(zeroVec)
+      if (c.poolLate) { c.poolLate = false; GORE.emit(1, c.x, c.y - c.h - c.r + 0.1, c.z, 0, 1, 0, clamp((c.r || 0.4) / 0.4, 0.6, 2)) }
+    }
     c.dove = false
     if (c.dead <= 0) { if (c.spawnOk || spawnWarm(c)) GAME.death.up(c, team); else c.dead = TICK }
     else if (!c.spawnOk) spawnWarm(c)
@@ -18565,20 +18569,24 @@ function seatedShot(c, viewT, f) {
   shotSkip = s ? s[0].id : null
   try { return f() } finally { [c.x, c.y, c.z] = was; shotSkip = null }
 }
+const PUNCH_EXTRA = 0.6
+const punchExtra = G => G.melee && !G.grip && (G.punch === 'jab' || G.punch === 'rise') ? PUNCH_EXTRA : 0
 function castPellet(shooter, targets, yaw, pitch, G, fx) {
   const [dx, dy, dz] = aimDir(yaw, pitch)
   const [ox, oy, oz] = eyeAt(shooter)
 
-  let best = wallAt(ox, oy, oz, dx, dy, dz, reachOf(shooter, G)), victim = null, obj = null
+  const R0 = reachOf(shooter, G)
+  let best = wallAt(ox, oy, oz, dx, dy, dz, R0 + punchExtra(G)), victim = null, obj = null
   for (const o of objs) {
     const t = rayObject(ox, oy, oz, dx, dy, dz, o)
-    if (t < best) { best = t; victim = null; obj = o }
+    if (t < best && t < R0) { best = t; victim = null; obj = o }
   }
   for (const c of targets) {
     if (c === shooter || c.dead > 0 || c.prot > 0) continue
     const t = rayCapsule(ox, oy, oz, dx, dy, dz, c)
     if (t < best) { best = t; victim = c; obj = null }
   }
+  if (!victim && best > R0) best = R0
   if (fx) fx.push([r2(ox), r2(oy), r2(oz),
                    r2(ox + dx * best), r2(oy + dy * best), r2(oz + dz * best)])
   if (!obj && !victim && LV.faust && isHost) dsShot(ox, oy, oz, dx, dy, dz, best, reachOf(shooter, G), G)
@@ -18596,7 +18604,13 @@ function castPellet(shooter, targets, yaw, pitch, G, fx) {
 
 const reachOf = (c, G) => G.range * profRange(c, G.name) * (G.melee ? 1 : eff(c, 'reach'))
 
-const downed = c => c.hp <= 0 && c.dead <= 0 && (c.dead = RESPAWN_S, goreDeath(c), true)
+function deathSlide(c) {
+  const sp = Math.hypot(c.knx || 0, c.knz || 0)
+  if (!(c.knT > 0) || sp < 1) return
+  const k = 2 * clamp(sp * LAUNCH.k, LAUNCH.min, LAUNCH.max) / KNOCK_S / sp
+  c.knx *= k; c.knz *= k; c.knT = KNOCK_S
+}
+const downed = c => c.hp <= 0 && c.dead <= 0 && (c.dead = RESPAWN_S, goreDeath(c), deathSlide(c), true)
 
 function blast(c, aimed, P, r, gunId, onKill) {
   const fx = [], rode = new Set()
@@ -18633,7 +18647,7 @@ function assistAim(c, list, G) {
   for (const v of list) {
     if (v === c || v.bird || v.dead > 0 || v.prot > 0) continue
     const dx = v.x - ox, dy = v.y - oy, dz = v.z - oz, d = Math.hypot(dx, dy, dz)
-    if (d - v.r > reach) continue
+    if (d - v.r > reach + punchExtra(G)) continue
     const a = Math.hypot(dx, dz) < v.r + 0.3 ? 0 : Math.abs(wrapPi(Math.atan2(-dx, -dz) - yaw))
     if (a > ASSIST_ARC || a * 2 + d >= score) continue
     score = a * 2 + d; best = [Math.atan2(-dx, -dz), Math.asin(clamp(dy / (d || 1), -1, 1)), true]
@@ -20665,7 +20679,7 @@ THREE.ShaderChunk.fog_vertex = THREE.ShaderChunk.fog_vertex.replace('- mvPositio
 for (const U of [THREE.UniformsLib.fog, ...Object.values(THREE.ShaderLib).map(s => s.uniforms)]) if (U.fogNear) U.fogGrown = { value: GAME.fogGrown ||= { x: 1e9, y: 0 } }
 let renderer, scene, camera, scene3d, sunLight, avatarGroup, pickGroup, tracerGroup, worldGroup
 const avatars = new Map()
-const pickPool = [], tracerPool = [], boxPool = [], orbPool = [], slashPool = [], whipPool = [], ringPool = [], struckPool = [], effectPool = [], glowPool = []
+const pickPool = [], tracerPool = [], boxPool = [], orbPool = [], slashPool = [], whipPool = [], ringPool = [], wordPool = [], struckPool = [], effectPool = [], glowPool = []
 let fxKey = null
 const baseTex = {}
 let liveTracers = []
@@ -24608,8 +24622,8 @@ const RIG_UPPER = /^(spine_0[123]|neck_01|Head|clavicle|upperarm|lowerarm|hand|i
 const RIG_LOWER = /^(pelvis|thigh|calf|foot|ball)/
 const swRamp = (t, a, b) => { const x = Math.min(1, Math.max(0, (t - a) / (b - a))); return x * x * (3 - 2 * x) }
 const swBump = (t, a, b) => Math.sin(Math.PI * Math.min(1, Math.max(0, (t - a) / (b - a))))
-function overCt(o, t) {
-  if (!o.knots) return Math.min(o.clock ?? o.t0 + (t - o.at) / 1000 * (o.speed || 1), o.stop ?? Infinity)
+function overCt(o, t, a) {
+  if (!o.knots) return Math.min(o.clock ?? o.t0 + (a ? rigOverAge(a, o, t) : t - o.at) / 1000 * (o.speed || 1), o.stop ?? Infinity)
   const e = (t - o.at) / 1000, K = o.knots
   for (let i = 1; i < K.length; i++) if (e < K[i][0]) return K[i - 1][1] + (K[i][1] - K[i - 1][1]) * Math.max(0, e - K[i - 1][0]) / (K[i][0] - K[i - 1][0])
   return K.at(-1)[1]
@@ -24626,7 +24640,8 @@ function knockDraw(t) {
     if (!K || !a.mesh?.visible) continue
     const w = knockEnv(K, t) * K.k * KNOCK.dist
     if (!(t - K.at <= KNOCK.ms)) { a.knock = null; continue }
-    a.mesh.position.x += K.x * w; a.mesh.position.z += K.z * w
+    const g = a.holdPos && t >= (a.holdFrom ?? Infinity) && t < (a.holdTo || 0) + LUNGE.ease ? Math.max(0, (t - (a.holdTo || 0)) / LUNGE.ease) : 1
+    a.mesh.position.x += K.x * w * g; a.mesh.position.z += K.z * w * g
   }
 }
 const knockDir = new THREE.Vector3()
@@ -24714,6 +24729,85 @@ function rigParts(inst, M) {
     poses: new Map(), over: null, combo: -1, frame: 0 }
 }
 const rigClip = (M, name) => M.anims.find(c => c.name === name)
+const SLIDE = { start: 1.2, stay: 0.5, extra: 250, hold: 160 }
+function rigSlide(a, R, M, t) {
+  const m = a.mesh.position, d = a.drawOff && m.x === a.drawOff[2] && m.z === a.drawOff[4] ? a.drawOff : null, p = { x: m.x - (d ? d[0] : 0), z: m.z - (d ? d[1] : 0) }
+  const dt = (t - (R.slT ?? t)) / 1000, vx = dt > 0 ? (p.x - R.slX) / dt : 0, vz = dt > 0 ? (p.z - R.slZ) / dt : 0
+  R.slX = p.x; R.slZ = p.z; R.slT = t
+  if (!a.struckFrom || a.struckAt === undefined || t - a.struckAt > KNOCK_S * 1000 + (a.holdTo - a.struckAt || 0) + SLIDE.extra || !rigClip(M, 'knockback')) return R.sliding = false
+  const dx = p.x - a.struckFrom[0], dz = p.z - a.struckFrom[1], n = Math.hypot(dx, dz) || 1
+  if ((vx * dx + vz * dz) / n > (R.sliding ? SLIDE.stay : SLIDE.start)) { R.slLo = t; return R.sliding = true }
+  return R.sliding = !!R.sliding && t - (R.slLo ?? t) < SLIDE.hold
+}
+const LAUNCH = { gain: 1.4, ko: 0.75, skip: 0.75, from: 1.1, s: 0.45, min: 0.7, max: 2.2, k: 0.12, rise: 0.3, gap: 400 }
+function rigLaunch(a, t) {
+  if (!(a.dying >= 0) || !a.struckFrom || a.struckAt === undefined || Math.abs(a.struckAt - (t - a.dying * 1000)) > LAUNCH.gap) return null
+  const u = Math.min(1, a.dying / LAUNCH.s)
+  return { x: 0, z: 0, y: Math.sin(Math.PI * u) * LAUNCH.rise }
+}
+function rigOverAge(a, o, t) {
+  const h0 = Math.max(a.holdFrom ?? Infinity, o.at)
+  return t - o.at - (t > h0 ? Math.max(0, Math.min(t, a.holdTo || 0) - h0) : 0)
+}
+const reachP = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()], reachD = new THREE.Vector3(), reachH = new THREE.Vector3(), reachG = new THREE.Vector3()
+const reachQ = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()]
+function restoreReachPose(R) {
+  if (!R.reachSave) return
+  for (const [b, q] of R.reachSave) b.quaternion.copy(q)
+  R.reachSave = null
+}
+function rigReachAim(b, u, v) {
+  b.parent.getWorldQuaternion(reachQ[0])
+  reachQ[1].setFromUnitVectors(u.normalize(), v.normalize())
+  reachQ[2].copy(reachQ[0]).invert().multiply(reachQ[1]).multiply(reachQ[0]).multiply(b.quaternion)
+  b.quaternion.copy(reachQ[2])
+}
+const REACH = { chest: 0.4, depth: 1.0, lead: 0.6, ramp: 60, release: 100, slack: 1.8 }
+const LUNGE = { stop: 0.9, max: 0.65, ease: 80, bound: 0.5, hold: 0.65 }
+function reachSeen(r, t) {
+  if (r && !r.seen) { r.seen = true; if (t > r.until) r.until = t }
+}
+function rigLunge(a, t) {
+  const r = a.reach
+  reachSeen(r, t)
+  if (!r || !a.mesh.visible || t < r.at || t > r.until + REACH.release || !r.to.mesh) return null
+  const w = clamp(REACH.lead + (t - r.at) / REACH.ramp, 0, 1) * clamp(1 - (t - r.until) / REACH.release, 0, 1)
+  const dx = r.to.mesh.position.x - a.mesh.position.x, dz = r.to.mesh.position.z - a.mesh.position.z, d = Math.hypot(dx, dz) || 1
+  const k = clamp(d - LUNGE.stop, 0, LUNGE.max) * w / d
+  return { x: dx * k, z: dz * k }
+}
+function rigReach(a, R, t) {
+  const r = a.reach
+  reachSeen(r, t)
+  if (!r || R.lod > 1 || !a.mesh.visible || t < r.at || t > r.until + REACH.release || !r.to.mesh) return
+  const to = r.to, C = to.spec, tp = to.mesh.position, ap = a.mesh.position
+  const w = clamp(REACH.lead + (t - r.at) / REACH.ramp, 0, 1) * clamp(1 - (t - r.until) / REACH.release, 0, 1)
+  if (w <= 0) return
+  const dx = ap.x - tp.x, dz = ap.z - tp.z, n = Math.hypot(dx, dz) || 1
+  reachG.set(tp.x + dx / n * C.r * REACH.depth, tp.y + REACH.chest * (C.h + C.r), tp.z + dz / n * C.r * REACH.depth)
+  a.mesh.updateMatrixWorld(true)
+  let side = 'r', best = Infinity
+  for (const s of ['l', 'r']) { const hd = R.bones.get('hand_' + s); if (!hd) return; hd.getWorldPosition(reachP[0]); const d = reachP[0].distanceToSquared(reachG); if (d < best) { best = d; side = s } }
+  const up = R.bones.get('upperarm_' + side), lo = R.bones.get('lowerarm_' + side), en = R.bones.get('hand_' + side)
+  if (!up || !lo || !en) return
+  up.getWorldPosition(reachP[0]); lo.getWorldPosition(reachP[1]); en.getWorldPosition(reachP[2])
+  const u = reachP[0].distanceTo(reachP[1]), f = reachP[1].distanceTo(reachP[2])
+  if (reachP[0].distanceTo(reachG) > (u + f) * REACH.slack) return
+  R.reachSave = [[up, up.quaternion.clone()], [lo, lo.quaternion.clone()]]
+  reachD.subVectors(reachG, reachP[0])
+  const d = clamp(reachD.length(), Math.abs(u - f) + 0.001, u + f - 0.002)
+  reachD.normalize()
+  reachP[3].copy(reachP[0]).addScaledVector(reachD, d)
+  const along = (u * u - f * f + d * d) / (2 * d)
+  reachH.subVectors(reachP[1], reachP[0]); reachH.addScaledVector(reachD, -reachH.dot(reachD)).normalize()
+  reachH.multiplyScalar(Math.sqrt(Math.max(0, u * u - along * along))).addScaledVector(reachD, along).add(reachP[0])
+  rigReachAim(up, reachP[1].clone().sub(reachP[0]), reachH.clone().sub(reachP[0]))
+  up.updateMatrixWorld(true)
+  lo.getWorldPosition(reachP[1]); en.getWorldPosition(reachP[2])
+  rigReachAim(lo, reachP[2].clone().sub(reachP[1]), reachP[3].clone().sub(reachP[1]))
+  for (const [b, q] of R.reachSave) { reachQ[0].copy(b.quaternion); b.quaternion.copy(q).slerp(reachQ[0], w) }
+  a.mesh.updateMatrixWorld(true)
+}
 function rigAction(R, name) {
   let x = R.acts.get(name)
   if (x === undefined) { const c = rigClip(R.M, name); R.acts.set(name, x = c ? R.mixer.clipAction(c) : null) }
@@ -24841,6 +24935,18 @@ function rigAnimate(a, want, dt, t) {
   restoreGaitPose(R)
   restoreMovePose(R)
   restoreSeatPose(R)
+  restoreReachPose(R)
+  const launch = rigLaunch(a, t), lunge = rigLunge(a, t), P = a.mesh.position
+  if (a.drawOff && P.x === a.drawOff[2] && P.y === a.drawOff[3] && P.z === a.drawOff[4]) { P.x -= a.drawOff[0]; P.y -= a.drawOff[5]; P.z -= a.drawOff[1] }
+  let ox = 0, oy = 0, oz = 0
+  if (lunge) { ox += lunge.x; oz += lunge.z }
+  if (a.holdPos && !(a.dying >= 0) && t < (a.holdTo || 0) + LUNGE.ease) { const f = t < a.holdTo ? 1 : 1 - (t - a.holdTo) / LUNGE.ease; ox += (a.holdPos[0] - P.x) * f; oz += (a.holdPos[1] - P.z) * f }
+  const om = Math.hypot(ox, oz)
+  const lb = LUNGE.bound + (LUNGE.hold - LUNGE.bound) * (a.holdFrom !== undefined && t >= a.holdFrom ? clamp(1 - (t - (a.holdTo || 0)) / REACH.release, 0, 1) : 0)
+  if (om > lb) { ox *= lb / om; oz *= lb / om }
+  if (launch) { ox += launch.x; oy += launch.y; oz += launch.z }
+  P.x += ox; P.y += oy; P.z += oz
+  a.drawOff = ox || oy || oz ? [ox, oz, P.x, P.y, P.z, oy] : null
   R.frame++
   a.swimming = typeof want === 'string' && want.startsWith('swim') && !!K[want]
   if (camera) {
@@ -24848,9 +24954,9 @@ function rigAnimate(a, want, dt, t) {
     if (lod !== R.lod) { R.lod = lod; R.lods.forEach((m, i) => { if (m) { m.visible = i === lod; m.castShadow = i < 2 } }) }
   }
   let name = K.idle, rate = 1, once = false, fade = 0.2
-  const airborne = want === 2 || want === 3 || a.moveState >= 2
+  const airborne = want === 2 || want === 3 || a.moveState >= 2, slide = rigSlide(a, R, M, t)
   if (a.moveState === 3) R.charged = t
-  if (a.dying >= 0) { name = K.death; once = true; fade = 0.1 }
+  if (a.dying >= 0) { name = K.death; once = true; fade = launch ? 0.06 : 0.1 }
   else if (a.chainState?.[0] === 1 && !airborne && !(want === 1 || v > 0.6)) { name = 'block_whirl'; fade = 0.15 }
   else if (a.chainState?.[0] === 2 && a.chainState[2] < 0.5 && !airborne) { name = 'block_throw'; once = true; fade = 0.05 }
   else if (K.rappelHold && rappelMove(a.chainState) !== undefined) { const m = rappelMove(a.chainState); name = [K.rappelHold, K.rappelHang, K.rappelClimb, K.rappelR, K.rappelL, K.rappelHop, K.rappelCoil, K.rappelSwing][m] || K.rappelHold; once = m >= 5; fade = 0.12 }
@@ -24865,6 +24971,7 @@ function rigAnimate(a, want, dt, t) {
   else if (hold === 'swing' || hold === 'climb' || hold === 'ceiling' || want === 4) name = K.climb
   else if (hold === 'dive' || want === 6) name = K.dive
   else if (hold === 'fly' || hold === 'hover' || hold === 'ascend' || hold === 'descend' || want === 5) name = K.fly
+  else if (slide) { name = 'knockback'; rate = 1.25; once = true; fade = 0.06 }
   else if (want === 'crouch') { name = K.crouch; fade = 0.12 }
   else if (want === 'crouchRun' && !M.chargeGait) { name = K.crouchRun; rate = clamp(v / (M.pace.crouch * H), 0.6, 1.6) }
   else if (airborne) {
@@ -24890,12 +24997,14 @@ function rigAnimate(a, want, dt, t) {
   R.wasWin = a.moveState === 5
   if (a.landAt !== undefined && a.landAt !== R.landSeen && t - a.landAt < 150) { R.landSeen = a.landAt; R.over = { clip: rigClip(M, K.land), t0: 0.08, at: t, full: true } }
   R.wasAir = airborne
-  const next = name === RIG_GAIT ? null : rigAction(R, name)
+  let next = name === RIG_GAIT ? null : rigAction(R, name)
+  if (!next && name !== RIG_GAIT && name !== K.idle) { name = K.idle; fade = 0.2; once = false; rate = 1; next = rigAction(R, name) }
   if (name === RIG_GAIT && R.name !== RIG_GAIT) { rigGaitInto(R, R.name === K.idle ? 0.1 : fade); R.name = RIG_GAIT }
   if (next && R.name !== name) {
     const prev = R.base, gaits = [K.walk, K.run, K.sprint, K.crouchRun]
     next.reset(); if (name === 'block_throw') next.time = BLOCK_THROW_LEAD
     next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity)
+    if (name === K.death && a.dying >= 0) next.time = launch ? 0 : LAUNCH.skip
     next.clampWhenFinished = once
     if (prev && gaits.includes(R.name) && gaits.includes(name)) next.time = prev.time / prev.getClip().duration * next.getClip().duration
     next.play()
@@ -24948,7 +25057,7 @@ function rigAnimate(a, want, dt, t) {
   if (a.struckAt !== undefined && a.struckAt !== R.struckSeen && t - a.struckAt < 200 && K.hits && !(R.over && !R.over.hit)) {
     R.struckSeen = a.struckAt
     const clip = rigClip(M, K.hits[(R.hitN = (R.hitN || 0) + 1) % K.hits.length])
-    if (clip) R.over = { clip, t0: 0, at: t, hit: true, w: a.spec.poise ? 0.4 : 0.85, speed: a.spec.poise ? 1.6 : 1.2 }
+    if (clip) R.over = { clip, t0: 0.07, at: t, hit: true, snap: true, w: a.spec.poise ? 0.4 : LAUNCH.gain, speed: a.spec.poise ? 1.6 : 1.2 }
   }
   if (a.whistleAt !== undefined && a.whistleAt !== R.whistleSeen && t - a.whistleAt < 600 && !(a.dying >= 0)) {
     R.whistleSeen = a.whistleAt; const clip = rigClip(M, MANIAK_CAR.whistle.clip); if (clip) R.over = { clip, t0: Math.max(0, (t - a.whistleAt) / 1000), at: t }
@@ -24963,13 +25072,13 @@ function rigAnimate(a, want, dt, t) {
   partsRig(a, R, M, t)
   R.stand = (R.stand ?? 0) + ((R.name === K.idle ? 1 : 0) - (R.stand ?? 0)) * Math.min(1, dt * 12)
   if (R.over && a.dying < 0) {
-    const o = R.over, ct = overCt(o, t), d = o.clip.duration, body = !o.full && rigStrike(M, o.clip.name)
+    const o = R.over, ct = overCt(o, t, a), d = o.clip.duration, body = !o.full && rigStrike(M, o.clip.name)
     const draw = (clip, time, w, legs) => { rigPose(R, clip, time, w, o.full ? null : RIG_UPPER); if (body && legs > 0 && R.stand > 0.01) rigPose(R, clip, time, legs * R.stand, RIG_LOWER) }
     if (ct >= d || o.until < t) R.over = null
     else {
-      const w = o.w ?? 1, out = Math.min(1, (d - ct) / 0.15)
+      const w = (o.w ?? 1) * (o.hit && slide ? clamp(1 - (t - Math.max(o.at, a.holdTo || 0)) / 80, 0, 1) : 1), out = Math.min(1, (d - ct) / 0.15)
       if (o.from && t - o.at < 90) draw(o.from.clip, o.from.ct, 1, 0)
-      draw(o.clip, ct, w * Math.min(1, (t - o.at) / (o.from ? 90 : 60), out), w * out)
+      draw(o.clip, ct, w * Math.min(1, o.snap ? 1 : (t - o.at) / (o.from ? 90 : 60), out), w * out)
     }
   } else if (a.dying >= 0) R.over = null
   if (R.over && a.dying < 0) {
@@ -24990,6 +25099,7 @@ function rigAnimate(a, want, dt, t) {
   } else R.inst.position.y = R.inst.userData.y
   rigMovePose(a, R, want, t)
   rigGait(a, R, M, dt, airborne)
+  rigReach(a, R, t)
   if (R.lod < 2 && a.dying < 0 && !airborne && !a.swimming && !SOLE.holds.has(hold) && !(a.chainState?.[0] >= 3) && bodyOf(a.spec.model) === 'maniak') rigSoleFloor(a, R, a.mesh.position.y - a.spec.h - a.spec.r, dt)
   else R.soleLift = 0
   if (a.dealId !== undefined) dealRig(a, R, dt, t)
@@ -27574,7 +27684,8 @@ function goreIntakeIn(list, t) {
 function goreDeath(c) {
   if (!isHost || !(c.hp <= 0)) return
   const y = c.y - c.h - c.r + 0.1, kx = c.knx || 0, kz = c.knz || 0, sp = Math.hypot(kx, kz), sz = clamp((c.r || 0.4) / 0.4, 0.6, 2)
-  GORE.emit(1, c.x, y, c.z, 0, 1, 0, sz)
+  if (c.knT > 0 && sp > 1) c.poolLate = true
+  else GORE.emit(1, c.x, y, c.z, 0, 1, 0, sz)
   if (sp > 2) GORE.emit(2, c.x - kx / sp * 0.2, y, c.z - kz / sp * 0.2, kx / sp, 0, kz / sp, clamp(sp * 0.18, 0.8, 2.6))
 }
 
@@ -27770,7 +27881,7 @@ function shake(cam, t) {
 
 const STRUCK_MS = 90
 function strikeWeight(arc, t) {
-  const f = arc[0], z = arc[arc.length - 1], d = clamp((GUNS[f[6]]?.dmg || 20) / 60, 0.3, 1), a = avatars.get(f[8]), hold = t + 50 + 30 * d
+  const f = arc[0], z = arc[arc.length - 1], d = clamp((GUNS[f[6]]?.dmg || 20) / 60, 0.3, 1), a = avatars.get(f[8]), hs = Math.max(t, now()), hold = hs + 66 + 34 * d, gun = GUNS[f[6]]
   kick(0.04 + 0.1 * d, z[3], z[4], z[5], 12, 220, t)
   let hit = null, best = 0.5
   for (const [id, b] of avatars) if (id >= 0 && b !== a && b.mesh.visible) {
@@ -27780,8 +27891,9 @@ function strikeWeight(arc, t) {
       if (e < best) { best = e; hit = b }
     }
   }
-  if (a) a.holdTo = hold
-  if (hit) { hit.holdTo = hold; hit.struckAt = t }
+  if (a) { a.holdTo = hold; a.holdFrom = hs }
+  if (hit) { hit.holdTo = hold; hit.holdFrom = hs; hit.struckAt = hs; hit.struckFrom = [f[0], f[2]]; hit.struckKnock = gun?.knock || 0; hit.holdPos = [hit.mesh.position.x, hit.mesh.position.z] }
+  if (a && hit && gun?.melee && !gun.grip && (gun.punch === 'jab' || gun.punch === 'rise')) a.reach = { to: hit, at: hs, until: hold }
   return hit
 }
 const struckMesh = () => { const g = new THREE.RingGeometry(0.001, 1, 16, 3), p = g.attributes.position
@@ -27796,6 +27908,39 @@ function drawStruck(id, t) {
   m.scale.set(C.r + 0.35, C.h + C.r + 0.35, 1)
   m.material.color.setHex(0xffffff)
   m.material.opacity = 0.7 * (1 - age / STRUCK_MS) * ghostOf(a)
+}
+const IMPACT_WORDS = { jab: ['TOK', 'POK', 'THWAK'], rise: ['KLUMP', 'SPLORT'], swing: ['KLUNK', 'THOK'] }
+const impactTex = new Map(), wordAt = new THREE.Vector3()
+function impactTexOf(word) {
+  let tx = impactTex.get(word)
+  if (tx) return tx
+  const c = document.createElement('canvas'); c.width = 256; c.height = 160
+  const g = c.getContext('2d')
+  g.beginPath()
+  for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2, r = i % 2 ? 56 : 78; g[i ? 'lineTo' : 'moveTo'](128 + Math.cos(a) * r * 1.55, 80 + Math.sin(a) * r) }
+  g.closePath(); g.fillStyle = '#fff3c4'; g.fill(); g.lineWidth = 7; g.lineJoin = 'miter'; g.strokeStyle = '#0a0a0a'; g.stroke()
+  g.font = 'italic 900 60px Impact, "Arial Black", sans-serif'
+  const k = Math.min(1, 168 / g.measureText(word).width)
+  g.font = 'italic 900 ' + Math.floor(60 * k) + 'px Impact, "Arial Black", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'
+  g.lineWidth = 9; g.lineJoin = 'round'; g.strokeStyle = '#0a0a0a'; g.strokeText(word, 128, 84); g.fillStyle = '#d4141c'; g.fillText(word, 128, 84)
+  tx = new THREE.CanvasTexture(c); tx.colorSpace = THREE.SRGBColorSpace
+  impactTex.set(word, tx)
+  return tx
+}
+function fxWord(o, age, words) {
+  const word = words[Math.abs(Math.round(o.born)) % words.length], s = o.struck, A = o.arc[o.arc.length - 1]
+  if (!o.wordAt) {
+    if (s.mesh && camera) { frontAt(wordAt, s); wordAt.y += 0.7 * (s.spec.h + s.spec.r); wordAt.addScaledVector(fxDir.set(1, 0, 0).applyQuaternion(camera.quaternion), 0.45); wordAt.addScaledVector(fxDir.subVectors(camera.position, wordAt).normalize(), 0.3) }
+    else wordAt.set(A[3], A[4], A[5])
+    o.wordAt = wordAt.clone()
+  }
+  const m = fxMesh(wordPool, () => new THREE.Sprite(new THREE.SpriteMaterial({ ...FX, map: impactTexOf(word), fog: false, toneMapped: false, depthTest: false })), 0xffffff, age < 0.6 ? 1 : 1 - (age - 0.6) / 0.4)
+  m.material.map = impactTexOf(word); m.renderOrder = 10
+  m.material.rotation = (Math.abs(Math.round(o.born)) % 7 - 3) * 0.06
+  m.position.copy(o.wordAt); m.position.y += age * 0.3
+  const pop = age < 0.12 ? 0.5 + 0.9 * age / 0.12 : 1.4 - 0.4 * Math.min(1, (age - 0.12) / 0.3)
+  const k = camera ? clamp(camera.position.distanceTo(o.wordAt) / 3.5, 0.3, 1.2) : 1
+  m.scale.set(1.25 * pop * k, 0.78 * pop * k, 1)
 }
 function fxRing(a, age, hex) {
   const m = fxMesh(ringPool, () => fxSolid(new THREE.RingGeometry(0.8, 1, 24)), hex, (1 - age) * (1 - age))
@@ -28074,12 +28219,14 @@ function fxSlash(o, age, hex) {
   pos.needsUpdate = true
   colors.needsUpdate = true
   m.material.opacity = whip ? 1 - age * age : 1 - age
-  if (o.hit && G.punch && !claw && o.struck.mesh) fxRing(o.struck, age, hex)
+  const words = o.hit && !claw && IMPACT_WORDS[G.punch]
+  if (words) fxWord(o, age, words)
+  else if (o.hit && G.punch && !claw && o.struck.mesh) fxRing(o.struck, age, hex)
   if (o.hit && !o.burst) {
     o.burst = true
     const d = s.tangent.subVectors(points[points.length - 1], points[points.length - 2]), e = o.struck.mesh ? frontAt(s.chord, o.struck) : points[points.length - 1]
     if (d.lengthSq() < 1e-8) d.copy(s.normal)
-    for (const k of claw ? ['claw'] : G.punch ? ['flare', 'puff'] : ['spark']) burst(k, e.x, e.y, e.z, d.x, d.y, d.z, hex, whip ? 0.8 : 1.4)
+    for (const k of claw ? ['claw'] : words ? ['puff'] : G.punch ? ['flare', 'puff'] : ['spark']) burst(k, e.x, e.y, e.z, d.x, d.y, d.z, hex, whip ? 0.8 : 1.4)
   }
 }
 
@@ -28709,7 +28856,7 @@ function craterPaint(paint,positions,size=3,fill=1) {
   return out
 }
 
-const fxPools = [...effectSources, effectPool, slashPool, whipPool, ringPool]
+const fxPools = [...effectSources, effectPool, slashPool, whipPool, ringPool, wordPool]
 const webHand = new THREE.Vector3()
 function drawWebs(me, others) {
   fxKey = 'web'
@@ -28808,6 +28955,7 @@ function drawTracers(t, me, others, viewId) {
       continue
     }
     if (f[7] === 3) {
+      if (G && G.melee && IMPACT_WORDS[G.punch]) continue
       const e = 1 - (1 - age) * (1 - age)
       fxStreak(f[0], f[1], f[2],
             f[0] + (f[3] - f[0]) * e, f[1] + (f[4] - f[1]) * e, f[2] + (f[5] - f[2]) * e,
