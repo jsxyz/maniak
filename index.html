@@ -23648,9 +23648,10 @@ void main() {
   float z0 = -realView(vUv, realD(vUv)).z, tol = 0.04 * z0 + 0.2;
   vec2 st = mix(uStep0, uStep, smoothstep(0.05, 0.85, texture2D(tColor, vUv).a));
   vec4 s = vec4(0.0); float w = 0.0;
+  vec2 gz = vec2(dFdx(z0), dFdy(z0)) / max(abs(vec2(dFdx(vUv.x), dFdy(vUv.y))), vec2(1e-6));
   for (int i = -3; i <= 3; i++) {
     vec2 uv = vUv + st * float(i);
-    float z = -realView(uv, realD(uv)).z, wi = exp(-0.15 * float(i * i)) * mix(1.0, 0.01, smoothstep(0.6, 1.4, abs(z - z0) / tol));
+    float z = -realView(uv, realD(uv)).z, wi = exp(-0.15 * float(i * i)) * mix(1.0, 0.01, smoothstep(0.6, 1.4, abs(z - z0 - dot(gz, st * float(i))) / tol));
     s += texture2D(tSrc, uv) * wi; w += wi;
   }
   gl_FragColor = s / w;
@@ -23906,7 +23907,7 @@ function realRender(raw, s, cam) {
       realPassTo(raw, R, 'ssr', T.ssrA)
       G.tColor.value = T.hdr.texture
       G.tSrc.value = T.ssrA.texture; G.uStep0.value.set(0.8 / T.hw, 0); G.uStep.value.set(1.6 / T.hw, 0); realPassTo(raw, R, 'glossy', T.ssrB)
-      G.tSrc.value = T.ssrB.texture; G.uStep0.value.set(0, 1.2 / T.hh); G.uStep.value.set(0, 3.2 / T.hh); realPassTo(raw, R, 'glossy', T.ssrA)
+      G.tSrc.value = T.ssrB.texture; G.uStep0.value.set(0, 3.0 / T.hh); G.uStep.value.set(0, 4.0 / T.hh); realPassTo(raw, R, 'glossy', T.ssrA)
     }
     if (tier.shafts) { realCones(R, cam, tier); realPassTo(raw, R, 'shafts', T.shaft) }
     let frame = T.hdr
