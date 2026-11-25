@@ -45053,6 +45053,47 @@ function rainBuild() {
 }
 const rainWrap = (v, w) => v - Math.floor(v / w) * w
 const ROOM = { ceil: 7, near: 25, tunnel: 8, ray: 40 }
+const ROOF = { cell: 1.5, half: 10, range: 40, budget: 12, scan: 64, near: 3, nearAge: 1.2, farAge: 6, lift: 0.3, dy: 2.5, car: 3.2, carTop: 1.5 }
+const roofSlot = (ix, iz) => ((ix % 21) + 21) % 21 + (((iz % 21) + 21) % 21) * 21
+function weatherRoofs() {
+  const R = rainState, c = camera.position, K = ROOF, W = 2 * K.half + 1
+  let g = R.g
+  if (!g || g.w !== world) g = R.g = { w: world, ix: new Int32Array(W * W).fill(-2147483648), iz: new Int32Array(W * W), y: new Float32Array(W * W), o: new Float32Array(W * W), t: new Float64Array(W * W), cur: 0 }
+  const t = performance.now() / 1000, cx = Math.floor(c.x / K.cell), cz = Math.floor(c.z / K.cell), oy = c.y + K.lift
+  let rays = K.budget
+  for (let n = 0; n < K.scan && rays > 0; n++) {
+    const k = g.cur; g.cur = (k + 1) % (W * W)
+    const ix = cx - K.half + k % W, iz = cz - K.half + (k / W | 0), s = roofSlot(ix, iz), near = Math.abs(ix - cx) <= K.near && Math.abs(iz - cz) <= K.near
+    if (g.ix[s] === ix && g.iz[s] === iz && t - g.t[s] < (near ? K.nearAge : K.farAge) && Math.abs(g.o[s] - oy) < K.dy) continue
+    rays--
+    const d = staticRay((ix + 0.5) * K.cell, oy, (iz + 0.5) * K.cell, 0, 1, 0, K.range)
+    g.ix[s] = ix; g.iz[s] = iz; g.t[s] = t; g.o[s] = oy; g.y[s] = d < K.range - 0.01 ? oy + d : -1e9
+  }
+}
+function weatherUnder(x, y, z) {
+  const R = rainState, g = R.g
+  if (!g) return R.indoor
+  const ix = Math.floor(x / ROOF.cell), iz = Math.floor(z / ROOF.cell), s = roofSlot(ix, iz)
+  if (g.ix[s] !== ix || g.iz[s] !== iz) return R.indoor
+  const h = g.y[s]
+  return h < -1e8 ? 0 : R.indoorTo > 0.5 || y < h ? 1 : 0
+}
+function weatherNear() {
+  const R = rainState, g = R.g, c = camera.position, K = ROOF
+  if (!g) return 0
+  const cx = Math.floor(c.x / K.cell), cz = Math.floor(c.z / K.cell)
+  let n = 0, m = 0
+  for (let a = -K.near; a <= K.near; a++) for (let b = -K.near; b <= K.near; b++) {
+    const s = roofSlot(cx + a, cz + b)
+    if (g.ix[s] !== cx + a || g.iz[s] !== cz + b) continue
+    m++; if (g.y[s] > c.y) n++
+  }
+  return m ? n / m : 0
+}
+function weatherCabin(x, y, z, me, gy) {
+  const dx = x - me.x, dz = z - me.z
+  return dx * dx + dz * dz < ROOF.car * ROOF.car && y < gy + ROOF.carTop ? 1 : 0
+}
 function weatherCover(dt) {
   const R = rainState, c = camera.position, t = performance.now()
   if (t - R.coverAt > 160) {
@@ -45066,9 +45107,10 @@ function weatherCover(dt) {
         W[0] = staticRay(c.x, y, c.z, 1, 0, 0, K); W[1] = staticRay(c.x, y, c.z, -1, 0, 0, K); W[2] = staticRay(c.x, y, c.z, 0, 0, 1, K); W[3] = staticRay(c.x, y, c.z, 0, 0, -1, K)
         if (roofed) room = room || W.filter(v => v < ROOM.near).length >= 3 || (W[0] < ROOM.tunnel && W[1] < ROOM.tunnel) || (W[2] < ROOM.tunnel && W[3] < ROOM.tunnel)
       }
-      R.indoorTo = room ? 1 : 0; R.coverTo = room ? 1 : 1 - 0.88 * covered
+      R.gridNear = weatherNear(); R.indoorTo = room ? 1 : 0; R.coverTo = room ? 1 : 1 - 0.88 * Math.max(covered, R.gridNear)
     } catch (e) { R.coverTo = 1; R.indoorTo = 0 }
   }
+  try { weatherRoofs() } catch (e) {}
   R.cover += (R.coverTo - R.cover) * (1 - Math.exp(-dt * 4))
   R.indoor += (R.indoorTo - R.indoor) * (1 - Math.exp(-dt * 10))
 }
@@ -45109,6 +45151,7 @@ function rainDraw(dt, level, fx, look) {
   if (R.group.parent !== scene) scene.add(R.group)
   R.group.visible = true
   const me = isHost ? players.get(0) : predicted, gy = me ? me.y - me.h - me.r : c.y - 1.7
+  const seat = me && seatOf(me), cab = !!me && (me.ride || seat) && seat?.[0].V.name !== PLANE.row
   R.T += dt; R.ox += wx * 0.9 * dt; R.oz += wz * 0.9 * dt
   const B = RAIN.box, H = RAIN.top + RAIN.bottom, col0 = look.c, col1 = look.alt || look.c, amax = Math.min(1, RAIN.alpha * look.a) * level * R.cover
   const n = R.n = Math.min(RAIN.streaks, Math.round(RAIN.streaks * fx * Math.min(1, level * 1.25))), A = R.a
@@ -45128,7 +45171,7 @@ function rainDraw(dt, level, fx, look) {
     const k = i * 12
     pa[k] = px - sx; pa[k + 1] = py - sy; pa[k + 2] = pz - sz; pa[k + 3] = px + sx; pa[k + 4] = py + sy; pa[k + 5] = pz + sz
     pa[k + 6] = tx - sx; pa[k + 7] = ty - sy; pa[k + 8] = tz - sz; pa[k + 9] = tx + sx; pa[k + 10] = ty + sy; pa[k + 11] = tz + sz
-    const near = Math.min(1, Math.max(0, (dist - 0.7) / 2.5)), far = 1 - Math.min(1, Math.max(0, (dist - 14) / 16)), a = amax * A.a[i] * near * far * (1 - weatherInside(rx, rz))
+    const near = Math.min(1, Math.max(0, (dist - 0.7) / 2.5)), far = 1 - Math.min(1, Math.max(0, (dist - 14) / 16)), a = amax * A.a[i] * near * far * (1 - weatherInside(rx, rz)) * (1 - Math.max(weatherUnder(px, py, pz), cab ? weatherCabin(px, py, pz, me, gy) : 0))
     const q = i * 16, col = i & 1 ? col1 : col0
     ka[q] = col[0]; ka[q + 1] = col[1]; ka[q + 2] = col[2]; ka[q + 3] = a
     ka[q + 4] = col[0]; ka[q + 5] = col[1]; ka[q + 6] = col[2]; ka[q + 7] = a
@@ -45142,7 +45185,7 @@ function rainDraw(dt, level, fx, look) {
     const u0 = R.T / Sp.t[i] + Sp.p[i], cyc = Math.floor(u0), u = u0 - cyc
     if (Sp.c[i] !== cyc) { Sp.c[i] = cyc; const h = weatherHash(i * 7919 + 13, cyc); Sp.x[i] = c.x + (((h & 0xffff) / 65535) * 2 - 1) * RAIN.reach; Sp.z[i] = c.z + ((((h >>> 16) & 0xffff) / 65535) * 2 - 1) * RAIN.reach }
     const r = RAIN.ring[0] + (RAIN.ring[1] - RAIN.ring[0]) * u, r0 = r * 0.7, d = Math.hypot(Sp.x[i] - c.x, Sp.z[i] - c.z)
-    const a = Math.min(1, amax * 2 * (look.sp || 1)) * (1 - u) * (1 - u) * Math.min(1, d / 2.5) * (1 - Math.min(1, Math.max(0, (d - 8) / 7))) * (1 - weatherInside(Sp.x[i] - c.x, Sp.z[i] - c.z))
+    const a = Math.min(1, amax * 2 * (look.sp || 1)) * (1 - u) * (1 - u) * Math.min(1, d / 2.5) * (1 - Math.min(1, Math.max(0, (d - 8) / 7))) * (1 - weatherInside(Sp.x[i] - c.x, Sp.z[i] - c.z)) * (1 - Math.max(weatherUnder(Sp.x[i], gy + 0.05, Sp.z[i]), cab ? weatherCabin(Sp.x[i], gy + 0.05, Sp.z[i], me, gy) : 0))
     for (let k = 0; k < 8; k++) {
       const ang = k * Math.PI / 4, ca = Math.cos(ang), sa = Math.sin(ang), o = i * 48 + k * 6, q = i * 64 + k * 8
       spa[o] = Sp.x[i] + ca * r0; spa[o + 1] = gy + 0.03; spa[o + 2] = Sp.z[i] + sa * r0; spa[o + 3] = Sp.x[i] + ca * r; spa[o + 4] = gy + 0.03; spa[o + 5] = Sp.z[i] + sa * r
@@ -45182,7 +45225,7 @@ function weatherSound() {
   if (!sfxLive()) { sfxRain = null; return }
   const t = actx.currentTime, R = rainState
   if (sfxRain && sfxRain.end <= t) sfxRain = null
-  const live = !!WEATHER_LOOKS[activeLook], want = live && weather.rain > 0.04 ? (0.15 + 0.85 * weather.rain) * (0.3 + 0.7 * R.cover * (1 - 0.7 * R.indoor)) : 0
+  const live = !!WEATHER_LOOKS[activeLook], want = live && weather.rain > 0.04 ? (0.15 + 0.85 * weather.rain) * (R.indoor > 0.5 ? 0.3 : 0.3 + 0.7 * R.cover) : 0
   if (want > 0) {
     if (!sfxRain || sfxRain.off) sfxRain = playSound('Rain', { cat: 'world', lvl: 0.05, span: Infinity })
     if (sfxRain) { sfxRain.off = false; sfxRain.end = t + 0.25; for (const s of sfxRain.srcs) { try { s.stop(sfxRain.end) } catch (e) {} } sfxRain.out.gain.setTargetAtTime(want * (SOUNDS.Rain.vol ?? 1), t, 0.4) }
