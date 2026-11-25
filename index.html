@@ -7276,7 +7276,7 @@ function faustRingsFrame() {
     }
     cells.sort((a, b) => a[0] - b[0])
     const S = F.ringShapes ||= faustRingShapes(), caps = R.caps, col = new THREE.Color()
-    const pools = {}, idx = new Map()
+    const pools = {}, idx = new Map(), bases = new Map()
     const KINDS = ['flat', 'pool', 'far', 'body', 'roof', 'light', 'pane', 'lit', 'shed', 'crown', 'picket', 'crownHi', 'crownTop', 'hedge']
     const scratch = F.ringScratch ||= Object.fromEntries(KINDS.map(k => [k, { m: new Float32Array(caps[k] * 16), c: new Float32Array(caps[k] * 3), l: new Float32Array(caps[k]) }]))
     for (const k of KINDS) pools[k] = { m: scratch[k].m, c: scratch[k].c, l: scratch[k].l, n: 0 }
@@ -7300,6 +7300,7 @@ function faustRingsFrame() {
       for (const [a, b, c2, d, y, tint] of c.flat) put('flat', (c2 - a) / 2, 1, (d - b) / 2, (a + c2) / 2, y, (b + d) / 2, tint)
       for (const b of c.light) put('light', b.ex, b.ey, b.ez, b.cx, b.cy, b.cz, 0xffffff)
       const roles = faustRingInRoles(c)
+      bases.set(cells[n][1] + ' ' + cells[n][2], { pane: pools.pane.n, lit: pools.lit.n })
       const lod = k => k !== 'crown' ? k : cells[n][0] < R.close ? 'crownHi' : k
       c.part.forEach(([k, sx, sy, sz, x, y, z, yaw, roll, tint], pi) => { const role = roles.get(pi); if (role !== undefined && pools[k].n < caps[k]) idx.set(role, pools[k].n); put(lod(k), sx, sy, sz, x, y, z, tint, false, yaw, roll) })
       if (cells[n][0] < R.near) for (const [k, sx, sy, sz, x, y, z, yaw, roll, tint] of c.near || []) put(lod(k), sx, sy, sz, x, y, z, tint, false, yaw, roll)
@@ -7349,8 +7350,10 @@ function faustRingsFrame() {
     }
     F.ringShown = set === sets[0] ? 0 : 1
     F.ringIdx = idx
+    F.ringBase = bases
     F.ringMeshes = KINDS.filter(k => set[k] && pools[k].n > 0).map(k => set[k])
     faustRingInRehide(F)
+    faustRingWinRehide(F)
     F.ringCounts = Object.fromEntries(Object.entries(pools).map(([k, P]) => [k, P.n]))
     yield 'frame'
   }, { valid: () => faustState === F && F.ringStamp === stamp }).catch(e => frameFailed('rings', e))
@@ -7492,7 +7495,22 @@ function faustRingInterior(b) {
   }
   const lamp = (u, v, y, r, power, color) => { const [z] = zr(v, v); F.lights.push([inCm(cx + u), inCm(y), inCm(z), r, power, color]) }
   const shell = [], pieces = []
-  const sbox = (u0, u1, y0, y1, v0, v1) => { addBox(shell, u0, u1, y0, y1, v0, v1, tint); pieces.push([inCm(u0), inCm(u1), inCm(y0), inCm(y1), inCm(v0), inCm(v1)]) }
+  const holes = faustRingWinHoles(b, sg, cx, cz, ex, ez, T, K.skin)
+  const carve = (u0, u1, y0, y1, v0, v1) => {
+    let list = [[u0, u1, y0, y1, v0, v1]]
+    for (const h of holes) {
+      const next = []
+      for (const q of list) {
+        if (!(q[0] < h[1] && q[1] > h[0] && q[2] < h[3] && q[3] > h[2] && q[4] < h[5] && q[5] > h[4])) { next.push(q); continue }
+        const a = Math.max(q[0], h[0]), z = Math.min(q[1], h[1]), c = Math.max(q[2], h[2]), d = Math.min(q[3], h[3])
+        next.push([q[0], a, q[2], q[3], q[4], q[5]], [z, q[1], q[2], q[3], q[4], q[5]], [a, z, q[2], c, q[4], q[5]], [a, z, d, q[3], q[4], q[5]])
+        next.push([a, z, c, d, q[4], Math.max(q[4], h[4])], [a, z, c, d, Math.min(q[5], h[5]), q[5]])
+      }
+      list = next
+    }
+    return list
+  }
+  const sbox = (u0, u1, y0, y1, v0, v1) => { for (const q of carve(u0, u1, y0, y1, v0, v1)) { addBox(shell, ...q, tint); pieces.push([inCm(q[0]), inCm(q[1]), inCm(q[2]), inCm(q[3]), inCm(q[4]), inCm(q[5])]) } }
   const d0 = ud - dw / 2, d1 = ud + dw / 2
   sbox(-ex, d0, 0, H, 0, T); sbox(d1, ex, 0, H, 0, T); sbox(d0, d1, dh, H, 0, T)
   sbox(-ex, ex, 0, H, 2 * ez - T, 2 * ez)
@@ -7506,10 +7524,11 @@ function faustRingInterior(b) {
   const skins = k => {
     F = floors[k]
     const y0 = k * FH, y1 = y0 + FH - (k === floors.length - 1 ? SL : 0), s = K.skin
-    box_(Ui0, d0, y0, y1, Vi0, Vi0 + s, wallT, { f: 16 }); box_(d1, Ui1, y0, y1, Vi0, Vi0 + s, wallT, { f: 16 })
-    if (k === 0) { box_(d0, d1, dh, y1, Vi0, Vi0 + s, wallT, { f: 16 }) } else { box_(d0, d1, y0, y1, Vi0, Vi0 + s, wallT, { f: 16 }) }
-    box_(Ui0, Ui1, y0, y1, Vi1 - s, Vi1, wallT, { f: 32 })
-    box_(Ui0, Ui0 + s, y0, y1, Vi0, Vi1, wallT, { f: 1 }); box_(Ui1 - s, Ui1, y0, y1, Vi0, Vi1, wallT, { f: 2 })
+    const wbox_ = (u0, u1, a0, a1, v0, v1, t, more) => { for (const q of carve(u0, u1, a0, a1, v0, v1)) addBox(F.boxes, ...q, t, more) }
+    wbox_(Ui0, d0, y0, y1, Vi0, Vi0 + s, wallT, { f: 16 }); wbox_(d1, Ui1, y0, y1, Vi0, Vi0 + s, wallT, { f: 16 })
+    if (k === 0) { wbox_(d0, d1, dh, y1, Vi0, Vi0 + s, wallT, { f: 16 }) } else { wbox_(d0, d1, y0, y1, Vi0, Vi0 + s, wallT, { f: 16 }) }
+    wbox_(Ui0, Ui1, y0, y1, Vi1 - s, Vi1, wallT, { f: 32 })
+    wbox_(Ui0, Ui0 + s, y0, y1, Vi0, Vi1, wallT, { f: 1 }); wbox_(Ui1 - s, Ui1, y0, y1, Vi0, Vi1, wallT, { f: 2 })
   }
   const apronU = (uPart, side, g0, g1) => keep.push([uPart - 1.5, uPart + 1.5, g0 - 0.2, g1 + 0.2])
   const overlap = (p, q, m = 0) => p[0] < q[1] + m && p[1] > q[0] - m && p[2] < q[3] + m && p[3] > q[2] - m
@@ -7815,6 +7834,108 @@ function faustRingUrbanInterior(b) {
   out.hash = inHash({ id: out.id, ground: B.ground, upper: B.upper, unit: B.unit, unit2: B.unit2, storeys: out.storeys, pieces, core: B.core })
   return out
 }
+const FAUST_RINGWIN = { kind: 87, base: 67108864, span: 16384 }
+const faustRingWinMin = () => FAUST_RINGWIN.kind * 4294967296 + FAUST_RINGWIN.base
+const faustRingWinKey = (i, j, pi) => faustRingWinMin() + ((i + 64) * 128 + j + 64) * FAUST_RINGWIN.span + pi
+function faustRingWinOf(q) {
+  const k = q[0], sx = q[1], sy = q[2]
+  if (!(k === 'pane' ? sy >= 0.5 && sy <= 0.7 && sx >= 0.4 && sx <= 0.8 : k === 'lit' && sy >= 0.6 && sy <= 1.0 && sx >= 0.4)) return null
+  const nx = Math.sin(q[7]), nz = Math.cos(q[7])
+  return { k, hx: sx, hy: sy, at: [q[4], q[5], q[6]], n: Math.abs(nx) > Math.abs(nz) ? [Math.sign(nx), 0, 0] : [0, 0, Math.sign(nz)], rot: Math.abs(nx * nz) > 0.01 }
+}
+function faustRingWinPane(F, i, j, pi, q) {
+  const w = faustRingWinOf(q)
+  if (!w) return null
+  const ci = Math.max(0, Math.min(F.S - 1, Math.floor((w.at[0] + ARENA) / 96))), cj = Math.max(0, Math.min(F.S - 1, Math.floor((w.at[2] + ARENA) / 96)))
+  const axis = w.n[0] ? 1 : 0, side = axis ? w.n[0] : w.n[2], a = axis ? w.at[2] : w.at[0]
+  return { key: faustRingWinKey(i, j, pi), kind: FAUST_RINGWIN.kind, chunk: ci * F.S + cj, ci, cj, slot: 0, ring: { i, j, pi, floor: 0.03 }, f: { axis, side, plane: axis ? w.at[0] : w.at[2] },
+    rect: { a0: a - w.hx, a1: a + w.hx, y0: w.at[1] - w.hy, y1: w.at[1] + w.hy }, n: w.n, at: w.at.slice() }
+}
+function faustRingWinAt(x, y, z, nx, nz) {
+  const F = faustState, C = FAUST_RINGS.cell
+  if (!F?.ringPlans || !LV.faust) return null
+  const i = Math.floor(x / C), j = Math.floor(z / C), c = F.ringPlans.get(i + ' ' + j)
+  if (!c?.part) return null
+  for (let pi = 0; pi < c.part.length && pi < FAUST_RINGWIN.span; pi++) {
+    const q = c.part[pi], w = faustRingWinOf(q)
+    if (!w || Math.abs(q[4] - x) > 4 || Math.abs(q[6] - z) > 4) continue
+    const yaw = q[7], sn = Math.sin(yaw), cs = Math.cos(yaw), dx = x - q[4], dz = z - q[6]
+    const u = dx * cs - dz * sn, v = y - q[5], d = dx * sn + dz * cs
+    if (Math.abs(u) > q[1] + 0.05 || Math.abs(v) > q[2] + 0.05 || Math.abs(d) > 0.35) continue
+    const p = faustRingWinPane(F, i, j, pi, q)
+    if (!p) continue
+    const along = p.f.axis ? z : x
+    return { ...p, along, inside: nx * sn + nz * cs < 0 }
+  }
+  return null
+}
+function faustRingWinFull(F, e) {
+  const q = F.ringPlans?.get(e.i + ' ' + e.j)?.part[e.pi]
+  return q ? faustRingWinOf(q) : null
+}
+function faustRingWinShow(F, e, gone) {
+  const w = faustRingWinFull(F, e), base = F.ringBase?.get(e.i + ' ' + e.j), c = F.ringPlans?.get(e.i + ' ' + e.j)
+  if (!w || !base || !c) return
+  let n = base[w.k]
+  for (let t = 0; t < e.pi; t++) if (c.part[t][0] === w.k) n++
+  const mesh = F.ringMeshes?.find(m => m.userData.faustRings === w.k)
+  if (!mesh || !(n < mesh.count)) return
+  const a = mesh.instanceMatrix.array, o = n * 16, ca = mesh.instanceColor.array, oc = n * 3
+  if (!e.m) { e.m = a.slice(o, o + 16); e.c = ca.slice(oc, oc + 3) }
+  const open = [...F.ringIn?.open.values() || []].some(O => { const s = O.b?.box; return s && !O.urban && Math.abs(w.at[0] - s.cx) <= s.ex + 0.6 && Math.abs(w.at[2] - s.cz) <= s.ez + 0.6 })
+  if (gone) { a.set(e.m, o); ca.set(e.c, oc) } else if (open) { a.fill(0, o, o + 16); a[o + 15] = 1 } else { a.set(e.m, o); ca[oc] = 0.01; ca[oc + 1] = 0.012; ca[oc + 2] = 0.016 }
+  mesh.instanceMatrix.addUpdateRange(o, 16); mesh.instanceMatrix.needsUpdate = true
+  mesh.instanceColor.addUpdateRange(oc, 3); mesh.instanceColor.needsUpdate = true
+}
+function faustRingWinRehide(F) { for (const e of F.ringBroken?.values() || []) faustRingWinShow(F, e, false) }
+function faustRingWinStale(F, e) {
+  const w = faustRingWinFull(F, e)
+  if (!w || w.rot) return
+  for (const O of F.ringIn?.open.values() || []) {
+    const s = O.b?.box
+    if (s && !O.urban && Math.abs(w.at[0] - s.cx) <= s.ex + 0.6 && Math.abs(w.at[2] - s.cz) <= s.ez + 0.6) O.stale = true
+  }
+}
+function faustRingWinHoles(b, sg, cx, cz, ex, ez, T, sk) {
+  const F = faustState, out = [], m = /^ring (-?\d+) (-?\d+)/.exec(String(b.id))
+  if (!F?.ringBroken?.size || !m) return out
+  for (const e of F.ringBroken.values()) {
+    if (e.i !== +m[1] || e.j !== +m[2]) continue
+    const w = faustRingWinFull(F, e)
+    if (!w || w.rot || Math.abs(w.at[0] - cx) > ex + 0.6 || Math.abs(w.at[2] - cz) > ez + 0.6) continue
+    const y0 = Math.max(0, w.at[1] - 1.5), y1 = y0 + 2.2, g = 0.06
+    if (w.n[2]) {
+      const u0 = w.at[0] - cx - w.hx, u1 = w.at[0] - cx + w.hx
+      out.push(w.n[2] * sg > 0 ? [u0, u1, y0, y1, -g, T + sk + g] : [u0, u1, y0, y1, 2 * ez - T - sk - g, 2 * ez + g])
+    } else {
+      const v = sg > 0 ? cz + ez - w.at[2] : w.at[2] - (cz - ez)
+      out.push(w.n[0] < 0 ? [-ex - g, -ex + T + sk + g, y0, y1, v - w.hx, v + w.hx] : [ex - T - sk - g, ex + g, y0, y1, v - w.hx, v + w.hx])
+    }
+  }
+  return out
+}
+function faustRingWinKinds(F) {
+  const Z = faustRingInState(F)
+  if (Z.winKind || !GAME.destruction?.kind) return
+  Z.winKind = true
+  GAME.destruction.kind(FAUST_RINGWIN.kind, {
+    record(key) {
+      const f = faustState, code = key - faustRingWinMin()
+      if (!f || !(code >= 0)) return null
+      const pi = code % FAUST_RINGWIN.span, cell = Math.floor(code / FAUST_RINGWIN.span), j = cell % 128 - 64, i = Math.floor(cell / 128) - 64
+      let c = f.ringPlans?.get(i + ' ' + j)
+      if (!c) { const plan = faustRoadsReady(f); if (plan) c = faustRingPlan(f, plan, i, j) }
+      const q = c?.part[pi], p = q && faustRingWinPane(f, i, j, pi, q)
+      if (p) return p
+      const x = i * FAUST_RINGS.cell + FAUST_RINGS.cell / 2, z = j * FAUST_RINGS.cell + FAUST_RINGS.cell / 2
+      const ci = Math.max(0, Math.min(f.S - 1, Math.floor((x + ARENA) / 96))), cj = Math.max(0, Math.min(f.S - 1, Math.floor((z + ARENA) / 96)))
+      return { key, kind: FAUST_RINGWIN.kind, chunk: ci * f.S + cj, ci, cj, slot: 0, ring: { i, j, pi, floor: 0.03 }, f: { axis: 0, side: 1, plane: z }, rect: { a0: x - 0.5, a1: x + 0.5, y0: 1, y1: 2 }, n: [0, 0, 1], at: [x, 1.5, z], lazy: true }
+    },
+    apply(rec) { const f = faustState; if (!f) return; const e = (f.ringBroken ||= new Map()).get(rec.key) || { i: rec.p.ring.i, j: rec.p.ring.j, pi: rec.p.ring.pi }; f.ringBroken.set(rec.key, e); faustRingWinShow(f, e, false); faustRingWinStale(f, e) },
+    undo(rec) { const f = faustState, e = f?.ringBroken?.get(rec.key); if (!e) return; faustRingWinShow(f, e, true); f.ringBroken.delete(rec.key); faustRingWinStale(f, e) },
+    fresh(rec) { if (!rec.p.lazy) dsFxPane(rec) },
+  })
+}
 function faustRingInState(F) { return F.ringIn ||= { open: new Map(), pending: new Set(), queue: [], n: 0, scan: 0, shut: new Map(), stats: { opened: 0, closed: 0, maxOpenMs: 0, maxSwapMs: 0, failed: 0 } } }
 function faustRingInRoles(c) {
   if (c.inRoles) return c.inRoles
@@ -7939,12 +8060,14 @@ function faustRingInSwap(F, Z, b, P, groups, shell) {
   }
   Z.open.set(b.id, O)
   faustRingInHide(F, O, true)
+  faustRingWinRehide(F)
   Z.stats.opened++; Z.stats.maxSwapMs = Math.max(Z.stats.maxSwapMs, performance.now() - t0)
   return true
 }
 function faustRingInClose(F, Z, O, gone) {
   if (O.urban) return faustRingUrbanClose(F, Z, O, gone)
   Z.open.delete(O.id)
+  faustRingWinRehide(F)
   if (O.rec && statics.includes(O.rec)) dropChunk(O.rec)
   faustIn.ramps = faustIn.ramps.filter(r => !O.ramps.includes(r))
   faustRingInHide(F, O, false)
@@ -7984,6 +8107,7 @@ function faustRingInTick(participants) {
   const F = faustState
   if (!F || !LV.faust || !world || !F.rings || !faustRoadsReady(F)) return
   const Z = faustRingInState(F), K = FAUST_RIN, C = FAUST_RINGS.cell, now_ = performance.now()
+  faustRingWinKinds(F)
   const pts = participants.filter(c => c && c.x === c.x && !c.bot).map(c => [c.x, c.z, Math.hypot(c.vx || 0, c.vz || 0), c.y - (c.h || 0) - (c.r || 0)])
   if (++Z.scan % 6 === 0 && Z.pending.size < 2 && Z.open.size < 24) for (const [x, z, v] of pts) {
     const R = v > 10 ? 6 : K.open
@@ -8001,6 +8125,7 @@ function faustRingInTick(participants) {
   }
   for (const O of [...Z.open.values()]) {
     if (O.c.dropped) { faustRingInClose(F, Z, O, true); continue }
+    if (O.stale && !pts.some(([x, z]) => x > O.P.rect.x0 - 0.3 && x < O.P.rect.x1 + 0.3 && z > O.P.rect.z0 - 0.3 && z < O.P.rect.z1 + 0.3)) { faustRingInClose(F, Z, O); continue }
     const r = O.P.rect, near = pts.some(([x, z]) => { const dx = Math.max(r.x0 - x, 0, x - r.x1), dz = Math.max(r.z0 - z, 0, z - r.z1); return dx * dx + dz * dz < K.close * K.close })
     if (near) O.seen = now_
     else if (now_ - O.seen > 3000) { faustRingInClose(F, Z, O); continue }
@@ -39682,7 +39807,7 @@ function dsPaneAt(x, y, z, nx, nz) {
   if (!F || !LV.faust || !dsState) return null
   const face = Math.abs(nx) > Math.abs(nz) ? (nx > 0 ? 2 : 3) : (nz > 0 ? 0 : 1)
   const ci = Math.floor((x + ARENA) / 96), cj = Math.floor((z + ARENA) / 96)
-  if (ci < 0 || cj < 0 || ci >= F.S || cj >= F.S) return null
+  if (ci < 0 || cj < 0 || ci >= F.S || cj >= F.S) return faustRingWinAt(x, y, z, nx, nz)
   const P = dsPlan(ci, cj)
   for (const [fc, inside] of [[face, false], [face ^ 1, true]]) {
     const near = off => inside ? off <= 0.1 && off >= -DS_INSIDE : Math.abs(off) <= 0.1
@@ -40097,7 +40222,7 @@ function dsInfo(p, power, side, along, y) {
 }
 function dsBreak(kind, key, info) {
   if (!isHost || !dsCheck() || dsState.all.has(key)) return false
-  const T = Math.round(tickAt || now()), rec = dsRecord(kind, key, T, info)
+  const T = Math.round(tickAt || now()), rec = dsRecord(kind === DS_KIND.pane && key >= faustRingWinMin() ? FAUST_RINGWIN.kind : kind, key, T, info)
   if (!rec) return false
   const stamp = dsKinds.get(kind)?.stamp
   if (stamp) rec.info = rec.info & 511 | stamp(rec) << 9
@@ -40750,6 +40875,7 @@ function dsFxLamp(rec) {
   try { sfxPlay('Glass break', { x: B.cx, y: B.cy, z: B.cz }, 'world', 0.6) } catch (e) { failN[143]++ }
 }
 function dsFloor(p, x, y, z) {
+  if (!p.lot) return p.ring?.floor ?? 0.03
   const L = p.lot, deco = L.district !== 'industrial' && L.district !== 'tenement'
   let top = 0.03
   if (Math.abs(x - L.x) < L.w + 0.25 && Math.abs(z - L.z) < L.d + 0.25 && y > 4) top = 4.02
@@ -41105,6 +41231,8 @@ function dsTilesTick(now = false) {
     if (!Number.isFinite(c.x) || !Number.isFinite(c.z)) continue
     const [a0, b0] = dsTileOfPoint(c.x - r, c.z - r), [a1, b1] = dsTileOfPoint(c.x + r, c.z + r)
     for (let tx = a0; tx <= a1; tx++) for (let tz = b0; tz <= b1; tz++) need.add(tx + ' ' + tz)
+    const tm = Math.floor((faustState.S - 1) / DS_SAVE.tileCells), [qx, qz] = dsTileOfPoint(c.x, c.z)
+    need.add(Math.max(0, Math.min(tm, qx)) + ' ' + Math.max(0, Math.min(tm, qz)))
   }
   for (const k of need) { const [tx, tz] = k.split(' ').map(Number); dsTileAt(tx, tz).neededAt = T }
   for (const [k, t] of P.tiles) {
