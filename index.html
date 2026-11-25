@@ -34083,6 +34083,7 @@ const GUEST_MSGS = {
     },
   },
   lag: { apply: d => { onLag(d.n) } },
+  face: { validate: d => Number.isFinite(d.y) && Math.abs(d.y) < 100 ? d : null, apply: d => { input.yaw = d.y; input.pitch = 0 } },
   sys: { apply: d => { sysMsg(String(d.m || '').slice(0, 200), d.kind === 'a' ? 'a' : d.kind === 'c' ? 'c' : 'b') }, validate: d => hostLine() ? d : null },
   log: { apply: d => { sysMsg(String(d.m || '').slice(0, 2000), d.kind === 'c' ? 'c' : 'b') } },
   pd: { apply: d => { perfHeard(d) } },
@@ -43155,8 +43156,8 @@ const testTools = (() => {
     const w = String(a || '').replace(/,/g, ' ').trim().split(/\s+/)
     if (w.length >= 3 && !Number.isFinite(Number(w[0]))) {
       if (!isHost) return refuse('Only the host can use test commands.')
-      const x = Number(w.at(-2)), z = Number(w.at(-1)), q = w.slice(0, -2).join(' ').toLowerCase()
-      if (!Number.isFinite(x) || !Number.isFinite(z)) return sysMsg('§cUsage: §f/tp [name] <x> <z>', 'c')
+      const hd = w.length >= 4 && w.slice(-3).every(v => Number.isFinite(Number(v))), x = Number(w.at(hd ? -3 : -2)), z = Number(w.at(hd ? -2 : -1)), q = w.slice(0, hd ? -3 : -2).join(' ').toLowerCase()
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return sysMsg('§cUsage: §f/tp [name] <x> <z> [heading]', 'c')
       const all = [...roster].filter(([id]) => id < BOT_ID0 && players.get(id)), exact = all.filter(([, p]) => p.name.toLowerCase() === q)
       const hit = exact.length ? exact : all.filter(([, p]) => p.name.toLowerCase().startsWith(q))
       if (!hit.length) return sysMsg('§cNo player called §f' + esc(q), 'c')
@@ -43164,6 +43165,11 @@ const testTools = (() => {
       const c = players.get(hit[0][0])
       if (c.dead > 0) return sysMsg('§c' + esc(hit[0][1].name) + ' is down.', 'c')
       const [px, py, pz, mv] = tpTo(c, x, z, 0, null, 4, true)
+      if (hd) {
+        const yaw = -Number(w.at(-1)) * Math.PI / 180, peer = conns.get(hit[0][0])
+        if (hit[0][0] === myId) { input.yaw = yaw; input.pitch = 0 }
+        else if (peer?.open) try { peer.send(JSON.stringify({ k: 'face', y: yaw })) } catch (e) { failN[99]++ }
+      }
       return sysMsg('§7Moved §f' + esc(hit[0][1].name) + ' §7to x §f' + px.toFixed(1) + ' §7z §f' + pz.toFixed(1) + ' §7y §f' + py.toFixed(1) + (mv ? ' §7(nudged by §f' + mv.toFixed(1) + ' m§7 to open ground)' : ''), 'c')
     }
     const c = me(true); if (!c) return
@@ -43402,7 +43408,7 @@ const blackbox = (() => {
   return B
 })()
 Object.assign(GAME.commands, {
-  tp:    { args: '[<name>] <x> <z>', help: 'host only, test: teleport to the street under a point; a named player (full name or a unique prefix), else you', run: testTools.tp },
+  tp:    { args: '[<name>] <x> <z> [<heading>]', help: 'host only, test: teleport to the street under a point; a named player (full name or a unique prefix), else you', run: testTools.tp },
   near:  { args: '<thing> [go]', help: 'host only, test: find the nearest (' + testTools.things() + '), go to teleport beside it', run: testTools.near },
   where: { args: '', help: 'test: your x, z, heading and city cell', run: testTools.where },
   repair: { args: 'props [all]', help: 'host only, test: clear the broken hydrants, mailboxes and meters of your save tile (all: every loaded tile)', run: testTools.repair },
