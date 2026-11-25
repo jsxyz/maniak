@@ -46121,6 +46121,7 @@ function boatLook(o) {
   if (carDentable(live || o)) for (const g of v.lods) if (g.visible) carDress(g, live || o)
   boatCrewDraw(o, K, v)
   boatWake(o, K, H, v)
+  boatRope(o, K, v)
   return true
 }
 function boatCrewDraw(o, K, v) {
@@ -46221,11 +46222,29 @@ function subScope(on) {
   if (subScopeEl) subScopeEl.style.display = on ? 'block' : 'none'
   return null
 }
+const boatRopeGeo = new THREE.BoxGeometry(1, 1, 1), boatRopeMat = new THREE.MeshBasicMaterial({ color: 0x241b14 }), boatRopeQ = new THREE.Quaternion(), boatRopeZ = new THREE.Vector3(0, 0, 1), boatRopeD = new THREE.Vector3()
+function boatRope(o, K, v) {
+  let g = null
+  if (K.name === 'Tug') {
+    const live = objs.find(x => x.id === o.id)
+    g = live?.tow !== undefined ? objs.find(b => b.id === live.tow) : isHost ? null : objs.find(b => b.K.name === 'Barge' && Math.hypot(b.x - o.x, b.z - o.z) < 40)
+  }
+  if (!g) { if (v.rope) v.rope.visible = false; return }
+  const Ha = hullOf(K), Hb = hullOf(g.K), Sa = BOAT_SHAPES.Tug, Sb = BOAT_SHAPES.Barge
+  const a = rotq(o.q, [0, Sa.d - Ha.at[1], Sa.l / 2 - Ha.at[2]]), b = rotq(g.q, [0, Sb.d - Hb.at[1], -Sb.l / 2 - Hb.at[2]])
+  const ax = o.x + a[0], ay = o.y + a[1], az = o.z + a[2], bx = g.x + b[0], by = g.y + b[1], bz = g.z + b[2], len = Math.hypot(bx - ax, by - ay, bz - az)
+  if (!(len > 0.5)) { if (v.rope) v.rope.visible = false; return }
+  if (!v.rope) { v.rope = new THREE.Mesh(boatRopeGeo, boatRopeMat); v.rope.matrixAutoUpdate = false; v.rope.frustumCulled = false; objGroup.add(v.rope) }
+  boatRopeD.set(bx - ax, by - ay, bz - az).divideScalar(len)
+  boatRopeQ.setFromUnitVectors(boatRopeZ, boatRopeD)
+  v.rope.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2); v.rope.quaternion.copy(boatRopeQ); v.rope.scale.set(0.14, 0.14, len); v.rope.updateMatrix()
+  v.rope.visible = true
+}
 function boatViewsTick() {
   boatFrame++
   if (subScopeEl && subScopeSeen < boatFrame - 1 && subScopeEl.style.display !== 'none') subScope(false)
-  for (const [key, v] of boatViews) if (v.seen < boatFrame - 1) { v.root.visible = false; if (v.crew) v.crew.root.visible = false; if (v.trail?.mesh) v.trail.mesh.visible = false
-    if (v.seen < boatFrame - 600) { v.root.removeFromParent(); v.crew?.root.removeFromParent(); v.crew?.mixer.stopAllAction(); if (v.trail?.mesh) { v.trail.mesh.removeFromParent(); v.trail.mesh.geometry.dispose(); v.trail.mesh.material.dispose() } boatViews.delete(key) } }
+  for (const [key, v] of boatViews) if (v.seen < boatFrame - 1) { v.root.visible = false; if (v.crew) v.crew.root.visible = false; if (v.rope) v.rope.visible = false; if (v.trail?.mesh) v.trail.mesh.visible = false
+    if (v.seen < boatFrame - 600) { v.root.removeFromParent(); v.rope?.removeFromParent(); v.crew?.root.removeFromParent(); v.crew?.mixer.stopAllAction(); if (v.trail?.mesh) { v.trail.mesh.removeFromParent(); v.trail.mesh.geometry.dispose(); v.trail.mesh.material.dispose() } boatViews.delete(key) } }
 }
 function boatWireOut() {
   const fl = objs.filter(o => o.floodT !== undefined && floatOf(o.K)).map(o => [o.id, Math.round(o.floodT)])
