@@ -845,11 +845,6 @@ const TEXT = {
   blast: 'was caught in a {vehicle}\'s blast',
   death: '§f{victim} §7{how}',
   enemyTag: 'enemy',
-  enemyArrives: '§f{name} §7{line}',
-  enemyArrivesDefault: 'turned up.',
-  enemyGone: '§f{name} §7is gone.',
-  arrive: {
-    'Misery Master': 'crashes the party.', 'Tony': 'is here to collect.', 'Street performer': 'sets up on the corner.' },
   achHeading: 'Achievements',
   achEarned: '{n} of {total} earned',
   achHidden: '???',
@@ -876,7 +871,6 @@ const TEXT = {
   matchEnd: '§e{why} §f{who} §7wins with §f{kills}',
   endWhy: { 'Time.': 'Time.', 'Frag limit.': 'Frag limit.' },
   newRound: '§7New round.',
-  balance: '§e{name} §7moves to the §f{side}§7 to balance the teams.',
   demands: ['Spare change for the arts?', 'Tip the talent!', 'Faust taxes the sun. I tax you.', 'Applause is free. Coins aren\'t.',
     'You watched. You pay.', 'Pay the performer, citizen!', 'Coins in the cup, or a hole in the gut.', 'Support the arts. Or bleed.',
     'That dance cost you a dollar.', 'A coin for the show, friend?', 'The cup is hungry!', 'Nobody walks past my show for free.'],
@@ -12308,7 +12302,6 @@ function faustInteriorTick(participants) {
       }
     }
   }
-  if (isHost) for (const c of participants) if (c && !c.bot && !(faustIn.told ||= new Set()).has(c.id) && inCab(c)) { faustIn.told.add(c.id); tell(c.id, '§7The express lift: stand by its UP or DOWN panel and press use (E). It stops every tenth floor and at the top.', 'a') }
   for (const [id, ks] of want) {
     const O = inOpen(id)
     if (!O) continue
@@ -12610,7 +12603,7 @@ function faustSewUnitsNear(plan, x, z, r) {
   }
   return out.sort((p, q) => p[0] - q[0])
 }
-function faustSewState(F) { return F.sew ||= { units: new Map(), queue: [], drawn: new Map(), pending: new Set(), covers: null, coverStamp: '', deep: false, told: new Set(), found: new Set(), open: new Set(), mapped: false, waterAt: -1,
+function faustSewState(F) { return F.sew ||= { units: new Map(), queue: [], drawn: new Map(), pending: new Set(), covers: null, coverStamp: '', deep: false, found: new Set(), open: new Set(), mapped: false, waterAt: -1,
   stats: { built: 0, dropped: 0, maxBuildMs: 0, drawn: 0, undrawn: 0, maxDrawStepMs: 0, uses: 0 } } }
 function faustSewBuild(F, plan, kind, k) {
   const Z = faustSewState(F), key = kind + k
@@ -12637,7 +12630,6 @@ function faustSewTick(participants) {
       const m = faustSewNear(plan, c.x, c.z, K.mouth)
       if (m) {
         x = m.x; z = m.z; r = 12
-        if (isHost && Math.hypot(m.x - c.x, m.z - c.z) < 2.5 && !Z.told.has(c.id)) { Z.told.add(c.id); tell(c.id, '§7A manhole: press use (E) to climb down into the sewers.', 'a') }
       }
     }
     if (!r) continue
@@ -15459,7 +15451,6 @@ function rescue(c) {
   const cause = [c.x, c.y, c.z].every(Number.isFinite) ? 'fell' : 'NaN'
   rescues.n++; rescues.last = { who: c.bot ? c.bot.name : 'player ' + c.id, x: c.x, y: c.y, z: c.z, vy: v ? v.y() : NaN, cell, cause }
   if (c.bot?.haunt) c.ai.gone = 'void'
-  if (c === selfChar()) sysMsg('§7rescued from ' + [c.x, c.z, c.y].map(Math.round).join(' ') + ' (' + cause + ')', 'b')
   const s = pickSpawn(c)
   setCharPos(c, s[0], spawnY(c, s), s[2])
   c.knT = 0; c.knx = 0; c.knz = 0; c.knUp = 0
@@ -15471,7 +15462,6 @@ function leaveRare(c) {
   players.delete(c.id); inputs.delete(c.id); roster.delete(c.id)
   detachBody(c)
   if (conns.size) pushRoster()
-  announce(gameText('enemyGone', { name: c.bot ? enemyName(c.bot.name) : '?' }), 'b')
 }
 
 const gunsOf = c => !gunless(CHARS[c.cid])
@@ -43941,7 +43931,6 @@ function rollRare(c) {
     if (!B.visits || players.has(BOT_ID0 + i) || Math.floor(Math.random() * (B.visits === true ? RARE_ONE_IN : B.visits))) return
     addBot(i)
     if (conns.size) pushRoster()
-    announce(gameText('enemyArrives', { name: enemyName(B.name), line: TEXT.arrive[B.name] || TEXT.enemyArrivesDefault }), 'b')
   })
 }
 
@@ -43969,7 +43958,6 @@ function rebalance(c) {
   if (!balanced() || mine - rest < 2) return
   const to = fallbackRow(c.id)
   moveTo(c, to); pushRoster()
-  announce(gameText('balance', { name: roster.get(c.id)?.name || 'A player', side: SIDES[CHARS[to].side].name }), 'b')
 }
 const moveTo = (c, cid) => { becomeChar(c, cid); const p = roster.get(c.id); if (p) p.cid = cid }
 
@@ -47422,7 +47410,7 @@ function rainBuild() {
   const ring = []
   for (let i = 0; i < M; i++) for (let k = 0; k < 8; k++) { const a = i * 16 + k * 2, b = i * 16 + (k + 1) % 8 * 2; ring.push(a, a + 1, b, b, a + 1, b + 1) }
   R.splashes = fxRibbon(M * 16, ring, { fog: false })
-  R.s = { x: new Float32Array(M), z: new Float32Array(M), p: new Float32Array(M), t: new Float32Array(M), c: new Int32Array(M).fill(-1) }
+  R.s = { x: new Float32Array(M), z: new Float32Array(M), p: new Float32Array(M), t: new Float32Array(M), c: new Int32Array(M).fill(-1), w: new Float32Array(M).fill(NaN) }
   for (let i = 0; i < M; i++) { R.s.p[i] = rnd(); R.s.t[i] = RAIN.life[0] + rnd() * (RAIN.life[1] - RAIN.life[0]) }
   const pidx = []
   for (let i = 0; i < PAPER.n; i++) pidx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 2, i * 4 + 1, i * 4 + 3)
@@ -47432,6 +47420,7 @@ function rainBuild() {
   R.group = new THREE.Group(); R.group.name = 'rain'
   for (const m of [R.streaks, R.splashes, R.paper]) { m.frustumCulled = false; m.renderOrder = 6; m.matrixAutoUpdate = false; R.group.add(m) }
 }
+const rainWaterOut = { flow: [0, 0] }
 const rainWrap = (v, w) => v - Math.floor(v / w) * w
 const ROOM = { ceil: 7, near: 25, tunnel: 8, ray: 40 }
 const ROOF = { cell: 1.5, half: 10, range: 40, budget: 12, scan: 64, near: 3, nearAge: 1.2, farAge: 6, lift: 0.3, dy: 2.5, car: 3.2, carTop: 1.5 }
@@ -47564,12 +47553,12 @@ function rainDraw(dt, level, fx, look) {
   const sp = R.splashes.geometry.attributes.position, sk = R.splashes.geometry.attributes.color, spa = sp.array, ska = sk.array
   for (let i = 0; i < m; i++) {
     const u0 = R.T / Sp.t[i] + Sp.p[i], cyc = Math.floor(u0), u = u0 - cyc
-    if (Sp.c[i] !== cyc) { Sp.c[i] = cyc; const h = weatherHash(i * 7919 + 13, cyc); Sp.x[i] = c.x + (((h & 0xffff) / 65535) * 2 - 1) * RAIN.reach; Sp.z[i] = c.z + ((((h >>> 16) & 0xffff) / 65535) * 2 - 1) * RAIN.reach }
-    const r = RAIN.ring[0] + (RAIN.ring[1] - RAIN.ring[0]) * u, r0 = r * 0.7, d = Math.hypot(Sp.x[i] - c.x, Sp.z[i] - c.z)
-    const a = Math.min(1, amax * 2 * (look.sp || 1)) * (1 - u) * (1 - u) * Math.min(1, d / 2.5) * (1 - Math.min(1, Math.max(0, (d - 8) / 7))) * (1 - weatherInside(Sp.x[i] - c.x, Sp.z[i] - c.z)) * (1 - Math.max(weatherUnder(Sp.x[i], gy + 0.05, Sp.z[i]), cab ? weatherCabin(Sp.x[i], gy + 0.05, Sp.z[i], me, gy) : 0))
+    if (Sp.c[i] !== cyc) { Sp.c[i] = cyc; const h = weatherHash(i * 7919 + 13, cyc); Sp.x[i] = c.x + (((h & 0xffff) / 65535) * 2 - 1) * RAIN.reach; Sp.z[i] = c.z + ((((h >>> 16) & 0xffff) / 65535) * 2 - 1) * RAIN.reach; const lw = FAUSTLAND_API.water.at(Sp.x[i], Sp.z[i], rainWaterOut); Sp.w[i] = lw ? lw.level + 0.03 : NaN }
+    const r = RAIN.ring[0] + (RAIN.ring[1] - RAIN.ring[0]) * u, r0 = r * 0.7, d = Math.hypot(Sp.x[i] - c.x, Sp.z[i] - c.z), sy = Sp.w[i] === Sp.w[i] ? Sp.w[i] : gy + 0.03
+    const a = Math.min(1, amax * 2 * (look.sp || 1)) * (1 - u) * (1 - u) * Math.min(1, d / 2.5) * (1 - Math.min(1, Math.max(0, (d - 8) / 7))) * (1 - weatherInside(Sp.x[i] - c.x, Sp.z[i] - c.z)) * (1 - Math.max(weatherUnder(Sp.x[i], sy + 0.02, Sp.z[i]), cab ? weatherCabin(Sp.x[i], sy + 0.02, Sp.z[i], me, gy) : 0))
     for (let k = 0; k < 8; k++) {
       const ang = k * Math.PI / 4, ca = Math.cos(ang), sa = Math.sin(ang), o = i * 48 + k * 6, q = i * 64 + k * 8
-      spa[o] = Sp.x[i] + ca * r0; spa[o + 1] = gy + 0.03; spa[o + 2] = Sp.z[i] + sa * r0; spa[o + 3] = Sp.x[i] + ca * r; spa[o + 4] = gy + 0.03; spa[o + 5] = Sp.z[i] + sa * r
+      spa[o] = Sp.x[i] + ca * r0; spa[o + 1] = sy; spa[o + 2] = Sp.z[i] + sa * r0; spa[o + 3] = Sp.x[i] + ca * r; spa[o + 4] = sy; spa[o + 5] = Sp.z[i] + sa * r
       ska[q] = col0[0]; ska[q + 1] = col0[1]; ska[q + 2] = col0[2]; ska[q + 3] = a * 0.4; ska[q + 4] = col0[0]; ska[q + 5] = col0[1]; ska[q + 6] = col0[2]; ska[q + 7] = a
     }
   }
@@ -48749,7 +48738,6 @@ function mcSpawn(c, st, T) {
       if (st.mode === 'come' || st.mode === 'pull' || st.mode === 'here') {
         if (anchor === P.pose) {
           tell(c.id, '§7Your car is coming to the nearest street, ' + Math.round(Math.hypot(P.pose.x - c.x, P.pose.z - c.z)) + ' m away.', 'a')
-          tell(c.id, 'Car pickup at x ' + Math.round(P.pose.x) + ', z ' + Math.round(P.pose.z) + '.', 'b')
         }
         return
       }
@@ -48782,7 +48770,6 @@ function mcSpawn(c, st, T) {
     if (st.mode === 'come' || st.mode === 'pull' || st.mode === 'here') {
       if (anchor === P.pose) {
         tell(c.id, '§7Your car is coming to the nearest street, ' + Math.round(Math.hypot(P.pose.x - c.x, P.pose.z - c.z)) + ' m away.', 'a')
-        tell(c.id, 'Car pickup at x ' + Math.round(P.pose.x) + ', z ' + Math.round(P.pose.z) + '.', 'b')
       }
       return
     }
