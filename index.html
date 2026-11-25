@@ -10340,6 +10340,7 @@ function faustRender(render, s, cam) {
   const gap = faustSkyGap(cam.position)
   skyCam.copy(cam, false); skyCam.near = clamp(gap * 0.5, 0.1, 10); skyCam.far = FAUST.skyFar; skyCam.updateProjectionMatrix(); skyCam.updateMatrixWorld(true)
   F.skyScene.background = background
+  inkSkyDome(F, activeLook === 'ink', skyCam.position)
   const t = performance.now() / 1000
   const inkLook = activeLook === 'ink' ? 1 : 0
   if (F.beamInk.value !== inkLook) { F.beamInk.value = inkLook; for (const m of [F.beamMaterial, F.beamPoolMaterial]) { if (inkLook) { m.blending = THREE.NormalBlending; m.blendSrcAlpha = null; m.blendDstAlpha = null } else faustBeamBlend(m) } }
@@ -10386,6 +10387,7 @@ function faustDisposeSky() {
   for (const geometry of geometries) geometry.dispose()
   for (const texture of textures) texture.dispose()
   for (const pool of F.beamPools || []) pool.removeFromParent()
+  F.inkDome?.material.map.dispose(); F.inkDome = null
   F.skyScene.clear(); F.skyScene = null; F.skyCamera = null; F.skyBeams = []; F.roofBeams = null; F.beamPools = []; F.headMesh = null; F.skyTurn = F.skyOccTurn = F.headBound = null
   F.skyHead?.geometry.dispose(); F.skyStand?.dispose(); F.skyOccluder = F.skyStand = F.skyHead = F.skyBounds = null
 }
@@ -21044,6 +21046,34 @@ function lookRender(render, s, cam) {
     passes: activeLook === 'realistic' ? realStats.passes : activeLook === 'ink' && inkPost ? inkPost.outlines ? inkPost.field ? 3 : 2 : 1 : 0, targetBytes: activeLook === 'realistic' ? realStats.targetMB * 1048576 : activeLook === 'ink' && inkPost ? inkPost.target.width * inkPost.target.height * (inkPost.outlines ? inkPost.field ? 20 : inkPost.separateNormals ? 12 : 16 : 8) + (inkPost.separateNormals ? inkPost.normalTarget.width * inkPost.normalTarget.height * 8 : 0) : 0 })
 }
 const inkOne = [null]
+function inkSkyDome(F, on, at) {
+  let dome = F.inkDome
+  if (!dome) {
+    if (!on) return
+    const rows = 1024, period = 10, lo = -0.15, hi = 1.0, canvas = document.createElement('canvas')
+    canvas.width = 4; canvas.height = rows
+    const context = canvas.getContext('2d'), image = context.createImageData(4, rows)
+    for (let r = 0; r < rows; r++) {
+      const y = lo + (hi - lo) * (1 - (r + 0.5) / rows), glow = 1 - Math.min(1, Math.max(0, y / 0.07)), width = 0.20 * Math.pow(glow, 1.6)
+      const from = (r % period) / period, to = from + 1 / period
+      const overlap = Math.max(0, Math.min(to, 0.5 + width / 2) - Math.max(from, 0.5 - width / 2)) * period
+      const v = Math.round(255 * 0.22 * Math.pow(glow, 2.2) * Math.min(1, Math.max(0, (y - lo) / 0.12)))
+      for (let x = 0; x < 4; x++) image.data.set([v, v, v, 255], (r * 4 + x) * 4)
+    }
+    context.putImageData(image, 0, 0)
+    const map = new THREE.CanvasTexture(canvas)
+    map.colorSpace = THREE.SRGBColorSpace; map.wrapS = THREE.RepeatWrapping; map.anisotropy = 4
+    const material = new THREE.MeshBasicMaterial({ map, side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false, toneMapped: false })
+    material.userData.inkSky = true
+    const geometry = new THREE.CylinderGeometry(1, 1, hi - lo, 48, 1, true)
+    geometry.translate(0, (hi + lo) / 2, 0)
+    dome = F.inkDome = new THREE.Mesh(geometry, material)
+    dome.name = 'ink-sky'; dome.renderOrder = -100; dome.frustumCulled = false; dome.scale.setScalar(20000)
+    F.skyScene.add(dome)
+  }
+  dome.visible = on
+  if (on) dome.position.copy(at)
+}
 function inkPrepare(root) {
   root?.traverse(o => {
     if (!o.material) return
@@ -21100,28 +21130,33 @@ function inkPrepare(root) {
           float inkStroke(float p, float width) {
             float d = abs(fract(p) - 0.5), aa = max(fwidth(p), 0.015);
             return 1.0 - smoothstep(width - aa, width + aa, d);
-          }\n` + shader.fragmentShader
+          }
+          float inkRamp(float t) {
+            float q = clamp(t, 0.0, 1.0) * 7.0, w = max(fwidth(q) * 0.8, 0.12);
+            float stepped = (floor(q) + smoothstep(0.5 - w, 0.5 + w, fract(q)) * 0.0 + smoothstep(0.5 - w, 0.5 + w, fract(q))) / 7.0;
+            return mix(t, stepped, 0.55);
+          }
+          float inkAlbedo(float base, float hi, float floorK) {
+            return floorK + (1.0 - floorK) * smoothstep(0.005, hi, base);
+          }
+\n` + shader.fragmentShader
         const shade = lit && water ? `outgoingLight = vec3(waterInkTone); diffuseColor.a = 1.0;` : lit && character ? `
           float base = inkLuma(diffuseColor.rgb);
           float light = inkLuma(reflectedLight.directDiffuse + reflectedLight.indirectDiffuse)
             / max(inkLuma(material.diffuseColor), 0.0001);
           float keyLight = max(0.0, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0))));
-          light = max(light, 0.10 + 0.25 * keyLight);
-          float aa = max(fwidth(light) * 0.7, 0.035);
-          float mid = smoothstep(0.18 - aa, 0.18 + aa, light);
-          float paperBand = smoothstep(0.52 - aa, 0.52 + aa, light);
-          float pigment = smoothstep(0.025, 0.14, base);
-          float tone = mix(mix(0.009, 0.055, pigment), mix(0.055, 0.38, pigment), mid);
-          tone = mix(tone, mix(0.20, 0.94, pigment), paperBand);
-          float pen = dot(inkPoint, vec3(0.80, 0.62, 0.35)) / 0.075;
-          float hatch = inkStroke(pen, 0.10);
-          hatch = mix(hatch, 0.20, smoothstep(0.20, 0.50, fwidth(pen)));
-          hatch *= smoothstep(0.22, 0.45, fwidth(pen) * 0.075 / max(length(fwidth(inkPoint)), 0.00001));
-          tone = mix(tone, 0.006, hatch * (1.0 - mid) * pigment * 0.70);
+          light = max(light, 0.10 + 0.55 * keyLight);
+          float lum = pow(clamp(light / 0.8, 0.0, 1.0), 0.8);
+          float inkRedK = inkRed(diffuseColor.rgb);
+          float alb = mix(inkAlbedo(base, 0.30, 0.13), 0.7, inkRedK);
           float facing = abs(dot(normal, normalize(-inkViewPosition)));
-          float rim = (1.0 - smoothstep(0.13, 0.25, facing)) * smoothstep(0.0002, 0.004, length(fwidth(normal)));
+          float tone0 = lum * alb * 0.78;
+          float keyEdge = smoothstep(0.30, 0.75, keyLight) * (1.0 - smoothstep(0.18, 0.46, facing));
+          tone0 = mix(tone0, 0.92, keyEdge * 0.85);
+          float tone = 0.96 * inkRamp(tone0);
+          float rim = (1.0 - smoothstep(0.10, 0.22, facing)) * (1.0 - keyEdge) * smoothstep(0.0002, 0.004, length(fwidth(normal)));
           if (!inkScreenLines) tone = mix(tone, 0.006, rim);
-          vec3 ink = mix(vec3(tone), vec3(max(tone * 0.72, 0.075), 0.008, 0.012), inkRed(diffuseColor.rgb));
+          vec3 ink = mix(vec3(tone), vec3(tone * 0.78, 0.008, 0.012), inkRedK);
           float glow = inkLuma(totalEmissiveRadiance);
           vec3 emission = totalEmissiveRadiance;
           float warm = step(emission.b * 1.3 + 0.015, emission.r) * step(emission.b * 1.15, emission.g);
@@ -21129,32 +21164,40 @@ function inkPrepare(root) {
         ` : lit ? `
           float base = inkLuma(diffuseColor.rgb);
           float light = inkLuma(reflectedLight.directDiffuse + reflectedLight.indirectDiffuse) / max(base, 0.0001);
-          ${!paper && !sky ? 'light = max(light, 0.22 + 0.40 * max(0.0, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)))));' : ''}
-          float tone = light < 0.08 ? 0.012 : light < 0.20 ? 0.55 : light < 0.40 ? 0.82 : 0.97;
-          float pigment = smoothstep(0.006, ${globe ? '0.08' : paper ? '0.025' : '0.14'}, base);
-          ${globe ? 'tone = clamp(0.10 + 0.80 * base, 0.10, 0.90);' : 'tone *= mix(0.025, 1.0, pigment);'}
+          float lightRaw0 = light;
+          ${!paper && !sky ? 'light = max(light, 0.40 + 0.30 * max(0.0, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)))));' : 'light = max(light, 0.30);'}
+          float lum = pow(clamp(light / 0.85, 0.0, 1.0), 0.8);
+          vec3 n = abs(cross(dFdx(inkPoint), dFdy(inkPoint)));
+          float ny = n.y / max(length(n), 0.00001);
+          float vertical = 1.0 - smoothstep(0.3, 0.8, ny);
+          ${paper ? 'lum = mix(0.20, 1.0, pow(clamp(lightRaw0 / 0.45, 0.0, 1.0), 0.55));' : ''}
+          float wy = inkWorldPoint.y;
+          float climb = mix(0.50, 1.0, smoothstep(0.0, 7.0, wy)) * (1.0 - 0.30 * smoothstep(40.0, 200.0, wy));
+          lum *= mix(1.0, climb, vertical * (${paper ? '1.0' : sky ? '0.0' : '0.4'}));
+          float blood = inkRed(diffuseColor.rgb);
+          float albF = mix(inkAlbedo(base, ${paper ? '0.03' : '0.16'}, ${paper ? '0.12' : '0.55'}), 0.85, blood);
+          float formK = smoothstep(-0.25, 0.75, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0))));
+          ${sky && !globe ? 'lum = pow(lum, 2.0) * mix(0.18, 1.0, formK);' : globe ? '' : paper ? 'lum *= mix(0.62, 1.0, formK);' : 'lum *= mix(0.34, 1.0, formK);'}
+          float tone0 = min(lum * albF * 1.12, 0.97);
+          ${globe ? 'tone0 = clamp(0.10 + 0.80 * base, 0.10, 0.90);' : ''}
+          tone0 += 0.10 * smoothstep(0.78, 1.0, lum * albF);
+          float paving = step(max(n.x, n.z), n.y) * (1.0 - step(0.2, inkPoint.y));
+          if (paving > 0.5) {
+            float road = base < 0.06 ? 0.44 : base < 0.20 ? 0.56 : base < 0.50 ? 0.72 : 0.86;
+            float wash = 0.78 + 0.22 * sin(inkPoint.x * 0.21 + sin(inkPoint.z * 0.17) * 2.0) * sin(inkPoint.z * 0.19 + inkPoint.x * 0.05);
+            float lumG = pow(clamp(max(lightRaw0, 0.10) / 0.85, 0.0, 1.0), 1.5);
+            float farK = 1.0 - 0.55 * smoothstep(15.0, 180.0, distance(inkWorldPoint.xz, cameraPosition.xz));
+            tone0 = road * mix(0.30, 1.6, lumG) * wash * farK;
+          }
           vec3 eye = normalize(-inkViewPosition);
           float facing = abs(dot(normal, eye));
           float rim = (1.0 - smoothstep(0.13, 0.25, facing)) * smoothstep(0.0002, 0.004, length(fwidth(normal)));
           float keyLight = dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)));
+          float tone = 0.96 * inkRamp(tone0);
           if (${paper || sky ? 'false' : 'true'} && base < 0.035) tone = keyLight > 0.55 && facing > 0.18 && facing < 0.27 ? 0.95 : 0.003;
-          vec3 n = abs(cross(dFdx(inkPoint), dFdy(inkPoint)));
-          vec2 pen = ${globe ? 'vec2(dot(inkPoint, vec3(0.2096, 0.8384, 0.5031)), dot(inkPoint, vec3(0.9776, -0.1685, -0.1264)))' : 'n.y > max(n.x, n.z) ? inkPoint.xz : n.x > n.z ? inkPoint.zy : inkPoint.xy'};
-          float spacing = ${globe ? '56.0' : sky ? '24.0' : paper ? '0.30' : '0.065'};
-          float hatch = inkStroke((pen.x + pen.y * 0.62) / spacing, ${globe ? 'light < 0.20 ? 0.3 : 0.14' : '0.11'});
-          float crossHatch = inkStroke((pen.x - pen.y * 0.86) / (spacing * 1.27), ${globe ? '0.2' : '0.09'});
-          float middle = step(0.08, light) * (1.0 - step(0.40, light));
-          float strokes = max(hatch, crossHatch * (1.0 - step(0.20, light)));
-          float unresolved = smoothstep(0.10, 0.18, fwidth((pen.x + pen.y * 0.62) / spacing));
-          float coverage = ${globe ? 'light < 0.20 ? 0.76 : 0.28' : 'light < 0.20 ? 0.34 : 0.22'};
-          strokes = mix(strokes, coverage, unresolved);
-          float paving = step(max(n.x, n.z), n.y) * (1.0 - step(0.2, inkPoint.y));
-          tone = mix(tone, 0.004, strokes * middle * (1.0 - paving));
-          if (paving > 0.5) tone = min(tone, base < 0.06 ? 0.30 : base < 0.20 ? 0.52 : 0.90) * (light < 0.20 ? 0.4 : 1.0);
-
           if (!inkScreenLines) tone = mix(tone, 0.006, rim);
-          ${sky && !globe ? `
-          tone = min(tone, 0.68);
+          ${sky ? `
+          tone = min(tone, 0.66);
           #ifdef USE_EMISSIVEMAP
             vec2 eyeStep = max(fwidth(vEmissiveMapUv) * 1.7, vec2(1.0 / 512.0));
             float eyeNeighbour = max(max(inkLuma(texture2D(emissiveMap, vEmissiveMapUv + vec2(eyeStep.x, 0.0)).rgb),
@@ -21168,9 +21211,8 @@ function inkPrepare(root) {
           vec3 emission = totalEmissiveRadiance;
           float warm = step(emission.b * 1.3 + 0.015, emission.r) * step(emission.b * 1.15, emission.g);
           ink = mix(ink, mix(vec3(0.94), vec3(1.0, 0.66, 0.28), warm), smoothstep(0.08, 0.5, glow));
-          float blood = inkRed(diffuseColor.rgb);
           ${vehicleLamps ? 'blood = 0.0;' : ''}
-          outgoingLight = mix(ink, vec3(max(tone, 0.18), 0.008, 0.012), blood);
+          outgoingLight = mix(ink, vec3(tone * 0.78, 0.008, 0.012), blood);
           ${vehicleLamp ? 'outgoingLight = max(outgoingLight, totalEmissiveRadiance);' : ''}
         ` : cloud ? `
           float mass = diffuseColor.a / max(opacity, 0.001);
@@ -21214,7 +21256,7 @@ function inkPrepare(root) {
           }`)
       }
       m.onBeforeCompile.inkHook = true
-      m.customProgramCacheKey = () => key + '|ink-6|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight) + Number(character) + Number(signal) + Number(vehicleLamp) + Number(vehicleLamps) + (water ? 'w' : '')
+      m.customProgramCacheKey = () => key + '|ink-7|' + Number(paper) + Number(cloud) + Number(globe) + Number(sky) + Number(facade) + Number(groundLight) + Number(character) + Number(signal) + Number(vehicleLamp) + Number(vehicleLamps) + (water ? 'w' : '')
       m.needsUpdate = true
     }
   })
