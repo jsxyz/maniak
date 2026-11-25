@@ -32169,6 +32169,7 @@ const probeApi = Object.freeze({
   },
 })
 Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
+  mapPerf: { trace: on => (mapTrace = on ? [] : null), log: () => mapTrace, low: on => { mapLow = !!on; mapCache = null }, get isLow() { return mapLowOn() } },
   log: () => gameLog.map(line => ({ ...line })),
   look: name => GAME.look.set(name),
   shaderCheck,
@@ -42766,7 +42767,7 @@ function* airLinesSteps(seed, S, planOf = (i, j) => faustPlan(seed, i, j, S)) {
     line.phase = (faustMix(seed, 977 + n, 31) % 100000) / 100000 * T
     line.index = n
   }
-  airLinesMemo = { key, lines }
+  airLinesMemo = { key, lines, names: airStopNames(seed, stops) }
   return lines
 }
 function airPose(line, k, t) {
@@ -42793,6 +42794,13 @@ function airPose(line, k, t) {
   out.x = a[0]; out.y = a[1]; out.z = a[2]; out.yaw = a[3]
   out.vx = (b[0] - e[0]) / dl * v; out.vy = (b[1] - e[1]) / dl * v; out.vz = (b[2] - e[2]) / dl * v
   out.w = airWrap(b[3] - e[3]) / dl * v; out.stage = 'leg'
+  return out
+}
+const AIR_ST_WORDS = [['Vesper', 'Crown', 'Meridian', 'Regent', 'Argent', 'Gilded', 'Obsidian', 'Zenith'], ['Plaza', 'Spire', 'Heights', 'Terrace', 'Landing', 'Crossing', 'Exchange', 'Gate']]
+function airStopNames(seed, stops) {
+  const ids = [...new Set(stops.map(s => s.id))].sort(), out = new Map()
+  const order = Array.from({ length: Math.max(ids.length, 64) }, (_, i) => i).sort((p, q) => faustMix(seed, p, 0x7a65) - faustMix(seed, q, 0x7a65) || p - q)
+  ids.forEach((id, i) => { const k = order[i]; out.set(id, (AIR_ST_WORDS[0][k & 7] + ' ' + AIR_ST_WORDS[1][k >> 3 & 7]).toUpperCase()) })
   return out
 }
 let airTrisMemo = null
@@ -46640,6 +46648,9 @@ const MAP_PAL = { ink: '#06080b', land: '#12150f', field: ['#171d12', '#1c1b13',
   road: { hwy: '#e2cf94', ramp: '#a99b78', boulevard: '#a49a7c', avenue: '#8f8567', diag: '#b8a46c', street: '#5c584c', plain: '#58554a', lane: '#46433b', alley: '#34322d' },
   ico: { club: '#e0527a', liquor: '#e3a14b', conv: '#58b8c4', theatre: '#d8b86a', cathedral: '#d8b86a', hotel: '#d8b86a', park: '#6fae7a', site: '#c98a5a', dock: '#7fb0c4', dam: '#d8d2be', station: '#e3b04b' } }
 const MAP_FONT = "'Futura','Century Gothic','Josefin Sans','Trebuchet MS',ui-sans-serif,sans-serif", MAP_TITLE = "'Maniak Display',Impact,'Arial Black',sans-serif"
+const MAP_HAND = "'Maniak Hand','Marker Felt','Comic Sans MS',cursive"
+const MAP_HAND_FONT = { family: 'Maniak Hand', url: 'https://cdn.jsdelivr.net/npm/@fontsource/permanent-marker@5.3.0/files/permanent-marker-latin-400-normal.woff2',
+  sri: 'sha384-vT5xTr25YOIF7ASHObdDkQnLzyunaZ1r9FRHtYCen88HCgzujW8tWPo6rzU2vt77' }
 const MAP_ZOOM = { max: 3, fit: 0.72 }, MAP_MS = { repaint: 160, warm: 4000, free: 20000 }
 const MAP_NATIVE = new Set(['highways', 'channels', 'water', 'rings'])
 const MAP_WORDS = ['Aurora', 'Meridian', 'Zenith', 'Orchid', 'Cobalt', 'Lantern', 'Marlowe', 'Verity', 'Halcyon', 'Sable', 'Garnet', 'Vesper', 'Quill', 'Ember', 'Pelham', 'Corbin', 'Dunmore', 'Larkin', 'Ashby', 'Fenwick', 'Gilded', 'Hartley', 'Ivory',
@@ -46754,11 +46765,16 @@ function* mapBuildSteps(seed, S) {
   const seen = new Map()
   for (const line of air) {
     const pts = []
-    for (const call of line.calls) { const P = call.path; for (let i = 0; i < P.length; i += 7) pts.push(P[i][0], P[i][2]); pts.push(P.at(-1)[0], P.at(-1)[2]) }
-    D.lines.push({ id: line.id, name: line.name, p: pts, loop: !!line.loop })
-    for (const s of line.stops) { const o = seen.get(s.id) || (seen.set(s.id, { x: s.x, z: s.z, lines: [] }), seen.get(s.id)); o.lines.push(line.name) }
+    for (const call of line.calls) {
+      const P = call.path, ms = call.stop, nose = i => { const a = P[Math.max(0, i - 1)], b = P[Math.min(P.length - 1, i + 1)], dx = b[0] - a[0], dz = b[2] - a[2], l = Math.hypot(dx, dz) || 1; return [P[i][0] + dx / l * AIR.nose, P[i][2] + dz / l * AIR.nose] }
+      pts.push(ms.x, ms.z, ms.x + Math.sin(call.yaw0) * AIR.back, ms.z + Math.cos(call.yaw0) * AIR.back)
+      for (let i = 0; i < P.length; i += 7) { const n = nose(i); pts.push(n[0], n[1]) }
+      const ne = nose(P.length - 1); pts.push(ne[0], ne[1])
+    }
+    D.lines.push({ id: line.id, name: line.name, p: pts, loop: !!line.loop, st: line.stops.map(m => [m.x, m.z]) })
+    for (const s of line.stops) { const o = seen.get(s.id) || (seen.set(s.id, { x: s.x, z: s.z, name: airLinesMemo?.names?.get(s.id), lines: [] }), seen.get(s.id)); o.lines.push(line.name) }
   }
-  for (const s of seen.values()) { D.stops.push(s); D.pois.push({ x: s.x, z: s.z, name: 'Zeppelin stop · ' + s.lines.join(', '), kind: 'air' }) }
+  for (const s of seen.values()) { D.stops.push(s); D.pois.push({ x: s.x, z: s.z, name: (s.name ? s.name.replace(/\w+/g, w => w[0] + w.slice(1).toLowerCase()) + ' · zeppelin stop · ' : 'Zeppelin stop · ') + s.lines.join(', '), kind: 'air' }) }
   const G = FAUST.globe, Hd = FAUST.head
   D.globe = { x: G.x, z: G.z, r: G.radius }; D.head = { x: Hd.position[0], z: Hd.position[2], hx: Hd.size[0] / 2, hz: Hd.size[2] / 2 }
   D.pois.push({ x: G.x, z: G.z, name: 'The Globe', kind: 'mark' }, { x: D.head.x, z: D.head.z, name: 'Faust\'s head', kind: 'mark' }, { x: -48, z: -48, name: 'Faust Plaza', kind: 'mark' })
@@ -46903,12 +46919,124 @@ function mapEnsure() {
 }
 
 function mapNiceLength(m) { const s = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]; return s.find(v => v >= m) || 20000 }
-function mapText(g, t, x, y, { size = 11, color = MAP_PAL.cream, align = 'center', weight = 700, space = 1.5, halo = '#06080b', font = MAP_FONT } = {}) {
-  g.font = weight + ' ' + size + 'px ' + font; g.textAlign = align; g.textBaseline = 'middle'
-  if ('letterSpacing' in g) g.letterSpacing = space + 'px'
-  g.lineJoin = 'round'; g.lineWidth = Math.max(2, size / 3); g.strokeStyle = halo; g.strokeText(t, x, y)
-  g.fillStyle = color; g.fillText(t, x, y)
-  if ('letterSpacing' in g) g.letterSpacing = '0px'
+const mapHash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0 }
+const mapRng = seed => { let a = (seed >>> 0) || 1; return () => { a = a + 0x6d2b79f5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296 } }
+const mapSeedAt = (x, z) => mapHash(Math.round(x) + ',' + Math.round(z))
+function mapInk(g, pts, color, w, halo, sharp) {
+  g.lineCap = 'round'; g.lineJoin = 'round'
+  for (const pass of halo ? [0, 1] : [1]) {
+    g.strokeStyle = pass ? color : 'rgba(6,8,11,.85)'; g.lineWidth = pass ? w : w + 2.2
+    g.beginPath(); g.moveTo(pts[0][0], pts[0][1])
+    if (sharp) for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1])
+    else {
+      for (let i = 1; i < pts.length - 1; i++) g.quadraticCurveTo(pts[i][0], pts[i][1], (pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2)
+      g.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1])
+    }
+    g.stroke()
+  }
+}
+function mapLoopPts(x, y, rx, ry, rnd) {
+  const n = 16, a0 = rnd() * 6.283, pts = []
+  for (let i = 0; i <= n + 2; i++) { const a = a0 + i / n * 6.283, q = 1 + (rnd() - 0.5) * 0.14 + i / n * 0.07; pts.push([x + Math.cos(a) * rx * q, y + Math.sin(a) * ry * q]) }
+  return pts
+}
+function mapEllPts(x, y, rx, ry, rot, rnd) {
+  const n = 12, a0 = rnd() * 6.283, c = Math.cos(rot), sn = Math.sin(rot), pts = []
+  for (let i = 0; i <= n + 1; i++) { const a = a0 + i / n * 6.283, q = 1 + (rnd() - 0.5) * 0.12, ex = Math.cos(a) * rx * q, ey = Math.sin(a) * ry * q; pts.push([x + ex * c - ey * sn, y + ex * sn + ey * c]) }
+  return pts
+}
+function mapArrowInk(g, cx, cy, dx, dy, hw, hh, col, w, rnd) {
+  const L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L, s = Math.min(hw / (Math.abs(ux) || 1e-6), hh / (Math.abs(uy) || 1e-6))
+  if (L - s < 10) return
+  const sx = cx + ux * s, sy = cy + uy * s, ex = cx + dx - ux * 4, ey = cy + dy - uy * 4, bend = (rnd() - 0.5) * 0.3 * (L - s)
+  const mx = (sx + ex) / 2 - uy * bend, my = (sy + ey) / 2 + ux * bend
+  mapInk(g, [[sx, sy], [mx, my], [ex, ey]], col, w, true)
+  const hx = ex - mx, hy = ey - my, hl = Math.hypot(hx, hy) || 1, ax = hx / hl, ay = hy / hl, hs = 6 + w
+  mapInk(g, [[ex - ax * hs - ay * hs * 0.55, ey - ay * hs + ax * hs * 0.55], [ex, ey], [ex - ax * hs + ay * hs * 0.55, ey - ay * hs - ax * hs * 0.55]], col, w, true, true)
+}
+let mapLow = false
+const mapLowOn = () => mapLow || IS_TOUCH || settings.quality !== 'high'
+const mapHandSp = (S, space, wide) => wide ? S * 0.17 + space * 0.45 : space * 0.6 + 0.3
+function mapHandWidth(g, t, size, space = 1.5, wide) {
+  t = String(t).toUpperCase(); g.font = '400 ' + size * 1.08 + 'px ' + MAP_HAND
+  return g.measureText(t).width + mapHandSp(size * 1.08, space, wide) * t.length
+}
+function mapText(g, t, x, y, o = {}) {
+  const { size = 11, color = MAP_PAL.cream, align = 'center', space = 1.5, halo = '#06080b' } = o
+  if (o.font) {
+    g.font = (o.weight || 700) + ' ' + size + 'px ' + o.font; g.textAlign = align; g.textBaseline = 'middle'
+    if ('letterSpacing' in g) g.letterSpacing = space + 'px'
+    g.lineJoin = 'round'; g.lineWidth = Math.max(2, size / 3); g.strokeStyle = halo; g.strokeText(t, x, y)
+    g.fillStyle = color; g.fillText(t, x, y)
+    if ('letterSpacing' in g) g.letterSpacing = '0px'
+    return
+  }
+  t = String(t).toUpperCase()
+  const S = size * 1.08, sp = mapHandSp(S, space, o.wide), n = t.length, rnd = mapRng(mapHash(t))
+  g.font = '400 ' + S + 'px ' + MAP_HAND; g.textBaseline = 'middle'; g.lineJoin = 'round'
+  const ls = 'letterSpacing' in g
+  let tw = g.measureText(t).width + sp * n
+  tw -= sp
+  const x0 = align === 'left' ? x : align === 'right' ? x - tw : x - tw / 2, yy = y + (rnd() - 0.5) * S * 0.12
+  g.textAlign = 'left'
+  if (ls) g.letterSpacing = sp + 'px'
+  if (halo !== 'rgba(0,0,0,0)') { g.lineWidth = Math.max(2, S / 3.2); g.strokeStyle = halo; g.strokeText(t, x0, yy) }
+  g.fillStyle = color; g.fillText(t, x0, yy)
+  if (ls) g.letterSpacing = '0px'
+  if (o.under || o.circle || o.arrow) {
+    const r2 = mapRng(mapHash(t) ^ 0x9e37), w = Math.max(1.4, S * 0.13)
+    if (o.under) { const yy = y + S * 0.66; for (let p = 0; p < 2; p++) mapInk(g, [[x0 - 4 + r2() * 3, yy + p * 2.4 + r2()], [x0 + tw * 0.5, yy + p * 2.4 + 1 + r2() * 1.5], [x0 + tw + 3 - r2() * 3, yy + p * 2.4 - 1 + r2() * 1.5]], color, w, true) }
+    if (o.circle) mapInk(g, mapLoopPts(x0 + tw / 2, y, tw / 2 + S * 0.9, S * 0.95, r2), color, w, true)
+    if (o.arrow) mapArrowInk(g, x0 + tw / 2, y, o.arrow[0], o.arrow[1], tw / 2 + 6, S / 2 + 5, color, w, r2)
+  }
+}
+function mapTag(g, t, tw, o) {
+  const th = (o.size || 10) * 1.08 + 7, r = mapRng(mapHash(t) ^ 0x7a6)
+  g.rotate((r() - 0.5) * 0.14)
+  g.fillStyle = 'rgba(0,0,0,.4)'; g.beginPath(); g.moveTo(-tw / 2 + 5, -th / 2 + 2); g.lineTo(tw / 2 + 2, -th / 2 + 2.5); g.lineTo(tw / 2 + 2, th / 2 + 2.5); g.lineTo(-tw / 2 + 2, th / 2 + 2.5); g.closePath(); g.fill()
+  g.fillStyle = '#e9ddb6'; g.strokeStyle = '#8a7a52'; g.lineWidth = 0.8; g.beginPath()
+  g.moveTo(-tw / 2 + 5, -th / 2); g.lineTo(tw / 2, -th / 2); g.lineTo(tw / 2, th / 2); g.lineTo(-tw / 2, th / 2); g.lineTo(-tw / 2, -th / 2 + 5); g.closePath(); g.fill(); g.stroke()
+  g.fillStyle = '#3b3220'; g.beginPath(); g.arc(-tw / 2 + 5.5, -th / 2 + 5.5, 1.1, 0, 2 * Math.PI); g.fill()
+}
+function mapWrap(g, a, b, r, seed) {
+  const rnd = mapRng(seed), turns = 1 + (rnd() < 0.5 ? 1 : 0) + (rnd() < 0.2 ? 1 : 0)
+  g.strokeStyle = '#a80f1a'; g.lineCap = 'round'
+  for (let i = 0; i < turns; i++) { g.lineWidth = 1.3 + rnd() * 0.9; g.beginPath(); g.ellipse(a + (rnd() - 0.5) * 1.5, b + (rnd() - 0.5) * 1.5, r + 1.4 + i * 1.2 + rnd(), r * (0.5 + rnd() * 0.4) + 1.1 + i * 0.8, rnd() * 3.14, 0, 2 * Math.PI * (0.78 + rnd() * 0.22)); g.stroke() }
+}
+function mapPin(g, a, b, r, col) {
+  g.fillStyle = 'rgba(0,0,0,.5)'; g.beginPath(); g.ellipse(a + r * 0.6, b + r * 0.85, r, r * 0.75, 0.6, 0, 2 * Math.PI); g.fill()
+  g.fillStyle = col; g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 1; g.beginPath(); g.arc(a, b, r, 0, 2 * Math.PI); g.fill(); g.stroke()
+  g.fillStyle = 'rgba(255,255,255,.7)'; g.beginPath(); g.arc(a - r * 0.32, b - r * 0.35, Math.max(0.9, r * 0.28), 0, 2 * Math.PI); g.fill()
+}
+function mapLegendBox(W, H, compact, n) {
+  const rows = n || (compact ? 6 : 9), lh = compact ? 14 : 15, w = compact ? 106 : 122, h = rows * lh + 12
+  return { rows, lh, w, h, x: 14, y: H - 28 - h }
+}
+function mapStrings(D) {
+  const out = [], by = {}
+  for (const s of D.stations) (by[s.line] ||= []).push(s)
+  const span = (kind, name, p, q, a, b, extra) => {
+    const r = mapRng(mapHash(kind + name + Math.round(p[0]) + ',' + Math.round(p[1]) + ',' + Math.round(q[0]) + ',' + Math.round(q[1]) + (extra ? 'x' : ''))), wob = []
+    for (let m = 0; m < 7; m++) wob.push(r() * 2 - 1)
+    return { a, b, extra: !!extra, sag: extra ? 0.06 + r() * 0.09 : 0.015 + r() * 0.07, lat: (r() - 0.5) * 0.12, wob, wt: extra ? 0.55 + r() * 0.2 : 0.78 + r() * 0.5, tail: !extra && r() < 0.4 ? { L: 9 + r() * 11, s: r() < 0.5 ? -1 : 1 } : null }
+  }
+  const mk = (kind, name, pts, loop) => {
+    const n = loop ? pts.length : pts.length - 1, spans = []
+    for (let i = 0; i < n; i++) spans.push(span(kind, name, pts[i], pts[(i + 1) % pts.length], i, (i + 1) % pts.length, false))
+    if (pts.length > 3) for (let i = 0; i < pts.length; i++) { const j = (i + 2) % pts.length; if ((loop || i + 2 < pts.length) && mapRng(mapHash(kind + name + 'c' + i))() < 0.3) spans.push(span(kind, name, pts[i], pts[j], i, j, true)) }
+    out.push({ kind, name, pts, loop, spans })
+  }
+  for (const id of Object.keys(by)) {
+    const L = by[id].slice().sort(id === 'L' ? (a, b) => Math.atan2(a.z, a.x) - Math.atan2(b.z, b.x) : id === 'B' ? (a, b) => a.z - b.z : (a, b) => a.x - b.x)
+    if (L.length > 1) mk('rail', MAP_LINES[id][0].toUpperCase(), L.map(s => [s.x, s.z]), id === 'L')
+  }
+  for (const l of D.lines) if (l.st && l.st.length > 1) mk('air', 'ZEPPELIN ' + l.name.toUpperCase(), l.st, l.loop)
+  for (const s of D.stops) {
+    let best = null, bd = 360
+    for (const t of D.stations) { const d = Math.hypot(t.x - s.x, t.z - s.z); if (d < bd) { bd = d; best = t } }
+    if (best && mapRng(mapHash('link' + Math.round(s.x) + ',' + Math.round(s.z)))() < 0.5) { const pts = [[s.x, s.z], [best.x, best.z]]; out.push({ kind: 'link', name: '', pts, loop: false, spans: [span('link', '', pts[0], pts[1], 0, 1, true)] }) }
+  }
+  return out
 }
 function mapPoly(g, p, close) {
   g.beginPath(); g.moveTo(p[0], p[1])
@@ -46918,67 +47046,105 @@ function mapPoly(g, p, close) {
 const mapUi = () => Math.min(mapSize.W, mapSize.H) < 480 ? 1.2 : 1
 
 function mapLabeler(g) {
-  const cand = []
+  const cand = [], blocks = []
   return {
-    add(prio, t, x, y, o = {}) { cand.push({ prio, t, x, y, o }) },
-    run(W, H) {
+    add(prio, t, x, y, o = {}) { cand.push({ prio, t, x, y, o: o.tag || o.arrow || o.plain ? o : { ...o, wide: 1 } }) },
+    block(x0, y0, x1, y1) { blocks.push([x0, y0, x1, y1]) },
+    *run(W, H) {
+      yield 'lab-sort'
       cand.sort((a, b) => b.prio - a.prio)
       const grid = new Map(), cs = 64, hit = (b, x0, y0, x1, y1) => b[0] < x1 && b[2] > x0 && b[1] < y1 && b[3] > y0
+      const put = box => { for (let i = Math.floor(box[0] / cs); i <= Math.floor(box[2] / cs); i++) for (let j = Math.floor(box[1] / cs); j <= Math.floor(box[3] / cs); j++) { const k = i * 4096 + j; let l = grid.get(k); if (!l) grid.set(k, l = []); l.push(box) } }
+      const free = (x0, y0, x1, y1) => { for (let i = Math.floor(x0 / cs); i <= Math.floor(x1 / cs); i++) for (let j = Math.floor(y0 / cs); j <= Math.floor(y1 / cs); j++) for (const b of grid.get(i * 4096 + j) || []) if (hit(b, x0, y0, x1, y1)) return false; return true }
+      for (const b of blocks) put(b)
       let placed = 0
+      let yc = 0
       for (const c of cand) {
-        const o = c.o, size = o.size || 10, space = o.space ?? 1.5, rot = o.rot || 0
-        g.font = (o.weight || 700) + ' ' + size + 'px ' + MAP_FONT
-        const tw = g.measureText(c.t).width + space * c.t.length + 4, th = size + 4, cr = Math.abs(Math.cos(rot)), sr = Math.abs(Math.sin(rot))
-        const hw = (tw * cr + th * sr) / 2, hh = (tw * sr + th * cr) / 2, x0 = c.x - hw, y0 = c.y - hh, x1 = c.x + hw, y1 = c.y + hh
-        if (x1 < -20 || y1 < -20 || x0 > W + 20 || y0 > H + 20) continue
-        if (o.keep && (x0 < 4 || y0 < 4 || x1 > W - 4 || y1 > H - 4)) continue
-        let ok = true
-        const ia = Math.floor(x0 / cs), ib = Math.floor(x1 / cs), ja = Math.floor(y0 / cs), jb = Math.floor(y1 / cs)
-        for (let i = ia; i <= ib && ok; i++) for (let j = ja; j <= jb && ok; j++) for (const b of grid.get(i * 4096 + j) || []) if (hit(b, x0, y0, x1, y1)) { ok = false; break }
-        if (!ok) continue
-        const box = [x0, y0, x1, y1]
-        for (let i = ia; i <= ib; i++) for (let j = ja; j <= jb; j++) { const k = i * 4096 + j; let l = grid.get(k); if (!l) grid.set(k, l = []); l.push(box) }
-        if (rot) { g.save(); g.translate(c.x, c.y); g.rotate(rot); mapText(g, c.t, 0, 0, o); g.restore() } else mapText(g, c.t, c.x, c.y, o)
-        placed++
+        if ((++yc & 31) === 0) yield 'lab-skip'
+        const o = c.o, size = o.size || 10, space = o.space ?? 1.5, pad = (o.pad || 0) * 2
+        const tw = mapHandWidth(g, c.t, size, space, o.wide) + 4 + (o.tag ? 8 : 0) + pad, th = size + 4 + (o.tag ? 5 : 0) + pad
+        for (const [px, py, rot, arr] of [[c.x, c.y, o.rot || 0, o.arrow], ...(o.alts || [])]) {
+          const cr = Math.abs(Math.cos(rot)), sr = Math.abs(Math.sin(rot)), hw = (tw * cr + th * sr) / 2, hh = (tw * sr + th * cr) / 2, x0 = px - hw, y0 = py - hh, x1 = px + hw, y1 = py + hh
+          if (x1 < -20 || y1 < -20 || x0 > W + 20 || y0 > H + 20) continue
+          if (o.keep && (x0 < 4 || y0 < 4 || x1 > W - 4 || y1 > H - 4)) continue
+          if (!free(x0, y0, x1, y1)) continue
+          put([x0, y0, x1, y1])
+          if (arr) for (let q = 1; q <= 6; q++) { const ax = px + arr[0] * q / 7, ay = py + arr[1] * q / 7; put([ax - 6, ay - 6, ax + 6, ay + 6]) }
+          g.save(); g.translate(px, py); g.rotate(rot)
+          if (o.tag) { mapTag(g, c.t, tw, o); mapText(g, c.t, 0, 0, { ...o, color: '#2a1d0d', halo: 'rgba(0,0,0,0)' }) } else mapText(g, c.t, 0, 0, arr ? { ...o, arrow: arr } : o)
+          g.restore()
+          placed++
+          yield 'lab'
+          break
+        }
       }
       return placed
-    } }
-}
-function mapAlong(pts, xy, W, H, tw, spacing, fn) {
-  let next = spacing * 0.4, run = 0
-  for (let i = 0; i + 3 < pts.length; i += 2) {
-    const [ax, ay] = xy(pts[i], pts[i + 1]), [bx, by] = xy(pts[i + 2], pts[i + 3]), L = Math.hypot(bx - ax, by - ay)
-    if (L < 0.5) continue
-    let rot = Math.atan2(by - ay, bx - ax); if (rot > Math.PI / 2) rot -= Math.PI; else if (rot < -Math.PI / 2) rot += Math.PI
-    while (next < run + L) {
-      if (L >= tw + 8) {
-        const s = Math.min(Math.max(next - run, tw / 2 + 4), L - tw / 2 - 4), x = ax + (bx - ax) * s / L, y = ay + (by - ay) * s / L
-        if (x > -30 && x < W + 30 && y > -30 && y < H + 30) fn(x, y, rot)
-      }
-      next += spacing
     }
-    run += L
   }
 }
-function mapIcon(g, kind, x, y, r) {
-  const col = MAP_PAL.ico[kind] || MAP_PAL.brass
-  g.fillStyle = '#10131a'; g.strokeStyle = col; g.lineWidth = 1.5; g.lineJoin = 'round'
-  g.beginPath()
-  if (kind === 'site') { g.moveTo(x, y - r - 1); g.lineTo(x + r + 1, y + r); g.lineTo(x - r - 1, y + r); g.closePath() }
-  else if (kind === 'park') { g.arc(x, y, r, 0, 2 * Math.PI) }
-  else if (kind === 'dock') { g.rect(x - r, y - r, 2 * r, 2 * r) }
-  else { g.arc(x, y, r, 0, 2 * Math.PI) }
-  g.fill(); g.stroke()
-  g.fillStyle = col; g.strokeStyle = col; g.lineWidth = 1.3
-  if (kind === 'club') { g.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i & 1 ? r * 0.28 : r * 0.62; g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr) } g.closePath(); g.fill() }
-  else if (kind === 'cathedral') { g.beginPath(); g.moveTo(x, y - r * 0.62); g.lineTo(x, y + r * 0.62); g.moveTo(x - r * 0.42, y - r * 0.14); g.lineTo(x + r * 0.42, y - r * 0.14); g.stroke() }
-  else if (kind === 'park') { g.beginPath(); g.arc(x, y, r * 0.5, 0, 2 * Math.PI); g.fill() }
-  else if (kind === 'dock') { g.fillRect(x - r * 0.4, y - r * 0.4, r * 0.8, r * 0.8) }
-  else if (kind === 'site') { g.fillRect(x - 1, y - 1, 2, 3) }
-  else { mapText(g, { liquor: 'L', conv: 'S', theatre: 'T', hotel: 'H' }[kind] || '•', x, y + 0.5, { size: r * 1.35, color: col, halo: 'rgba(0,0,0,0)', space: 0, weight: 800 }) }
+function mapAlong(pts, xy, W, H, tw, spacing, fn) {
+  const [ox, oy] = xy(0, 0), k = xy(1, 0)[0] - ox
+  let next = spacing * 0.4, run = 0, ax = ox + pts[0] * k, ay = oy + pts[1] * k
+  for (let i = 0; i + 3 < pts.length; i += 2) {
+    const bx = ox + pts[i + 2] * k, by = oy + pts[i + 3] * k, L = Math.hypot(bx - ax, by - ay)
+    if (L >= 0.5) {
+      if (next < run + L) {
+        let rot = Math.atan2(by - ay, bx - ax); if (rot > Math.PI / 2) rot -= Math.PI; else if (rot < -Math.PI / 2) rot += Math.PI
+        while (next < run + L) {
+          if (L >= tw + 8) {
+            const s = Math.min(Math.max(next - run, tw / 2 + 4), L - tw / 2 - 4), x = ax + (bx - ax) * s / L, y = ay + (by - ay) * s / L
+            if (x > -30 && x < W + 30 && y > -30 && y < H + 30) fn(x, y, rot)
+          }
+          next += spacing
+        }
+      }
+      run += L
+    }
+    ax = bx; ay = by
+  }
+}
+function mapIcon(g, kind, x, y, r, seed = mapSeedAt(x, y)) {
+  const col = MAP_PAL.ico[kind] || MAP_PAL.brass, rnd = mapRng(seed ^ mapHash(kind)), w = Math.max(1.5, r * 0.26)
+  const big = kind === 'theatre' || kind === 'cathedral' || kind === 'hotel'
+  if (kind !== 'club') { g.fillStyle = 'rgba(16,19,26,.6)'; g.beginPath(); g.arc(x, y, r + 1.5, 0, 2 * Math.PI); g.fill() }
+  const ring = rr => mapInk(g, mapLoopPts(x, y, rr, rr, rnd), col, w, true)
+  if (kind === 'site') {
+    const a = r * 0.95
+    mapInk(g, [[x - a, y - a * 0.9], [x + a * 0.1, y + a * 0.05], [x + a, y + a]], col, w * 1.2, true, true)
+    mapInk(g, [[x + a * 0.9, y - a], [x - a * 0.05, y], [x - a, y + a * 0.95]], col, w * 1.2, true, true)
+  } else if (kind === 'park') {
+    ring(r)
+    for (let i = -1; i <= 1; i++) mapInk(g, [[x + i * r * 0.5 - r * 0.32, y + r * 0.45], [x + i * r * 0.5 + r * 0.32, y - r * 0.45]], col, w * 0.8, false)
+  } else if (kind === 'dock') {
+    mapInk(g, [[x - r, y - r * 0.9], [x + r * 1.05, y - r], [x + r, y + r * 1.05], [x - r * 1.05, y + r], [x - r * 0.95, y - r * 1.15]], col, w, true, true)
+    mapInk(g, [[x - r * 0.6, y], [x - r * 0.2, y - r * 0.4], [x + r * 0.2, y + r * 0.4], [x + r * 0.6, y]], col, w * 0.8, false, true)
+  } else if (kind === 'club') {
+    const u = r * 1.5, cy = y + 0.37 * u
+    const shapes = [mapEllPts(x - 0.38 * u, cy - 0.85 * u, 0.28 * u, u, -0.2, rnd), mapEllPts(x + 0.42 * u, cy - 0.9 * u, 0.28 * u, u, 0.32, rnd), mapEllPts(x, cy + 0.45 * u, 0.82 * u, 0.7 * u, 0, rnd)]
+    for (const sh of shapes) {
+      g.fillStyle = 'rgba(16,19,26,.82)'; g.beginPath(); g.moveTo(sh[0][0], sh[0][1]); for (let i = 1; i < sh.length; i++) g.lineTo(sh[i][0], sh[i][1]); g.closePath(); g.fill()
+      g.fillStyle = col; g.globalAlpha = 0.24; g.fill(); g.globalAlpha = 1
+      mapInk(g, sh, col, w * 1.15, true)
+    }
+    mapInk(g, [[x - 0.4 * u, cy - 1.35 * u], [x - 0.34 * u, cy - 0.3 * u]], col, w * 0.7, false, true)
+    mapInk(g, [[x + 0.46 * u, cy - 1.4 * u], [x + 0.4 * u, cy - 0.35 * u]], col, w * 0.7, false, true)
+    g.fillStyle = col
+    for (const ex of [-0.3, 0.3]) { g.beginPath(); g.arc(x + ex * u, cy + 0.32 * u, Math.max(0.9, u * 0.11), 0, 2 * Math.PI); g.fill() }
+    g.beginPath(); g.arc(x, cy + 0.62 * u, Math.max(0.8, u * 0.1), 0, 2 * Math.PI); g.fill()
+    if (u >= 6) for (const sd of [-1, 1]) for (const dy of [0.5, 0.75]) mapInk(g, [[x + sd * 0.22 * u, cy + dy * u], [x + sd * 0.95 * u, cy + (dy + (dy - 0.62) * 0.8) * u]], col, 1, false, true)
+  } else if (kind === 'cathedral') {
+    ring(r)
+    mapInk(g, [[x, y - r * 0.62], [x + 0.4, y + r * 0.62]], col, w, false)
+    mapInk(g, [[x - r * 0.42, y - r * 0.14], [x + r * 0.42, y - r * 0.1]], col, w, false)
+  } else {
+    ring(r)
+    mapText(g, { liquor: 'L', conv: 'S', theatre: 'T', hotel: 'H' }[kind] || '•', x, y + 0.5, { size: r * 1.5, color: col, halo: 'rgba(0,0,0,0)', space: 0 })
+  }
+  if (big) { g.globalAlpha = 0.65; mapInk(g, mapLoopPts(x, y, r * 1.6, r * 1.6, rnd), col, w * 0.8, true); g.globalAlpha = 1 }
 }
 
-function mapPaint(g, D, V, W, H, sc) {
+function mapPaint(g, D, V, W, H, sc) { const it = mapPaintSteps(g, D, V, W, H, sc); while (!it.next().done); }
+function* mapPaintSteps(g, D, V, W, H, sc) {
   const k = V.k, P = MAP_PAL, xy = (x, z) => [(x - V.cx) * k + W / 2, (z - V.cz) * k + H / 2], ui = mapUi(), T = n => Math.round(n * ui * 10) / 10
   const x0 = V.cx - W / 2 / k, x1 = V.cx + W / 2 / k, z0 = V.cz - H / 2 / k, z1 = V.cz + H / 2 / k, WL = mapWorld(), A = D.A
   const vis = (a0, b0, a1, b1) => a1 >= x0 && a0 <= x1 && b1 >= z0 && b0 <= z1
@@ -46992,6 +47158,7 @@ function mapPaint(g, D, V, W, H, sc) {
   g.imageSmoothingEnabled = true; g.drawImage(B.cv, -B.nr * bc, -B.nr * bc, bn * bc, bn * bc)
   g.restore()
   const bandAt = (i, j) => i < -B.nr || j < -B.nr || i >= B.nr || j >= B.nr ? 4 : B.bands[(j + B.nr) * bn + i + B.nr]
+  yield 'fields'
   const plot = FAUST_FIELDS.plot
   if (k * plot >= 6) {
     const ia = Math.max(Math.floor(x0 / bc), -B.nr), ib = Math.min(Math.floor(x1 / bc), B.nr - 1), ja = Math.max(Math.floor(z0 / bc), -B.nr), jb = Math.min(Math.floor(z1 / bc), B.nr - 1)
@@ -47002,6 +47169,7 @@ function mapPaint(g, D, V, W, H, sc) {
     }
     tints.forEach((list, c) => { g.fillStyle = P.field[c]; g.beginPath(); for (let n = 0; n < list.length; n += 2) g.rect(list[n] + gap, list[n + 1] + gap, plot - 2 * gap, plot - 2 * gap); g.fill() })
   }
+  yield 'grid'
   if (k >= 0.012 && k < 0.2) {
     g.strokeStyle = 'rgba(201,164,92,.07)'; g.lineWidth = px(1); g.beginPath()
     for (let u = -WL; u <= WL; u += 1000) { if (u >= x0 && u <= x1) { g.moveTo(u, -WL); g.lineTo(u, WL) } if (u >= z0 && u <= z1) { g.moveTo(-WL, u); g.lineTo(WL, u) } }
@@ -47013,20 +47181,24 @@ function mapPaint(g, D, V, W, H, sc) {
     for (let u = -WL + 200; u < WL; u += 400) for (const [a, b] of [[u, -WL], [u, WL], [-WL, u], [WL, u]]) if (vis(a - 5, b - 5, a + 5, b + 5)) g.rect(a - px(1.5), b - px(1.5), px(3), px(3))
     g.fill() }
 
+  yield 'roads-lane'
   const roadW = { boulevard: 14, plain: 10, lane: 7 }, roadMin = { boulevard: 1.5, plain: 1.1, lane: 0.8 }
-  const roads = (cls, wd, min, color, casing) => {
+  const roads = function* (cls, wd, min, color, casing) {
     const list = D.roads.filter(r => r.cls === cls && vis(r.box[0] - 20, r.box[1] - 20, r.box[2] + 20, r.box[3] + 20))
     if (!list.length) return
     for (const pass of casing ? [0, 1] : [1]) {
       g.strokeStyle = pass ? color : P.ink; g.lineWidth = Math.max(pass ? wd : wd + px(2), px(min + (pass ? 0 : 2))); g.beginPath()
-      for (const r of list) { const p = r.pts; g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]) }
+      let rn = 0
+      for (const r of list) { const p = r.pts; g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]); if ((rn += p.length) > 1500) { rn = 0; g.stroke(); yield 'road-chunk'; g.beginPath() } }
       g.stroke()
     }
   }
   if (k >= 0.035) {
-    roads('lane', roadW.lane, roadMin.lane, P.road.lane, k >= 0.3)
-    roads('plain', roadW.plain, roadMin.plain, P.road.plain, k >= 0.25)
-    roads('boulevard', roadW.boulevard, roadMin.boulevard, P.road.boulevard, k >= 0.2)
+    yield* roads('lane', roadW.lane, roadMin.lane, P.road.lane, k >= 0.3)
+    yield 'roads-plain'
+    yield* roads('plain', roadW.plain, roadMin.plain, P.road.plain, k >= 0.25)
+    yield 'roads-boulevard+courts'
+    yield* roads('boulevard', roadW.boulevard, roadMin.boulevard, P.road.boulevard, k >= 0.2)
   }
   if (k >= 0.2) {
     g.fillStyle = P.road.plain; g.strokeStyle = P.road.plain; g.lineCap = 'round'
@@ -47036,11 +47208,13 @@ function mapPaint(g, D, V, W, H, sc) {
     for (const [ex, ez, dir] of D.courts) if (vis(ex - 70, ez - 20, ex + 70, ez + 20)) { g.moveTo(ex + dir * 64 + 10.5, ez); g.arc(ex + dir * 64, ez, Math.max(10.5, px(1.4)), 0, 2 * Math.PI) }
     g.fill(); g.lineCap = 'butt'
   }
+  yield 'alleys'
   if (k >= 0.25) {
     g.strokeStyle = P.road.alley; g.lineWidth = Math.max(5, px(0.6)); g.beginPath()
     for (const [ax, az, bx, bz] of D.alleys) if (vis(Math.min(ax, bx), az - 4, Math.max(ax, bx), az + 4)) { g.moveTo(ax, az); g.lineTo(bx, bz) }
     g.stroke()
   }
+  yield 'pools+huts'
   if (k >= 0.5) {
     g.fillStyle = '#2b86b0'
     for (const [pxx, pz, hx, hz] of D.pools) if (vis(pxx - hx, pz - hz, pxx + hx, pz + hz)) g.fillRect(pxx - hx, pz - hz, Math.max(2 * hx, px(2)), Math.max(2 * hz, px(2)))
@@ -47054,6 +47228,7 @@ function mapPaint(g, D, V, W, H, sc) {
       g.fill() }
   }
 
+  yield 'cells'
   const cells = D.cells.filter(c => vis(c.x, c.z, c.x + 96, c.z + 96))
   for (let d = 0; d < 4; d++) {
     g.fillStyle = P.ground[MAP_DISTRICTS[d]]; g.beginPath()
@@ -47073,6 +47248,7 @@ function mapPaint(g, D, V, W, H, sc) {
   }
   if (k >= 0.05) {
     for (let h = 0; h < 9; h++) {
+      yield 'lots'
       g.fillStyle = MAP_LOT[h]; g.beginPath()
       for (const c of cells) for (const l of c.lots) if (!l[6] && Math.min(8, Math.floor(l[4] / 30)) === h) g.rect(l[0] - l[2], l[1] - l[3], 2 * l[2], 2 * l[3])
       g.fill()
@@ -47083,6 +47259,7 @@ function mapPaint(g, D, V, W, H, sc) {
   }
   g.strokeStyle = 'rgba(201,164,92,.55)'; g.lineWidth = px(1.2); g.strokeRect(-A, -A, 2 * A, 2 * A)
 
+  yield 'water'
   const wpass = (fn) => { for (const w of D.water) for (const c of w.caps) fn(w, c) }
   const shore = Math.max(px(1.8), 0)
   for (const pass of [0, 1]) {
@@ -47107,18 +47284,21 @@ function mapPaint(g, D, V, W, H, sc) {
   for (const d of D.dams) if (vis(d.x - 150, d.z - 150, d.x + 150, d.z + 150)) { g.moveTo(d.x + Math.sin(d.ang) * 130, d.z - Math.cos(d.ang) * 130); g.lineTo(d.x - Math.sin(d.ang) * 130, d.z + Math.cos(d.ang) * 130) }
   g.stroke()
 
-  const cityRoads = (cls, color, wd, min, casing) => {
+  const cityRoads = function* (cls, color, wd, min, casing) {
     const list = D.roads.filter(r => r.cls === cls && vis(r.box[0] - 20, r.box[1] - 20, r.box[2] + 20, r.box[3] + 20))
     if (!list.length) return
     for (const pass of casing ? [0, 1] : [1]) {
       g.strokeStyle = pass ? color : P.ink; g.lineWidth = Math.max(pass ? wd : wd + px(2), px(min + (pass ? 0 : 2))); g.beginPath()
-      for (const r of list) { const p = r.pts; g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]) }
+      let rn = 0
+      for (const r of list) { const p = r.pts; g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]); if ((rn += p.length) > 1500) { rn = 0; g.stroke(); yield 'road-chunk'; g.beginPath() } }
       g.stroke()
     }
   }
-  if (k >= 0.05) cityRoads('street', P.road.street, 8, 0.9, k >= 0.2)
-  cityRoads('avenue', P.road.avenue, 20, 1.5, k >= 0.05)
-  cityRoads('diag', P.road.diag, 26, 1.8, true)
+  yield 'streets+avenues'
+  if (k >= 0.05) yield* cityRoads('street', P.road.street, 8, 0.9, k >= 0.2)
+  yield* cityRoads('avenue', P.road.avenue, 20, 1.5, k >= 0.05)
+  yield 'diag+rays'
+  yield* cityRoads('diag', P.road.diag, 26, 1.8, true)
   if (k >= 0.2) {
     g.setLineDash([px(8), px(6)]); g.strokeStyle = 'rgba(201,164,92,.42)'; g.lineWidth = px(0.8); g.beginPath()
     for (const r of D.roads) if ((r.cls === 'avenue' || r.cls === 'diag') && vis(r.box[0] - 20, r.box[1] - 20, r.box[2] + 20, r.box[3] + 20)) { const p = r.pts; g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]) }
@@ -47130,8 +47310,10 @@ function mapPaint(g, D, V, W, H, sc) {
     g.stroke(); g.beginPath(); g.arc(-48, -48, 24, 0, 2 * Math.PI); g.arc(-48, -48, 80, 0, 2 * Math.PI); g.stroke()
   }
 
+  yield 'hwy'
   g.lineCap = 'butt'
   for (const pass of [0, 1, 2]) for (const h of D.hwy) {
+    if (h === D.hwy[0]) yield 'hwy-pass'
     const ramp = h.kind === 'ramp', p = h.pts
     if (pass === 2 && (ramp || k < 0.15)) continue
     let a0 = Infinity, b0 = Infinity, a1 = -Infinity, b1 = -Infinity
@@ -47144,6 +47326,7 @@ function mapPaint(g, D, V, W, H, sc) {
     mapPoly(g, p, h.closed); g.stroke()
     if (pass === 2) g.setLineDash([])
   }
+  yield 'bridges+beams'
   for (const b of D.bridges) {
     if (!vis(Math.min(b.x0, b.x1) - 40, Math.min(b.z0, b.z1) - 40, Math.max(b.x0, b.x1) + 40, Math.max(b.z0, b.z1) + 40)) continue
     const wd = Math.max(2 * b.half, px(b.hwy ? 2.4 : b.foot ? 1 : 1.6))
@@ -47153,11 +47336,12 @@ function mapPaint(g, D, V, W, H, sc) {
   for (const pass of [0, 1]) for (const b of D.beams) {
     if (pass === 0 && !b.turnout) continue
     if (pass === 1 && b.turnout) continue
-    g.strokeStyle = MAP_LINES[b.line][1]; g.lineWidth = Math.max(k >= 0.5 ? 2.2 : 0, px(b.turnout ? 1.2 : 2)); mapPoly(g, b.p, false); g.stroke()
+    if (k >= 0.12) { g.strokeStyle = 'rgba(176,64,58,.3)'; g.lineWidth = px(b.turnout ? 1 : 1.6); mapPoly(g, b.p, false); g.stroke() }
   }
-  g.strokeStyle = P.air; g.lineWidth = px(1.4); g.setLineDash([px(7), px(5)]); g.globalAlpha = 0.8
-  for (const l of D.lines) { mapPoly(g, l.p, l.loop); g.stroke() }
+  g.strokeStyle = P.air; g.lineWidth = px(1.4); g.setLineDash([px(7), px(5)]); g.globalAlpha = 0.34
+  if (k >= 0.1) for (const l of D.lines) { mapPoly(g, l.p, l.loop); g.stroke() }
   g.setLineDash([]); g.globalAlpha = 1
+  yield 'globe'
   const Gb = D.globe, Hd = D.head
   if (vis(Gb.x - Gb.r, Gb.z - Gb.r, Gb.x + Gb.r, Gb.z + Gb.r)) {
     g.fillStyle = 'rgba(95,194,192,.07)'; g.beginPath(); g.arc(Gb.x, Gb.z, Gb.r, 0, 2 * Math.PI); g.fill()
@@ -47171,31 +47355,59 @@ function mapPaint(g, D, V, W, H, sc) {
     g.fillStyle = 'rgba(230,220,194,.16)'; g.fillRect(Hd.x - Hd.hx, Hd.z - Hd.hz, 2 * Hd.hx, 2 * Hd.hz)
     g.strokeStyle = P.cream; g.lineWidth = px(1.6); g.strokeRect(Hd.x - Hd.hx, Hd.z - Hd.hz, 2 * Hd.hx, 2 * Hd.hz)
   }
+  yield 'labels-collect'
   g.setTransform(sc, 0, 0, sc, 0, 0)
   const on = (x, z, m = 60) => { const [a, b] = xy(x, z); return a > -m && a < W + m && b > -m && b < H + m }
   const pin = (x, z, f) => { const [a, b] = xy(x, z); if (a > -40 && a < W + 40 && b > -40 && b < H + 40) f(a, b) }
 
+  const strings = D.str ||= mapStrings(D), lines = []
+  for (const S of strings) {
+    const P = S.pts, vs = []
+    for (const sp of S.spans) {
+      const p = P[sp.a], q = P[sp.b], [a0, b0] = xy(p[0], p[1]), [a1, b1] = xy(q[0], q[1])
+      if (Math.max(a0, a1) < -60 || Math.min(a0, a1) > W + 60 || Math.max(b0, b1) < -60 || Math.min(b0, b1) > H + 60) continue
+      const len = Math.hypot(a1 - a0, b1 - b0) || 1, ux = (a1 - a0) / len, uy = (b1 - b0) / len, nx = -uy, ny = ux, amp = Math.min(len * 0.018, 5.5), pts = [[a0, b0]]
+      for (let m = 0; m < 7; m++) { const t = (m + 1) / 8, bell = 4 * t * (1 - t); pts.push([a0 + (a1 - a0) * t + nx * sp.wob[m] * amp + sp.lat * len * bell, b0 + (b1 - b0) * t + ny * sp.wob[m] * amp + sp.sag * len * bell]) }
+      pts.push([a1, b1])
+      lines.push({ pts, wt: sp.wt, extra: sp.extra })
+      if (sp.tail) { const L = sp.tail.L, s2 = sp.tail.s; lines.push({ pts: [[a1 + ux * L * 0.2, b1 + uy * L * 0.2], [a1 + ux * L, b1 + uy * L], [a1 + ux * L * 0.75 + nx * s2 * L * 0.7, b1 + uy * L * 0.75 + ny * s2 * L * 0.7], [a1 + ux * L * 0.1 + nx * s2 * L * 0.55, b1 + uy * L * 0.1 + ny * s2 * L * 0.55]], wt: 0.85, extra: false }) }
+      if (!sp.extra && S.kind !== 'link') { const ang = Math.atan2(b1 - b0, a1 - a0), fl = ang > Math.PI / 2 ? ang - Math.PI : ang < -Math.PI / 2 ? ang + Math.PI : ang; const rt = clamp(fl, -0.4, 0.4); vs.push({ len, a: pts[4][0], b: pts[4][1], rot: rt, alts: [3, 5, 2, 6].map(m => [pts[m][0], pts[m][1], rt]) }) }
+    }
+    vs.sort((p, q) => q.len - p.len)
+    let tags = 0
+    for (const v of vs) if (tags < (k < 0.05 ? 2 : 4) && v.len > 70 && v.a > 30 && v.a < W - 30 && v.b > 30 && v.b < H - 30) { tags++; lab.add(64, S.name, v.a, v.b, { size: T(8.5), space: 1, tag: 1, rot: v.rot, alts: v.alts }) }
+  }
+  const th = (k >= 0.2 ? 3.6 : k >= 0.06 ? 2.9 : 2.1) * (ui > 1 ? 1.15 : 1)
+  const trace = (pts, dx, dy) => { g.moveTo(pts[0][0] + dx, pts[0][1] + dy); for (let i = 1; i < pts.length - 1; i++) g.quadraticCurveTo(pts[i][0] + dx, pts[i][1] + dy, (pts[i][0] + pts[i + 1][0]) / 2 + dx, (pts[i][1] + pts[i + 1][1]) / 2 + dy); g.lineTo(pts[pts.length - 1][0] + dx, pts[pts.length - 1][1] + dy) }
+  const strand = (style, wmul, wadd, dx, dy, dash) => {
+    if (dash) { g.lineCap = 'butt'; g.setLineDash(dash) }
+    for (const L of lines) { g.strokeStyle = typeof style === 'function' ? style(L) : style; g.lineWidth = Math.max(0.7, th * L.wt * wmul + wadd); g.beginPath(); trace(L.pts, dx, dy); g.stroke() }
+    g.setLineDash([]); g.lineCap = 'round'
+  }
+  g.lineCap = 'round'; g.lineJoin = 'round'
+  strand('rgba(0,0,0,.45)', 1, 1, 2, 3.2)
+  strand(L => L.extra ? '#8a0b14' : '#a80f1a', 1, 0, 0, 0)
+  strand('rgba(70,0,8,.5)', 1, 0, 0, 0, [1.1, 2.1])
+  strand('rgba(255,120,120,.55)', 0.3, 0, -0.3, -0.6)
+  const pinR = k >= 0.3 ? 5.5 : k >= 0.08 ? 4.5 : 3.4
   for (const s of D.stations) pin(s.x, s.z, (a, b) => {
-    const big = s.name === 'Globe Cross', r = k >= 0.3 ? (big ? 6 : 4.5) : k >= 0.08 ? 3 : 2
-    g.fillStyle = '#10131a'; g.strokeStyle = MAP_LINES[s.line][1]; g.lineWidth = k >= 0.08 ? 2 : 1.2
-    g.beginPath(); g.arc(a, b, r, 0, 2 * Math.PI); g.fill(); g.stroke()
-    if (k >= 0.45) lab.add(55, s.name.toUpperCase(), a, b + T(12), { size: T(9), space: 1.2, color: MAP_LINES[s.line][1] })
+    mapWrap(g, a, b, s.name === 'Globe Cross' ? pinR * 1.3 : pinR, mapSeedAt(s.x, s.z)); mapPin(g, a, b, s.name === 'Globe Cross' ? pinR * 1.3 : pinR, '#f2c230')
+    if (k >= 0.45) lab.add(55, s.name, a, b + T(12), { size: T(9), space: 1.2, color: '#f2d98a' })
   })
   for (const s of D.stops) pin(s.x, s.z, (a, b) => {
-    const r = k >= 0.08 ? 5 : 3.2
-    g.fillStyle = '#10131a'; g.strokeStyle = P.air; g.lineWidth = 1.6
-    g.beginPath(); g.moveTo(a, b - r); g.lineTo(a + r, b); g.lineTo(a, b + r); g.lineTo(a - r, b); g.closePath(); g.fill(); g.stroke()
+    mapWrap(g, a, b, pinR, mapSeedAt(s.x, s.z)); mapPin(g, a, b, pinR, '#6fd3df')
+    if (k >= 0.2) lab.add(54, s.name || 'ZEPPELIN STOP', a, b + T(12), { size: T(9), space: 1.2, color: '#a4e6ea' })
   })
   for (const p of D.places) if (k >= p.min) pin(p.x, p.z, (a, b) => {
     const r = T(k >= 0.5 ? 6.5 : 5)
-    mapIcon(g, p.kind, a, b, r)
-    if (k >= p.min * 1.5 || p.kind === 'dock' || p.kind === 'theatre' || p.kind === 'cathedral' || p.kind === 'hotel') lab.add(p.kind === 'dock' ? 70 : 48, p.name, a, b + r + T(7), { size: T(8.5), color: MAP_PAL.ico[p.kind] || MAP_PAL.cream, space: 1 })
+    mapIcon(g, p.kind, a, b, r, mapSeedAt(p.x, p.z))
+    if (k >= p.min * 1.5 || p.kind === 'dock' || p.kind === 'theatre' || p.kind === 'cathedral' || p.kind === 'hotel') lab.add(p.kind === 'dock' ? 70 : 48, p.name, a, b + (p.kind === 'club' ? r * 2.3 + T(5) : r + T(7)), { size: T(8.5), color: MAP_PAL.ico[p.kind] || MAP_PAL.cream, space: 1 })
   })
-  for (const l of mapPlaces.values()) if (k >= (l.min || 0.1)) pin(l.x, l.z, (a, b) => { mapIcon(g, l.kind || 'site', a, b, T(6)); if (l.name) lab.add(50, l.name, a, b + T(14), { size: T(8.5), space: 1 }) })
+  for (const l of mapPlaces.values()) if (k >= (l.min || 0.1)) pin(l.x, l.z, (a, b) => { mapIcon(g, l.kind || 'site', a, b, T(6), mapSeedAt(l.x, l.z)); if (l.name) lab.add(50, l.name, a, b + T(14), { size: T(8.5), space: 1 }) })
   for (const l of D.labels) {
-    if (l.kind === 'district' && k >= 0.04 && k < 0.5) pin(l.x, l.z, (a, b) => lab.add(80, l.text, a, b, { size: T(clamp(k * 70, 10, 14)), color: 'rgba(236,226,196,.88)', space: 3.5 }))
-    else if (l.kind === 'industry' && k >= 0.04 && k < 0.5) pin(l.x, l.z, (a, b) => lab.add(76, l.text, a, b, { size: T(clamp(k * 60, 9.5, 12.5)), color: 'rgba(214,170,120,.9)', space: 3 }))
-    else if (l.kind === 'hood' && k >= 0.016 && k < 0.3 && (l.rank < 10 || k >= 0.035)) pin(l.x, l.z, (a, b) => lab.add(40, l.text, a, b, { size: T(clamp(k * 100, 9.5, 12)), color: l.d === 1 ? 'rgba(190,200,215,.8)' : 'rgba(170,200,160,.8)', space: 2.5 }))
+    if (l.kind === 'district' && k >= 0.04 && k < 0.5) pin(l.x, l.z, (a, b) => lab.add(80, l.text, a, b, { size: T(clamp(k * 70, 10, 14)), color: 'rgba(236,226,196,.88)', space: 3.5, pad: 12 }))
+    else if (l.kind === 'industry' && k >= 0.04 && k < 0.5) pin(l.x, l.z, (a, b) => lab.add(76, l.text, a, b, { size: T(clamp(k * 60, 9.5, 12.5)), color: 'rgba(214,170,120,.9)', space: 3, pad: 12 }))
+    else if (l.kind === 'hood' && k >= 0.016 && k < 0.3 && (l.rank < 10 || k >= 0.035)) pin(l.x, l.z, (a, b) => lab.add(40, l.text, a, b, { size: T(clamp(k * 100, 9.5, 12)), color: l.d === 1 ? 'rgba(190,200,215,.8)' : 'rgba(170,200,160,.8)', space: 2.5, pad: 5 }))
     else if (l.kind === 'shanty' && k >= 0.016 && k < 0.3 && (l.rank < 6 || k >= 0.035)) pin(l.x, l.z, (a, b) => lab.add(38, l.text, a, b, { size: T(clamp(k * 100, 9, 11.5)), color: 'rgba(205,170,120,.85)', space: 2.2 }))
   }
   if (k < 0.07) for (const [r, t] of [[3500, 'OUTER CITY'], [8000, 'THE SUBURBS'], [12750, 'SHANTY TOWNS']]) for (const [sx, sz] of [[1, -1], [-1, 1], [1, 1], [-1, -1]]) pin(sx * r * 0.82, sz * r * 0.82, (a, b) => lab.add(34, t, a, b, { size: T(clamp(k * 380, 10, 14)), color: 'rgba(201,164,92,.5)', space: 7, keep: 1 }))
@@ -47203,25 +47415,48 @@ function mapPaint(g, D, V, W, H, sc) {
   const lakes = D.water.filter(w => w.kind !== 'river')
   if (k >= 0.012) {
     for (const w of lakes) pin(w.x, w.z, (a, b) => lab.add(85, w.name, a, b, { size: T(11), color: '#9cc8d8', space: 4 }))
-    for (const w of D.water) if (w.line) { const tw = w.name.length * 9 + 24; mapAlong(w.line, xy, W, H, tw, 520, (a, b, rot) => lab.add(85, w.name, a, b, { size: T(11), color: '#9cc8d8', space: 6, rot })) }
+    for (const w of D.water) if (w.line) { const tw = mapHandWidth(g, w.name, T(11), 6, 1) + 24; mapAlong(w.line, xy, W, H, tw, 520, (a, b, rot) => lab.add(85, w.name, a, b, { size: T(11), color: '#9cc8d8', space: 6, rot })) }
   }
-  if (k >= 0.012) for (const h of D.hwy) if (h.name) { const tw = h.name.length * 9 + 24; mapAlong(h.pts, xy, W, H, tw, 560, (a, b, rot) => lab.add(90, h.name, a, b, { size: T(10), color: '#f0e2b0', space: 3, rot })) }
+  if (k >= 0.012) for (const h of D.hwy) if (h.name) { const tw = mapHandWidth(g, h.name, T(10), 3, 1) + 24; mapAlong(h.pts, xy, W, H, tw, 560, (a, b, rot) => lab.add(90, h.name, a, b, { size: T(10), color: '#f0e2b0', space: 3, rot })) }
   const streetMin = { avenue: 0.2, diag: 0.18, street: 0.5, boulevard: 0.12, plain: 0.3, lane: 0.6 }
   for (const r of D.roads) {
+    yield 'names'
     if (!r.name || k < streetMin[r.cls] || !vis(r.box[0] - 20, r.box[1] - 20, r.box[2] + 20, r.box[3] + 20)) continue
-    const nm = r.name.toUpperCase(), size = T(r.cls === 'avenue' || r.cls === 'diag' || r.cls === 'boulevard' ? 9.5 : 8.5), tw = nm.length * (size * 0.72 + 1.2)
+    const nm = r.name.toUpperCase(), size = T(r.cls === 'avenue' || r.cls === 'diag' || r.cls === 'boulevard' ? 9.5 : 8.5), tw = mapHandWidth(g, nm, size, 1.2, 1)
     let cnt = 0
     mapAlong(r.pts, xy, W, H, tw, 330, (a, b, rot) => { if (cnt++ < 8) lab.add((r.cls === 'diag' ? 46 : r.cls === 'avenue' || r.cls === 'boulevard' ? 42 : 24) + Math.min(10, r.len / 400), nm, a, b, { size, color: r.cls === 'lane' || r.cls === 'street' ? '#bdb496' : '#e4d9b8', space: 1.2, rot, weight: 600 }) })
   }
   if (k >= 0.6) for (const b of D.bridges) if (b.name && !b.foot) pin((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2, (a, bb) => lab.add(30, b.name.toUpperCase(), a, bb - T(10), { size: T(8), color: '#d8c588', space: 1 }))
-  if (k < 0.1) pin(0, A, (a, b) => lab.add(60, 'FAUSTLAND', a, b + 14, { size: T(11), color: P.cream, space: 3 }))
-  pin(Gb.x, Gb.z, (a, b) => lab.add(95, 'THE GLOBE', a, b, { size: T(clamp(k * 600, 10, 15)), color: P.brass, space: 4 }))
-  pin(Hd.x, Hd.z + Hd.hz + 90, (a, b) => lab.add(94, 'FAUST', a, b, { size: T(clamp(k * 520, 10, 15)), color: P.cream, space: 4 }))
-  if (k >= 0.1) pin(-48, -48, (a, b) => lab.add(93, 'FAUST PLAZA', a, b, { size: T(10), color: P.brass, space: 2.5 }))
+  if (k < 0.1) pin(0, A, (a, b) => lab.add(60, 'FAUSTLAND', a, b + 14, { size: T(11), color: P.cream, space: 3, under: 1 }))
+  pin(Gb.x, Gb.z, (a, b) => lab.add(95, 'THE GLOBE', a, b, { size: T(clamp(k * 600, 10, 15)), color: P.brass, space: 4, under: 1 }))
+  pin(Hd.x, Hd.z + Hd.hz + 90, (a, b) => lab.add(94, 'FAUST', a, b, { size: T(clamp(k * 520, 10, 15)), color: P.cream, space: 4, under: 1 }))
+  if (k >= 0.1) pin(-48, -48, (a, b) => lab.add(93, 'FAUST PLAZA', a, b, { size: T(10), color: P.brass, space: 2.5, circle: 1 }))
+  const note = (x, z, dx, dy, text, k0, k1) => { if (k >= k0 && k < k1) pin(x, z, (a, b) => lab.add(92, text, a + T(dx), b + T(dy), { size: T(10.5), color: '#ff6b5e', space: 1, arrow: [-T(dx), -T(dy)], alts: [[-1, 1], [1, -1], [-1, -1]].map(([sx, sy]) => [a + sx * T(dx), b + sy * T(dy), 0, [-sx * T(dx), -sy * T(dy)]]) })) }
+  note(Hd.x, Hd.z, 78, -40, 'HIM.', 0.015, 0.5)
+  note(Gb.x, Gb.z, -96, -50, 'HE LIVES IN THERE?', 0.03, 0.4)
+  note(-48, -48, 110, 70, 'ALL ROADS LEAD HERE', 0.1, 0.6)
+  const gcx = D.stations.find(s => s.name === 'Globe Cross')
+  if (gcx) note(gcx.x, gcx.z, 74, 38, 'IT ALL CONNECTS.', 0.12, 0.8)
+  if (D.stops.length) note(D.stops[0].x, D.stops[0].z, 66, -38, 'WHO IS FLYING THESE?!', 0.08, 0.7)
+  note(-9800, 5200, 0, -30, 'DON\'T GO OUT THERE', 0, 0.07)
+  const st0 = D.stations.find(s => s.name === 'Faust Plaza') || D.stations[0]
+  if (st0) note(st0.x, st0.z, -70, 44, 'THE TRAINS KNOW.', 0.12, 0.8)
+  const clubP = D.places.find(p => p.kind === 'club')
+  if (clubP) note(clubP.x, clubP.z, -80, -54, 'THEY ALL GO IN HERE', 0.3, 1.6)
+  const br = D.bridges.find(b => b.name && !b.foot && !b.hwy)
+  if (br) note((br.x0 + br.x1) / 2, (br.z0 + br.z1) / 2, 62, -46, 'NOBODY CHECKS THE BRIDGES', 0.1, 0.8)
   pin(-WL * 0.55, WL, (a, b) => lab.add(20, 'THE WORLD\'S EDGE', a, b - 12, { size: T(10), color: P.brassDim, space: 3 }))
   pin(-WL, WL * 0.45, (a, b) => lab.add(20, 'THE WORLD\'S EDGE', a + 12, b, { size: T(10), color: P.brassDim, space: 3, rot: -Math.PI / 2 }))
-  if (k < 0.12) for (const [r, t] of [[4000, '4 KM'], [8000, '8 KM'], [12000, '12 KM']]) pin(r * 0.7071, -r * 0.7071, (a, b) => lab.add(10, t, a, b, { size: T(9), color: P.brassDim, space: 2 }))
-  lab.run(W, H)
+  if (k < 0.12) for (const [r, t] of [[4000, '4 KM'], [8000, '8 KM'], [12000, '12 KM']]) pin(r * 0.7071, -r * 0.7071, (a, b) => lab.add(10, t, a, b, { size: T(9), color: P.brassDim, space: 2, plain: 1 }))
+  {
+    const m = (W - (mapSize.W || W)) / 2, vw = mapSize.W || W, vh = mapSize.H || H, cp = vw < 560 || vh < 440, rr = cp ? 22 : 30, tw0 = cp ? 118 : 170
+    const lb = mapLegendBox(vw, vh, cp), ox = vw - rr - 22, oy = vh - rr - 40
+    lab.block(m + lb.x - 2, m + lb.y - 8, m + lb.x + lb.w + 4, m + lb.y + lb.h + 4)
+    lab.block(m + ox - rr - 8, m + oy - rr - 18, m + ox + rr + 8, m + oy + rr + 6)
+    lab.block(m + vw / 2 - tw0, m + 4, m + vw / 2 + tw0, m + (cp ? 36 : 44))
+    if (mapMe) { const [ya, yb] = xy(mapMe.x, mapMe.z); lab.block(ya - 18, yb - 20, ya + 18, yb + 34) }
+  }
+  yield* lab.run(W, H)
   const c = { xy, k, W, H, D, t: performance.now() }
   for (const L of mapLayers) if (L.static) try { g.save(); L.static(g, c); g.restore() } catch (e) { console.warn('map layer ' + L.name + ':', e?.message || e) }
 }
@@ -47238,26 +47473,31 @@ function mapPaintChrome(g, W, H, sc, compact) {
   mapText(g, 'FAUSTLAND', cx, top + th / 2 + 1, { size: compact ? 17 : 22, color: MAP_PAL.cream, space: 4, weight: 400, font: MAP_TITLE, halo: 'rgba(0,0,0,0)' })
   const r = compact ? 22 : 30, ox = W - r - 22, oy = H - r - 40
   g.save(); g.translate(ox, oy)
-  g.strokeStyle = B; g.lineWidth = 1.4; g.beginPath(); g.arc(0, 0, r, 0, 2 * Math.PI); g.stroke()
-  g.beginPath(); g.arc(0, 0, r * 0.62, 0, 2 * Math.PI); g.globalAlpha = 0.5; g.stroke(); g.globalAlpha = 1
+  mapInk(g, mapLoopPts(0, 0, r, r, mapRng(7)), B, 1.6, false)
+  g.globalAlpha = 0.5; mapInk(g, mapLoopPts(0, 0, r * 0.62, r * 0.62, mapRng(9)), B, 1.4, false); g.globalAlpha = 1
   for (let i = 0; i < 4; i++) { g.save(); g.rotate(i * Math.PI / 2); g.fillStyle = i ? B : MAP_PAL.cream; g.beginPath(); g.moveTo(0, -r - 4); g.lineTo(r * 0.2, -r * 0.1); g.lineTo(0, 0); g.lineTo(-r * 0.2, -r * 0.1); g.closePath(); g.fill(); g.restore() }
   g.restore(); mapText(g, 'N', ox, oy - r - 12, { size: 12, color: MAP_PAL.cream, space: 0 })
   const rows = [['you', 'you'], ['player', 'players'], ['car', 'his car'], ['rail', 'monorail'], ['air', 'zeppelins'], ['hwy', 'highway'], ['water', 'water'], ['club', 'club'], ['shop', 'shops']].slice(0, compact ? 6 : 9)
-  const lx = 22, ly = H - 28 - (compact ? rows.length * 15 + 6 : rows.length * 17 + 8)
-  g.fillStyle = 'rgba(8,10,14,.78)'; g.strokeStyle = 'rgba(201,164,92,.5)'; g.lineWidth = 1
-  const lh = compact ? 15 : 17; g.beginPath(); g.rect(lx - 8, ly - 8, compact ? 92 : 112, rows.length * lh + 10); g.fill(); g.stroke()
+  const lb = mapLegendBox(W, H, compact, rows.length), lx = lb.x + 8, ly = lb.y + 8, lh = lb.lh
+  g.save(); g.translate(lb.x + lb.w / 2, lb.y + lb.h / 2); g.rotate(-0.018)
+  g.fillStyle = 'rgba(0,0,0,.42)'; g.fillRect(-lb.w / 2 + 3, -lb.h / 2 + 4, lb.w, lb.h)
+  g.fillStyle = '#e9ddb6'; g.strokeStyle = '#8a7a52'; g.lineWidth = 0.8; g.fillRect(-lb.w / 2, -lb.h / 2, lb.w, lb.h); g.strokeRect(-lb.w / 2, -lb.h / 2, lb.w, lb.h)
+  g.fillStyle = 'rgba(214,196,140,.85)'; g.fillRect(-lb.w / 2 + 6, -lb.h / 2 - 4, 22, 9); g.fillRect(lb.w / 2 - 28, -lb.h / 2 - 4, 22, 9)
+  g.restore()
   rows.forEach(([kind, text], i) => {
     const y = ly + i * lh + lh / 2 - 4
     if (kind === 'you') mapArrow(g, lx + 6, y, 0, 6, '#ffd36a')
     else if (kind === 'player') { g.fillStyle = '#7fd4b4'; g.beginPath(); g.arc(lx + 6, y, 3.4, 0, 2 * Math.PI); g.fill() }
     else if (kind === 'car') mapCar(g, lx + 6, y, 0.9)
-    else if (kind === 'rail') { g.strokeStyle = MAP_LINES.L[1]; g.lineWidth = 2.2; g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke() }
-    else if (kind === 'hwy') { g.strokeStyle = MAP_PAL.road.hwy; g.lineWidth = 3; g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke() }
+    else if (kind === 'rail' || kind === 'air') {
+      g.strokeStyle = '#a80f1a'; g.lineWidth = 2.6; g.lineCap = 'round'; g.beginPath(); g.moveTo(lx, y); g.quadraticCurveTo(lx + 8, y + 4.5, lx + 17, y); g.stroke()
+      mapPin(g, lx, y, 2.4, kind === 'rail' ? '#f2c230' : '#6fd3df'); mapPin(g, lx + 17, y, 2.4, kind === 'rail' ? '#f2c230' : '#6fd3df')
+    }
+    else if (kind === 'hwy') { g.strokeStyle = '#2a1d0d'; g.lineWidth = 5; g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke(); g.strokeStyle = MAP_PAL.road.hwy; g.lineWidth = 3; g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke() }
     else if (kind === 'water') { g.fillStyle = MAP_PAL.water; g.strokeStyle = MAP_PAL.waterEdge; g.lineWidth = 1; g.fillRect(lx - 1, y - 4, 14, 8); g.strokeRect(lx - 1, y - 4, 14, 8) }
-    else if (kind === 'club') mapIcon(g, 'club', lx + 6, y, 5)
+    else if (kind === 'club') mapIcon(g, 'club', lx + 6, y, 2.8)
     else if (kind === 'shop') mapIcon(g, 'liquor', lx + 6, y, 5)
-    else { g.strokeStyle = MAP_PAL.air; g.lineWidth = 1.6; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(lx - 1, y); g.lineTo(lx + 13, y); g.stroke(); g.setLineDash([]) }
-    mapText(g, text.toUpperCase(), lx + 22, y, { size: 9, align: 'left', space: 1.2, color: MAP_PAL.dim })
+    mapText(g, text.toUpperCase(), lx + 25, y, { size: 9, align: 'left', space: 1.2, color: '#2a1d0d', halo: 'rgba(0,0,0,0)' })
   })
 }
 function mapArrow(g, x, y, yaw, r, color) {
@@ -47279,10 +47519,35 @@ function mapCarAt() {
   for (const o of objs) if (o.k === K && me) { const d = Math.hypot(o.x - me.x, o.z - me.z); if (d < bd) { bd = d; best = o } }
   return best ? { x: best.x, z: best.z } : null
 }
+let mapPaintJob = null, mapBackCv = null, mapKSeen = -1, mapKAt = 0, mapTrace = null
+function mapPaintDrive(V, CW, CH, dpr, margin, now) {
+  const C = mapCache
+  if (V.k !== mapKSeen) { mapKSeen = V.k; mapKAt = now }
+  let want = !C || C.dirty
+  if (C && !want) want = Math.abs(C.k - V.k) > 1e-9 ? now - mapKAt >= 140 : Math.abs(C.cx - V.cx) * V.k > margin * 0.6 || Math.abs(C.cz - V.cz) * V.k > margin * 0.6
+  const J = mapPaintJob
+  if (J && (J.CW !== CW || J.CH !== CH || J.D !== mapData || Math.abs(J.v.k - V.k) > 1e-9)) mapPaintJob = null
+  if (want && !mapPaintJob && mapData) {
+    const sc = Math.min(dpr, Math.sqrt((mapLowOn() ? 1.7e6 : 4.2e6) / (CW * CH))) || 1, bc = mapBackCv ||= document.createElement('canvas'), w = Math.round(CW * sc), h = Math.round(CH * sc)
+    if (bc.width !== w || bc.height !== h) { bc.width = w; bc.height = h }
+    const v = { cx: V.cx, cz: V.cz, k: V.k }
+    mapPaintJob = { v, CW, CH, D: mapData, at: '', wasDirty: !!(C && C.dirty), gen: mapPaintSteps(bc.getContext('2d'), mapData, v, CW, CH, sc) }
+  }
+  const j = mapPaintJob
+  if (!j) return
+  const t0 = performance.now(), budget = C ? 5 : 12
+  let done = false
+  do { const t1 = performance.now(), q = j.gen.next(); done = q.done; if (mapTrace) { const d = performance.now() - t1; if (d > 3) mapTrace.push(['stage', Math.round(now), +d.toFixed(1), j.at || 'start']) } j.at = q.value } while (!done && performance.now() - t0 < budget)
+  if (done) {
+    ;[mapCacheCv, mapBackCv] = [mapBackCv, mapCacheCv]
+    mapCache = { cx: j.v.cx, cz: j.v.cz, k: j.v.k, CW, CH, dirty: !!(C && C.dirty && !j.wasDirty) }; mapPaintJob = null
+  }
+  if (mapTrace) mapTrace.push(['slice', Math.round(now), +(performance.now() - t0).toFixed(1), done ? 'swap' : ''])
+}
 function mapFrame(now) {
   const cv = el('#map-cv'), W = cv.clientWidth, H = cv.clientHeight
   if (!W || !H) return
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const dpr = mapLowOn() ? 1 : Math.min(window.devicePixelRatio || 1, 2)
   if (mapSize.W !== W || mapSize.H !== H || mapSize.dpr !== dpr) { mapSize = { W, H, dpr }; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); mapCache = null; mapChrome = null; mapClampView() }
   const g = mapCtx ||= cv.getContext('2d'), V = mapView
   g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = MAP_PAL.ink; g.fillRect(0, 0, cv.width, cv.height)
@@ -47290,14 +47555,7 @@ function mapFrame(now) {
     g.setTransform(dpr, 0, 0, dpr, 0, 0); mapText(g, 'SURVEYING FAUSTLAND…', W / 2, H / 2, { size: 14, color: MAP_PAL.brass, space: 4 }); return
   }
   const C = mapCache, margin = Math.round(0.22 * Math.max(W, H)), CW = W + 2 * margin, CH = H + 2 * margin
-  const off = !C || Math.abs(C.k - V.k) > 1e-9 || Math.abs(C.cx - V.cx) * V.k > 0.5 || Math.abs(C.cz - V.cz) * V.k > 0.5 || C.dirty
-  if (off && (!C || C.dirty || now - mapPaintAt >= MAP_MS.repaint)) {
-    const sc = Math.min(dpr, Math.sqrt((IS_TOUCH ? 1.7e6 : 4.2e6) / (CW * CH))) || 1
-    const cc = mapCacheCv ||= document.createElement('canvas')
-    if (cc.width !== Math.round(CW * sc) || cc.height !== Math.round(CH * sc)) { cc.width = Math.round(CW * sc); cc.height = Math.round(CH * sc) }
-    mapPaint(cc.getContext('2d'), mapData, V, CW, CH, sc)
-    mapCache = { cx: V.cx, cz: V.cz, k: V.k, CW, CH }; mapPaintAt = now
-  }
+  mapPaintDrive(V, CW, CH, dpr, margin, now)
   if (mapCache) {
     const s = V.k / mapCache.k, sx = (mapCache.cx - V.cx) * V.k + W / 2, sy = (mapCache.cz - V.cz) * V.k + H / 2
     g.setTransform(1, 0, 0, 1, 0, 0); g.imageSmoothingEnabled = true
@@ -47310,7 +47568,7 @@ function mapFrame(now) {
   g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(mapChromeCv, 0, 0); g.setTransform(dpr, 0, 0, dpr, 0, 0)
   const len = mapNiceLength(110 / V.k), bw = len * V.k
   const sx0 = W / 2 - bw / 2, sy0 = H - 24
-  g.strokeStyle = MAP_PAL.cream; g.lineWidth = 2; g.beginPath(); g.moveTo(sx0, sy0 - 5); g.lineTo(sx0, sy0); g.lineTo(sx0 + bw, sy0); g.lineTo(sx0 + bw, sy0 - 5); g.stroke()
+  mapInk(g, [[sx0 - 0.5, sy0 - 6], [sx0 + 0.8, sy0], [sx0 + bw / 2, sy0 + 1.2], [sx0 + bw - 0.6, sy0 - 0.4], [sx0 + bw + 0.5, sy0 - 6]], MAP_PAL.cream, 2, false, true)
   mapText(g, len >= 1000 ? len / 1000 + ' KM' : len + ' M', W / 2, sy0 + 10, { size: 10, color: MAP_PAL.cream, space: 2 })
   const t = now, me = mapMe, mine = me && !(me.dead > 0)
   const c = { xy, k: V.k, W, H, D: mapData, t }
@@ -47341,8 +47599,8 @@ function mapFrame(now) {
     let best = null, bd = 15
     for (const p of mapData.pois) { const [a, b] = xy(p.x, p.z), d = Math.hypot(a - mapHover.x, b - mapHover.y); if (d < bd) { bd = d; best = p } }
     if (best) {
-      const [a, b] = xy(best.x, best.z); g.font = '700 11px ' + MAP_FONT
-      const w = g.measureText(best.name).width + 16, x = clamp(a - w / 2, 8, W - w - 8), y = b - 30 < 12 ? b + 14 : b - 34
+      const [a, b] = xy(best.x, best.z)
+      const w = mapHandWidth(g, best.name, 11, 0.3) + 16, x = clamp(a - w / 2, 8, W - w - 8), y = b - 30 < 12 ? b + 14 : b - 34
       g.fillStyle = 'rgba(8,10,14,.92)'; g.strokeStyle = MAP_PAL.brass; g.lineWidth = 1; g.beginPath(); g.rect(x, y, w, 22); g.fill(); g.stroke()
       mapText(g, best.name, x + w / 2, y + 11.5, { size: 11, weight: 600, space: 0.3, halo: 'rgba(0,0,0,0)' })
     }
@@ -47350,7 +47608,9 @@ function mapFrame(now) {
 }
 function mapLoop(now) {
   if (!mapOpen) { mapLooping = false; return }
+  const t0 = mapTrace ? performance.now() : 0
   try { mapFrame(now) } catch (e) { console.warn('map:', e) }
+  if (mapTrace) mapTrace.push(['frame', now, +(performance.now() - t0).toFixed(1)])
   requestAnimationFrame(mapLoop)
 }
 
@@ -47368,15 +47628,15 @@ function mapGoCity() { mapView.cx = 0; mapView.cz = 0; mapView.k = Math.min(mapS
 function mapGoWorld() { mapView.cx = 0; mapView.cz = 0; mapView.k = 0; mapClampView() }
 function mapRelease() {
   if (mapOpen) return
-  for (const c of [mapCacheCv, mapChromeCv]) if (c) { c.width = 0; c.height = 0 }
-  mapCache = null; mapChrome = null; mapCtx = null; mapCacheCv = null; mapChromeCv = null
+  for (const c of [mapCacheCv, mapChromeCv, mapBackCv]) if (c) { c.width = 0; c.height = 0 }
+  mapCache = null; mapChrome = null; mapCtx = null; mapCacheCv = null; mapChromeCv = null; mapBackCv = null; mapPaintJob = null
 }
 function openMap() {
   if (mapOpen || phase !== 'playing' || serving || !LV.faust || chatOpen || menuUp()) return
-  mapEnsure(); clearTimeout(mapFreeTimer)
+  mapEnsure(); clearTimeout(mapFreeTimer); mapPaintJob = null
   mapOpen = true; letGo()
   mapMe = selfChar()
-  mapSize = { W: innerWidth, H: innerHeight, dpr: 1 }; mapGoMe()
+  mapSize = { W: innerWidth, H: innerHeight, dpr: 0 }; mapGoMe()
   show('map', 1)
   if (!mapLooping) { mapLooping = true; requestAnimationFrame(mapLoop) }
 }
@@ -47443,7 +47703,7 @@ function initMap() {
 }
 GAME.map = { layer: (name, spec) => { if (MAP_NATIVE.has(name)) return; const i = mapLayers.findIndex(L => L.name === name); if (i >= 0) mapLayers.splice(i, 1); mapLayers.push({ name, ...spec }); if (mapCache) mapCache.dirty = true },
   place: (id, spec) => { if (spec) mapPlaces.set(id, spec); else mapPlaces.delete(id); if (mapCache) mapCache.dirty = true },
-  dirty: () => { if (mapCache) mapCache.dirty = true }, open: openMap, close: closeMap, toggle: toggleMap,
+  dirty: () => { if (mapCache) mapCache.dirty = true }, trace: on => (mapTrace = on ? [] : null), traceLog: () => mapTrace, open: openMap, close: closeMap, toggle: toggleMap,
   get isOpen() { return mapOpen }, get data() { return mapData }, view: mapView, paint: mapPaint, build: mapBuildSteps }
 
 class Arena extends ENABLE3D.Scene3D {
@@ -47599,6 +47859,8 @@ Promise.all([ammoReady, OBJECTS.some(K => K.shape === 'hull') && loadHull().catc
 
 fetch(TITLE_FONT.url, { integrity: TITLE_FONT.sri, mode: 'cors' }).then(r => r.arrayBuffer())
   .then(b => new FontFace(TITLE_FONT.family, b).load()).then(f => document.fonts.add(f)).catch(() => {})
+fetch(MAP_HAND_FONT.url, { integrity: MAP_HAND_FONT.sri, mode: 'cors' }).then(r => r.arrayBuffer())
+  .then(b => new FontFace(MAP_HAND_FONT.family, b).load()).then(f => { document.fonts.add(f); mapChrome = null; if (mapCache) mapCache.dirty = true }).catch(() => {})
 faustFacesLoad()
 
 const nameNow = () => { myName = cleanName(nameIn.value) || suggestedName() }
