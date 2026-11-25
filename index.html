@@ -23032,7 +23032,7 @@ const REAL_MEAN = [[0.241, 0.241, 0.239], [0.255, 0.170, 0.107], [0.127, 0.120, 
   [0.275, 0.268, 0.242], [0.489, 0.470, 0.445]]
 const REAL_KIND = { stone: 0, brick: 1, concrete: 2, asphalt: 3, sidewalk: 4, setts: 5, granite: 6, darkGranite: 7,
   paintWhite: 8, paintYellow: 9, paintBike: 10, iron: 11, steel: 12, brass: 13, door: 14, shadow: 15, lamp: 16,
-  pier: 17, cornice: 18, crown: 19, shutter: 20, signNeon: 21, signPaint: 22, grass: 23, wood: 24, shingle: 25, stucco: 26, siding: 27, houseBrick: 28 }
+  pier: 17, cornice: 18, crown: 19, shutter: 20, signNeon: 21, signPaint: 22, grass: 23, wood: 24, shingle: 25, stucco: 26, siding: 27, houseBrick: 28, water: 29 }
 const REAL_TINTS = [
   [0x704e3b, 'signPaint'], [0x723b38, 'signPaint'], [0x35503c, 'signPaint'], [0x627d83, 'signPaint'], [0x282f32, 'signPaint'],
   [0xc5b194, 'stone'], [0xb68d69, 'stone'], [0x6a4236, 'brick'], [0xc79a72, 'stone'], [0x9e6349, 'stone'], [0x7d4a37, 'stone'], [0x293a43, 'iron'],
@@ -23043,7 +23043,7 @@ const REAL_TINTS = [
   [0x515963, 'darkGranite'], [0xa4a9ac, 'stone'], [0x8d949c, 'stone'], [0x1b222b, 'door'], [0x080e18, 'shadow'],
   [0xc0c5c7, 'stone'], [0x596574, 'stone'], [0xadb5b9, 'cornice'], [0xc1c6c7, 'stone'], [0xc6c8c3, 'steel'],
   [0x8c939b, 'crown'], [0xa4aab0, 'steel'], [0xc4c9c9, 'steel'], [0xe1d2a9, 'brass'], [0x8b969f, 'steel'],
-  [0x252d37, 'iron'], [0x5c6671, 'iron'], [0xd6d0b2, 'lamp'],
+  [0x252d37, 'iron'], [0x5c6671, 'iron'], [0xd6d0b2, 'lamp'], [0x0b1c25, 'water'], [0x0a1820, 'water'],
   [0xfd3a50, 'signNeon'], [0xfdb347, 'signNeon'], [0x4afd7a, 'signNeon'], [0x2ac8fd, 'signNeon'], [0xfd9a3a, 'signNeon'],
   [0xfd5a3a, 'signNeon'], [0xfd3a66, 'signNeon'], [0xfd2a2a, 'signNeon'], [0xfd8a1a, 'signNeon'], [0xfdf4e8, 'signNeon'],
   [0xd7c98a, 'signPaint'], [0xc9d2d6, 'signPaint'], [0xce8a3a, 'signPaint'], [0xd7d4c4, 'signPaint'], [0x1b2230, 'shadow'],
@@ -23106,6 +23106,7 @@ RealK realKind(int k) {
   else if (k == 15) { m.layer = -1.0; m.gain = 0.4; m.rough = 0.9; }
   else if (k == 16) { m.layer = -1.0; m.rough = 0.3; m.emit = vec3(1.0, 0.56, 0.22) * 40.0; }
   else if (k == 17 || k == 18 || k == 19) { m.layer = 0.0; m.gain = 0.9; }
+  else if (k == 29) { m.layer = -1.0; m.rough = 0.05; m.sat = 1.0; }
   else if (k == 21) { m.layer = -1.0; m.rough = 0.3; m.sat = 1.0; }
   else if (k == 22) { m.layer = -1.0; m.rough = 0.8; m.sat = 1.0; m.gain = 1.25; }
   else if (k == 23) { m.layer = -1.0; m.rough = 0.95; m.sat = 1.0; m.gain = 1.6; }
@@ -23384,6 +23385,7 @@ RealSurf realSurface() {
     nT = normalize(mix(nT, vec3(0, 0, 1), max(pud, wet * 0.3)));
     s.reflect = max(pud * 0.95, wet * 0.3);
   }
+  if (k == 29) { float realWaterNear = 1.0 - smoothstep(12.0, 35.0, distance(vRealW, cameraPosition)); s.reflect = 0.85 * realWaterNear; s.emit = vec3(0.007, 0.009, 0.014); }
 #endif
   s.normal = normalize(T * nT.x + B * nT.y + N * nT.z);
   return s;
@@ -23702,13 +23704,13 @@ void main() {
   }
   vec3 col = vec3(0.0); float w = 0.0;
   if (hit.x >= 0.0) {
-    col = realSafe(texture2D(tColor, hit).rgb); vec2 e = smoothstep(0.0, 0.12, hit) * smoothstep(1.0, 0.88, hit);
+    col = realSafe(texture2D(tColor, hit).rgb); vec2 e = smoothstep(0.0, 0.3, hit) * smoothstep(1.0, 0.7, hit);
     w = e.x * e.y * (1.0 - smoothstep(0.25, 0.55, length(hit - vUv))) * smoothstep(0.35, -0.1, r.z) * smoothstep(1.5, 4.0, -realView(hit, realD(hit)).z)
       * (1.0 - smoothstep(0.75, 1.0, th / reach));
   }
   else if (r.y > -0.2) {
     vec4 c = uProj * vec4(r, 0.0); vec2 u = c.xy / c.w * 0.5 + 0.5;
-    if (c.w > 0.0 && u.x > 0.0 && u.x < 1.0 && u.y > 0.0 && u.y < 1.0 && realD(u) >= 1.0) { col = realSafe(texture2D(tColor, u).rgb); vec2 e = smoothstep(0.0, 0.07, u) * smoothstep(1.0, 0.93, u); w = e.x * e.y; }
+    if (c.w > 0.0 && u.x > 0.0 && u.x < 1.0 && u.y > 0.0 && u.y < 1.0 && realD(u) >= 1.0) { col = realSafe(texture2D(tColor, u).rgb); vec2 e = smoothstep(0.0, 0.3, u) * smoothstep(1.0, 0.7, u); w = e.x * e.y; }
   }
   gl_FragColor = vec4(min(col, vec3(60.0)) * w, w);
 }`,
