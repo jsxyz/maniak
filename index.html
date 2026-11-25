@@ -17935,7 +17935,7 @@ function stepPhysics(dt) {
 }
 
 const PARKED = { fill: { core: 0.65, tenement: 0.6, civic: 0.45, industrial: 0.3 }, kerb: 9.2, off: 0.5, pitch: 6.5, end: 20, mid: 10,
-  hydrant: 3, shelter: 15, manhole: 2, alley: 6, venue: 3, site: 21, dock: 15, near: 70, far: 100, perPlayer: 16, perTick: 1, every: 0.1,
+  hydrant: 3, shelter: 15, manhole: 2, alley: 6, venue: 3, site: 21, dock: 15, near: 40, far: 55, perPlayer: 16, perTick: 1, every: 0.1, hold: 5, wake: 12, touch: 3, brush: 2.2, body: 1, wakes: 8,
   lane: 0.4, post: 4.8, postLat: 0, moved: 0.5, shadow: 22, fleet: [['Car', 1], ['Sports car', 0.5], ['Van', 0.6], ['Truck', 0.4]] }
 const PARKED_KIND = 86
 const parkedHash = (...v) => { let h = 2166136261; for (const n of v) { h = Math.imul(h ^ (n | 0), 16777619); h ^= h >>> 13 } return h >>> 0 }
@@ -18007,7 +18007,65 @@ function parkedRecord(key) {
   const r = parkedCellRows(ci, cj)[place]
   return r ? { chunk, at: [r.x, 0, r.z], p: { slot: r.slot } } : null
 }
-function parkedTick(dt, people) {
+function parkedNear(x, z, R, make, f) {
+  const F = faustState
+  if (!F) return make
+  const A = F.S * 48, W = F.seed + ' ' + F.S
+  for (let ci = Math.max(0, Math.floor((x - R + A) / 96)); ci <= Math.min(F.S - 1, Math.floor((x + R + A) / 96)); ci++)
+    for (let cj = Math.max(0, Math.floor((z - R + A) / 96)); cj <= Math.min(F.S - 1, Math.floor((z + R + A) / 96)); cj++) {
+      let rows = parkedCellsSeed === W ? parkedCells.get(ci + ' ' + cj) : null
+      if (!rows && make > 0) { make--; rows = parkedCellRows(ci, cj) }
+      if (rows) for (const r of rows) f(r)
+    }
+  return make
+}
+const parkedGap = (r, x, z) => {
+  const ux = -Math.sin(r.yaw), uz = -Math.cos(r.yaw), px = x - r.x, pz = z - r.z
+  return Math.hypot(Math.max(0, Math.abs(px * ux + pz * uz) - r.hl), Math.max(0, Math.abs(px * uz - pz * ux) - r.hw))
+}
+function parkedWake(r, Pk, clock) {
+  const live = Pk.live.get(r.slot)
+  if (live) { live.parkHold = clock + PARKED.hold; return 2 }
+  if (Pk.vacated.has(r.slot) || (r.seed & 0xffff) / 65536 >= Math.min(1, trafficK())) return 0
+  const o = parkedPromote(r, Pk, trafficState, clock, 1.2)
+  if (!o) return 0
+  o.parkHold = clock + PARKED.hold
+  return 1
+}
+function parkedWakeRay(ox, oy, oz, dx, dy, dz, len) {
+  if (!isHost || !LV.faust || !faustState || !trafficState || !world || !(len > 0)) return
+  len = Math.min(len, 400)
+  if (oy > 4 && oy + dy * len > 4) return
+  const Pk = parkedFor(faustState), clock = trafficClock()
+  let n = 0
+  parkedNear(ox + dx * len / 2, oz + dz * len / 2, len / 2 + 3, 2, r => {
+    if (n >= PARKED.wakes) return
+    const px = r.x - ox, py = 0.8 - oy, pz = r.z - oz, t = px * dx + py * dy + pz * dz, R = r.hl + 0.5
+    if (t < -R || t > len + R || px * px + py * py + pz * pz - t * t > R * R) return
+    if (parkedWake(r, Pk, clock)) n++
+  })
+}
+function parkedWakeAt(x, y, z, R) {
+  if (!isHost || !LV.faust || !faustState || !trafficState || !world || !(R > 0) || y > R + 3) return
+  const Pk = parkedFor(faustState), clock = trafficClock()
+  let n = 0
+  parkedNear(x, z, R + 3, 4, r => { if (n < 2 * PARKED.wakes && parkedGap(r, x, z) < R && parkedWake(r, Pk, clock)) n++ })
+}
+function parkedWakeTick(Pk, people, all, clock) {
+  const K = PARKED, reach = PARKED_STAND.far + 10
+  let make = 1, n = 0
+  const wake = (x, z, gap) => { make = parkedNear(x, z, gap + 3, make, r => { if (parkedGap(r, x, z) < gap && (n < K.wakes || Pk.live.has(r.slot)) && parkedWake(r, Pk, clock) === 1) n++ }) }
+  const far = (x, z) => people.every(p => Math.abs(p.x - x) > reach || Math.abs(p.z - z) > reach)
+  for (const o of objs) {
+    if (o.parkRow || !o.body || o.kin || o.heldBy !== undefined || !o.body.isActive() || far(o.x, o.z)) continue
+    const a = o.traffic, s = speedOf(o)
+    if (a && !a.urgent && !a.follow && a.driver !== false) wake(o.x, o.z, K.brush)
+    else if (s > 3) wake(o.x, o.z, K.wake)
+    else if (s > 0.3) wake(o.x, o.z, K.touch)
+  }
+  for (const c of all) if (Number.isFinite(c.x) && !people.includes(c) && !seatOf(c) && !far(c.x, c.z)) wake(c.x, c.z, K.body)
+}
+function parkedTick(dt, people, all = people) {
   if (!isHost || !LV.faust || !faustState || !world) return
   const K = PARKED, T = trafficState, F = faustState
   const Pk = parkedFor(F)
@@ -18022,12 +18080,13 @@ function parkedTick(dt, people) {
     if (!o.V || o.hp < o.V.hp - 0.01 || o.fuse !== undefined || o.heldBy !== undefined || o.riders.some(v => v !== undefined) || Math.hypot(o.x - r.x, o.z - r.z) > K.moved) {
       Pk.live.delete(slot); delete o.parkRow; parkedVacate(r); continue
     }
-    if (retired < K.perTick && (people.every(p => Math.hypot(p.x - o.x, p.z - o.z) > K.far) || q < 1 && ((r.seed & 0xffff) / 65536 >= q || people.every(p => Math.hypot(p.x - o.x, p.z - o.z) > near + 10)))) {
+    if (retired < K.perTick && !(o.parkHold > clock) && (people.every(p => Math.hypot(p.x - o.x, p.z - o.z) > K.far) || q < 1 && ((r.seed & 0xffff) / 65536 >= q || people.every(p => Math.hypot(p.x - o.x, p.z - o.z) > near + 10)))) {
       dropObject(o); objs.splice(objs.indexOf(o), 1); T.cars.delete(o.id); T.departures.push({ id: o.id, until: clock + 12 }); delete objSeeds[o.id]
       for (const sent of objSent.values()) sent.delete(o.id)
       Pk.live.delete(slot); retired++
     }
   }
+  parkedWakeTick(Pk, people, all, clock)
   const want = [], A = F.S * 48
   for (const p of people) {
     let mine = 0
@@ -18043,17 +18102,24 @@ function parkedTick(dt, people) {
   want.sort((a, b) => a[0] - b[0])
   let made = 0
   for (const [, r] of want) {
-    if (made >= K.perTick || objs.length >= OBJ_MAX - 64) break
-    if (Pk.live.has(r.slot) || objs.some(o => o.body && Math.hypot(o.x - r.x, o.z - r.z) < r.hl + 2.5)) continue
-    const k = OBJECTS.findIndex(Q => Q.name === r.kind)
-    let id = OBJ_MAX - 1; while (id >= 16 && (objs.some(o => o.id === id) || T.departures.some(v => v.id === id && v.until > clock))) id--
-    if (id < 16 || k < 0) break
-    faustEnsure([[r.x, r.z]]); objSeeds[id] = r.seed
-    const o = addObject(k, [r.x, 1, r.z], id, r.yaw)
-    if (!o) { delete objSeeds[id]; continue }
-    o.at = [r.x, -o.low + 0.02, r.z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body); o.body.setActivationState(CF_SLEEPING)
-    o.parkRow = r; T.cars.set(o.id, o); o.trafficAmbient = false; Pk.live.set(r.slot, o); made++
+    if (made >= K.perTick) break
+    const o = parkedPromote(r, Pk, T, clock)
+    if (o === false) break
+    if (o) made++
   }
+}
+function parkedPromote(r, Pk, T, clock, gap) {
+  if (objs.length >= OBJ_MAX - 64) return false
+  if (Pk.live.has(r.slot) || objs.some(o => o.body && Math.hypot(o.x - r.x, o.z - r.z) < (gap ?? r.hl + 2.5))) return null
+  const k = OBJECTS.findIndex(Q => Q.name === r.kind)
+  let id = OBJ_MAX - 1; while (id >= 16 && (objs.some(o => o.id === id) || T.departures.some(v => v.id === id && v.until > clock))) id--
+  if (id < 16 || k < 0) return false
+  faustEnsure([[r.x, r.z]]); objSeeds[id] = r.seed
+  const o = addObject(k, [r.x, 1, r.z], id, r.yaw)
+  if (!o) { delete objSeeds[id]; return null }
+  o.at = [r.x, -o.low + 0.02, r.z]; teleportBody(o.body, ...o.at); o.y = o.at[1]; world.updateSingleAabb(o.body); o.body.setActivationState(CF_SLEEPING)
+  o.parkRow = r; T.cars.set(o.id, o); o.trafficAmbient = false; Pk.live.set(r.slot, o)
+  return o
 }
 function parkedSeeds(x, z) {
   const F = faustState
@@ -19223,7 +19289,7 @@ function trafficTick(dt, all) {
   trafficGridBuild()
   for (const p of objs) if (p.V && !p.traffic && !p.kin && p.body.isActive() && speedOf(p) > 3) movers.push(p)
   const tp0 = performance.now()
-  parkedTick(dt, people)
+  parkedTick(dt, people, all)
   const tp1 = performance.now()
   lootTick(dt, people)
   const tp2 = performance.now()
@@ -19536,6 +19602,7 @@ function castPellet(shooter, targets, yaw, pitch, G, fx) {
 
   const R0 = reachOf(shooter, G)
   let best = wallAt(ox, oy, oz, dx, dy, dz, R0 + punchExtra(G)), victim = null, obj = null
+  if (isHost) parkedWakeRay(ox, oy, oz, dx, dy, dz, Math.min(best, R0))
   for (const o of objs) {
     const t = rayObject(ox, oy, oz, dx, dy, dz, o)
     if (t < best && t < R0) { best = t; victim = null; obj = o }
@@ -19825,6 +19892,7 @@ function deliver(c, P, gunId, aimed, onKill) {
   }
 
   let reach = wallAt(ox, oy, oz, dx, dy, dz, pRange), first = null, block = null
+  if (isHost) parkedWakeRay(ox, oy, oz, dx, dy, dz, reach)
   for (const o of objs) { const t = rayObject(ox, oy, oz, dx, dy, dz, o); if (t < reach) { reach = t; block = [t, o] } }
   for (const v of aimed) {
     if (shut(v)) continue
@@ -41569,6 +41637,7 @@ function dsWallHit(ox, oy, oz, dx, dy, dz, t, G) {
   return !!p && dsBreak(DS_KIND.pane, p.key, dsInfo(p, dsGunPower(G), p.inside ? 1 : 0, p.along, h[1]))
 }
 function dsBlast(x, y, z, r, power = 3) {
+  parkedWakeAt(x, y, z, r + 2)
   if (!isHost || !LV.faust || !dsCheck() || !(r > 0)) return 0
   let n = 0
   for (const key of dsPanesNear(x, y, z, r)) {
