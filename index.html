@@ -12528,7 +12528,7 @@ function inSetBroken(slotId, keys) {
   const id = inIdOfSlot(slotId)
   if (!id) return
   const B = inBuilding(id), was = faustIn.broken.get(id), now = new Set()
-  for (const key of keys || []) { const q = key >>> 0, k = q >>> 10 & 1023; if (k < B.storeys.length && inWindowsOf(B, k).some(w => w.key === q)) now.add(q) }
+  for (const key of keys || []) { const q = key, k = q >>> 10 & 1023; if (k < B.storeys.length && inWindowsOf(B, k).some(w => w.key === q)) now.add(q) }
   if (was ? was.size === now.size && [...now].every(k => was.has(k)) : !now.size) return
   if (now.size) faustIn.broken.set(id, now); else faustIn.broken.delete(id)
   faustIn.brokenWins.delete(id)
@@ -43169,8 +43169,8 @@ function dsNotify() {
   const set = GAME.interiors?.setBroken
   if (typeof set === 'function') for (const id of st.buildings) {
     const [ci, cj, slot] = id.split(' ').map(Number), ch = st.chunks.get(ci * faustState.S + cj)
-    const keys = ch ? [...ch.recs.values()].filter(r => r.kind === DS_KIND.pane && r.p.slot === slot).map(r => r.key) : []
-    try { set(id, keys) } catch (e) { console.warn('destruction: interiors.setBroken', e) }
+    const recs = ch ? [...ch.recs.values()].filter(r => r.kind === DS_KIND.pane && r.p.slot === slot) : [], P = dsPlan(ci, cj), lot = P.lots.find(l => dsSlot(l, ci, cj) === slot), qs = lot ? inSlot(P, lot) : slot
+    try { set(ci + ' ' + cj + ' ' + qs, recs.map(r => r.key + (qs - slot) * 1048576)) } catch (e) { console.warn('destruction: interiors.setBroken', e) }
   }
   st.buildings.clear()
 }
