@@ -9707,10 +9707,10 @@ function faustShopfronts(batch, lot) {
   }
 }
 const FAUST_GLASS_STATS = []
-function faustShopGlass(batch, B, V) {
-  const S = FAUST_NIGHT.shops
+function faustShopGlass(batch, B, V, slot = B.slot) {
+  const S = FAUST_NIGHT.shops, shift = (slot - B.slot) * 1048576
   for (const w of inWindows(B, 0)) {
-    if (typeof dsState === 'object' && dsState?.all?.has(w.key)) continue
+    if (typeof dsState === 'object' && dsState?.all?.has(w.key + shift)) continue
     const h = cityHash(B.seed ^ Math.imul(w.face * 32 + w.bay + 7, 0x85ebca6b)), lit = faustPieceLit(B.seed, B.venue, w.face, w.piece), cool = (h >>> 8 & 1) === 1, blinds = (h >>> 10) % 100 < 55 ? 1 : 0.55
     const a = Math.round(batch.count * 3), sg = w.face === 0 || w.face === 2 ? 1 : -1, fwd = w.face === 0 || w.face === 3
     const quad = (u0, u1, y0, y1, off, tint, gb, gt, back) => {
@@ -9733,7 +9733,7 @@ function faustShopGlass(batch, B, V) {
       for (let k = 0; k < n; k++) quad(u0, u1, y0 + k * pitch, y0 + k * pitch + pitch * 0.82, 0.15, k & 1 ? 0x5a6169 : 0x7d858d, 0, 0)
       quad(mid - 0.14, mid + 0.14, y0 + 0.12, y0 + 0.26, 0.165, 0x252d37, 0, 0)
     }
-  V.set(w.key, [a, Math.round(batch.count * 3)])
+  V.set(w.key + shift, [a, Math.round(batch.count * 3)])
   }
 }
 function dsGlassOut(rec) {
@@ -11642,7 +11642,7 @@ function* faustVisualSteps(c) {
   for (const s of faustTelescreens(P)) { if (ornament.room < 1000) break; faustTeleFrame(ornament, s); teles.push(s) }
   { const skipped = [], before = Math.round(ornament.count * 3), V = P.glassV = new Map()
     for (let i = 0; i < glassLots.length; i += 2) { const B = glassLots[i + 1], n = inWindows(B, 0).length
-      if (ornament.room < n * 150 + 64) skipped.push(P.lots.indexOf(glassLots[i])); else faustShopGlass(ornament, B, V) }
+      if (ornament.room < n * 150 + 64) skipped.push(P.lots.indexOf(glassLots[i])); else faustShopGlass(ornament, B, V, dsSlot(glassLots[i], c.ci, c.cj)) }
     if (FAUST_GLASS_STATS.length < 400) FAUST_GLASS_STATS.push({ ci: c.ci, cj: c.cj, lots: glassLots.length / 2, vertsBefore: before, vertsAfter: Math.round(ornament.count * 3), skipped }) }
   if (gothicLots.length) {
     const tier = faustGothicTier(), budget = Math.floor(Math.min(FAUST_GOTHIC.budget[tier], ornament.room) / gothicLots.length)
