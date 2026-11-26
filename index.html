@@ -42952,7 +42952,7 @@ function dsLampPieceStep() {
     let near = false
     for (const c of players.values()) if (!(c.dead > 0) && Math.hypot(c.x - r.p.foot[0], c.z - r.p.foot[1]) < DS_PIECE_NEAR) { near = true; break }
     if (!near) continue
-    if (typeof dsPieceBudget === 'function' && !dsPieceBudget(null)) continue
+    if (!dsPiecePlace(r)) continue
     const id = partsFreeId()
     if (id < 0) continue
     const [x, z, w] = dsPieceAt(r), o = addObject(LAMP_PIECE, [x, 0.3, z], id, Math.atan2(Math.cos(w), Math.sin(w)))
@@ -42963,6 +42963,7 @@ function dsLampPieceStep() {
 function dsLampPieceRetire(o) {
   const r = o.pieceR, st = dsState
   if (!r || !isHost || !st) return
+  r.again = true
   dsRemove(dsPieceKey(r.chunk, r.p.i))
   if (st.all.has(r.key) && !dsPieceQ.includes(r)) dsPieceQ.push(r)
   dsTileTouch(r.chunk); st.fallenDirty = true; dsPersistLater()
@@ -43010,7 +43011,7 @@ function dsSigPieceStep() {
     let near = false
     for (const c of players.values()) if (!(c.dead > 0) && Math.hypot(c.x - r.p.x, c.z - r.p.z) < DS_PIECE_NEAR) { near = true; break }
     if (!near) continue
-    if (typeof dsPieceBudget === 'function' && !dsPieceBudget(null)) continue
+    if (!dsPiecePlace(r)) continue
     const id = partsFreeId()
     if (id < 0) continue
     const [x, z, w] = dsSigAt(r), o = addObject(SIG_PIECE, [x, 0.3, z], id, Math.atan2(Math.cos(w), Math.sin(w)))
@@ -43021,6 +43022,7 @@ function dsSigPieceStep() {
 function dsSigPieceRetire(o) {
   const r = o.pieceR, st = dsState
   if (!r || !isHost || !st) return
+  r.again = true
   dsRemove(dsSigKey(r.chunk, r.p.i))
   if (st.all.has(r.key) && !dsSigQ.includes(r)) dsSigQ.push(r)
   dsTileTouch(r.chunk); dsPersistLater()
@@ -43934,6 +43936,7 @@ function dsPropLoose(s, dx, dz, power) {
 }
 const DS_LOOSE_MAX = 48
 const DS_TREELOG = 36, DS_TREELOG_AT = 1.5
+function dsPiecePlace(r) { return typeof dsPieceBudget !== 'function' || (r.again ? dsPoolCount(o => !!o.K.piece) < PIECE_MAX : dsPieceBudget(null)) }
 const dsTreeLogKey = r => DS_TREELOG * 4294967296 + r.key - DS_FEAT * 4294967296
 const dsTreeQ = [], dsTreeLive = []
 function dsTreeLogRecord(key) { const r = dsFeatRecord(DS_FEAT * 4294967296 + key - DS_TREELOG * 4294967296); return r && { chunk: r.chunk, at: r.at } }
@@ -43963,12 +43966,12 @@ function dsTreePieceStep() {
     let near = false
     for (const c of players.values()) if (!(c.dead > 0) && Math.hypot(c.x - f.x, c.z - f.z) < DS_PIECE_NEAR) { near = true; break }
     if (!near) continue
-    if (typeof dsPieceBudget === 'function' && !dsPieceBudget(null)) continue
+    if (!dsPiecePlace(r)) continue
     const id = partsFreeId()
     if (id < 0) continue
     const w = (r.info >> 3 & 63) / 64 * 2 * Math.PI, d = DS_TREELOG_AT * (f.s || 1)
-    const o = addObject(LOG_PIECE, [f.x + Math.cos(w) * d * 0.4, 1.7 * (f.s || 1), f.z + Math.sin(w) * d * 0.4], id, Math.atan2(Math.cos(w), Math.sin(w)))
-    if (o) teleportBody(o.body, o.x, o.y, o.z, null, [Math.cos(w) * 2.5, 0.3, Math.sin(w) * 2.5], [Math.sin(w) * 2.2, 0, -Math.cos(w) * 2.2])
+    const o = addObject(LOG_PIECE, [f.x + Math.cos(w) * d * 0.9, 1.7 * (f.s || 1), f.z + Math.sin(w) * d * 0.9], id, Math.atan2(Math.cos(w), Math.sin(w)))
+    if (o) teleportBody(o.body, o.x, o.y, o.z, null, [Math.cos(w) * 3.4, 0.3, Math.sin(w) * 3.4], [Math.sin(w) * 2.2, 0, -Math.cos(w) * 2.2])
     dsTreeQ.splice(i, 1)
     if (o) { o.pieceR = r; dsTreeLive.push([r, o]) }
   }
@@ -43976,6 +43979,7 @@ function dsTreePieceStep() {
 function dsTreeLogRetire(o) {
   const r = o.pieceR, st = dsState
   if (!r || !isHost || !st) return
+  r.again = true
   dsRemove(dsTreeLogKey(r))
   if (st.all.has(r.key) && !dsTreeQ.includes(r)) dsTreeQ.push(r)
   dsTileTouch(r.chunk); dsPersistLater()
@@ -44044,9 +44048,9 @@ function dsFeatsLook(c, g) {
   let lo = Infinity, hi = -1
   for (const r of st.chunks.get(c.ci * F.S + c.cj)?.recs.values() || []) {
     if (r.kind !== DS_FEAT) continue
-    const v = V[r.p.i]
+    const v = V[r.p.i], tree = r.p.f.k === 'tree'
     if (!v) continue
-    for (let k = v[0]; k < v[1]; k++) { A[k * 3] = r.p.f.x; A[k * 3 + 1] = -50; A[k * 3 + 2] = r.p.f.z }
+    for (let k = v[0]; k < v[1]; k++) { if (tree && A[k * 3 + 1] <= 0.45) continue; A[k * 3] = r.p.f.x; A[k * 3 + 1] = tree ? 0.45 : -50; A[k * 3 + 2] = r.p.f.z }
     lo = Math.min(lo, v[0]); hi = Math.max(hi, v[1] - 1)
   }
   if (hi < 0) return
@@ -44064,8 +44068,8 @@ function dsFeatFresh(rec) {
   if (rec.p.f.k === 'tree') {
     const w = (rec.info >> 3 & 63) / 64 * Math.PI * 2, dx = Math.cos(w), dz = Math.sin(w), s = rec.p.f.s || 1
     try {
-      for (let k = 0; k < 22; k++) burst('splinter', rec.p.f.x, 1.5 * s + (k % 5) * 0.6 * s, rec.p.f.z, dx + (k % 7 - 3) * 0.2, 0.7, dz + (k % 5 - 2) * 0.2, [0x2c3b22, 0x23331f, 0x34402a, 0x1e2c1c][k & 3], 1.8)
-      for (let k = 0; k < 8; k++) burst('splinter', rec.p.f.x, 0.5 + (k % 4) * 0.4, rec.p.f.z, dx + (k - 4) * 0.1, 0.5, dz, 0x6a4c34, 1.4)
+      for (let k = 0; k < 34; k++) burst('splinter', rec.p.f.x, 1.2 * s + (k % 6) * 0.6 * s, rec.p.f.z, dx + (k % 7 - 3) * 0.25, 0.7, dz + (k % 5 - 2) * 0.25, [0x5d8a44, 0x4f7a3a, 0x6f9a4e, 0x44703a][k & 3], 3.2)
+      for (let k = 0; k < 10; k++) burst('splinter', rec.p.f.x, 0.5 + (k % 4) * 0.4, rec.p.f.z, dx + (k - 5) * 0.1, 0.5, dz, 0x9a7a54, 2.4)
       burst('dust', rec.p.f.x, 0.2, rec.p.f.z, 0, 1, 0, 0xb8b09a, 1.4)
       sfxPlay('Door rip', { x: rec.p.f.x, y: 1.2, z: rec.p.f.z }, 'world', 1)
     } catch (e) { failN[168]++ }
