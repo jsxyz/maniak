@@ -1428,6 +1428,8 @@ OBJECTS.push(
   { name: 'Tin panel', half: [1.8, 1.0, 0.06], mass: 3.6, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0x3a424b, stripe: 0x252d37, prop: 'tinfence', dmg: 14, thrown: 15, hp: 3 })
 OBJECTS.push({ name: 'Lamp post', half: [0.14, 0.14, 1.5], mass: 6, bounce: 0.05, friction: 0.6, damp: [0.15, 0.4], hit: 1, color: 0x252d37, stripe: 0x5c6671, piece: 'lamppost', across: 1, dmg: 40, thrown: 40, retire: o => dsLampPieceRetire(o) })
 const LAMP_PIECE = OBJECTS.length - 1
+OBJECTS.push({ name: 'Log', half: [0.25, 0.25, 1.4], mass: 9, bounce: 0.05, friction: 0.7, damp: [0.15, 0.4], hit: 1, color: 0x4a3a2c, stripe: 0x3a2e24, piece: 'log', across: 1, dmg: 45, thrown: 45, retire: o => dsTreeLogRetire(o) })
+const LOG_PIECE = OBJECTS.length - 1
 OBJECTS.push({ name: 'Signal pole', half: [0.08, 0.08, 1.15], mass: 2.5, bounce: 0.05, friction: 0.6, damp: [0.15, 0.4], hit: 1, color: 0x56606a, stripe: 0x252d37, piece: 'signalpole', across: 1, dmg: 25, thrown: 25, retire: o => dsSigPieceRetire(o) })
 const SIG_PIECE = OBJECTS.length - 1
 const SIT_HIP = 0.29
@@ -42143,12 +42145,17 @@ function dsPostsTick(all, dt) {
       const dx = p.x - o.x, dz = p.z - o.z
       if (Math.abs(dx * fw[0] + dz * fw[2]) < hl + DS_SIG.pole && Math.abs(dx * rt[0] + dz * rt[2]) < hw + DS_SIG.pole) dsFellSignal(p, vx / sp, vz / sp, 2, o)
     }
+    if (sp > 6) for (const q of dsTreesNear(o.x, o.z, hl + hw + 1)) {
+      const dx = q.x - o.x, dz = q.z - o.z
+      if (Math.abs(dx * fw[0] + dz * fw[2]) < hl + 0.3 && Math.abs(dx * rt[0] + dz * rt[2]) < hw + 0.3) dsTreeFell(q, vx / sp, vz / sp, 2, o)
+    }
   }
   for (const c of all) {
     const v = c.dsV, sp = v ? Math.hypot(v[0], v[2]) : 0
     if (sp < DESTRUCT.body || c.dead > 0 || seatOf(c) || c.y - c.h - c.r > 8.5) continue
     for (const p of dsPostsOnPath(c.x - v[0] * dt, c.z - v[2] * dt, c.x, c.z, c.r + 0.15)) dsFell(p, v[0] / sp, v[2] / sp, 2, c)
     if (c.y - c.h - c.r < DS_SIG.top) for (const p of dsPolesOnPath(c.x - v[0] * dt, c.z - v[2] * dt, c.x, c.z, c.r + 0.1)) dsFellSignal(p, v[0] / sp, v[2] / sp, 2, c)
+    if (c.y - c.h - c.r < 2.8) for (const q of dsTreesOnPath(c.x - v[0] * dt, c.z - v[2] * dt, c.x, c.z, c.r + 0.1)) dsTreeFell(q, v[0] / sp, v[2] / sp, 2, c)
   }
 }
 let dsObjTicks = 0
@@ -42171,6 +42178,7 @@ function dsObjectsTick(dt) {
     if (o.V) continue
     if (o.y - r < 9) for (const p of dsPostsOnPath(o.x, o.z, b[0], b[2], r)) dsFell(p, vx, vz, 2, o)
     if (o.y - r < DS_SIG.top) for (const p of dsPolesOnPath(o.x, o.z, b[0], b[2], r)) dsFellSignal(p, vx, vz, 2, o)
+    if (o.y - r < 2.8) for (const q of dsTreesOnPath(o.x, o.z, b[0], b[2], r)) dsTreeFell(q, vx, vz, sp > 8 ? 2 : 1, o)
   }
 }
 function dsShot(ox, oy, oz, dx, dy, dz, t, reach, G) {
@@ -42186,6 +42194,10 @@ function dsShot(ox, oy, oz, dx, dy, dz, t, reach, G) {
   if (dsGunPower(G) >= 2 && Math.hypot(dx, dz) > 0.2) for (const p of dsPolesOnPath(ox, oz, ox + dx * t, oz + dz * t, 0.3)) {
     const y = oy + dy * t * p.f
     if (y > 0 && y < DS_SIG.top) dsFellSignal(p, dx, dz, 2)
+  }
+  if (dsGunPower(G) >= 2 && Math.hypot(dx, dz) > 0.2) for (const q of dsTreesOnPath(ox, oz, ox + dx * t, oz + dz * t, 0.3)) {
+    const y = oy + dy * t * q.f
+    if (y > 0 && y < 2.8 * (q.s.f.s || 1)) dsTreeFell(q, dx, dz, 2, { x: ox, z: oz })
   }
   const power = dsGunPower(G), low = G?.melee ? [[ox, Math.min(oy, 0.9), oz], [ox + dx * reach, Math.min(oy, 0.9), oz + dz * reach]] : [a, b]
   const prop = dsPropsAlong(low[0], low[1], 0.12, power)[0]
@@ -42210,6 +42222,7 @@ function dsBlast(x, y, z, r, power = 3) {
   }
   for (const key of dsLampsNear(x, y, z, r)) if (dsBreak(DS_KIND.lamp, key, (power & 3) | 4 << 3 | 4 << 6)) n++
   if (y < 9 + r) for (const p of dsPostsNear(x, z, r * 0.6)) if (dsFell(p, p.x - x || 1e-3, p.z - z, power)) n++
+  if (y < 3 + r) for (const q of dsTreesNear(x, z, r * 0.7)) if (dsTreeFell(q, q.x - x || 1e-3, q.z - z, power)) n++
   if (y < 3 + r) for (const q of dsPropsNearPt(x, z, r * 0.8, power)) if (dsPropKnock(q, power, q.x - x || 1e-3, q.z - z)) n++
   for (const s of dsSignalsNear(x, z, r)) {
     const ux = s.x - x, uy = DS_SIG.y - y, uz = s.z - z, d = Math.hypot(ux, uy, uz)
@@ -43006,6 +43019,7 @@ function dsFrame(t, dt) {
   }
   if (st.lampsChanged) { st.lampsChanged = false; try { GAME.faustland.night?.build?.() } catch (e) { failN[146]++ } }
   dsTableBuild()
+  if (isHost) dsTreePieceStep()
   dsNotify()
   dsLampPieceWarm()
   if (isHost) { dsLampPieceStep(); dsSigPieceStep() }
@@ -43664,6 +43678,10 @@ function propObjLook(K) {
     disc(0.1, 0.05, 0.22, 0, 1.22, 0xff514c); disc(0.1, 0.05, 0.22, 0, 1.0, 0x4a3a22); disc(0.1, 0.05, 0.22, 0, 0.78, 0x1f3a2a)
   } else if (K.piece === 'lamppost') {
     box(0.28, 0.28, 3, 0, 0, 0, 0x56606a); box(1, 0.14, 0.14, 0.55, 0.05, 1.42, 0x56606a); box(1.3, 0.16, 0.6, 1.05, 0, 1.42, 0xfff0c8)
+  } else if (K.piece === 'log') {
+    add(new T.CylinderGeometry(0.22, 0.27, 2.8, 8).rotateX(Math.PI / 2), 0, 0, 0, 0x6b5640)
+    add(new T.CylinderGeometry(0.2, 0.2, 0.02, 10).rotateX(Math.PI / 2), 0, 0, 1.4, 0xcbb48e); add(new T.CylinderGeometry(0.25, 0.25, 0.02, 10).rotateX(Math.PI / 2), 0, 0, -1.4, 0xcbb48e)
+    box(0.08, 0.08, 0.5, 0.2, 0.12, 0.6, 0x4a3a2c); box(0.5, 0.06, 0.06, -0.2, 0.1, -0.3, 0x4a3a2c)
   } else if (K.loot === 'pipe') {
     add(new T.CylinderGeometry(0.1, 0.1, 3, 8).rotateX(Math.PI / 2), 0, 0, 0, 0x7c828a)
     for (const z of [-1.46, 1.46]) add(new T.CylinderGeometry(0.115, 0.115, 0.08, 8).rotateX(Math.PI / 2), 0, 0, z, 0x5c6671)
@@ -43809,6 +43827,53 @@ function dsPropLoose(s, dx, dz, power) {
   return o
 }
 const DS_LOOSE_MAX = 48
+const DS_TREELOG = 36, DS_TREELOG_AT = 1.5
+const dsTreeLogKey = r => DS_TREELOG * 4294967296 + r.key - DS_FEAT * 4294967296
+const dsTreeQ = [], dsTreeLive = []
+function dsTreeLogRecord(key) { const r = dsFeatRecord(DS_FEAT * 4294967296 + key - DS_TREELOG * 4294967296); return r && { chunk: r.chunk, at: r.at } }
+const dsTreeFell = (q, dx, dz, power = 2, from) => power >= 2 && dsBreak(DS_FEAT, q.key, (power & 3) | dsFellWay(q.x, q.z, q.key, dx, dz, from) << 3)
+function dsTreesNear(x, z, r) { return dsFeatsNearPt(x, z, r).filter(q => q.s.f.k === 'tree') }
+function dsTreesOnPath(x0, z0, x1, z1, r) {
+  const dx = x1 - x0, dz = z1 - z0, L2 = dx * dx + dz * dz, out = []
+  for (const q of dsTreesNear((x0 + x1) / 2, (z0 + z1) / 2, Math.sqrt(L2) / 2 + r + 1.5)) {
+    const f = L2 > 1e-9 ? Math.max(0, Math.min(1, ((q.x - x0) * dx + (q.z - z0) * dz) / L2)) : 0
+    if (Math.hypot(x0 + dx * f - q.x, z0 + dz * f - q.z) < r + 0.3 * (q.s.f.s || 1)) out.push({ ...q, f })
+  }
+  return out
+}
+function dsTreePieceStep() {
+  const st = dsState, F = faustState
+  if (!st || !F || !world || !(LOG_PIECE > 0)) return
+  const T = dsNow()
+  for (let i = dsTreeLive.length - 1; i >= 0; i--) {
+    const [r, o] = dsTreeLive[i]
+    if (!objs.includes(o)) { dsTreeLive.splice(i, 1); continue }
+    if (o.heldBy !== undefined) { dsTreeLive.splice(i, 1); dsBreak(DS_TREELOG, dsTreeLogKey(r), 0) }
+  }
+  for (let i = dsTreeQ.length - 1; i >= 0; i--) {
+    const r = dsTreeQ[i], f = r.p.f
+    if (!st.all.has(r.key) || st.all.has(dsTreeLogKey(r))) { dsTreeQ.splice(i, 1); continue }
+    if (T - r.t < 600) continue
+    let near = false
+    for (const c of players.values()) if (!(c.dead > 0) && Math.hypot(c.x - f.x, c.z - f.z) < DS_PIECE_NEAR) { near = true; break }
+    if (!near) continue
+    if (typeof dsPieceBudget === 'function' && !dsPieceBudget(null)) continue
+    const id = partsFreeId()
+    if (id < 0) continue
+    const w = (r.info >> 3 & 63) / 64 * 2 * Math.PI, d = DS_TREELOG_AT * (f.s || 1)
+    const o = addObject(LOG_PIECE, [f.x + Math.cos(w) * d * 0.4, 1.7 * (f.s || 1), f.z + Math.sin(w) * d * 0.4], id, Math.atan2(Math.cos(w), Math.sin(w)))
+    if (o) teleportBody(o.body, o.x, o.y, o.z, null, [Math.cos(w) * 2.5, 0.3, Math.sin(w) * 2.5], [Math.sin(w) * 2.2, 0, -Math.cos(w) * 2.2])
+    dsTreeQ.splice(i, 1)
+    if (o) { o.pieceR = r; dsTreeLive.push([r, o]) }
+  }
+}
+function dsTreeLogRetire(o) {
+  const r = o.pieceR, st = dsState
+  if (!r || !isHost || !st) return
+  dsRemove(dsTreeLogKey(r))
+  if (st.all.has(r.key) && !dsTreeQ.includes(r)) dsTreeQ.push(r)
+  dsTileTouch(r.chunk); dsPersistLater()
+}
 const dsLooseFull = () => dsPoolFull(o => !!o.K.prop, DS_LOOSE_MAX)
 function dsPropsReach(c, kind, reach) {
   const F = faustState, out = [], row = OBJECTS.find(K => K.prop === kind)
@@ -43852,7 +43917,7 @@ function dsPullReport(r = 6) {
   }
   return out
 }
-const DS_FEAT = 21, DS_FEAT_KINDS = { bench: 1, planter: 1, phone: 1, news: 1 }
+const DS_FEAT = 21, DS_FEAT_KINDS = { bench: 1, planter: 1, phone: 1, news: 1, tree: 1 }
 const dsFeatKey = (chunk, i) => DS_FEAT * 4294967296 + chunk * 1024 + i
 const dsFeatCache = new WeakMap()
 function dsFeatSites(P) {
@@ -43882,6 +43947,7 @@ function dsFeatsLook(c, g) {
   pos.addUpdateRange(lo * 3, (hi - lo + 1) * 3); pos.needsUpdate = true
 }
 function dsFeatApply(rec) {
+  if (isHost && rec.p.f.k === 'tree') dsTreeQ.push(rec)
   const F = faustState, c = F.chunks.get(faustKey(rec.p.ci, rec.p.cj)), mesh = c?.visual?.children.find(m => m.isMesh && m.userData.feat)
   if (mesh) dsFeatsLook(c, mesh.geometry)
   if (world) dsDropSlim(b => rec.p.s.boxes.some(q => dsSameBox(b, q)))
@@ -43889,6 +43955,16 @@ function dsFeatApply(rec) {
 function dsFeatUndo(rec) { const c = faustState.chunks.get(faustKey(rec.p.ci, rec.p.cj)); if (c?.visual) dsRelight(c) }
 function dsFeatFresh(rec) {
   const [x, y, z] = rec.p.at
+  if (rec.p.f.k === 'tree') {
+    const w = (rec.info >> 3 & 63) / 64 * Math.PI * 2, dx = Math.cos(w), dz = Math.sin(w), s = rec.p.f.s || 1
+    try {
+      for (let k = 0; k < 22; k++) burst('splinter', rec.p.f.x, 1.5 * s + (k % 5) * 0.6 * s, rec.p.f.z, dx + (k % 7 - 3) * 0.2, 0.7, dz + (k % 5 - 2) * 0.2, [0x2c3b22, 0x23331f, 0x34402a, 0x1e2c1c][k & 3], 1.8)
+      for (let k = 0; k < 8; k++) burst('splinter', rec.p.f.x, 0.5 + (k % 4) * 0.4, rec.p.f.z, dx + (k - 4) * 0.1, 0.5, dz, 0x6a4c34, 1.4)
+      burst('dust', rec.p.f.x, 0.2, rec.p.f.z, 0, 1, 0, 0xb8b09a, 1.4)
+      sfxPlay('Door rip', { x: rec.p.f.x, y: 1.2, z: rec.p.f.z }, 'world', 1)
+    } catch (e) { failN[168]++ }
+    return
+  }
   try {
     for (let k = 0; k < 3; k++) burst('chip', x, y, z, 0, 0.8, 1, 0x9a9488, 0.8)
     burst('dust', x, 0.2, z, 0, 1, 0, 0xc9c0ae, 1)
@@ -44157,6 +44233,7 @@ for (const K of OBJECTS) if (K.prop === 'fence' || K.prop === 'tinfence') K.brea
 dsPropKind()
 dsKindRegister(DS_PIECE, { record: dsPieceRecord, apply() {}, undo() {}, fresh() {} })
 dsLampPieceKind()
+dsKindRegister(DS_TREELOG, { record: dsTreeLogRecord, apply() {}, undo() {}, fresh() {} })
 dsKindRegister(DS_SIGPIECE, { record: dsSigPieceRecord, apply() {}, undo() {}, fresh() {} })
 dsSigPieceKind()
 
