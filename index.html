@@ -3324,6 +3324,24 @@ function faustFeatMesh(P) {
 }
 const FAUST_LANDMARKS = { theatre: 2, cathedral: 1, hotel: 2 }
 let faustLandmarkMemo = null
+let faustStoreMemo = null
+function faustStoreCells(seed, S) {
+  seed >>>= 0
+  if (faustStoreMemo?.seed === seed && faustStoreMemo.S === S) return faustStoreMemo.set
+  const rail = faustRail(seed, S), net = faustNet(seed, S), list = []
+  for (let gx = -S / 2; gx < S / 2; gx++) for (let gz = -S / 2; gz < S / 2; gz++) {
+    const c = faustCell(seed, gx, gz)
+    if (c.district !== 'core' || c.layout !== 4 || c.plaza || c.diagonal || c.park || c.diag || c.distance < 150 ** 2 || c.distance > 470 ** 2) continue
+    if ((gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 || rail.byCell.has(faustKey(gx + S / 2, gz + S / 2)) || faustChanCell(seed, S, gx, gz)) continue
+    const sl = net.lots(gx, gz).slots
+    if (sl.length !== 4 || sl.some(q => q.packed || rail.lots.has(faustKey(q.x, q.z)))) continue
+    list.push({ k: gx + ' ' + gz, h: faustMix(seed ^ 0x73746f72, gx, gz) })
+  }
+  list.sort((a, b) => a.h - b.h || (a.k < b.k ? -1 : 1))
+  const set = new Set(list.slice(0, 2).map(e => e.k))
+  faustStoreMemo = { seed, S, set }
+  return set
+}
 function faustLandmarks(seed, S) {
   seed >>>= 0
   if (faustLandmarkMemo?.seed === seed && faustLandmarkMemo.S === S) return faustLandmarkMemo.map
@@ -3560,7 +3578,7 @@ function faustClubAt(seed, gx, gz, i) {
   if (!(c.layout === 4 && (c.district === 'core' || c.district === 'tenement') || c.district === 'industrial')) return false
   return faustClubHash(seed, gx, gz, i) % (c.district === 'core' ? 30 : c.district === 'tenement' ? 160 : 80) === 0
 }
-const FAUST_NET = { version: 24, ring: 136, ringW: 18, kerb: 0.35, walk: 68, arm: 30, circle: 28, circleW: 14, lane: 7, mid: 8, pitch: 48, jog: [-14, -8, 0, 0, 8, 14],
+const FAUST_NET = { version: 25, ring: 136, ringW: 18, kerb: 0.35, walk: 68, arm: 30, circle: 28, circleW: 14, lane: 7, mid: 8, pitch: 48, jog: [-14, -8, 0, 0, 8, 14],
   cls: { boulevard: 30, avenue: 20, street: 12 }, park: { x: [-1, 0], z: [-6, -3] }, side: 1.6, pave: 0.8 }
 function faustPrisonCell(seed, S, gx, gz, free) { return false }
 function faustDiagAt(gx, gz) {
@@ -4205,13 +4223,15 @@ function faustPlan(seed, ci, cj, S = 20) {
     const row = layout === 4 ? i >> 1 : 0, d = al && i & 1 ? alD[row] : d0
     if (al && !(i & 1)) alD[row] = d
     let gothic = district === 'civic' || district === 'core' && rng() > 0.66, tint = rng() * 4 | 0
-    if (landmark === 'theatre' || landmark === 'hotel') gothic = false
+    const store = layout === 4 && i === 1 && faustStoreCells(seed, S).has(gx + ' ' + gz)
+    if (landmark === 'theatre' || landmark === 'hotel' || store) gothic = false
     const isClub = !sl.prison && faustClubAt(seed, gx, gz, i)
     if (isClub) gothic = false
     const cath = landmark === 'cathedral' && (G0.kind === 'close' || !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0))
     if (cath) { H = 46; gothic = true }
     if (G0.kind === 'etoile') H = 24 + (faustMix(seed ^ 0x65746f69, gx * 4 + i, gz) & 1) * 4
     if (landmark === 'hotel' && !(((gx + 2) % 4 === 0) && ((gz + 2) % 4 === 0) && i === 0)) H = 72 + faustMix(seed ^ 0x686f7465, gx, gz) % 5 * 8
+    if (store) H = 44 + faustMix(seed ^ 0x73746f72, gx, gz) % 4 * 6
     const site = yardSite ? { k: yardSite, x, z, s: 1, q: 0, h: (districtHash >>> 8) + i * 7919 & 0xffffff } : faustSiteFor(seed, gx, gz, i, district, layout, plaza, diagonal, x, z)
     if (site && !sl.prison && !(Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(sl.x, sl.z)))) { sites.push(site); continue }
     if (Math.abs(x) < 48 && z > 192 && z < 720 || rail.lots.has(faustKey(sl.x, sl.z))) continue
@@ -4231,6 +4251,7 @@ function faustPlan(seed, ci, cj, S = 20) {
     const skyMass = cath ? mass.slice(0, 2) : h1 ? [mass[0], faustBox(x, h0 + (H - h0) / 2, z, m1[0], (H - h0) / 2, m1[1])] : mass.slice(0, 2)
     const lot = { x, z, w, d, height: H, gothic, district: cath ? 'civic' : style, stop, tint, mass, skyMass, seed: faustMix(seed, gx * 4 + (i & 3) + (i >> 2) * 100003, gz), slot: i, tile: [sl.b[0] - 1.2, sl.b[1] - 1.2, sl.b[2] + 1.2, sl.b[3] + 1.2], ...al && { alley: { side: i & 1 ? -1 : 1, half: inCm(al.G / 2) } } }
     if (landmark && !stop && (landmark !== 'cathedral' || cath)) lot.landmark = landmark
+    if (store && !stop && !lot.landmark) lot.landmark = 'store'
     if (!isClub && !lot.landmark && !boxDone && boxCell && boxCell.ci === ci && boxCell.cj === cj) {
       boxDone = true
       const dx = x - 0.6 * w, r = v => Math.round(v * 100) / 100, hs = faustClubHash(seed, gx, gz, i) >>> 8, al = lot.alley
@@ -4468,9 +4489,9 @@ function faustInterior(plan, li) {
     tenement: ['hall', 'hall', 'hall'], industrial: ['warehouse'] }
   const venue = ['liquor', 'conv', 'club', 'boxing'].includes(lot.venue) ? lot.venue : null
   const backDoors = [...lot.backDoors || [], ...faustVenueRec(lot)?.back && faustVenueRec(lot).backOut ? [{ x: faustVenueRec(lot).back[0], z: faustVenueRec(lot).back[1], out: faustVenueRec(lot).backOut }] : []].filter((q, i, all) => q.out && (q.out[1] < 0 || q.out[0] !== 0) && all.findIndex(r => r.x === q.x && r.z === q.z && r.out[0] === q.out[0] && r.out[1] === q.out[1]) === i)
-  const ground0 = H >= 120 || plan.layout === 1 ? 'lobby' : pick(kinds[style] || ['lobby']), ground = venue ? venue : ground0
+  const ground0 = H >= 120 || plan.layout === 1 ? 'lobby' : pick(kinds[style] || ['lobby']), ground = venue ? venue : lot.landmark === 'store' ? 'sales' : ground0
   const unit0 = style === 'tenement' ? pick(['shop', 'shop', 'bar', 'diner']) : null, unit = unit0, unit2 = style === 'tenement' ? pick(['shop', 'shop', 'bar', 'diner']) : null
-  const upper = style === 'tenement' ? 'flat' : style === 'industrial' ? 'store' : 'office'
+  const upper = lot.landmark === 'store' ? 'sales' : style === 'tenement' ? 'flat' : style === 'industrial' ? 'store' : 'office'
   const dx = style === 'industrial' ? x - 0.6 * w : x
   const door = { x: inCm(dx), z: inCm(z + d), w: K.door[0], h: K.door[1], out: [inCm(dx), 0, inCm(z + d + 2.2)], in: [inCm(dx), 0, inCm(z + d - T - 1.2)] }
   const solids = []
@@ -4691,7 +4712,7 @@ function faustStorey(B, k) {
     box(P.x0, C.x0, y0, y1, C.z0, C.z1, t, more); box(C.x1, P.x1, y0, y1, C.z0, C.z1, t, more)
   }
   const floorTint = { lobby: IN_TINT.marble, shop: IN_TINT.tile, bar: IN_TINT.wood, diner: IN_TINT.tile, liquor: IN_TINT.wood, conv: IN_TINT.tile, club: IN_TINT.carpet, hall: IN_TINT.lino, warehouse: IN_TINT.concrete, boxing: IN_TINT.concrete,
-    office: IN_TINT.lino, flat: IN_TINT.woodLight, store: IN_TINT.concrete }[type] || IN_TINT.lino
+    office: IN_TINT.lino, flat: IN_TINT.woodLight, store: IN_TINT.concrete, sales: IN_TINT.woodLight }[type] || IN_TINT.lino
   if (k === 0) slabParts(-0.04, 0.06, floorTint, { f: 4, m: type === 'lobby' ? 1 : 0, r: -1 })
   else slabParts(y - K.slab, y, floorTint, { f: 4, c: 1, m: type === 'lobby' ? 1 : 0, r: -1 })
   slabParts(Y1, y + K.storey, IN_TINT.plaster, last ? { f: 8, r: -1 } : { f: 8, c: 1, r: -1 })
@@ -4890,10 +4911,10 @@ function faustStorey(B, k) {
   const ringAt = (x, z) => [Math.min(Math.max(x, G.x0 + hw / 2), G.x1 - hw / 2), Math.min(Math.max(z, G.z0 + hz0 / 2), G.z1 - hz1 / 2)]
   const toRing = (id, x, z) => ringNodes.push([id, ringT(x, z)])
   toRing(nDoorOut, (sd0 + sd1) / 2, C.z1 + 1.1)
-  const open = type === 'warehouse' || type === 'store' || type === 'boxing'
+  const open = type === 'warehouse' || type === 'store' || type === 'boxing' || type === 'sales'
   if (open) {
     rooms[ring] = { ...rooms[ring], x0: P.x0, x1: P.x1, z0: P.z0, z1: P.z1, kind: type }
-    fitHall(type)
+    if (type === 'sales') fitSales(type); else fitHall(type)
   } else for (const Z of zones) {
     const depth = Z.along ? Z.x1 - Z.x0 : Z.z1 - Z.z0
     if (depth < 2.6) continue
@@ -5391,6 +5412,52 @@ function faustStorey(B, k) {
     faustBoxDress2()
     { const zw = C.z1 - K.part / 2, fo = { r: core }; box(sd0 - 0.09, sd0, y, y + 2.5, zw - K.part / 2 - 0.02, zw + K.part / 2 + 0.04, IN_TINT.dark, fo); box(sd1, sd1 + 0.09, y, y + 2.5, zw - K.part / 2 - 0.02, zw + K.part / 2 + 0.04, IN_TINT.dark, fo); box(sd0 - 0.09, sd1 + 0.09, y + 2.5, y + 2.62, zw - K.part / 2 - 0.02, zw + K.part / 2 + 0.04, IN_TINT.dark, fo); box(sd0 - 0.02, sd0 + 0.05, y, y + 2.45, zw + K.part / 2, zw + K.part / 2 + 0.95, IN_TINT.woodLight, { f: 63 ^ 8, ...fo }); box(sd0 + 0.03, sd0 + 0.09, y + 1.0, y + 1.1, zw + K.part / 2 + 0.78, zw + K.part / 2 + 0.88, IN_TINT.brass, { m: 1, ...fo }) }
     boxingRec = { cx, cz, floorY: top, canvas: [cx - hc, cz - hc, cx + hc, cz + hc], rope: [cx - hr, cz - hr, cx + hr, cz + hr], gaps: [[cx, cz + hr], [cx + hr, cz]], posts: posts.map(q => [q[0], q[1]]), room: [R.x0, R.z0, R.x1, R.z1], lamps }
+  }
+  function fitSales(kind) {
+    enter(ring)
+    const fy = y + (k === 0 ? 0.06 : 0)
+    const ax = Math.min(Math.max(B.door.x, R.x0 + 2.2), R.x1 - 2.2), cz0 = C.z1 + 0.2, cz1 = C.z1 + 2.6
+    const bxBack = R.z1 - 20, rows = [], main = [], lane = side => wins.some(q => q.face === side) ? 1.4 : 0.6
+    for (let rz = R.z0 + Math.max(1.2, lane(1)); rz + 1.1 < R.z1 - Math.max(1.2, lane(0)); rz += 3.3) rows.push(rz)
+    for (const rz of kind === 'boxing' ? rows.filter(q => q + 1.1 < bxBack - 0.6) : rows) {
+      const z0 = rz, z1 = rz + 1.1
+      if (z1 > cz0 && z0 < cz1 && (C.x0 > ax ? true : true) && z0 < R.z1) {  }
+      for (const [from, to, dir] of [[ax + 2.1, R.x1 - lane(2), 1], [ax - 2.1, R.x0 + lane(3), -1]]) {
+        for (let a = from; dir > 0 ? a + 2.7 <= to : a - 2.7 >= to; a += dir * 2.8) {
+          const x0 = dir > 0 ? a : a - 2.7, x1 = x0 + 2.7
+          if (x0 < C.x1 + 1.4 && x1 > C.x0 - 1.4 && z0 < C.z1 + 2.8 && z1 > C.z0 - 1.4) continue
+          if (BDS.some(BD => BD.axis === 1 && z1 > BD.u - 1.5 && z0 < BD.u + 1.5 && (dir > 0) === (BD.side > 0))) continue
+          if (z1 > cz0 - 0.2 && z0 < cz1 + 0.2 && (x0 < Math.max(ax, C.x1) && x1 > Math.min(ax, C.x0))) continue
+          box(x0, x1, fy, fy + 1.0, z0, z1, 0x4a3220, { c: 1 }); box(x0 - 0.04, x1 + 0.04, fy + 1.0, fy + 1.08, z0 - 0.04, z1 + 0.04, IN_TINT.brass, { c: 1 }); box(x0 + 0.05, x1 - 0.05, fy + 1.08, fy + 1.14, z0 + 0.05, z1 - 0.05, IN_TINT.glass, { c: 1 })
+          for (let gi = 0; gi < 4; gi++) if (chance(0.85)) box(x0 + 0.2 + gi * 0.62, x0 + 0.62 + gi * 0.62, fy + 1.14, fy + 1.34 + (gi & 1) * 0.1, z0 + 0.25, z1 - 0.25, pick([IN_TINT.red, IN_TINT.cream, IN_TINT.green, IN_TINT.cloth]), { c: 1 })
+          take(x0, x1, z0, z1)
+        }
+      }
+    }
+    for (const rz of [R.z0 + 0.6, ...rows.map(rz => rz + 2.2), R.z1 - 1.2]) free.push([R.x0, R.x1, rz - 0.6, rz + 0.6])
+    free.push([ax - 0.9, ax + 0.9, R.z0, R.z1], [Math.min(ax, C.x0) - 0.6, Math.max(ax, C.x1) + 0.6, cz0, cz1])
+    for (const BD of BDS) free.push(BD.axis === 0 ? [BD.u - 1.4, BD.u + 1.4, P.z0, P.z0 + 2.2] : BD.side < 0 ? [P.x0, P.x0 + 2.2, BD.u - 1.4, BD.u + 1.4] : [P.x1 - 2.2, P.x1, BD.u - 1.4, BD.u + 1.4])
+    if (kind === 'boxing') free.push([R.x0, R.x1, bxBack - 0.5, R.z1])
+    place(1.2, 1.2, 5, (x0, x1, z0, z1) => { box(x0 + 0.5, x1 - 0.5, fy, fy + 1.45, z0 + 0.5, z1 - 0.5, 0x2a2018, { c: 1 }); box(x0, x1, fy + 1.45, fy + 1.5, z0, z1, IN_TINT.brass, { c: 1 }); box(x0 + 0.3, x1 - 0.3, fy + 1.5, fy + 2.1, z0 + 0.35, z1 - 0.35, pick([IN_TINT.red, IN_TINT.cream, IN_TINT.green]), { c: 1 }); box(x0 + 0.45, x1 - 0.45, fy + 2.1, fy + 2.45, z0 + 0.45, z1 - 0.45, IN_TINT.cream, { c: 1 }) })
+    for (let lz = R.z0 + 2; lz < (kind === 'boxing' ? bxBack : R.z1 - 1); lz += 6) for (const lx of [ax, (ax + R.x1) / 2, (ax + R.x0) / 2]) {
+      if (lx > C.x0 - 0.8 && lx < C.x1 + 0.8 && lz > C.z0 - 0.8 && lz < C.z1 + 0.8) continue
+      const on = !chance(0.2)
+      light(lx, y + 3.3, lz, ring, on ? 1.3 : 0, 0xe8f0ff); box(lx - 0.6, lx + 0.6, y + 3.5, y + 3.6, lz - 0.12, lz + 0.12, on ? 0xf0f6ff : IN_TINT.paper, { m: on ? 2 : 0, r: ring })
+    }
+    if (kind === 'boxing') fitBoxing()
+    if (kind === 'warehouse') posters.push(wallPoster(R, fy + 2, 'poster'))
+    for (const rz of [R.z0 + 0.6, ...rows.map(rz => rz + 2.2), R.z1 - 1.2].filter(v => v > R.z0 + 0.3 && v < R.z1 - 0.3)) {
+      const m = node(ax, y, rz, ring, { hall: 1 }); main.push(m)
+      for (const ex of [R.x1 - 1.0, R.x0 + 1.0]) if (Math.abs(ex - ax) > 3) {
+        const e = node(ex, y, rz, ring, { hall: 1 })
+        if (!(rz > C.z0 - 1.2 && rz < C.z1 + 0.2 && Math.min(ex, ax) < C.x1 && Math.max(ex, ax) > C.x0)) link(m, e)
+      }
+    }
+    main.sort((p, q) => nodes[p].z - nodes[q].z)
+    for (let j = 0; j + 1 < main.length; j++) link(main[j], main[j + 1])
+    const cross = node(ax, y, C.z1 + 1.1, ring, { hall: 1 }); link(cross, nDoorOut)
+    const near = main.reduce((b, m) => Math.abs(nodes[m].z - nodes[cross].z) < Math.abs(nodes[b].z - nodes[cross].z) ? m : b, main[0]); link(cross, near)
+    hallMain = main
   }
   function fitHall(kind) {
     enter(ring)
@@ -10358,7 +10425,7 @@ function faustDecoTower(g, lot) {
   const { x, z, height: H, gothic, mass, seed } = lot, D = FAUST_DECO
   if (mass.length < 3) return
   if (lot.landmark === 'cathedral') return
-  const [m0, m1, m2] = mass, kind = lot.landmark === 'hotel' ? 1 : (seed >>> 7) % 7, spire = gothic ? 2.2 : 1
+  const [m0, m1, m2] = mass, kind = lot.landmark === 'hotel' || lot.landmark === 'store' ? 1 : (seed >>> 7) % 7, spire = gothic ? 2.2 : 1
   for (const [m, r, y0, y1, cap] of [[m0, 1.1, 5.4, m0.cy + m0.ey + 1.5, 4], [m1, 0.95, m1.cy - m1.ey, m1.cy + m1.ey + 2, 5], [m2, 0.8, m2.cy - m2.ey, H + 6.7, 6]])
     if (!(gothic && m === m0)) for (const sx of [-1, 1]) for (const sz of [-1, 1])
       faustFin(g, m.cx + sx * m.ex, m.cz + sz * m.ez, r, y0, y1, cap * spire, m === m0 ? 1.2 : 0, D.pier)
@@ -10686,6 +10753,44 @@ function faustDecoRelief(g, lot) {
   }
 }
 const FAUST_HOTEL = ['RIVIERA', 'ALCOVE', 'DELTA', 'TIARA']
+const FAUST_STORE = ['ARCADIA', 'GALLERIA', 'CITADEL', 'GALERIE']
+function faustDecoStore(g, lot) {
+  if (lot.landmark !== 'store' || lot.mass.length < 3) return
+  const { x, z, d } = lot, D = FAUST_DECO, f = z + d + 0.25, m0 = lot.mass[0], I = 0x6a7480, E = 0x8b939b, K = 0x0b0f16, L = 0xd6d0b2
+  const amber = FAUST_SIGN_TINT.get(0xffb347) ?? 0xffb347, name = FAUST_STORE[lot.seed >>> 9 & 3], hw = Math.min(m0.ex - 1.5, 22)
+  g.box(faustBox(x, 4.5, f + 1.7, hw, 0.1, 1.7), I)
+  g.box(faustBox(x, 4.64, f + 1.7, hw + 0.1, 0.04, 1.8), E)
+  g.box(faustBox(x, 4.38, f + 1.7, hw - 0.4, 0.015, 1.4), 0xffc27a, 0.6)
+  for (let i = 0; i <= 16; i++) g.box(faustBox(x - hw + 0.3 + i * (2 * hw - 0.6) / 16, 4.3, f + 3.35, 0.07, 0.07, 0.07), L, 1.4)
+  for (let i = 0; i < 15; i++) {
+    const cx = x - hw + 0.8 + i * (2 * hw - 1.6) / 14
+    g.tri([cx - 0.35, 4.4, f + 3.42], [cx + 0.35, 4.4, f + 3.42], [cx, 3.98, f + 3.42], D.brass)
+    g.tri([cx + 0.35, 4.4, f + 3.42], [cx - 0.35, 4.4, f + 3.42], [cx, 3.98, f + 3.42], D.brass)
+  }
+  for (const s of [-1, 1]) g.box(faustBox(x + s * (hw + 0.1), 4.5, f + 1.7, 0.08, 0.55, 1.78), E)
+  g.box(faustBox(x, 5.1, f + 3.4, hw + 0.1, 0.55, 0.05), K)
+  const wMax = 2 * hw - 3
+  if (!faustLetters(g, 'deco', name, [x, 5.1, f + 3.5], [1, 0, 0], [0, 1, 0], wMax, 0.8, amber, 3.0)) {
+    const cell = Math.min(0.14, wMax / (name.length * 6)), x0 = x - (name.length * 6 * cell - cell) / 2, y0 = 5.1 + 3.5 * cell
+    for (const [c, r, n, q] of faustClubWord(name)) g.box(faustBox(x0 + (c + n / 2) * cell, y0 - (r + q / 2) * cell, f + 3.5, n * cell / 2, q * cell / 2, 0.02), amber, 3.0)
+  }
+  for (const s of [-1, 1]) for (let i = 0; i < 6; i++) {
+    const px = x + s * (hw - 1.2 - i * (hw - 2.4) / 5.5)
+    g.box(faustBox(px, 3.0, f + 0.12, 0.18, 3.0, 0.1), E)
+    g.box(faustBox(px, 3.0, f + 0.26, 0.06, 2.7, 0.04), D.brass, 0.5)
+  }
+  const top = m0.cy + m0.ey, rw = Math.min(m0.ex - 2.6, 12), zc = m0.cz + m0.ez + 0.8, yc = top + 2.6
+  g.box(faustBox(x, yc, zc, rw, 1.9, 0.15), K)
+  for (const sd of [-1, 1]) for (const k of [0.3, 0.8]) g.box(faustBox(x + sd * (rw - 0.4) * k, top + 0.72, zc, 0.15, 0.28, 0.12), I)
+  g.box(faustBox(x, yc + 1.85, zc + 0.17, rw - 0.1, 0.05, 0.02), amber, 3.2)
+  g.box(faustBox(x, yc - 1.85, zc + 0.17, rw - 0.1, 0.05, 0.02), amber, 3.2)
+  for (const sd of [-1, 1]) g.box(faustBox(x + sd * (rw - 0.12), yc, zc + 0.17, 0.05, 1.85, 0.02), amber, 3.2)
+  const rMax = 2 * rw - 1.6
+  if (!faustLetters(g, 'deco', name, [x, yc, zc + 0.2], [1, 0, 0], [0, 1, 0], rMax, 2.6, amber, 3.0)) {
+    const cell = Math.min(0.4, rMax / (name.length * 6)), x0 = x - (name.length * 6 * cell - cell) / 2, y0 = yc + 3.5 * cell
+    for (const [c, r, n, q] of faustClubWord(name)) g.box(faustBox(x0 + (c + n / 2) * cell, y0 - (r + q / 2) * cell, zc + 0.18, n * cell / 2, q * cell / 2, 0.02), amber, 3.0)
+  }
+}
 function faustDecoHotel(g, lot) {
   if (lot.landmark !== 'hotel' || lot.mass.length < 3) return
   const { x, z, d } = lot, D = FAUST_DECO, f = z + d + 0.25, m0 = lot.mass[0], I = 0x6a7480, E = 0x8b939b, K = 0x0b0f16
@@ -11486,6 +11591,7 @@ function* faustVisualSteps(c) {
     if (!art) faustDecoMarquee(ornament, lot)
     faustDecoTheatre(ornament, lot)
     faustDecoHotel(ornament, lot)
+    faustDecoStore(ornament, lot)
     faustDecoClub(ornament, lot)
     if (gothic && !neo) {
       const front = z + d + 0.3
@@ -50288,7 +50394,7 @@ function* mapBuildSteps(seed, S) {
     for (const l of plan.lots) {
       const k = l.landmark || l.venue
       if (!k || k === 'boxing') continue
-      const name = k === 'club' ? clubName(l.club ? l.club.name : 0) : k === 'hotel' ? 'HOTEL ' + FAUST_HOTEL[l.seed >>> 9 & 3] : k === 'theatre' ? 'THEATRE' : k === 'cathedral' ? 'CATHEDRAL' : k === 'liquor' ? 'LIQUOR STORE' : 'CONVENIENCE STORE'
+      const name = k === 'club' ? clubName(l.club ? l.club.name : 0) : k === 'hotel' ? 'HOTEL ' + FAUST_HOTEL[l.seed >>> 9 & 3] : k === 'store' ? FAUST_STORE[l.seed >>> 9 & 3] : k === 'theatre' ? 'THEATRE' : k === 'cathedral' ? 'CATHEDRAL' : k === 'liquor' ? 'LIQUOR STORE' : 'CONVENIENCE STORE'
       D.places.push({ x: l.x, z: l.z, kind: k, name, min: k === 'liquor' || k === 'conv' ? 0.55 : k === 'club' ? 0.3 : 0.1 })
     }
     for (const s of plan.sites || []) D.places.push({ x: s.x, z: s.z, kind: 'site', name: MAP_SITES[s.k] || 'WORKS', min: s.k === 'site_freight' ? 0.45 : 0.3 })
