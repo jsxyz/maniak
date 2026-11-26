@@ -43936,6 +43936,7 @@ function dsPropLoose(s, dx, dz, power) {
 }
 const DS_LOOSE_MAX = 48
 const DS_TREELOG = 36, DS_TREELOG_AT = 1.5
+const DS_STUMP_CUT = new THREE.Color(0xcbb48e), DS_STUMP_BARK = new THREE.Color(0x7a6048)
 function dsPiecePlace(r) { return typeof dsPieceBudget !== 'function' || (r.again ? dsPoolCount(o => !!o.K.piece) < PIECE_MAX : dsPieceBudget(null)) }
 const dsTreeLogKey = r => DS_TREELOG * 4294967296 + r.key - DS_FEAT * 4294967296
 const dsTreeQ = [], dsTreeLive = []
@@ -44050,7 +44051,23 @@ function dsFeatsLook(c, g) {
     if (r.kind !== DS_FEAT) continue
     const v = V[r.p.i], tree = r.p.f.k === 'tree'
     if (!v) continue
-    for (let k = v[0]; k < v[1]; k++) { if (tree && A[k * 3 + 1] <= 0.45) continue; A[k * 3] = r.p.f.x; A[k * 3 + 1] = tree ? 0.45 : -50; A[k * 3 + 2] = r.p.f.z }
+    if (tree) {
+      const C = g.attributes.color?.array, s = (r.p.f.s || 1) * 0.35
+      for (let k = v[0]; k < v[1]; k++) {
+        if (A[k * 3 + 1] <= 0.45) continue
+        if (Math.hypot(A[k * 3] - r.p.f.x, A[k * 3 + 2] - r.p.f.z) > s) { A[k * 3] = r.p.f.x; A[k * 3 + 2] = r.p.f.z }
+        A[k * 3 + 1] = 0.45
+      }
+      if (C) {
+        for (let q = v[0]; q < v[1]; q += 3) {
+          const cap = A[q * 3 + 1] > 0.44 && A[q * 3 + 4] > 0.44 && A[q * 3 + 7] > 0.44
+          if (!cap && !(A[q * 3 + 1] < 0.4 || A[q * 3 + 4] < 0.4 || A[q * 3 + 7] < 0.4)) continue
+          const c = cap ? DS_STUMP_CUT : DS_STUMP_BARK
+          for (let j = 0; j < 3; j++) { C[(q + j) * 3] = c.r; C[(q + j) * 3 + 1] = c.g; C[(q + j) * 3 + 2] = c.b }
+        }
+        g.attributes.color.needsUpdate = true
+      }
+    } else for (let k = v[0]; k < v[1]; k++) { A[k * 3] = r.p.f.x; A[k * 3 + 1] = -50; A[k * 3 + 2] = r.p.f.z }
     lo = Math.min(lo, v[0]); hi = Math.max(hi, v[1] - 1)
   }
   if (hi < 0) return
