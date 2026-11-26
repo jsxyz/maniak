@@ -10331,7 +10331,7 @@ function faustSurfaceShader(shader, surf) {
   const uv = fixed >= 0 ? 'fsUv = vec2(fsW.x + 0.37 * fsW.z, fsW.y + 0.61 * fsW.z) / fsS;' : surf.quad ? 'fsUv = position.xy * 0.5 + 0.5;'
     : `if (abs(fsN.y) > 0.9) fsUv = fsW.xz / fsS;
    else { vec2 fsT = normalize(vec2(-fsN.z, fsN.x)); vec3 fsUp = normalize(vec3(0.0, 1.0, 0.0) - fsN * fsN.y); fsUv = vec2(dot(fsW.xz, fsT), dot(fsW, fsUp)) / fsS; }`
-  shader.vertexShader = `varying vec2 vFsUv;\nflat varying float vFsLayer;\n${fixed >= 0 ? '' : 'attribute float faustLayer;\n'}const float FS_SCALE[${S.layers.length}] = float[${S.layers.length}](${S.layers.map(n => S.scale[n].toFixed(2)).join(', ')});\n` +
+  shader.vertexShader = `varying vec2 vFsUv;\nvarying float vFsLayer;\n${fixed >= 0 ? '' : 'attribute float faustLayer;\n'}const float FS_SCALE[${S.layers.length}] = float[${S.layers.length}](${S.layers.map(n => S.scale[n].toFixed(2)).join(', ')});\n` +
     shader.vertexShader.replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
   {
    vec4 fsP = vec4(transformed, 1.0); mat3 fsR = mat3(modelMatrix);
@@ -10344,7 +10344,7 @@ function faustSurfaceShader(shader, surf) {
    ${uv}
    vFsUv = fsUv; vFsLayer = fsL;
   }`)
-  shader.fragmentShader = `uniform sampler2DArray faustSurf;\nvarying vec2 vFsUv;\nflat varying float vFsLayer;\n` + shader.fragmentShader
+  shader.fragmentShader = `uniform sampler2DArray faustSurf;\nvarying vec2 vFsUv;\nvarying float vFsLayer;\n` + shader.fragmentShader
     .replace('#include <map_fragment>', `#include <map_fragment>
  vec4 fsT = texture(faustSurf, vec3(vFsUv, vFsLayer));
  float faustMask = fsT.a;
@@ -23430,9 +23430,11 @@ uniform sampler2DArray realAlbedo, realNormal;
 uniform float realTime;
 uniform float realWet;
 varying vec3 vRealW, vRealN;
-flat varying vec4 vRealBox;
-flat varying vec2 vRealBoxY;
-flat varying float vRealKind;
+varying vec4 vRealBoxV;
+varying vec2 vRealBoxYV;
+varying float vRealKind;
+#define vRealBox (floor(vRealBoxV * 100.0 + 0.5) / 100.0)
+#define vRealBoxY (floor(vRealBoxYV * 100.0 + 0.5) / 100.0)
 const vec3 REAL_LW = vec3(0.2126, 0.7152, 0.0722);
 const vec3 REAL_MEAN[6] = vec3[6](${REAL_MEAN.map(c => 'vec3(' + c.join(', ') + ')').join(', ')});
 float realHash12(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
@@ -23670,7 +23672,7 @@ function realCityMaterial(kind, R) {
     shader.defines = { ...shader.defines, [define]: 1 }
     const swap = (src, from, to) => { if (!src.includes(from)) throw new Error('realistic: no shader anchor ' + from); return src.replace(from, to) }
     let vs = shader.vertexShader, fs = shader.fragmentShader
-    vs = `attribute vec4 realBox;\nattribute vec2 realBoxY;\nvarying vec3 vRealW, vRealN;\nflat varying vec4 vRealBox;\nflat varying vec2 vRealBoxY;\nflat varying float vRealKind;
+    vs = `attribute vec4 realBox;\nattribute vec2 realBoxY;\nvarying vec3 vRealW, vRealN;\nvarying vec4 vRealBoxV;\nvarying vec2 vRealBoxYV;\nvarying float vRealKind;
 #if defined(REAL_ORNAMENT)
 attribute float faustLayer;
 const float REAL_LAYER_KIND[${FAUST_SURFACE.layers.length}] = float[${FAUST_SURFACE.layers.length}](${FAUST_SURFACE.layers.map(n => (REAL_KIND[FAUST_SURFACE.real[n] || 'stone']).toFixed(1)).join(', ')});
@@ -23687,10 +23689,10 @@ float realKindOf(vec3 c) {
       vec4 realWorld = vec4(transformed, 1.0);
       #ifdef USE_INSTANCING
         realWorld = instanceMatrix * realWorld;
-        vRealBox = vec4(instanceMatrix[3].x, instanceMatrix[3].z, length(instanceMatrix[0].xyz) * 0.5, length(instanceMatrix[2].xyz) * 0.5);
-        vRealBoxY = vec2(instanceMatrix[3].y, length(instanceMatrix[1].xyz) * 0.5);
+        vRealBoxV = vec4(instanceMatrix[3].x, instanceMatrix[3].z, length(instanceMatrix[0].xyz) * 0.5, length(instanceMatrix[2].xyz) * 0.5);
+        vRealBoxYV = vec2(instanceMatrix[3].y, length(instanceMatrix[1].xyz) * 0.5);
       #else
-        vRealBox = realBox; vRealBoxY = realBoxY;
+        vRealBoxV = realBox; vRealBoxYV = realBoxY;
       #endif
       realWorld = modelMatrix * realWorld; vRealW = realWorld.xyz;
       vRealN = normalize(mat3(modelMatrix) * objectNormal);
@@ -42646,8 +42648,10 @@ vec3 dsRoom(vec2 q, vec2 size, uint key, vec3 rd, float lit, float full, out flo
   return r;
 }
 varying vec3 vDsW, vDsN;
-flat varying vec4 vDsBox;
-flat varying vec2 vDsBoxY;
+varying vec4 vDsBoxV;
+varying vec2 vDsBoxYV;
+#define vDsBox (floor(vDsBoxV * 100.0 + 0.5) / 100.0)
+#define vDsBoxY (floor(vDsBoxYV * 100.0 + 0.5) / 100.0)
 vec3 dsEmit = vec3(0.0);
 vec3 dsFacade() {
   vec3 wall = ${dsLin(0x9b9fa5)}, N = normalize(vDsN);
@@ -42696,17 +42700,17 @@ const DS_VERTEX = `
 attribute vec4 realBox;
 attribute vec2 realBoxY;
 varying vec3 vDsW, vDsN;
-flat varying vec4 vDsBox;
-flat varying vec2 vDsBoxY;
+varying vec4 vDsBoxV;
+varying vec2 vDsBoxYV;
 `
 const DS_VERTEX_MAIN = `
   vec4 dsWorld = vec4(transformed, 1.0);
   #ifdef USE_INSTANCING
     dsWorld = instanceMatrix * dsWorld;
-    vDsBox = vec4(instanceMatrix[3].x, instanceMatrix[3].z, length(instanceMatrix[0].xyz) * 0.5, length(instanceMatrix[2].xyz) * 0.5);
-    vDsBoxY = vec2(instanceMatrix[3].y, length(instanceMatrix[1].xyz) * 0.5);
+    vDsBoxV = vec4(instanceMatrix[3].x, instanceMatrix[3].z, length(instanceMatrix[0].xyz) * 0.5, length(instanceMatrix[2].xyz) * 0.5);
+    vDsBoxYV = vec2(instanceMatrix[3].y, length(instanceMatrix[1].xyz) * 0.5);
   #else
-    vDsBox = realBox; vDsBoxY = realBoxY;
+    vDsBoxV = realBox; vDsBoxYV = realBoxY;
   #endif
   dsWorld = modelMatrix * dsWorld; vDsW = dsWorld.xyz; vDsN = objectNormal;
 `
