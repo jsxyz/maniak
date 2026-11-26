@@ -1426,6 +1426,8 @@ OBJECTS.push(
 OBJECTS.push(
   { name: 'Fence panel', half: [1.8, 1.1, 0.08], mass: 3.2, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0x5a4632, stripe: 0x252d37, prop: 'fence', dmg: 12, thrown: 14, hp: 3 },
   { name: 'Tin panel', half: [1.8, 1.0, 0.06], mass: 3.6, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0x3a424b, stripe: 0x252d37, prop: 'tinfence', dmg: 14, thrown: 15, hp: 3 })
+OBJECTS.push({ name: 'Picket panel', half: [0.95, 0.43, 0.05], mass: 1.4, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0xc8c2b2, stripe: 0x9a948a, prop: 'picketpanel', dmg: 10, thrown: 9, hp: 3 })
+OBJECTS.push({ name: 'Hedge clump', half: [1.3, 0.55, 0.35], mass: 2.6, bounce: 0.05, friction: 0.7, damp: [0.15, 0.4], hit: 1, color: 0x1f2b1c, stripe: 0x2c3d28, prop: 'hedgeclump', dmg: 14, thrown: 12 })
 OBJECTS.push({ name: 'Lamp post', half: [0.14, 0.14, 1.5], mass: 6, bounce: 0.05, friction: 0.6, damp: [0.15, 0.4], hit: 1, color: 0x252d37, stripe: 0x5c6671, piece: 'lamppost', across: 1, dmg: 40, thrown: 40, retire: o => dsLampPieceRetire(o) })
 const LAMP_PIECE = OBJECTS.length - 1
 OBJECTS.push({ name: 'Log', half: [0.25, 0.25, 1.4], mass: 9, bounce: 0.05, friction: 0.7, damp: [0.15, 0.4], hit: 1, color: 0x4a3a2c, stripe: 0x3a2e24, piece: 'log', across: 1, dmg: 45, thrown: 45, retire: o => dsTreeLogRetire(o) })
@@ -7815,9 +7817,10 @@ function* faustRingCellSteps0(seed, S, plan, i, j) {
   const R = FAUST_RINGS, C = R.cell, T = R.tints, band = faustRingBand(seed, S, i, j)
   const out = { band, far: [], body: [], roof: [], flat: [], light: [], solid: [], buildings: [], part: [], near: [], lots: [], pavements: [], fences: [], trees: [], swims: [] }
   out.close = []; out.mid = []
-  const close = (k, sx, sy, sz, x, y, z, yaw, roll, tint) => out.close.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint])
-  const mid = (k, sx, sy, sz, x, y, z, yaw, roll, tint) => out.mid.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint])
-  const near = (k, sx, sy, sz, x, y, z, yaw, roll, tint) => out.near.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint])
+  const close = (k, sx, sy, sz, x, y, z, yaw, roll, tint, pid) => out.close.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint, ...pid === undefined ? [] : [pid]])
+  const mid = (k, sx, sy, sz, x, y, z, yaw, roll, tint, pid) => out.mid.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint, ...pid === undefined ? [] : [pid]])
+  const near = (k, sx, sy, sz, x, y, z, yaw, roll, tint, pid) => out.near.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint, ...pid === undefined ? [] : [pid]])
+  const fpid = (li, sg, u) => li < 256 && sg < 4 && u < 16 ? (li * 4 + sg) * 16 + u : undefined
   const part = (k, sx, sy, sz, x, y, z, yaw, roll, tint) => out.part.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint])
   const HALF = 1.5707963267948966
   if (band === 'city' || band === 'edge') return out
@@ -7988,9 +7991,10 @@ function* faustRingCellSteps0(seed, S, plan, i, j) {
               const a = from, b = Math.min(g0, lx1)
               if (b - a > 0.4) {
                 const m = (a + b) / 2, h = (b - a) / 2
-                if (kind === 'picket') { const nP = Math.max(1, Math.round((b - a) / 2)), hp = (b - a) / (2 * nP); for (let q = 0; q < nP; q++) close('picket', hp, 1, 1, a + hp * (2 * q + 1), 0, fl, 0, 0, T.picket)
-                  mid('body', h, 0.42, 0.03, m, 0.42, fl, 0, 0, T.picket) }
-                else near('hedge', h, 0.55, 0.3, m, 0.55, fl - sg * 0.05, 0, 0, pick(T.hedge, hq >>> 11))
+                const li = out.buildings.length - 1, sI = lot.fence.length
+                if (kind === 'picket') { const nP = Math.max(1, Math.round((b - a) / 2)), hp = (b - a) / (2 * nP); for (let q = 0; q < nP; q++) close('picket', hp, 1, 1, a + hp * (2 * q + 1), 0, fl, 0, 0, T.picket, fpid(li, sI, q))
+                  mid('body', h, 0.42, 0.03, m, 0.42, fl, 0, 0, T.picket, fpid(li, sI, 15)) }
+                else near('hedge', h, 0.55, 0.3, m, 0.55, fl - sg * 0.05, 0, 0, pick(T.hedge, hq >>> 11), fpid(li, sI, 0))
                 const seg = [faustCm(a), faustCm(fl), faustCm(b), faustCm(fl), kind]
                 lot.fence.push(seg); out.fences.push(seg)
               }
@@ -8334,19 +8338,28 @@ function faustRingsFrame() {
     }
     cells.sort((a, b) => a[0] - b[0])
     const S = F.ringShapes ||= faustRingShapes(), caps = R.caps, col = new THREE.Color()
-    const pools = {}, idx = new Map(), bases = new Map()
+    const pools = {}, idx = new Map(), bases = new Map(), fidx = new Map(), hseg = new Map()
     const KINDS = ['flat', 'pool', 'far', 'body', 'roof', 'light', 'pane', 'lit', 'shed', 'crown', 'picket', 'crownHi', 'crownTop', 'hedge']
     const scratch = F.ringScratch ||= Object.fromEntries(KINDS.map(k => [k, { m: new Float32Array(caps[k] * 16), c: new Float32Array(caps[k] * 3), l: new Float32Array(caps[k]) }]))
     for (const k of KINDS) pools[k] = { m: scratch[k].m, c: scratch[k].c, l: scratch[k].l, n: 0 }
-    const put = (k, sx, sy, sz, tx, ty, tz, tint, alongZ, yaw = alongZ ? Math.PI / 2 : 0, roll = 0) => {
+    const put = (k, sx, sy, sz, tx, ty, tz, tint, alongZ, yaw = alongZ ? Math.PI / 2 : 0, roll = 0, fk) => {
+      if (fk !== undefined && k === 'hedge') {
+        const seg = Math.floor(fk / 16), nH = Math.min(15, Math.max(1, Math.ceil(sx / 2))), H = { i: -1, nH, sx, sy, sz, tx, ty, tz, tint, spill: [] }
+        hseg.set(seg, H)
+        if (!dsRingFenceSegs.has(seg)) { H.i = pools[k].n; put(k, sx, sy, sz, tx, ty, tz, tint, alongZ, yaw, roll); H.m = H.i < pools[k].n ? pools[k].m.slice(H.i * 16, H.i * 16 + 16) : null; if (!H.m) H.i = -1; return }
+        for (let q = 0; q < nH; q++) if (!dsRingFenceGone(seg * 16 + q)) { const at = pools[k].n; put(k, sx / nH, sy, sz, tx - sx + (2 * q + 1) * sx / nH, ty, tz, tint, alongZ, yaw, roll); if (pools[k].n > at) H.spill.push(at) }
+        return
+      }
       const P = pools[k]
-      if (P.n >= caps[k]) return
+      if (P.n >= caps[k] || fk !== undefined && dsRingFenceGone(fk)) return
       const m = P.m, o = P.n * 16, c = Math.cos(yaw), s = Math.sin(yaw), cr = Math.cos(roll), sr = Math.sin(roll)
       m[o] = c * cr * sx; m[o + 1] = sr * sx; m[o + 2] = -s * cr * sx; m[o + 3] = 0
       m[o + 4] = -c * sr * sy; m[o + 5] = cr * sy; m[o + 6] = s * sr * sy; m[o + 7] = 0
       m[o + 8] = s * sz; m[o + 9] = 0; m[o + 10] = c * sz; m[o + 11] = 0
       m[o + 12] = tx; m[o + 13] = ty; m[o + 14] = tz; m[o + 15] = 1
-      col.setHex(tint); P.c[P.n * 3] = col.r; P.c[P.n * 3 + 1] = col.g; P.c[P.n * 3 + 2] = col.b; P.l[P.n] = faustSurfaceLayer(k, tint); P.n++
+      col.setHex(tint); P.c[P.n * 3] = col.r; P.c[P.n * 3 + 1] = col.g; P.c[P.n * 3 + 2] = col.b; P.l[P.n] = faustSurfaceLayer(k, tint)
+      if (fk !== undefined) { let L = fidx.get(fk); if (!L) fidx.set(fk, L = []); L.push([k, P.n, m.slice(o, o + 16)]) }
+      P.n++
     }
     for (let n = 0; n < cells.length; n++) {
       const c = yield* faustRingPlanSteps(F, plan, cells[n][1], cells[n][2])
@@ -8361,8 +8374,8 @@ function faustRingsFrame() {
       bases.set(cells[n][1] + ' ' + cells[n][2], { pane: pools.pane.n, lit: pools.lit.n })
       const lod = k => k !== 'crown' ? k : cells[n][0] < R.close ? 'crownHi' : k
       c.part.forEach(([k, sx, sy, sz, x, y, z, yaw, roll, tint], pi) => { const role = roles.get(pi); if (role !== undefined && pools[k].n < caps[k]) idx.set(role, pools[k].n); put(lod(k), sx, sy, sz, x, y, z, tint, false, yaw, roll) })
-      if (cells[n][0] < R.near) for (const [k, sx, sy, sz, x, y, z, yaw, roll, tint] of c.near || []) put(lod(k), sx, sy, sz, x, y, z, tint, false, yaw, roll)
-      for (const [k, sx, sy, sz, x, y, z, yaw, roll, tint] of (cells[n][0] < R.close ? c.close : cells[n][0] < R.near ? c.mid : null) || []) put(k, sx, sy, sz, x, y, z, tint, false, yaw, roll)
+      if (cells[n][0] < R.near) for (const [k, sx, sy, sz, x, y, z, yaw, roll, tint, pid] of c.near || []) put(lod(k), sx, sy, sz, x, y, z, tint, false, yaw, roll, pid === undefined ? undefined : dsRingFenceKey(cells[n][1], cells[n][2], pid))
+      for (const [k, sx, sy, sz, x, y, z, yaw, roll, tint, pid] of (cells[n][0] < R.close ? c.close : cells[n][0] < R.near ? c.mid : null) || []) put(k, sx, sy, sz, x, y, z, tint, false, yaw, roll, pid === undefined ? undefined : dsRingFenceKey(cells[n][1], cells[n][2], pid))
       if (n % R.part === R.part - 1) yield
     }
     const sets = F.ringSets ||= [{}, {}], set = sets[F.ringShown === 0 ? 1 : 0], other = set === sets[0] ? sets[1] : sets[0]
@@ -8409,6 +8422,8 @@ function faustRingsFrame() {
     F.ringShown = set === sets[0] ? 0 : 1
     F.ringIdx = idx
     F.ringBase = bases
+    F.ringFenceIdx = fidx
+    F.ringHedgeSeg = hseg
     F.ringMeshes = KINDS.filter(k => set[k] && pools[k].n > 0).map(k => set[k])
     faustRingInRehide(F)
     faustRingWinRehide(F)
@@ -43870,6 +43885,11 @@ function propObjLook(K) {
     cyl(0, 1.2, 1.7, 0, 0.2, 0, 0x1b3324); cyl(0, 0.8, 1.5, 0, 1.2, 0, 0x2c4a37)
   } else if (K.prop === 'phone') {
     for (const x of [-0.55, 0.55]) { box(0.9, 2.2, 0.9, x, -0.08, 0, 0x2b333d); box(1.0, 0.16, 1.0, x, 1.1, 0, 0x9aa1a8); box(0.6, 1.2, 0.04, x, 0.12, 0.46, 0xffd7a0) }
+  } else if (K.prop === 'picketpanel') {
+    box(1.9, 0.08, 0.1, 0, 0.2, 0, 0xb4ae9e); box(1.9, 0.08, 0.1, 0, -0.1, 0, 0xb4ae9e)
+    for (let i = 0; i < 10; i++) box(0.15, 0.86, 0.05, -0.855 + i * 0.19, 0, 0.06, 0xc8c2b2)
+  } else if (K.prop === 'hedgeclump') {
+    box(2.6, 0.9, 0.7, 0, -0.1, 0, 0x2b3d26); box(2.2, 0.5, 0.8, -0.2, 0.4, 0.05, 0x3a5233); box(1.6, 0.45, 0.75, 0.5, 0.5, -0.05, 0x33492d); box(1.2, 0.4, 0.7, -0.7, 0.55, 0, 0x40603a); for (let i = 0; i < 8; i++) box(0.35 + (i % 3) * 0.1, 0.18 + (i % 2) * 0.1, 0.5, -1.1 + i * 0.31, 0.78 + (i * 37 % 5) * 0.04, ((i % 3) - 1) * 0.08, i % 2 ? 0x4a6b42 : 0x36502f)
   } else if (K.prop === 'fence' || K.prop === 'tinfence') {
     box(3.6, 2.2, 0.16, 0, 0, 0, K.color); box(3.62, 0.1, 0.3, 0, 1.15, 0, 0x2a2018); box(3.62, 0.1, 0.2, 0, 0.8, 0, 0x252d37); box(3.62, 0.1, 0.2, 0, -0.8, 0, 0x252d37)
     for (let i = 1; i < 12; i++) box(0.025, 2.2, 0.17, -1.8 + i * 0.3, 0, 0, K.prop === 'fence' ? 0x2a2018 : 0x2b3037)
@@ -43914,6 +43934,7 @@ function dsPropsAlong(a, b, r, power) {
       if (t <= len) out.push({ key, i: s.i, t, x: s.f.x, z: s.f.z, s })
     }
   }
+  out.push(...dsRingFencesAlong(a, b, r, power))
   return out.sort((p, q) => p.t - q.t)
 }
 function dsPropsNearPt(x, z, r, power = 3) {
@@ -43924,12 +43945,13 @@ function dsPropsNearPt(x, z, r, power = 3) {
     const d = Math.hypot(s.f.x - x, s.f.z - z), key = dsPropKey(ci * F.S + cj, s.i)
     if (d <= r && s.hard <= power && !dsState.all.has(key)) out.push({ key, i: s.i, x: s.f.x, z: s.f.z, s, d })
   }
+  out.push(...dsRingFencesNearPt(x, z, r, power))
   return out.sort((p, q) => p.d - q.d)
 }
 const dsPropWay = (dx, dz) => Math.round((Math.atan2(dz, dx) / (2 * Math.PI) % 1 + 1) % 1 * 64) & 63
 function dsPropKnock(p, power, dx, dz) {
   if (!isHost || !dsCheck() || p.s.hard > power) return false
-  if (!dsBreak(DS_PROP, p.key, (power & 3) | dsPropWay(dx, dz) << 3)) return false
+  if (!dsBreak(p.kind ?? DS_PROP, p.key, (power & 3) | dsPropWay(dx, dz) << 3)) return false
   const o = dsPropLoose(p.s, dx, dz, power)
   if (o) o.propKey = p.key
   return true
@@ -44001,7 +44023,7 @@ function dsPropsReach(c, kind, reach) {
   for (const p of dsPropsNearPt(c.x, c.z, reach + 1 + Math.max(row.half[0], row.half[2]), 3)) {
     if (p.s.f.k !== kind) continue
     const gap = p.d - c.r - Math.max(p.s.boxes[0]?.ex || 0.2, p.s.boxes[0]?.ez || 0.2)
-    if (gap <= reach) out.push({ ref: { key: p.key, i: p.i, x: p.x, z: p.z, q: p.s.f.q }, at: [p.x, p.s.top / 2, p.z], gap, R: 0.4, mass: row.mass })
+    if (gap <= reach) out.push({ ref: { key: p.key, kind: p.kind, i: p.i, x: p.x, z: p.z, q: p.s.f.q }, at: [p.x, p.s.top / 2, p.z], gap, R: 0.4, mass: row.mass })
   }
   for (const p of dsFeatsNearPt(c.x, c.z, reach + 1 + Math.max(row.half[0], row.half[2]))) {
     if (p.s.f.k !== kind) continue
@@ -44345,7 +44367,7 @@ function dsPropKind() {
     GAME.parts.kind(K.name + ' on its post', { of: 'attached', mass: K.mass, rip: { pull: 0.45, gives: K.name } }, {
       near: (c, reach) => dsPropsReach(c, K.prop, reach),
       detach: (inst, c) => {
-        if (!isHost || !dsCheck() || !dsBreak(inst.ref.feat ? DS_FEAT : DS_PROP, inst.ref.key, dsPropWay(inst.ref.x - c.x, inst.ref.z - c.z) << 3)) return false
+        if (!isHost || !dsCheck() || !dsBreak(inst.ref.feat ? DS_FEAT : inst.ref.kind ?? DS_PROP, inst.ref.key, dsPropWay(inst.ref.x - c.x, inst.ref.z - c.z) << 3)) return false
         const at = [inst.ref.x, K.half[1] + 0.1, inst.ref.z]
         at.yaw = (inst.ref.q || 0) * Math.PI / 2
         return at
@@ -44353,6 +44375,118 @@ function dsPropKind() {
     })
   }
 }
+const DS_RINGFENCE = 33
+const dsRingFenceKey = (a, b, pid) => DS_RINGFENCE * 4294967296 + 2097152 + ((a + 64) * 128 + (b + 64)) * 16384 + pid
+const dsRingFenceSegs = new Map(), dsRingFenceCache = new WeakMap()
+const dsRingFenceGone = key => key % 16 === 15 ? dsRingFenceSegs.has(Math.floor(key / 16)) : !!(typeof dsState !== 'undefined' && dsState?.all.has(key))
+function dsRingFenceSites(c, a, b) {
+  let L = dsRingFenceCache.get(c)
+  if (L) return L
+  L = []
+  for (const list of [c.close || [], c.near || []]) for (const e of list) {
+    const pid = e[10], hedge = e[0] === 'hedge'
+    if (pid === undefined || !hedge && e[0] !== 'picket') continue
+    const z = e[6], ey = hedge ? 0.55 : 0.43, nH = hedge ? Math.min(15, Math.max(1, Math.ceil(e[1] / 2))) : 1
+    for (let q = 0; q < nH; q++) {
+      const x = hedge ? e[4] - e[1] + (2 * q + 1) * e[1] / nH : e[4], ex = e[1] / nH
+      L.push({ key: dsRingFenceKey(a, b, pid + q), kind: DS_RINGFENCE, hard: 1, i: -1, x, z, top: ey * 2, f: { k: hedge ? 'hedgeclump' : 'picketpanel', x, z, q: 0 }, boxes: [{ cx: x, cy: ey, cz: z, ex, ey, ez: hedge ? 0.3 : 0.06 }] })
+    }
+  }
+  dsRingFenceCache.set(c, L)
+  return L
+}
+function dsRingFenceCells(x0, z0, x1, z1) {
+  const F = faustState, C = FAUST_RINGS.cell, out = []
+  if (!F?.ringPlans) return out
+  for (let a = Math.floor(x0 / C); a <= Math.floor(x1 / C); a++) for (let b = Math.floor(z0 / C); b <= Math.floor(z1 / C); b++) { const c = F.ringPlans.get(a + ' ' + b); if (c) out.push([c, a, b]) }
+  return out
+}
+function dsRingFencesNearPt(x, z, r, power) {
+  const out = []
+  if (!dsState) return out
+  for (const [c, a, b] of dsRingFenceCells(x - r - 3, z - r - 3, x + r + 3, z + r + 3)) for (const s of dsRingFenceSites(c, a, b)) {
+    const d = Math.hypot(s.x - x, s.z - z)
+    if (d <= r && s.hard <= power && !dsState.all.has(s.key)) out.push({ key: s.key, kind: s.kind, i: s.i, x: s.x, z: s.z, s, d })
+  }
+  return out
+}
+function dsRingFencesAlong(a, b, r, power) {
+  const out = [], d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], len = Math.hypot(d[0], d[1], d[2])
+  if (!dsState || len < 1e-6 || Math.min(a[1], b[1]) > 3 + r) return out
+  for (const [c, ca, cb] of dsRingFenceCells(Math.min(a[0], b[0]) - 3, Math.min(a[2], b[2]) - 3, Math.max(a[0], b[0]) + 3, Math.max(a[2], b[2]) + 3)) for (const s of dsRingFenceSites(c, ca, cb)) {
+    if (s.hard > power || dsState.all.has(s.key)) continue
+    const B = s.boxes[0], t = rayBox(a[0], a[1], a[2], d[0] / len, d[1] / len, d[2] / len, { cx: B.cx, cy: B.cy, cz: B.cz, ex: B.ex + r, ey: B.ey + r, ez: B.ez + r })
+    if (t <= len) out.push({ key: s.key, kind: s.kind, i: s.i, t, x: s.x, z: s.z, s })
+  }
+  return out
+}
+function dsRingFenceRecord(key) {
+  const F = faustState, p = key - DS_RINGFENCE * 4294967296 - 2097152
+  if (!F || !(p >= 0 && p < 268435456)) return null
+  const cell = Math.floor(p / 16384), a = Math.floor(cell / 128) - 64, b = cell % 128 - 64, C = FAUST_RINGS.cell
+  const c = F.ringPlans?.get(a + ' ' + b), s = c && dsRingFenceSites(c, a, b).find(q => q.key === key) || null
+  const x = s ? s.x : a * C + C / 2, z = s ? s.z : b * C + C / 2
+  const ci = Math.max(0, Math.min(F.S - 1, Math.floor((x + ARENA) / 96))), cj = Math.max(0, Math.min(F.S - 1, Math.floor((z + ARENA) / 96)))
+  return { chunk: ci * F.S + cj, at: [x, s ? s.top / 2 : 1, z], p: { a, b, site: s } }
+}
+function dsRingFenceShow(key, on) {
+  const F = faustState, L = F?.ringFenceIdx?.get(key)
+  for (const [kind, i, m] of L || []) {
+    const mesh = F.ringMeshes?.find(q => q.userData.faustRings === kind)
+    if (!mesh) continue
+    const A = mesh.instanceMatrix.array, o = i * 16
+    if (on) A.set(m, o); else { A.fill(0, o, o + 16); A[o + 15] = 1 }
+    mesh.instanceMatrix.addUpdateRange(o, 16); mesh.instanceMatrix.needsUpdate = true
+  }
+}
+function dsRingFenceApply(rec) {
+  const seg = Math.floor(rec.key / 16), n = (dsRingFenceSegs.get(seg) || 0) + 1
+  dsRingFenceSegs.set(seg, n)
+  dsRingFenceShow(rec.key, false)
+  if (n === 1) dsRingFenceShow(seg * 16 + 15, false)
+  dsRingHedgeRefresh(seg)
+}
+function dsRingFenceUndo(rec) {
+  const seg = Math.floor(rec.key / 16), n = (dsRingFenceSegs.get(seg) || 1) - 1
+  dsRingFenceShow(rec.key, true)
+  if (n > 0) dsRingFenceSegs.set(seg, n); else { dsRingFenceSegs.delete(seg); dsRingFenceShow(seg * 16 + 15, true) }
+  dsRingHedgeRefresh(seg)
+}
+function dsRingHedgeRefresh(seg) {
+  const F = faustState, H = F?.ringHedgeSeg?.get(seg)
+  if (!H) return
+  const mesh = F.ringMeshes?.find(q => q.userData.faustRings === 'hedge')
+  if (!mesh) return
+  const A = mesh.instanceMatrix.array, K = mesh.instanceColor.array, LA = mesh.userData.ownGeometry ? mesh.geometry.attributes.faustLayer : null
+  const hide = i => { const o = i * 16; A.fill(0, o, o + 16); A[o + 15] = 1; mesh.instanceMatrix.addUpdateRange(o, 16) }
+  for (const i of H.spill) hide(i)
+  H.spill = []
+  const left = []
+  for (let q = 0; q < H.nH; q++) if (!dsRingFenceGone(seg * 16 + q)) left.push(q)
+  if (H.i >= 0 && left.length === H.nH) { A.set(H.m, H.i * 16); mesh.instanceMatrix.addUpdateRange(H.i * 16, 16); mesh.instanceMatrix.needsUpdate = true; return }
+  if (H.i >= 0) hide(H.i)
+  const col = new THREE.Color(H.tint)
+  for (const q of left) {
+    const i = mesh.count
+    if (i >= mesh.instanceMatrix.count) { F.ringStamp = null; return }
+    const o = i * 16, u = H.sx / H.nH
+    A.fill(0, o, o + 16); A[o] = u; A[o + 5] = H.sy; A[o + 10] = H.sz; A[o + 12] = H.tx - H.sx + (2 * q + 1) * u; A[o + 13] = H.ty; A[o + 14] = H.tz; A[o + 15] = 1
+    K[i * 3] = col.r; K[i * 3 + 1] = col.g; K[i * 3 + 2] = col.b
+    if (LA) { LA.array[i] = faustSurfaceLayer('hedge', H.tint); LA.addUpdateRange(i, 1); LA.needsUpdate = true }
+    mesh.instanceColor.addUpdateRange(i * 3, 3); mesh.instanceColor.needsUpdate = true; mesh.instanceMatrix.addUpdateRange(o, 16)
+    mesh.count = i + 1; H.spill.push(i)
+  }
+  mesh.instanceMatrix.needsUpdate = true
+}
+function dsRingFenceFresh(rec) {
+  const [x, y, z] = rec.p.at, hedge = rec.p.site?.f.k === 'hedgeclump', w = (rec.info >> 3 & 63) / 64 * Math.PI * 2, dx = Math.cos(w), dz = Math.sin(w)
+  try {
+    for (let k = 0; k < 12; k++) burst('splinter', x, y + (k % 4 - 1.5) * 0.25, z, dx + (k - 6) * 0.12, 0.9, dz, hedge ? 0x2c4a2a : 0xc8c2b2, 1.6)
+    burst('dust', x, y, z, 0, 1, 0, 0x8a7a66, 1.4)
+    sfxPlay('Door rip', { x, y, z }, 'world', 0.8)
+  } catch (e) { failN[167]++ }
+}
+dsKindRegister(DS_RINGFENCE, { record: dsRingFenceRecord, apply: dsRingFenceApply, undo: dsRingFenceUndo, fresh: dsRingFenceFresh })
 GAME.parts.on('rip', (o, p) => { if (p.src === 'attached' && o.K.prop && Number.isInteger(p.ref?.key)) o.propKey = p.ref.key })
 dsKindRegister(DS_PROP, { record: dsPropRecord, apply: dsPropApply, undo: dsPropUndo, fresh: dsPropFresh, stamp: r => dsTagOf(r.p.f), fit: (k, c, n, i) => dsFitSite(dsPropSites, dsPropKey, k, c, n, i) })
 dsKindRegister(DS_FEAT, { record: dsFeatRecord, apply: dsFeatApply, undo: dsFeatUndo, fresh: dsFeatFresh, stamp: r => dsTagOf(r.p.f), fit: (k, c, n, i) => dsFitSite(dsFeatSites, dsFeatKey, k, c, n, i) })
@@ -44365,7 +44499,7 @@ function propBreak(o) {
   delete o.propKey
   lootRetire(o)
 }
-for (const K of OBJECTS) if (K.prop === 'fence' || K.prop === 'tinfence') K.breaks = propBreak
+for (const K of OBJECTS) if (K.prop === 'fence' || K.prop === 'tinfence' || K.prop === 'picketpanel') K.breaks = propBreak
 dsPropKind()
 dsKindRegister(DS_PIECE, { record: dsPieceRecord, apply() {}, undo() {}, fresh() {} })
 dsLampPieceKind()
