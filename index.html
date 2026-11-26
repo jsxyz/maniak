@@ -6753,7 +6753,7 @@ function faustChanMapLayer() {
     }
   } })
 }
-const FAUST_WATER = { version: 1, cell: 96, grid: 6, reach: 240, look: 1500, part: 1000,
+const FAUST_WATER = { version: 2, cell: 96, grid: 6, reach: 240, look: 1500, part: 1000,
   dress: null,
   river: { reach: 3300, level: -3, flow: 1.2, tab: [[28, 0], [20, 4], [12, 4], [8, 7.5], [0, 7.5]],
     sec: { foot: 20, h: 4, land: 16, kinds: ['bed', 'bed', 'bed'], inner: [[20, 0], [12, 0], [8, -3.5]] } },
@@ -6761,8 +6761,199 @@ const FAUST_WATER = { version: 1, cell: 96, grid: 6, reach: 240, look: 1500, par
   waves: { drawn: false, sines: [[0.8, 0.6, 22, 2.4, 1], [-0.5, 0.86, 9, 1.8, 0.6], [0.2, -0.98, 41, 3.1, 0.8]], amp: { river: 0.04, lake: 0.08, reservoir: 0.1, bay: 0.18, channel: 0 } },
   dam: { lat: 130, blend: 80, face: 12, notch: 11, sill: 0.3, flow: 6.5, pool: 13, rise: 1.4, tint: [0x7f7b73, 0x6c6962, 0x9a958b] },
   tint: { mud: 0x4a4638, sand: 0x6a644f, deep: 0x1d292b, water: 0x0b1c25, fields: [0x2b3527, 0x3a3128, 0x464232, 0x30392a], dock: 0x5b4a39, pile: 0x3a3229, bollard: 0x2f343b, lamp: 0xffb35a, pole: 0x30353c } }
+const FAUST_PORT = { hw: 215, deep: 205, over: 55, top: 0.08, rails: [4, 19.5], cranes: [-150, -50, 50, 150], pier: 44, near: { r: 110, fade: 20, cap: 480, step: 6, every: 250, wake: 220 },
+  tints: { container: [0x9a3b2e, 0x2f5d7c, 0x3e6b45, 0xb08a2a, 0x8c8f93, 0xc8c2b0, 0x6a3d5a, 0xa65d2a], hull: [0x7a2f2a, 0x56606b, 0x2f4a5c], quay: 0x6f7378, apron: 0x5d6166, stripe: 0xb8a040,
+    steel: 0x6b747c, crane: 0x9a3a2e, cab: 0xb7bcc0, wall: 0x7b7f78, tin: [0x55585a, 0x4a4f52], door: 0x8e8a80, rail: 0x3a3d40, fence: 0x5a5d60, super: 0xcfc9bd, funnel: 0xa8432e } }
+function faustPortSite(seed, b, bodies, A) {
+  const K = FAUST_PORT, lv = -FAUST_WATER.kinds.bay.level + 0.05, cm = v => Math.round(v * 100) / 100
+  const depthAt = (x, z) => { let d = 0; for (const c of b.caps) d = Math.max(d, Math.min(b.dmax, Math.max(0, (c[4] - faustWaterSegDist(c, x, z)) / b.slope))); return d }
+  const wet = (x, z) => depthAt(x, z) > lv
+  const other = (x, z) => bodies.some(o => o !== b && o.caps.some(c => faustWaterSegDist(c, x, z) < c[4] + 70))
+  const c0 = b.caps[0], r = c0[4], a0 = faustMix(seed ^ 0x504f5254, 7, 1) % 628 / 100
+  for (let q = 0; q < 48; q++) {
+    const a = a0 + q * 6.283185307 / 48, ca = Math.cos(a), sa = Math.sin(a)
+    let d = r * 0.4; for (let t = r * 0.4; t < r * 1.7; t += 3) if (wet(c0[0] + ca * t, c0[1] + sa * t)) d = t
+    const sx = c0[0] + ca * d, sz = c0[1] + sa * d
+    const nx = Math.abs(ca) > Math.abs(sa) ? -Math.sign(ca) : 0, nz = nx ? 0 : -Math.sign(sa), tx = -nz, tz = nx
+    const qx = sx + nx * K.over, qz = sz + nz * K.over, at = (u, w) => [qx - nx * w + tx * u, qz - nz * w + tz * u]
+    let ok = true
+    for (const u of [-200, -70, 70, 200]) { const [x, z] = at(u, 0); if (depthAt(x, z) < 4) ok = false }
+    for (const u of [-200, -110, -20, 20, 110, 200]) for (const w of [-25, -60]) { const [x, z] = at(u, w); if (depthAt(x, z) < 5) ok = false }
+    for (let u = -K.hw; ok && u <= K.hw; u += 43) for (let w = 0; w <= K.deep; w += 17) { const [x, z] = at(u, w); if (other(x, z) || (w >= 75 && wet(x, z))) ok = false }
+    for (const [u, w] of [[-215, 0], [215, 0], [-215, 205], [215, 205], [0, 102], [0, 205]]) { const [x, z] = at(u, w); if (!faustWaterFree(x, z, 80, [], A)) ok = false }
+    for (const dk of b.docks || []) for (const [u, w] of [[-215, 0], [0, 0], [215, 0], [-215, 100], [215, 100]]) { const [x, z] = at(u, w); if (Math.hypot(x - dk.x, z - dk.z) < 80) ok = false }
+    if (!ok) continue
+    const docks = [], ang = Math.atan2(-nz, -nx)
+    for (const sgn of [-1, 1]) {
+      const bx = qx - nx * K.over + tx * sgn * (K.hw + 36), bz = qz - nz * K.over + tz * sgn * (K.hw + 36)
+      for (let e = -60; e <= 60; e += 2) if (wet(bx + nx * e, bz + nz * e)) {
+        const x = bx + nx * (e - 7), z = bz + nz * (e - 7)
+        if (wet(x + nx * K.pier, z + nz * K.pier)) docks.push({ id: b.id + ':p:' + (sgn > 0 ? 1 : 0), x: cm(x), z: cm(z), yaw: cm(Math.atan2(Math.cos(ang), Math.sin(ang))), len: K.pier, a: cm(ang) })
+        break
+      }
+    }
+    return { id: b.id + ':port', x: cm(qx), z: cm(qz), nx, nz, a: cm(a), docks }
+  }
+  return null
+}
+const faustPortBuilt = new WeakMap()
+function faustPortOf(seed, S) {
+  const w = faustWater(seed, S)
+  if (w.port === undefined) w.port = w.bodies.find(b => b.port)?.port || null
+  return w.port
+}
+function faustPortSegs(seed, S, x0, z0, x1, z1) {
+  const P = faustPortOf(seed, S)
+  if (!P) return []
+  const K = FAUST_PORT, tx = -P.nz, tz = P.nx, mx = P.x - P.nx * K.deep / 2, mz = P.z - P.nz * K.deep / 2, c = 135
+  const ax = mx - tx * K.hw, az = mz - tz * K.hw, bx = mx + tx * K.hw, bz = mz + tz * K.hw
+  if (Math.min(ax, bx) - c > x1 || Math.max(ax, bx) + c < x0 || Math.min(az, bz) - c > z1 || Math.max(az, bz) + c < z0) return []
+  return [[ax, az, bx, bz, c]]
+}
+function faustPortBuild(P, seed) {
+  const K = FAUST_PORT, T = K.tints, RT = FAUST_RINGS.tints, nx = P.nx, nz = P.nz, tx = -nz, tz = nx, swap = nx !== 0, cm = faustCm, top = K.top, hw = K.hw
+  const o = { part: [], cont: [], flat: [], light: [], solid: [] }
+  const yawW = Math.atan2(nz, -nx)
+  const h = (a, b = 0) => faustMix(seed ^ 0x504f5254, a, b)
+  const wp = (u, w) => [P.x - nx * w + tx * u, P.z - nz * w + tz * u]
+  const box = (u, w, y, hu, hy, hww, tint, solid, to) => {
+    const [x, z] = wp(u, w), ex = swap ? hww : hu, ez = swap ? hu : hww, e = ['body', cm(ex), cm(hy), cm(ez), cm(x), cm(y), cm(z), 0, 0, tint]
+    if (to) o.cont.push([e[1], e[2], e[3], e[4], e[5], e[6], e[9]]); else o.part.push(e)
+    if (solid) o.solid.push(faustBox(cm(x), cm(y), cm(z), cm(ex), cm(hy), cm(ez)))
+  }
+  const stay = (u, wa, ya, wb, yb, tint) => {
+    const [x, z] = wp(u, (wa + wb) / 2)
+    o.part.push(['body', cm(Math.hypot(wb - wa, yb - ya) / 2), 0.1, 0.1, cm(x), cm((ya + yb) / 2), cm(z), yawW, Math.atan2(yb - ya, wb - wa), tint])
+  }
+  const slab = (u, w, y, hu, hy, hww) => { const [x, z] = wp(u, w); o.solid.push(faustBox(cm(x), cm(y), cm(z), cm(swap ? hww : hu), cm(hy), cm(swap ? hu : hww))) }
+  const flat = (u0, u1, w0, w1, y, tint) => { const [xa, za] = wp(u0, w0), [xb, zb] = wp(u1, w1); o.flat.push([cm(Math.min(xa, xb)), cm(Math.min(za, zb)), cm(Math.max(xa, xb)), cm(Math.max(za, zb)), y, tint]) }
+  const lamp = (u, w, y, hu, hy, hww) => { const [x, z] = wp(u, w); o.light.push(faustBox(cm(x), cm(y), cm(z), cm(swap ? hww : hu), cm(hy), cm(swap ? hu : hww))) }
+  slab(0, K.deep / 2, top - 5, hw, 5, K.deep / 2)
+  flat(-hw, hw, 0, K.deep, 0.12, T.apron)
+  flat(-hw, hw, 28, 138, 0.13, RT.lot)
+  flat(-hw, hw, 138, 142, 0.14, RT.street)
+  flat(-hw, hw, 0.4, 1.0, 0.15, T.stripe)
+  flat(-hw, hw, 143.5, 150.5, 0.14, RT.dirt)
+  for (let bi = 0; bi < 4; bi++) flat(-205 + bi * 82 + 67, -205 + bi * 82 + 82, 28, 138, 0.14, RT.street)
+  box(0, 0, -0.9, hw, 1.0, 0.15, T.quay)
+  for (const sg of [-1, 1]) box(sg * hw, 35, -0.9, 0.15, 1.0, 35, T.quay)
+  for (const w of K.rails) box(0, w, 0.2, hw - 5, 0.1, 0.2, T.rail)
+  for (const w of [145, 148]) for (const d of [-0.7, 0.7]) box(0, w + d, 0.22, hw - 10, 0.12, 0.08, T.rail)
+  for (let u = -200; u <= 200; u += 25) box(u, 1.4, 0.45, 0.2, 0.35, 0.2, RT.pole)
+  const crane = u0 => {
+    const r = K.rails
+    for (const du of [-10, 10]) for (const w of r) box(u0 + du, w, 17.6, 0.9, 17.5, 0.9, T.steel, true)
+    for (const du of [-10, 10]) box(u0 + du, (r[0] + r[1]) / 2, 36, 0.8, 1, (r[1] - r[0]) / 2 + 1, T.steel)
+    for (const w of r) box(u0, w, 36, 10.8, 1, 0.8, T.steel)
+    box(u0, -17, 39, 1.3, 1.2, 43, T.crane)
+    box(u0, 11.75, 49.5, 0.7, 7.5, 0.7, T.steel)
+    box(u0, -30, 36.9, 1.6, 1.2, 1.8, T.steel)
+    box(u0, -20, 34.5, 2.2, 1.4, 2.2, T.cab)
+    for (const du of [-0.9, 0.9]) { stay(u0 + du, -59, 39.5, 11.75, 56.6, T.steel); stay(u0 + du, 11.75, 56.6, 26, 39.5, T.steel); stay(u0 + du, -30, 39.5, -2, 52, T.steel) }
+    for (const [w, y] of [[-59, 39.9], [11.75, 57.5], [4, 37.2], [19.5, 37.2]]) lamp(u0, w, y, 0.45, 0.35, 0.45)
+  }
+  for (const u0 of K.cranes) crane(u0)
+  for (const u of [-120, 0, 120]) {
+    box(u, 142, 2.1, 1.8, 2, 1.8, T.steel, true); box(u, 142, 13, 0.7, 9, 0.7, T.steel); box(u, 142 - 12, 22.5, 0.6, 0.7, 14, T.crane)
+    box(u, 157, 21, 1.5, 1.2, 1.5, T.steel); box(u, 141, 18.5, 1.4, 1.3, 1.4, T.cab)
+  }
+  for (let bi = 0; bi < 5; bi++) {
+    const bu = -205 + bi * 82
+    for (let row = 0, w = 30; w < 134; row++, w += 2.8) {
+      if (row % 11 === 10) { w += 4; continue }
+      let mx = 0, mn = 9, c0 = -1, c1 = -1
+      for (let c = 0; c < 5; c++) {
+        const q = h(bi * 100 + c, row), n = q % 7 < 2 ? 0 : 1 + (q >>> 4) % 4, u = bu + 6.7 + c * 13.4
+        for (let k = 0; k < n; k++) box(u, w, 0.14 + 1.3 + k * 2.6, 6.1, 1.3, 1.22, T.container[h(bi * 1000 + c * 37 + row, k + 7) % 8], false, true)
+        if (n) { mx = Math.max(mx, n); mn = Math.min(mn, n); if (c0 < 0) c0 = c; c1 = c }
+      }
+      if (mx) {
+        slab(bu + 33.5, w, 0.14 + mx * 1.3, 33.5, mx * 1.3, 1.22)
+        box(bu + 6.7 + (c0 + c1) * 6.7, w, 0.14 + mn * 1.3, (c1 - c0) * 6.7 + 5.75, mn * 1.3 - 0.3, 0.92, T.container[h(bi * 977 + row, 5) % 8])
+      }
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    const u = -170 + i * 85
+    box(u, 175, 4.6, 34, 4.5, 15, T.wall, true)
+    const [x, z] = wp(u, 175); o.part.push(['shed', cm((swap ? 15 : 34) + 0.4), 1.4, cm((swap ? 34 : 15) + 0.4), cm(x), 9.1, cm(z), 0, 0, T.tin[i & 1]])
+    for (const du of [-18, 0, 18]) box(u + du, 159.85, 3.4, 3.2, 3.2, 0.12, T.door)
+  }
+  for (const u of [-85, 0, 85]) box(u, 198, 2.6, 11, 2.5, 5, T.wall, true)
+  for (const [a, b] of [[-215, -134.5], [-120.5, 120.5], [134.5, 215]]) box((a + b) / 2, 205, 1.7, (b - a) / 2, 1.6, 0.1, T.fence, true)
+  for (const sg of [-1, 1]) box(sg * hw, 140, 1.7, 0.1, 1.6, 65, T.fence, true)
+  for (const sg of [-1, 1]) { box(sg * 140, 200, 1.7, 2.5, 1.6, 2.5, T.wall, true); lamp(sg * 140, 200, 3.8, 0.6, 0.3, 0.6) }
+  for (const w of [26, 139]) for (let u = -210; u <= 210; u += 70) { box(u, w, 11.1, 0.22, 11, 0.22, RT.pole); lamp(u, w, 22.4, 1.3, 0.25, 0.7) }
+  for (const [si, u0] of [[0, -110], [1, 110]]) {
+    const hull = T.hull[h(si, 3) % 3], dir = h(si, 4) & 1 ? 1 : -1, wc = -15.5
+    box(u0, wc, -1.2, 92, 7, 14.5, hull, true)
+    let off = 92
+    for (const [hu, hww] of [[8, 12], [6, 8], [5, 4]]) { box(u0 + dir * (off + hu), wc, -1.2, hu, 7, hww, hull, true); off += 2 * hu }
+    box(u0 - dir * 70, wc, 15, 10, 9, 11, T.super, true); box(u0 - dir * 70, wc, 26.5, 6, 2.5, 12.2, T.super); box(u0 - dir * 58, wc, 31, 3, 5, 3, T.funnel)
+    for (let r = 0; r < 6; r++) {
+      let mn = 9
+      for (let c = 0; c < 10; c++) {
+        const n = 1 + h(si * 977 + c, r) % 3, u = u0 - dir * 40 + dir * c * 13.4
+        for (let k = 0; k < n; k++) box(u, wc - 7 + r * 2.8, 5.8 + 1.3 + k * 2.6, 6.1, 1.3, 1.22, T.container[h(si * 7919 + c * 31 + r, k + 3) % 8], false, true)
+        mn = Math.min(mn, n)
+      }
+      box(u0 - dir * 40 + dir * 6.7 * 9, wc - 7 + r * 2.8, 5.8 + mn * 1.3, 6.7 * 9 + 5.75, mn * 1.3 - 0.3, 0.92, T.container[h(si * 31 + r, 9) % 8])
+    }
+  }
+  o.grid = new Map()
+  o.cont.forEach((e, i) => { const k = Math.floor(e[3] / 24) + ',' + Math.floor(e[5] / 24); const g = o.grid.get(k); g ? g.push(i) : o.grid.set(k, [i]) })
+  return o
+}
+function faustPortGet(seed, P) {
+  let B = faustPortBuilt.get(P)
+  if (!B) faustPortBuilt.set(P, B = faustPortBuild(P, seed))
+  return B
+}
+function faustPortFrame() {
+  const F = faustState
+  if (!F?.materials || !camera || renderHeadless || !LV.faust) return
+  const P = faustPortOf(F.seed, F.S), K = FAUST_PORT.near
+  if (!P) return
+  const p = camera.position, mx = P.x - P.nx * FAUST_PORT.deep / 2, mz = P.z - P.nz * FAUST_PORT.deep / 2
+  let M = F.portMesh
+  if (Math.hypot(p.x - mx, p.z - mz) > FAUST_PORT.hw + K.wake) { if (M) { M.visible = false; M.count = 0; F.portAt = null } return }
+  if (!M) {
+    const S = F.ringShapes ||= faustRingShapes()
+    M = F.portMesh = new THREE.InstancedMesh(faustSurfaceGeometry(S.body, K.cap), faustSurfaceMaterial(F, 'body'), K.cap)
+    M.userData.ownGeometry = true; M.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    M.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(K.cap * 3), 3); M.instanceColor.setUsage(THREE.DynamicDrawUsage)
+    M.castShadow = false; M.receiveShadow = false; M.frustumCulled = true; M.boundingSphere = new THREE.Sphere(new THREE.Vector3(), K.r + 10)
+    worldGroup.add(M); inkPrepare(M)
+  }
+  const t = now(), at = F.portAt
+  if (at && Math.hypot(p.x - at[0], p.z - at[1]) < K.step && t - at[2] < K.every) return
+  F.portAt = [p.x, p.z, t]
+  const B = faustPortGet(F.seed, P), g0x = Math.floor((p.x - K.r) / 24), g1x = Math.floor((p.x + K.r) / 24), g0z = Math.floor((p.z - K.r) / 24), g1z = Math.floor((p.z + K.r) / 24), cand = []
+  for (let a = g0x; a <= g1x; a++) for (let b = g0z; b <= g1z; b++) { const list = B.grid.get(a + ',' + b); if (list) for (const i of list) { const e = B.cont[i], d = Math.hypot(e[3] - p.x, e[5] - p.z); if (d < K.r) cand.push([d, i]) } }
+  cand.sort((u, v) => u[0] - v[0])
+  const n = Math.min(cand.length, K.cap), m = M.instanceMatrix.array, c = M.instanceColor.array, la = M.geometry.attributes.faustLayer.array, col = F.portCol ||= new THREE.Color()
+  for (let q = 0; q < n; q++) {
+    const e = B.cont[cand[q][1]], s = 0.6 + 0.4 * Math.min(1, (K.r - cand[q][0]) / K.fade), o = q * 16
+    m[o] = e[0] * s; m[o + 1] = 0; m[o + 2] = 0; m[o + 3] = 0; m[o + 4] = 0; m[o + 5] = e[1] * s; m[o + 6] = 0; m[o + 7] = 0
+    m[o + 8] = 0; m[o + 9] = 0; m[o + 10] = e[2] * s; m[o + 11] = 0; m[o + 12] = e[3]; m[o + 13] = e[4]; m[o + 14] = e[5]; m[o + 15] = 1
+    col.setHex(e[6]); c[q * 3] = col.r; c[q * 3 + 1] = col.g; c[q * 3 + 2] = col.b; la[q] = faustSurfaceLayer('body', e[6])
+  }
+  M.count = n; M.visible = n > 0; M.boundingSphere.center.set(p.x, 0, p.z)
+  M.instanceMatrix.needsUpdate = true; M.instanceColor.needsUpdate = true; M.geometry.attributes.faustLayer.needsUpdate = true
+}
+function faustPortCell(seed, S, i, j, out) {
+  const P = faustPortOf(seed, S)
+  if (!P) return
+  let B = faustPortBuilt.get(P)
+  if (!B) faustPortBuilt.set(P, B = faustPortBuild(P, seed))
+  const C = FAUST_RINGS.cell, here = (x, z) => Math.floor(x / C) === i && Math.floor(z / C) === j
+  for (const e of B.part) if (here(e[4], e[6])) out.part.push(e)
+  for (const e of B.flat) if (here((e[0] + e[2]) / 2, (e[1] + e[3]) / 2)) out.flat.push(e)
+  for (const b of B.light) if (here(b.cx, b.cz)) out.light.push(b)
+  for (const b of B.solid) if (here(b.cx, b.cz)) out.solid.push(b)
+}
 function faustWaterMix(seed, S) {
-  const h = i => faustMix(seed ^ 0x57415452, 92, 10 + i) % 100, m = { river: h(1) < 75, reservoir: h(2) < 55, bay: h(3) < 45, lakes: h(4) < 30 ? 0 : h(4) < 60 ? 1 : h(4) < 85 ? 2 : 3 }
+  const h = i => faustMix(seed ^ 0x57415452, 92, 10 + i) % 100, m = { river: h(1) < 75, reservoir: h(2) < 55, bay: true, lakes: h(4) < 30 ? 0 : h(4) < 60 ? 1 : h(4) < 85 ? 2 : 3 }
   if (!m.river && !m.reservoir && !m.bay && !m.lakes) m.lakes = 1 + h(5) % 2
   return m
 }
@@ -6825,10 +7016,10 @@ function faustWater(seed, S) {
     let cx, cz, out
     if (ends1) {
       const across = ends1.out[0] ? ends1.p[1] : ends1.p[0], clear = Math.min(...[-R.avenue, R.avenue].map(l => Math.abs(across - l))), fit = kind === 'reservoir' ? clear - 245 : (clear - 140) / 1.25
-      if (fit < 200) ends1 = null; else r = Math.min(r, fit)
+      if (fit < (kind === 'bay' ? 700 : 200)) ends1 = null; else r = Math.min(r, fit)
     }
     if (ends1) { out = ends1.out; cx = ends1.p[0] + out[0] * (r + (kind === 'reservoir' ? 54 : 30)); cz = ends1.p[1] + out[1] * (r + (kind === 'reservoir' ? 54 : 30)) }
-    else { for (let t = 0; t < 40; t++) { const ang = rng() * 6.283, dist = 4200 + rng() * 5200; cx = Math.cos(ang) * dist; cz = Math.sin(ang) * dist; if (faustWaterFree(cx, cz, r + 40, taken, A)) break }
+    else { for (let t = 0; t < (kind === 'bay' ? 400 : 40); t++) { const ang = rng() * 6.283, dist = 4200 + rng() * 5200; cx = Math.cos(ang) * dist; cz = Math.sin(ang) * dist; if (faustWaterFree(cx, cz, r + 40, taken, A)) break }
       out = [Math.cos(Math.atan2(cz, cx)), Math.sin(Math.atan2(cz, cx))] }
     const caps = blob(cx, cz, r, kind === 'reservoir' ? 0 : 2, id.length * 7 + (kind === 'bay' ? 3 : 5)), b = body(id, kind, caps, { bounds: bounds(caps) })
     taken.push([cx, cz, r * 1.35]); return { b, cx, cz, r, out, onRiver: !!ends1 }
@@ -6846,6 +7037,8 @@ function faustWater(seed, S) {
     bay = place('bay', 'bay:0', 0, ends && { p: ends.dn, out: ends.dnOut })
     const toward = Math.atan2(-bay.out[1], -bay.out[0])
     bay.b.docks = docks(bay.b, bay.cx, bay.cz, bay.r, 4, 5, toward)
+    const site = faustPortSite(seed, bay.b, bodies, A)
+    if (site) { bay.b.docks.push(...site.docks); delete site.docks; bay.b.port = site }
   }
   if (ends && !(bay && bay.onRiver) && pondFit(ends.dn, ends.dnOut) >= 80) { const c = ends.dn, pr = Math.min(260, pondFit(ends.dn, ends.dnOut)), caps = blob(c[0] + ends.dnOut[0] * 200, c[1] + ends.dnOut[1] * 200, pr, 2, 13); body('lake:delta', 'lake', caps, { bounds: bounds(caps) }); taken.push([c[0] + ends.dnOut[0] * 200, c[1] + ends.dnOut[1] * 200, 360]) }
   for (let n = 0; n < mix.lakes; n++) {
@@ -7294,7 +7487,7 @@ const faustWaterBodies = (seed, S) => {
   return w.listed ||= [...w.bodies.map(b => ({ id: b.id, kind: b.kind, level: b.level, bounds: b.bounds, ...b.centre && { centre: b.centre }, ...b.docks && { docks: b.docks.map(k => ({ id: k.id, x: k.x, z: k.z, yaw: k.yaw })) }, ...b.dam && { dam: b.dam }, ...b.channel && { channel: b.channel } })),
     ...faustChannels(seed, S).list.filter(c => c.kind !== 'river').map(c => ({ id: c.id, kind: 'channel', level: FAUST_CHAN.ground - FAUST_CHAN.depth - FAUST_CHAN.gutter[2] + FAUST_CHAN.water, bounds: [c.rect.a0, c.rect.b0, c.rect.a1, c.rect.b1] }))]
 }
-const FAUST_RINGS = { version: 10, near: 700, close: 220, tree: 40, cell: 480, city: 14, jitter: 300, urban: 6000, suburb: 10000, edge: 15500, clear: 14,
+const FAUST_RINGS = { version: 11, near: 700, close: 220, tree: 40, cell: 480, city: 14, jitter: 300, urban: 6000, suburb: 10000, edge: 15500, clear: 14,
   block: 96, street: 7, inset: 3, gap: 2.5, high: [20, 48], low: [9, 16], storey: 3.5,
   sub: { pitch: 160, street: 5, front: 25, house: [4.5, 6], depth: [4, 5.5], storeys: [3, 5.8], roof: [2.2, 3.2] },
   shanty: { odds: [0.2, 0.07], radius: [16, 36], count: [26, 70], alley: 0.8, bulbs: 22 },
@@ -7544,6 +7737,11 @@ function* faustSubStreetsideSteps(seed, i, j, ctx) {
 }
 function faustRingCell(seed, S, plan, i, j) { return drain(faustRingCellSteps(seed, S, plan, i, j)) }
 function* faustRingCellSteps(seed, S, plan, i, j) {
+  const out = yield* faustRingCellSteps0(seed, S, plan, i, j)
+  faustPortCell(seed, S, i, j, out)
+  return out
+}
+function* faustRingCellSteps0(seed, S, plan, i, j) {
   const R = FAUST_RINGS, C = R.cell, T = R.tints, band = faustRingBand(seed, S, i, j)
   const out = { band, far: [], body: [], roof: [], flat: [], light: [], solid: [], buildings: [], part: [], near: [], lots: [], pavements: [], fences: [], trees: [], swims: [] }
   out.close = []; out.mid = []
@@ -7553,7 +7751,7 @@ function* faustRingCellSteps(seed, S, plan, i, j) {
   const part = (k, sx, sy, sz, x, y, z, yaw, roll, tint) => out.part.push([k, faustCm(sx), faustCm(sy), faustCm(sz), faustCm(x), faustCm(y), faustCm(z), yaw, roll, tint])
   const HALF = 1.5707963267948966
   if (band === 'city' || band === 'edge') return out
-  const x0 = i * C, z0 = j * C, x1 = x0 + C, z1 = z0 + C, segs = faustRingRoads(plan, x0, z0, x1, z1).concat(faustChanSegs(seed, S, x0, z0, x1, z1)).concat(faustWaterSegs(seed, S, x0, z0, x1, z1)), A = S * 48, cuts = faustChannels(seed, S).rects.concat(faustWaterRectsIn(seed, S, x0, z0, x1, z1))
+  const x0 = i * C, z0 = j * C, x1 = x0 + C, z1 = z0 + C, segs = faustRingRoads(plan, x0, z0, x1, z1).concat(faustChanSegs(seed, S, x0, z0, x1, z1)).concat(faustWaterSegs(seed, S, x0, z0, x1, z1)).concat(faustPortSegs(seed, S, x0, z0, x1, z1)), A = S * 48, cuts = faustChannels(seed, S).rects.concat(faustWaterRectsIn(seed, S, x0, z0, x1, z1))
   const H = (k, a, b = 0) => faustMix(seed ^ k, a, b), pick = (list, h) => list[h % list.length]
   const inCity = (x, z, e) => Math.abs(x) < A + R.city + e && Math.abs(z) < A + R.city + e
   const mouths = (kind, axis, c) => { const o = []
@@ -9138,6 +9336,7 @@ function faustReset() {
   faustDisposeSky()
   for (const g of Object.values(faustState?.ringShapes || {})) g.dispose()
   for (const set of faustState?.ringSets || []) for (const m of Object.values(set)) if (m.userData.ownGeometry) m.geometry.dispose()
+  if (faustState?.portMesh) { worldGroup.remove(faustState.portMesh); faustState.portMesh.geometry.dispose() }
   inReset()
   faustState = { seed: LV.grow.seed, S: LV.grow.S, chunks: new Map(), skyline: null, materials: null,
     stats: { plans: 0, dropped: 0, maxPlanMs: 0, maxPhysicsMs: 0, maxVisualMs: 0, maxStreamMs: 0, maxTickMs: 0, maxFrameMs: 0 },
@@ -9985,8 +10184,8 @@ const FAUST_SURFACE = {
     return { stucco: [T.house[0], T.house[2], T.store[0]], siding: [T.house[1], T.house[3], T.store[1], T.shackHigh[2]], brick: [T.house[4], T.store[2]],
       shingle: [T.roof[1], T.roof[3]], tile: [T.roof[0], T.roof[2]], glass: [T.glass], door: T.door, garage: T.garageDoor,
       wood: [T.trim, T.picket, T.plank, T.board, T.trunk, T.shackHigh[0], T.shackHigh[3], T.shackHigh[4], ...T.shackLow],
-      tin: [...T.tin, T.patch[1], T.shackHigh[1]], paint: [T.swim, T.garageLine, T.patch[2], T.patch[3], ...T.awning, ...T.sign, ...T.cloth],
-      asphalt: [T.street, T.lot, T.porchEdge], concrete: [T.walk, T.pave, T.path, T.kerb, T.porch], grass: [T.park, ...T.lawn], dirt: [T.dirt, T.earth, T.verge], metal: [T.pole] }
+      tin: [...T.tin, T.patch[1], T.shackHigh[1], ...FAUST_PORT.tints.container, ...FAUST_PORT.tints.tin, FAUST_PORT.tints.wall], line: [FAUST_PORT.tints.stripe], paint: [T.swim, T.garageLine, T.patch[2], T.patch[3], ...T.awning, ...T.sign, ...T.cloth, FAUST_PORT.tints.crane, FAUST_PORT.tints.cab, FAUST_PORT.tints.super, FAUST_PORT.tints.funnel],
+      asphalt: [T.street, T.lot, T.porchEdge], concrete: [T.walk, T.pave, T.path, T.kerb, T.porch, FAUST_PORT.tints.quay, FAUST_PORT.tints.apron], grass: [T.park, ...T.lawn], dirt: [T.dirt, T.earth, T.verge], metal: [T.pole, FAUST_PORT.tints.steel, FAUST_PORT.tints.rail, FAUST_PORT.tints.fence, ...FAUST_PORT.tints.hull] }
   }
 }
 function faustSurfaceMap() {
@@ -11936,7 +12135,7 @@ function faustAlleySteam() {
     sp.scale.setScalar(0.9 + 2.6 * ph); sp.material.opacity = K.opacity * Math.min(1, a * 1.5); sp.material.color.setRGB(0.75 + 0.25 * t.w, 0.78 + 0.07 * t.w, 0.82 - 0.22 * t.w)
   })
 }
-function faustAtmosphereFrame() { faustAlleySteam(); faustFieldsFrame(); faustRoadsFrame(); faustRingsFrame(); faustRingTreesNear(); faustChanFrame(); faustWaterFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
+function faustAtmosphereFrame() { faustAlleySteam(); faustFieldsFrame(); faustRoadsFrame(); faustRingsFrame(); faustPortFrame(); faustRingTreesNear(); faustChanFrame(); faustWaterFrame(); faustLampGrid(); faustInteriorLamps(); airDraw(); railFrame() }
 function faustFarLights() { return drain(faustFarLightsSteps()) }
 function* faustFarLightsSteps() {
   const F = faustState, tiles = new Map(), T = FAUST_FAR_TILE
@@ -23100,7 +23299,8 @@ const REAL_MEAN = [[0.241, 0.241, 0.239], [0.255, 0.170, 0.107], [0.127, 0.120, 
   [0.275, 0.268, 0.242], [0.489, 0.470, 0.445]]
 const REAL_KIND = { stone: 0, brick: 1, concrete: 2, asphalt: 3, sidewalk: 4, setts: 5, granite: 6, darkGranite: 7,
   paintWhite: 8, paintYellow: 9, paintBike: 10, iron: 11, steel: 12, brass: 13, door: 14, shadow: 15, lamp: 16,
-  pier: 17, cornice: 18, crown: 19, shutter: 20, signNeon: 21, signPaint: 22, grass: 23, wood: 24, shingle: 25, stucco: 26, siding: 27, houseBrick: 28, water: 29 }
+  pier: 17, cornice: 18, crown: 19, shutter: 20, signNeon: 21, signPaint: 22, grass: 23, wood: 24, shingle: 25, stucco: 26, siding: 27, houseBrick: 28, water: 29, painted: 30 }
+const REAL_PAINTED = [0x9a3b2e, 0x2f5d7c, 0x3e6b45, 0xb08a2a, 0x8c8f93, 0xc8c2b0, 0x6a3d5a, 0xa65d2a]
 const REAL_TINTS = [
   [0x704e3b, 'signPaint'], [0x723b38, 'signPaint'], [0x35503c, 'signPaint'], [0x627d83, 'signPaint'], [0x282f32, 'signPaint'],
   [0xc5b194, 'stone'], [0xb68d69, 'stone'], [0x6a4236, 'brick'], [0xc79a72, 'stone'], [0x9e6349, 'stone'], [0x7d4a37, 'stone'], [0x293a43, 'iron'],
@@ -23175,6 +23375,7 @@ RealK realKind(int k) {
   else if (k == 16) { m.layer = -1.0; m.rough = 0.3; m.emit = vec3(1.0, 0.56, 0.22) * 40.0; }
   else if (k == 17 || k == 18 || k == 19) { m.layer = 0.0; m.gain = 0.9; }
   else if (k == 29) { m.layer = -1.0; m.rough = 0.05; m.sat = 1.0; }
+  else if (k == 30) { m.layer = -1.0; m.rough = 0.4; m.metal = 0.2; m.sat = 0.9; m.gain = 1.2; }
   else if (k == 21) { m.layer = -1.0; m.rough = 0.3; m.sat = 1.0; }
   else if (k == 22) { m.layer = -1.0; m.rough = 0.8; m.sat = 1.0; m.gain = 1.25; }
   else if (k == 23) { m.layer = -1.0; m.rough = 0.95; m.sat = 1.0; m.gain = 1.6; }
@@ -23366,6 +23567,10 @@ function realCityMaterial(kind, R) {
 attribute float faustLayer;
 const float REAL_LAYER_KIND[${FAUST_SURFACE.layers.length}] = float[${FAUST_SURFACE.layers.length}](${FAUST_SURFACE.layers.map(n => (REAL_KIND[FAUST_SURFACE.real[n] || 'stone']).toFixed(1)).join(', ')});
 #endif
+bool realPainted(vec3 c) {
+  ${REAL_PAINTED.map(h => { const c = new THREE.Color(h); return `if (all(lessThan(abs(c - vec3(${c.r.toFixed(6)}, ${c.g.toFixed(6)}, ${c.b.toFixed(6)})), vec3(0.0015)))) return true;` }).join('\n  ')}
+  return false;
+}
 float realKindOf(vec3 c) {
   ${tints}
   return dot(c, vec3(0.2126, 0.7152, 0.0722)) < 0.012 ? ${REAL_KIND.iron}.0 : ${REAL_KIND.stone}.0;
@@ -23382,7 +23587,11 @@ float realKindOf(vec3 c) {
       realWorld = modelMatrix * realWorld; vRealW = realWorld.xyz;
       vRealN = normalize(mat3(modelMatrix) * objectNormal);
       #if defined(REAL_ORNAMENT)
-        vRealKind = faustLayer < -0.5 ? realKindOf(color.rgb) : REAL_LAYER_KIND[int(faustLayer + 0.5)];
+        vec3 realTintV = color.rgb;
+        #ifdef USE_INSTANCING_COLOR
+        realTintV *= instanceColor.rgb;
+        #endif
+        vRealKind = faustLayer < -0.5 ? realKindOf(color.rgb) : realPainted(realTintV) ? ${REAL_KIND.painted}.0 : REAL_LAYER_KIND[int(faustLayer + 0.5)];
         if (faustShopTint(color.rgb)) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
       #else
         vRealKind = ${REAL_KIND.asphalt}.0;
@@ -23435,6 +23644,7 @@ RealSurf realSurface() {
   s.metal = m.metal; s.emit = m.emit;
   if (k == 21) s.emit = min(tint / max(max(tint.r, max(tint.g, tint.b)), 1e-3) * 6.0, vec3(16.0));
   else if (k == 22) s.emit = tint * 0.25;
+  else if (k == 30) s.emit = tint * 0.06;
   if (isBox && k >= 17) realTrim(k, u, hw, hy, vRealBoxY.y, nT, s);
   if (isBox && k == 7 && abs(N.y) < 0.5 && abs(vRealBoxY.y - 2.0) < 0.15 && y0 < 0.1 && hw > 4.0) realShop(N, T, u, hw, lod, s, nT);
   if (isBox && (k == 14 || k == 20)) realDoor(k, N, T, u, hw, vRealW.y - y0, 2.0 * vRealBoxY.y, dot(s.albedo, REAL_LW) / max(dot(tone, REAL_LW), 1e-4), lod, s, nT);
@@ -46623,14 +46833,14 @@ function boatCrewBody(o, cause, dmg = 1000, thrower = null) {
 }
 const BOATS = { moor: 260, away: 420, think: 1000, lines: [1.2, 1.6, 2.5, 3.0],
   fleet: { river: [['Rowboat', 4], ['Speedboat', 3], ['Tug', 2], ['Police launch', 1]], lake: [['Rowboat', 5], ['Speedboat', 3], ['Tug', 2]],
-    reservoir: [['Rowboat', 3], ['Speedboat', 2]], bay: [['Rowboat', 3], ['Speedboat', 3], ['Tug', 2], ['Police launch', 1], ['Barge', 1]], channel: [] },
+    reservoir: [['Rowboat', 3], ['Speedboat', 2]], bay: [['Rowboat', 3], ['Speedboat', 3], ['Tug', 2], ['Police launch', 1], ['Barge', 1]], port: [['Tug', 2], ['Barge', 2]], channel: [] },
   wake: { speed: 1.5, every: 0.09, spray: 8 } }
 const boatMoored = new Map()
 let boatThinkT = 0
 const boatHash = (seed, s) => { let h = (seed | 0) ^ 0x9e3779b9; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0 }
 function boatKindAt(W, body, dock, first) {
   if (first && (body.kind === 'bay' || body.kind === 'reservoir')) return 'Submarine'
-  const F = BOATS.fleet[body.kind] || [], n = F.reduce((s, [, w]) => s + w, 0)
+  const F = BOATS.fleet[dock.id.includes(':p:') ? 'port' : body.kind] || [], n = F.reduce((s, [, w]) => s + w, 0)
   if (!n) return null
   let r = boatHash(LV.grow?.seed ?? 0, body.id + ':' + dock.id) % n
   for (const [k, w] of F) if ((r -= w) < 0) return k
@@ -50081,9 +50291,11 @@ function* mapBuildSteps(seed, S) {
     }
     D.water.push(rec)
     for (const k of b.docks || []) D.docks.push({ x: k.x, z: k.z, yaw: k.yaw, len: k.len || 40 })
+    if (b.port) { const P = b.port, tx = -P.nz, tz = P.nx; D.docks.push({ x: P.x - tx * 215, z: P.z - tz * 215, yaw: Math.atan2(tz, tx), len: 430 }); D.places.push({ x: P.x - P.nx * 100, z: P.z - P.nz * 100, kind: 'dock', name: 'THE PORT', min: 0.02 }) }
     if (b.dam) D.dams.push({ x: b.dam.x, z: b.dam.z, ang: b.dam.ang })
-    if (b.docks && b.docks.length >= 2) D.places.push({ x: b.docks.reduce((t, k) => t + k.x, 0) / b.docks.length, z: b.docks.reduce((t, k) => t + k.z, 0) / b.docks.length, kind: 'dock', name: 'THE DOCKS', min: 0.02 })
-    else if (b.docks && b.docks.length) D.places.push({ x: b.docks[0].x, z: b.docks[0].z, kind: 'dock', name: 'QUAY', min: 0.12 })
+    const pier = (b.docks || []).filter(k => !k.id.includes(':p:'))
+    if (pier.length >= 2) D.places.push({ x: pier.reduce((t, k) => t + k.x, 0) / pier.length, z: pier.reduce((t, k) => t + k.z, 0) / pier.length, kind: 'dock', name: 'THE DOCKS', min: 0.02 })
+    else if (pier.length) D.places.push({ x: pier[0].x, z: pier[0].z, kind: 'dock', name: 'QUAY', min: 0.12 })
   }
   for (const ch of CH.list) {
     const flat = ch.axis ? [ch.c, ch.lo, ch.c, ch.hi] : [ch.lo, ch.c, ch.hi, ch.c]
