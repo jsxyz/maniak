@@ -1428,6 +1428,8 @@ OBJECTS.push(
   { name: 'Tin panel', half: [1.8, 1.0, 0.06], mass: 3.6, bounce: 0.1, friction: 0.6, damp: [0.12, 0.4], hit: 1, color: 0x3a424b, stripe: 0x252d37, prop: 'tinfence', dmg: 14, thrown: 15, hp: 3 })
 OBJECTS.push({ name: 'Lamp post', half: [0.14, 0.14, 1.5], mass: 6, bounce: 0.05, friction: 0.6, damp: [0.15, 0.4], hit: 1, color: 0x252d37, stripe: 0x5c6671, piece: 'lamppost', across: 1, dmg: 40, thrown: 40, retire: o => dsLampPieceRetire(o) })
 const LAMP_PIECE = OBJECTS.length - 1
+OBJECTS.push({ name: 'Signal pole', half: [0.08, 0.08, 1.15], mass: 2.5, bounce: 0.05, friction: 0.6, damp: [0.15, 0.4], hit: 1, color: 0x56606a, stripe: 0x252d37, piece: 'signalpole', across: 1, dmg: 25, thrown: 25, retire: o => dsSigPieceRetire(o) })
+const SIG_PIECE = OBJECTS.length - 1
 const SIT_HIP = 0.29
 const seatFit = (s, C) => { const M = MODELS[C.model || 'man']
   return [s[0] - Math.sign(s[0]) * (M.sitIn || 0), s[1] + SIT_HIP * (C.h + C.r) + (M.sitLift || 0), s[2]] }
@@ -41727,9 +41729,11 @@ function dsSignalLook(L, i, n, s) {
   const age = Number.isFinite(pole.t) ? Math.max(0, (drawNow() - pole.t) / 1000) : 99, u = Math.min(1, age / DS_SIG.fallS), phi = dsFallAngle(age, DS_SIG.fallS, Math.PI / 2 - 0.04)
   K.q.setFromAxisAngle(K.a.set(fz, 0, -fx), phi)
   const x = n.x + s * 9, z = n.z + s * 9, lift = DS_SIG.pole * u
-  for (const [mesh, h] of [[L.poles, 2.3], [L.lamps, DS_SIG.y]]) {
+  const cut = age >= DS_SIG.fallS && pole.p && dsSigCut(pole)
+  if (cut) { K.sh ||= new THREE.Vector3(1, 0.5, 1); K.s0 ||= new THREE.Vector3(0, 0, 0) }
+  for (const [mesh, h] of [[L.poles, cut ? 1.15 : 2.3], [L.lamps, DS_SIG.y]]) {
     K.v.set(0, h, 0).applyQuaternion(K.q); K.v.x += x; K.v.y += lift; K.v.z += z
-    mesh.setMatrixAt(i, K.m.compose(K.v, K.q, K.s))
+    mesh.setMatrixAt(i, K.m.compose(K.v, K.q, cut ? mesh === L.poles ? K.sh : K.s0 : K.s))
   }
 }
 
@@ -41792,6 +41796,7 @@ function dsAdd(rec) {
   if (rec.kind === DS_KIND.pane) { st.tableDirty = true; st.buildings.add(rec.p.ci + ' ' + rec.p.cj + ' ' + rec.p.slot); dsGlassOut(rec) }
   else if (rec.kind === DS_KIND.lamp) dsLampOut(rec)
   else if (rec.kind === DS_KIND.post) { dsLampOut(rec); dsPostPhysics(rec); st.fallenDirty = true; if (isHost) dsPieceQ.push(rec) }
+  else if (rec.kind === DS_KIND.pole) { if (isHost) dsSigQ.push(rec) }
   else if (dsKinds.has(rec.kind)) dsKindCall(rec, 'apply')
   if (!serving && dsNow() - rec.t < DESTRUCT.fresh) st.fx.push(rec)
   for (const fn of st.listeners.get('break') || []) try { fn(rec.key, rec) } catch (e) { console.warn('destruction listener', e) }
@@ -42602,6 +42607,73 @@ function dsLampPieceWarm() {
   m.count = 1
   try { renderer.compileAsync(m, camera, scene)?.catch?.(() => {}) } finally { m.count = 0 }
 }
+const DS_SIGPIECE = 31, DS_SIGPIECE_AT = 3.45
+const dsSigKey = (chunk, i) => DS_SIGPIECE * 4294967296 + chunk * 1024 + i
+const dsSigQ = [], dsSigLive = []
+const dsSigAt = r => { const w = (r.info >> 3 & 63) / 64 * 2 * Math.PI; return [r.p.x + Math.cos(w) * DS_SIGPIECE_AT, r.p.z + Math.sin(w) * DS_SIGPIECE_AT, w] }
+function dsSigPieceRecord(key) {
+  const p = dsSignal(DS_POLE + key - DS_SIGPIECE * 4294967296)
+  return p && { chunk: p.chunk, i: p.i, at: p.at }
+}
+function dsSigCut(r) {
+  const n = performance.now()
+  if (r.cutT !== undefined && n - r.cutT < 150) return r.cutV
+  r.cutT = n
+  if (dsState.all.has(dsSigKey(r.chunk, r.p.i))) return r.cutV = true
+  const [cx, cz] = dsSigAt(r)
+  for (const o of objs) if (o.K.piece === 'signalpole' && Math.abs(o.x - cx) < 3 && Math.abs(o.z - cz) < 3) return r.cutV = true
+  return r.cutV = false
+}
+function dsSigPieceStep() {
+  const st = dsState, F = faustState
+  if (!st || !F || !world || !(SIG_PIECE > 0)) return
+  const T = dsNow()
+  for (let i = dsSigLive.length - 1; i >= 0; i--) {
+    const [r, o] = dsSigLive[i]
+    if (!objs.includes(o)) { dsSigLive.splice(i, 1); continue }
+    if (o.heldBy !== undefined) { dsSigLive.splice(i, 1); dsBreak(DS_SIGPIECE, dsSigKey(r.chunk, r.p.i), 0) }
+  }
+  for (let i = dsSigQ.length - 1; i >= 0; i--) {
+    const r = dsSigQ[i]
+    if (!st.all.has(r.key)) { dsSigQ.splice(i, 1); continue }
+    if (T - r.t < DS_SIG.fallS * 1000) continue
+    if (st.all.has(dsSigKey(r.chunk, r.p.i))) { dsSigQ.splice(i, 1); continue }
+    let near = false
+    for (const c of players.values()) if (!(c.dead > 0) && Math.hypot(c.x - r.p.x, c.z - r.p.z) < DS_PIECE_NEAR) { near = true; break }
+    if (!near) continue
+    if (typeof dsPieceBudget === 'function' && !dsPieceBudget(null)) continue
+    const id = partsFreeId()
+    if (id < 0) continue
+    const [x, z, w] = dsSigAt(r), o = addObject(SIG_PIECE, [x, 0.3, z], id, Math.atan2(Math.cos(w), Math.sin(w)))
+    dsSigQ.splice(i, 1)
+    if (o) { o.pieceR = r; dsSigLive.push([r, o]) }
+  }
+}
+function dsSigPieceRetire(o) {
+  const r = o.pieceR, st = dsState
+  if (!r || !isHost || !st) return
+  dsRemove(dsSigKey(r.chunk, r.p.i))
+  if (st.all.has(r.key) && !dsSigQ.includes(r)) dsSigQ.push(r)
+  dsTileTouch(r.chunk); dsPersistLater()
+}
+let dsSigPieceDone = false
+function dsSigPieceKind() {
+  if (dsSigPieceDone || !GAME.parts?.kind || !(SIG_PIECE > 0)) return
+  dsSigPieceDone = true
+  const row = OBJECTS[SIG_PIECE]
+  GAME.parts.kind('Signal pole on its base', { of: 'attached', mass: row.mass, rip: { pull: 0.5, gives: row.name } }, {
+    near: (c, reach) => {
+      if (!faustState || !LV.faust || !dsCheck() || !(row.mass <= liftOf(c)) || Math.abs(c.y - c.h - c.r) > 1.4) return []
+      return dsSignalsNear(c.x, c.z, reach + 0.6).map(p => ({ ref: { key: p.key, pole: p.pole, i: p.i, x: p.x, z: p.z, chunk: p.chunk }, at: [p.x, 1.2, p.z], gap: Math.hypot(p.x - c.x, p.z - c.z) - c.r - 0.1, R: 0.3, mass: row.mass }))
+    },
+    detach: (inst, c) => {
+      const p = inst.ref
+      if (!isHost || !dsCheck() || !dsBreak(DS_KIND.pole, p.pole, 2 | dsFellWay(p.x, p.z, p.pole, p.x - c.x, p.z - c.z, c) << 3)) return false
+      dsBreak(DS_SIGPIECE, dsSigKey(p.chunk, p.i), 0)
+      return true
+    },
+  })
+}
 let dsLampPieceDone = false
 function dsLampPieceKind() {
   if (dsLampPieceDone || !GAME.parts?.kind || !(LAMP_PIECE > 0)) return
@@ -42686,7 +42758,7 @@ function dsFrame(t, dt) {
   dsTableBuild()
   dsNotify()
   dsLampPieceWarm()
-  if (isHost) dsLampPieceStep()
+  if (isHost) { dsLampPieceStep(); dsSigPieceStep() }
   dsFallenStep()
   dsFxStep(Math.min(0.05, Math.max(0, dt)))
   dsPropJetStep(Math.min(0.05, Math.max(0, dt)))
@@ -43337,7 +43409,10 @@ function propObjLook(K) {
   const box = (w, h, d, x, y, z, col) => add(new T.BoxGeometry(w, h, d), x, y, z, col)
   const cyl = (r0, r1, h, x, y, z, col, n = 8) => add(new T.CylinderGeometry(r0, r1, h, n), x, y, z, col)
   const disc = (r, h, x, y, z, col) => add(new T.CylinderGeometry(r, r, h, 10).rotateZ(Math.PI / 2), x, y, z, col)
-  if (K.piece === 'lamppost') {
+  if (K.piece === 'signalpole') {
+    box(0.16, 0.16, 2.3, 0, 0, 0, 0x56606a); box(0.42, 0.42, 0.7, 0, 0, 1.0, 0x20242a)
+    disc(0.1, 0.05, 0.22, 0, 1.22, 0xff514c); disc(0.1, 0.05, 0.22, 0, 1.0, 0x4a3a22); disc(0.1, 0.05, 0.22, 0, 0.78, 0x1f3a2a)
+  } else if (K.piece === 'lamppost') {
     box(0.28, 0.28, 3, 0, 0, 0, 0x56606a); box(1, 0.14, 0.14, 0.55, 0.05, 1.42, 0x56606a); box(1.3, 0.16, 0.6, 1.05, 0, 1.42, 0xfff0c8)
   } else if (K.loot === 'pipe') {
     add(new T.CylinderGeometry(0.1, 0.1, 3, 8).rotateX(Math.PI / 2), 0, 0, 0, 0x7c828a)
@@ -43832,6 +43907,8 @@ for (const K of OBJECTS) if (K.prop === 'fence' || K.prop === 'tinfence') K.brea
 dsPropKind()
 dsKindRegister(DS_PIECE, { record: dsPieceRecord, apply() {}, undo() {}, fresh() {} })
 dsLampPieceKind()
+dsKindRegister(DS_SIGPIECE, { record: dsSigPieceRecord, apply() {}, undo() {}, fresh() {} })
+dsSigPieceKind()
 
 const SL_BABY = {
   name: 'Baby', range: SHOOTER.fireRange, aimErr: SHOOTER.aimErr, turn: 3.0 + (0.07 - SHOOTER.aimErr) * 30, gun: SHOOTER.far, sticky: 0.7,
