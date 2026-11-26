@@ -42524,7 +42524,11 @@ function dsTableBuild() {
   const R = DESTRUCT.tableCells, keys = []
   for (const [chunk, ch] of st.chunks) {
     if (Math.abs(Math.floor(chunk / F.S) - ci) > R || Math.abs(chunk % F.S - cj) > R) continue
-    for (const r of ch.recs.values()) if (r.kind === DS_KIND.pane) keys.push(r.key)
+    for (const r of ch.recs.values()) if (r.kind === DS_KIND.pane) {
+      keys.push(r.key)
+      const bx = r.p.box, q = bx ? (bx.cx - (r.p.ci * 96 - ARENA) > 56 ? 1 : 0) + (bx.cz - (r.p.cj * 96 - ARENA) > 56 ? 2 : 0) : r.p.slot
+      if (q !== r.p.slot) keys.push(r.key + (q - r.p.slot) * 1048576)
+    }
   }
   let slots = DESTRUCT.slots, data = null, worst = 0
   while (!data) {
@@ -42588,7 +42592,7 @@ bool dsWindow(vec3 w, vec3 N, vec4 box, vec2 boxY, out uint key, out vec2 q, out
   size = vec2(bw * (wx.y - wx.x), 4.0 * (wy.y - wy.x)); share = (wx.y - wx.x) * (wy.y - wy.x);
   float ci = floor((box.x + dsCity.x) / 96.0), cj = floor((box.y + dsCity.x) / 96.0);
   float slot = (box.x - (ci * 96.0 - dsCity.x) > 56.0 ? 1.0 : 0.0) + (box.y - (cj * 96.0 - dsCity.x) > 56.0 ? 2.0 : 0.0);
-  key = ((uint(ci * dsCity.y + cj) * 4u + uint(slot)) << 20u) | (uint(k) << 10u) | (face << 8u) | uint(j);
+  key = ((uint(ci * dsCity.y + cj) * 16u + uint(slot)) << 20u) | (uint(k) << 10u) | (face << 8u) | uint(j);
   return true;
 }
 bool dsBroken(uint key) {
