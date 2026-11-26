@@ -50574,6 +50574,19 @@ function* mapBuildSteps(seed, S) {
   for (const h of D.huts) { const u = Math.floor(h[0] / 2400), v = Math.floor(h[1] / 2400), k = u * 4096 + v; let e = sb.get(k); if (!e) sb.set(k, e = { n: 0, x: 0, z: 0 }); e.n++; e.x += h[0]; e.z += h[1] }
   for (const e of sb.values()) if (e.n >= 4) D.labels.push({ x: e.x / e.n, z: e.z / e.n, text: sName('X').split(' ')[0].toUpperCase() + [' FLATS', ' ROW', ' SETTLEMENT'][e.n % 3], size: e.n, kind: 'shanty', d: 4 })
   yield
+  const hoodDry = (x, z) => !wet(x, z) && !wet(x + 600, z) && !wet(x - 600, z) && !wet(x, z + 200) && !wet(x, z - 200)
+  const hoodBand = (x, z) => { const i = Math.floor(x / C), j = Math.floor(z / C); return i < -nr || j < -nr || i >= nr || j >= nr ? 0 : bands[(j + nr) * bn + i + nr] }
+  for (let q = D.labels.length - 1; q >= 0; q--) {
+    const l = D.labels[q]
+    if (l.kind !== 'hood' || hoodDry(l.x, l.z)) continue
+    let hit = null
+    for (let r = 240; r <= 2400 && !hit; r += 240) for (let s = 0; s < 8 && !hit; s++) {
+      const x = l.x + Math.cos(s * Math.PI / 4) * r, z = l.z + Math.sin(s * Math.PI / 4) * r
+      if (hoodBand(x, z) === l.d && hoodDry(x, z)) hit = [x, z]
+    }
+    if (hit) { l.x = hit[0]; l.z = hit[1] } else D.labels.splice(q, 1)
+  }
+  for (const p of D.places) if (p.name === 'THE PORT') p.min = 0.012; else if (p.name === 'THE DOCKS') p.min = 0.035
   for (const kind of ['hood', 'shanty']) D.labels.filter(l => l.kind === kind).sort((a, b) => b.size - a.size || a.x - b.x).forEach((l, i) => { l.rank = i })
   D.parkName = mapNamer(seed, 0x5041524b)
   for (const p of D.parks) { p.name = D.parkName('X').split(' ')[0].toUpperCase() + ' PARK'; D.places.push({ x: p.x, z: p.z, kind: 'park', name: p.name, min: 0.2 }) }
@@ -51073,7 +51086,7 @@ function* mapPaintSteps(g, D, V, W, H, sc) {
   for (const p of D.places) if (k >= p.min) pin(p.x, p.z, (a, b) => {
     const r = T(k >= 0.5 ? 6.5 : 5)
     mapIcon(g, p.kind, a, b, r, mapSeedAt(p.x, p.z)); if (p.kind === 'club') lab.block(a - r * 1.6, b - r * 2.4, a + r * 1.6, b + r); else lab.block(a - r * 1.2, b - r * 1.2, a + r * 1.2, b + r * 0.9)
-    if (k >= p.min * 1.5 || p.kind === 'dock' || p.kind === 'theatre' || p.kind === 'cathedral' || p.kind === 'hotel') lab.add(p.kind === 'dock' ? 70 : 48, p.name, a, b + (p.kind === 'club' ? r * 2.3 + T(5) : r + T(7)), { size: T(8.5), color: MAP_PAL.ico[p.kind] || MAP_PAL.cream, space: 1 })
+    if (k >= p.min * 1.5 || p.kind === 'dock' || p.kind === 'theatre' || p.kind === 'cathedral' || p.kind === 'hotel') lab.add(p.kind === 'dock' ? 70 : 48, p.name, a, b + (p.kind === 'club' ? r * 2.3 + T(5) : p.kind === 'dock' && k < 0.035 ? -r - T(9) : r + T(7)), { size: T(8.5), color: MAP_PAL.ico[p.kind] || MAP_PAL.cream, space: 1 })
   })
   for (const l of mapPlaces.values()) if (k >= (l.min || 0.1)) pin(l.x, l.z, (a, b) => { mapIcon(g, l.kind || 'site', a, b, T(6), mapSeedAt(l.x, l.z)); if (l.name) lab.add(50, l.name, a, b + T(14), { size: T(8.5), space: 1 }) })
   for (const l of D.labels) {
