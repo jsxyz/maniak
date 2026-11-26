@@ -3122,7 +3122,7 @@ function faustFeatParts(f) {
     B(0, 1.1, -0.2, 1.55, 1.1, 0.35, 0, 0, 2)
   } else if (f.k === 'pond') {
     const R = 4.4
-    B(0, 0.05, 0, 36, 0.005, 1.4, T.path); B(0, 0.05, 0, 1.4, 0.005, 36, T.path)
+    B(0, 0.012, 0, 36, 0.005, 1.4, T.path); B(0, 0.012, 0, 1.4, 0.005, 36, T.path)
     oct(R, 0, 0.5, 0x8a9099, 0); basin(R, 0.5, 0.9); U([0, 0.5, 0], [0, 0.9, 0], R, R, 8, T.pale, 0.5, 0, 1)
     water(R - 0.4, 0.58, 0x07181c, 0.12)
     B(1.4, 0.6, -0.9, 0.4, 0.005, 0.1, 0xbfefff, 1.6); B(-1.1, 0.6, 1.5, 0.3, 0.005, 0.08, 0xbfefff, 1.6); B(-0.4, 0.6, -2.2, 0.35, 0.005, 0.08, 0xbfefff, 1.4)
@@ -3996,6 +3996,7 @@ function faustNetNav(net, at, target) {
   for (const k of path) { const n = net.nodes.get(k); if (Math.hypot(n.x - at.x, n.z - at.z) > 3) return { corner: { x: n.x, y: 0, z: n.z }, there: target.y < 5, pad: null } }
   return direct
 }
+const NET_Y = { pad: 0.006, band: 0.016 }
 function faustNetKerbs(g, P, X, Z) {
   const net = faustState && faustNet(faustState.seed, faustState.S)
   if (!net) return
@@ -4034,7 +4035,7 @@ function faustNetKerbs(g, P, X, Z) {
         if (on && run < 0) run = k
         if (!on && run >= 0) {
           const t0 = run * L / m, t1 = k * L / m, a0 = [A[0] + dx * t0, A[1] + dz * t0], a1 = [A[0] + dx * t1, A[1] + dz * t1]
-          flat([a0, a1, [a1[0] - nx * K.kerb, a1[1] - nz * K.kerb], [a0[0] - nx * K.kerb, a0[1] - nz * K.kerb]], 0.03, FAUST_FEAT.pale)
+          flat([a0, a1, [a1[0] - nx * K.kerb, a1[1] - nz * K.kerb], [a0[0] - nx * K.kerb, a0[1] - nz * K.kerb]], NET_Y.band, FAUST_FEAT.pale)
           run = -1
         }
       }
@@ -4044,12 +4045,12 @@ function faustNetKerbs(g, P, X, Z) {
   const R = K.ring - K.ringW / 2 - 0.5, w = 2.6, col = FAUST_FEAT.path
   for (let k = 0; k < 4; k++) {
     const ux = Math.round(Math.cos(k * Math.PI / 2)), uz = Math.round(Math.sin(k * Math.PI / 2)), nx = -uz, nz = ux
-    flat([[ux * 16 + nx * w, uz * 16 + nz * w], [ux * R + nx * w, uz * R + nz * w], [ux * R - nx * w, uz * R - nz * w], [ux * 16 - nx * w, uz * 16 - nz * w]], 0.03, col)
+    flat([[ux * 16 + nx * w, uz * 16 + nz * w], [ux * R + nx * w, uz * R + nz * w], [ux * R - nx * w, uz * R - nz * w], [ux * 16 - nx * w, uz * 16 - nz * w]], NET_Y.band, col)
   }
-  flat(Array.from({ length: 24 }, (_, i) => [Math.cos(i * Math.PI / 12) * 18, Math.sin(i * Math.PI / 12) * 18]), 0.03, col)
+  flat(Array.from({ length: 24 }, (_, i) => [Math.cos(i * Math.PI / 12) * 18, Math.sin(i * Math.PI / 12) * 18]), NET_Y.band, col)
   for (let i = 0; i < 64; i++) {
     const a = i * Math.PI / 32, b = (i + 1) * Math.PI / 32, r0 = K.walk - w, r1 = K.walk + w
-    flat([[Math.cos(a) * r0, Math.sin(a) * r0], [Math.cos(b) * r0, Math.sin(b) * r0], [Math.cos(b) * r1, Math.sin(b) * r1], [Math.cos(a) * r1, Math.sin(a) * r1]], 0.03, col)
+    flat([[Math.cos(a) * r0, Math.sin(a) * r0], [Math.cos(b) * r0, Math.sin(b) * r0], [Math.cos(b) * r1, Math.sin(b) * r1], [Math.cos(a) * r1, Math.sin(a) * r1]], NET_Y.band, col)
   }
 }
 function faustEtoileGarden(seed, S, gx, gz, NC, net) {
@@ -4096,8 +4097,8 @@ function faustNetGround(g, P, X, Z) {
   for (const p of P.pads) {
     const cx = (p[0] + p[2]) / 2, cz = (p[1] + p[3]) / 2
     const col = garden && Math.hypot(cx, cz) < FAUST_NET.ring - 14 ? FAUST_FEAT.grass : tint
-    if (p.length > 4) { const a = [p[4], 0.02, p[1]], b = [p[6], 0.02, p[1]], c = [p[7], 0.02, p[3]], d = [p[5], 0.02, p[3]]; if (p[6] - p[4] > 0.01 || p[7] - p[5] > 0.01) { g.tri(a, d, c, col); g.tri(a, c, b, col) } }
-    else g.box(faustBox(cx, 0.01, cz, (p[2] - p[0]) / 2, 0.01, (p[3] - p[1]) / 2), col)
+    if (p.length > 4) { const a = [p[4], NET_Y.pad, p[1]], b = [p[6], NET_Y.pad, p[1]], c = [p[7], NET_Y.pad, p[3]], d = [p[5], NET_Y.pad, p[3]]; if (p[6] - p[4] > 0.01 || p[7] - p[5] > 0.01) { g.tri(a, d, c, col); g.tri(a, c, b, col) } }
+    else g.box(faustBox(cx, NET_Y.pad - 0.01, cz, (p[2] - p[0]) / 2, 0.01, (p[3] - p[1]) / 2), col)
   }
   faustNetKerbs(g, P, X, Z)
   const quad = (a, u, n, len, wd, y, col) => {
@@ -11711,7 +11712,7 @@ function faustDoorDress(g, lot, B) {
   if (lit) {
     g.box(faustBox(x, h - 0.04, D.z + 0.1, w, 0.03, 0.2), K.warm, 1.8)
     const mixc = (a, b, t) => { const c = s => Math.round((a >> s & 255) * (1 - t) + (b >> s & 255) * t); return c(16) << 16 | c(8) << 8 | c(0) }
-    for (let i = 0; i < 6; i++) { const t = (i + 1) / 6; g.box(faustBox(x, 0.03 + i * 0.004, f + 1.2 - i * 0.07, w + 0.7 - i * 0.1, 0.006, 1.4 - i * 0.2), mixc(K.pool, K.warm, t * t), 0.04 + 0.46 * t * t) }
+    for (let i = 0; i < 6; i++) { const t = (i + 1) / 6; g.box(faustBox(x, 0.016 + i * 0.004, f + 1.2 - i * 0.07, w + 0.7 - i * 0.1, 0.006, 1.4 - i * 0.2), mixc(K.pool, K.warm, t * t), 0.04 + 0.46 * t * t) }
   }
   const side = hs & 1 ? 1 : -1, shed = lot.district === 'industrial', word = shed ? 'OFFICE' : String(2 + (hs >>> 4) % 198), ex = shed ? 0.6 : 0.14 + word.length * 0.1, px = x + side * (w + 0.4 + ex)
   g.box(faustBox(px, 1.5, f + 0.02, ex, 0.21, 0.02), K.plate)
