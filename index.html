@@ -1292,6 +1292,8 @@ const BOAT_SHAPES = {
   Rowboat: { l: 4.2, b: 1.45, d: 0.62, draft: 0.17, bow: 0.42, transom: 0.62, vee: 0.1, stations: 5, across: 2, deck: [] },
   Speedboat: { l: 6.2, b: 2.05, d: 1.0, draft: 0.34, bow: 0.4, transom: 0.86, vee: 0.22, stations: 6, across: 2, sweep: 0.45, rake: 0.75, rakeFrom: 0.5,
     deck: [[-0.84, 1.19, -1.05, 0.84, 1.5, -0.5]] },
+  'River launch': { l: 6.2, b: 2.05, d: 1.0, draft: 0.34, bow: 0.4, transom: 0.86, vee: 0.22, stations: 6, across: 2, sweep: 0.45, rake: 0.75, rakeFrom: 0.5,
+    deck: [[-0.84, 1.19, -1.05, 0.84, 1.5, -0.5]] },
   'Police launch': { l: 9.5, b: 2.8, d: 1.4, draft: 0.6, bow: 0.38, transom: 0.8, vee: 0.3, stations: 6, across: 2,
     deck: [[-0.95, 1.4, -1.7, 0.95, 3.0, 0.6]] },
   Tug: { l: 12.5, b: 4.4, d: 2.3, draft: 1.5, bow: 0.32, transom: 1, counter: 0.74, vee: 0.5, stations: 7, across: 3,
@@ -1344,6 +1346,8 @@ const BOAT_ROWS = [
     { thrust: 6.5, reverse: 0.35, drag: [0.04, 0.5, 0], quad: [0.02, 0.9, 1.2], rudder: 0.11, wash: 2.5, plane: [0.012, 0.35], bank: 0.012, prop: [0, 0.12, 2.95], bob: 0.35, turn: 1.0, float: 2, sink: 8 }],
   ['Police launch', 24, 0x1b2433, 0.75, 0.4, 18, 450, 3.5, { radius: 7, dmg: 120, knock: 16 }, [[-0.4, 1.5, -0.8], [0.45, 2.15, -0.8]],
     { thrust: 4.2, reverse: 0.4, drag: [0.04, 0.6, 0], quad: [0.0125, 1.0, 1.2], rudder: 0.09, wash: 2.2, plane: [0.004, 0.2], bank: 0.006, prop: [0, 0.2, 4.4], bob: 0.35, turn: 2.0, float: 3, sink: 12 }],
+  ['River launch', 10, 0x1b2433, 0.4, 0.35, 21, 360, 2.5, { radius: 6, dmg: 100, knock: 14 }, [[-0.45, 0.62, -0.3], [0.45, 0.62, 0.8]],
+    { thrust: 5.6, reverse: 0.35, drag: [0.04, 0.5, 0], quad: [0.02, 0.9, 1.2], rudder: 0.11, wash: 2.5, plane: [0.012, 0.35], bank: 0.012, prop: [0, 0.12, 2.95], bob: 0.35, turn: 1.0, float: 2, sink: 8 }],
   ['Tug', 60, 0x2c3a2a, 1.3, 0.39, 8, 900, 6, { radius: 9, dmg: 150, knock: 18 }, [[-0.5, 3.0, -1.6], [0.5, 3.0, -1.6]],
     { thrust: 2.2, reverse: 0.6, drag: [0.05, 0.8, 0], quad: [0.03, 1.4, 1.4], rudder: 0.16, wash: 2.6, spin: 3.5, prop: [0, 0.45, 5.8], bob: 0.35, turn: 3.5, float: 4, sink: 18 }],
   ['Submarine', 110, 0x353c45, 1.15, 0.653, 11, 1500, 8, { radius: 10, dmg: 160, knock: 20 }, [[0, 4.6, -2.0]],
@@ -45882,7 +45886,7 @@ function squadShore(o, p) {
 function squadSpanAhead(o, rec) {
   const body = GAME.faustland?.water?.bodies?.find(b => b.id === rec.id)
   if (!body) return false
-  const v = o.body.getLinearVelocity(), sp = Math.hypot(v.x(), v.z()), S = BOAT_SHAPES['Police launch'], f = sp > 1 ? [v.x() / sp, v.z() / sp] : [-Math.sin(o.yaw || 0), -Math.cos(o.yaw || 0)]
+  const v = o.body.getLinearVelocity(), sp = Math.hypot(v.x(), v.z()), S = BOAT_SHAPES[o.K.name], f = sp > 1 ? [v.x() / sp, v.z() / sp] : [-Math.sin(o.yaw || 0), -Math.cos(o.yaw || 0)]
   const spans = boatSpansOf(body), ahead = S.l / 2 + sp * 2 + 8
   return !!boatInSpan(spans, o.x + f[0] * ahead, o.z + f[1] * ahead, 0) || !!boatInSpan(spans, o.x, o.z, S.l / 2 + 6)
 }
@@ -45895,14 +45899,22 @@ function squadBoard(o, p) {
   restoreChar(gun, at.x, at.y + gun.h + gun.r + 0.05, at.z, 0, 2, 0)
   return true
 }
+function squadRiverPursue(o, p, wr, speed) {
+  const body = GAME.faustland?.water?.bodies?.find(b => b.id === wr.id), C = body && riverChain(body)
+  if (!C || C.length < 2) return false
+  const A = o.boatAI?.river === body.id ? o.boatAI : (o.boatAI = { river: body.id, dir: 1, speed, stop: 0 }), s = riverNear(C, o.x, o.z, A.s ?? 0, 120), gap = riverNear(C, p.x, p.z, s) - s
+  A.dir = gap < 0 ? -1 : 1; A.speed = speed; A.stop = Math.abs(gap) < RIVER.ahead + 20 ? RIVER.ahead : 0
+  o.loose = true; o.crew ||= boatCrewNew(o)
+  return true
+}
 function squadLaunchTick(o, p, H, T) {
   if (o.riders[0] !== undefined) { GAME.boats?.cancel?.(o.id); o.squadKind = 'taken'; o.squadOf = undefined; return }
   const d = Math.hypot(o.x - p.x, o.z - p.z), wet = !!GAME.faustland?.water?.at?.(p.x, p.z)
   const dock = objs.some(m => m !== o && m.moored && Math.hypot(m.x - o.x, m.z - o.z) < BOAT_PATROL.dockR), depth = GAME.faustland?.water?.at?.(o.x, o.z)?.depth ?? 0
   const speed = dock ? BOAT_PATROL.dockSpeed : depth < BOAT_PATROL.shallow ? BOAT_PATROL.shallowSpeed : BOAT_PATROL.speed
-  const wr = GAME.faustland?.water?.at?.(o.x, o.z, floatRec), held = wr?.kind === 'river' && !boatClearsSpans('Police launch', wr.level) && squadSpanAhead(o, wr)
+  const wr = GAME.faustland?.water?.at?.(o.x, o.z, floatRec), held = wr?.kind === 'river' && !boatClearsSpans(o.K.name, wr.level) && squadSpanAhead(o, wr)
   if (held) { if (o.boatAI) GAME.boats?.cancel?.(o.id) }
-  else if (T - o.squadPursueAt > BOAT_PATROL.renew || o.boatAI?.speed !== speed) { o.squadPursueAt = T; GAME.boats?.pursue?.(o, p, { speed, stop: wet ? BOAT_PATROL.stopWet : BOAT_PATROL.stop, urgent: true }) }
+  else if (T - o.squadPursueAt > BOAT_PATROL.renew || o.boatAI?.speed !== speed) { o.squadPursueAt = T; if (!(wr?.kind === 'river' && o.K.name === 'River launch' && !wet && squadRiverPursue(o, p, wr, speed))) GAME.boats?.pursue?.(o, p, { speed, stop: wet ? BOAT_PATROL.stopWet : BOAT_PATROL.stop, urgent: true }) }
   const m = o.squadMark ||= { t: T, d }
   if (T - m.t > BOAT_PATROL.mark) {
     if (d > BOAT_PATROL.lo + 10 && d > m.d - BOAT_PATROL.progress) { H.boatDrops = (H.boatDrops | 0) + 1; H.boatAt = T - (BOAT_PATROL.gap - BOAT_PATROL.retry) * 1000; squadRemove(o); return }
@@ -45926,7 +45938,9 @@ function squadLaunch(p, H) {
     const a = a0 + i * 1.047, s = GAME.boats.spot(p.x + Math.cos(a) * BOAT_PATROL.ring, p.z + Math.sin(a) * BOAT_PATROL.ring, 70, 10)
     if (!s) continue
     const wr = GAME.faustland?.water?.at?.(s.x, s.z, floatRec)
-    if (wr?.kind === 'river' && !boatClearsSpans('Police launch', wr.level)) continue
+    const nm = wr?.kind === 'river' && !boatClearsSpans('Police launch', wr.level) ? 'River launch' : 'Police launch'
+    if (wr?.kind === 'river') { const body = GAME.faustland?.water?.bodies?.find(b => b.id === wr.id); if (!boatClearsSpans(nm, wr.level) || body && boatInSpan(boatSpansOf(body), s.x, s.z, BOAT_SHAPES[nm].l / 2 + 3)) continue }
+    s.launch = nm
     const d = Math.hypot(s.x - p.x, s.z - p.z)
     if (d < BOAT_PATROL.lo || d > BOAT_PATROL.hi) continue
     if (trafficHidden(s.x, s.z, people)) spot = s; else if (d >= BOAT_PATROL.seenMin) seen ||= s
@@ -45935,7 +45949,7 @@ function squadLaunch(p, H) {
   const id = squadId(T)
   if (!spot || id < 0 || objs.length >= OBJ_MAX - 8) return false
   squadIds.add(id)
-  const o = GAME.boats.add('Police launch', spot, id)
+  const o = GAME.boats.add(spot.launch || 'Police launch', spot, id)
   if (!o) { squadIds.delete(id); return false }
   o.squadOf = p.id; o.squadKind = 'launch'; o.squadAt = tickAt || now(); o.squadState = 'drive'; o.squadPursueAt = o.squadAt
   if (!GAME.boats.pursue(o, p, { speed: BOAT_PATROL.speed, stop: BOAT_PATROL.stop, urgent: true })) { squadRemove(o); return false }
@@ -46058,8 +46072,8 @@ function squadBarsDraw(list) {
       for (const x of [-1, 1]) { const m = new THREE.Mesh(kit.lens, new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false })); m.position.set(x * 0.34, 0.09, 0); b.add(m) }
       objGroup.add(b); squadBars.set(o.id, b)
     }
-    const at0 = hullAt(K), bar = K.boat ? [0, 3.1, -0.8] : [0, 1.45, 0.15], p = rotq(o.q, [bar[0] - at0[0], bar[1] - at0[1], bar[2] - at0[2]])
-    b.position.set(o.x + p[0], o.y + p[1], o.z + p[2]); b.quaternion.set(o.q[0], o.q[1], o.q[2], o.q[3]); b.scale.setScalar(K.boat ? 1.9 : 1); b.visible = true
+    const SB = K.boat && BOAT_SHAPES[K.model || K.name], at0 = hullAt(K), bar = K.boat ? [0, (SB?.d ?? 1.2) + 0.45, -0.8] : [0, 1.45, 0.15], p = rotq(o.q, [bar[0] - at0[0], bar[1] - at0[1], bar[2] - at0[2]])
+    b.position.set(o.x + p[0], o.y + p[1], o.z + p[2]); b.quaternion.set(o.q[0], o.q[1], o.q[2], o.q[3]); b.scale.setScalar(K.boat ? (SB?.b ?? 2) * 0.5 : 1); b.visible = true
     b.children[1].material.color.copy(kit.on[0]).lerp(kit.off[0], phase * 0.6); b.children[2].material.color.copy(K.boat ? kit.bOn : kit.on[1]).lerp(K.boat ? kit.bOff : kit.off[1], (1 - phase) * 0.6)
   }
   for (const [id, b] of squadBars) if (!live.has(id)) { b.removeFromParent(); b.children.forEach(c => { if (c.material !== kit.dark) c.material.dispose() }); squadBars.delete(id) }
@@ -48102,6 +48116,8 @@ const BOAT_PAINTS = (({ black, maroon, wine, green, teal, cream, ivory, grey, sl
   Tug: [[black, maroon, 0x7a1f1a, cream], [green, cream, 0x7a1f1a, black], [slate, ivory, 0x7a1f1a, maroon]],
   Barge: [[black, tan, 0x7a1f1a, cream], [olive, brown, 0x7a1f1a, cream], [steel, grey, 0x7a1f1a, black]],
   Submarine: [[steel, slate, black, ivory], [grey, slate, black, cream]] }))(NOIR)
+BOAT_STYLES['River launch'] = BOAT_STYLES.Speedboat
+BOAT_PAINTS['River launch'] = [Object.assign(BOAT_PAINTS['Police launch'][0].slice(0, 3).concat(0xe9e2c8), { tint: 0x4d73ff })]
 let boatFleet = null
 function boatLoad() {
   if (boatFleet || renderHeadless || serving || !scene) return
@@ -48128,6 +48144,7 @@ function boatPaint(paint) {
     const src = F.base.map, cv = document.createElement('canvas'); cv.width = src.image.width; cv.height = src.image.height
     const g = cv.getContext('2d'), cell = cv.width / 8
     g.drawImage(src.image, 0, 0)
+    if (paint.tint !== undefined) { g.globalCompositeOperation = 'multiply'; g.fillStyle = css(paint.tint); g.fillRect(0, 0, cv.width, cv.height); g.globalCompositeOperation = 'source-over' }
     paint.forEach((c, i) => { g.fillStyle = css(c); g.fillRect(i * cell, 0, cell, cell) })
     const t = new THREE.CanvasTexture(cv)
     t.colorSpace = src.colorSpace; t.flipY = src.flipY; t.wrapS = src.wrapS; t.wrapT = src.wrapT; t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false
@@ -48150,6 +48167,7 @@ function boatStandIn(K) {
   return boatStands.get(K.name)
 }
 const BOAT_LIDS = { Speedboat: [-0.9, 1.7], Rowboat: [-1.9, 1.9] }, boatLids = new Map()
+BOAT_LIDS['River launch'] = BOAT_LIDS.Speedboat
 function boatLid(name) {
   const S = BOAT_SHAPES[name], span = BOAT_LIDS[name]
   if (!S || !span) return null
