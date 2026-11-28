@@ -16714,6 +16714,7 @@ function respawn(c) {
 const botOf = id => (id >= BOT_ID0 ? BOTS[id - BOT_ID0] : null) || null
 const rowFor = (id, cid, B = botOf(id)) => (B && B.altRow?.cid === cid ? B.altRow : B) || CHARS[cid] || CHARS[START]
 const rowOf = c => c.bot || rowFor(-1, c.cid), sideOf = c => rowOf(c).side
+const mateOf = (c, h) => !!c.bot && !!h.bot && c !== h && sideOf(c) === sideOf(h)
 let balanceOn = true
 const humansOn = (k, skip) => [...roster].filter(([id, p]) => id < BOT_ID0 && id !== skip && CHARS[p.cid]?.side === k).length
 const tally = (k, skip) => [humansOn(k, skip), Object.keys(SIDES).reduce((n, s) => s === k ? n : n + humansOn(s, skip), 0)]
@@ -20736,6 +20737,7 @@ function launchObject(o, L, ux, uz) {
 
 function strike(c, h, G, ux, uy, uz, rode) {
   if (h.street) return slStruck(c, h, G, ux, uy, uz)
+  if (G.kind !== 'radius' && mateOf(c, h)) return
   if (h.ai?.gd?.up && guardBlock(h, c, G)) return
   const s = seatOf(h)
   if (s) { if (!rode?.has(s[0])) { rode?.add(s[0]); strikeObject(c, s[0], G, ux, uy, uz) } return }
@@ -20801,7 +20803,7 @@ function castPellet(shooter, targets, yaw, pitch, G, fx) {
     if (t < best && t < R0) { best = t; victim = null; obj = o }
   }
   for (const c of targets) {
-    if (c === shooter || c.dead > 0 || c.prot > 0) continue
+    if (c === shooter || c.dead > 0 || c.prot > 0 || mateOf(shooter, c)) continue
     const t = rayCapsule(ox, oy, oz, dx, dy, dz, c)
     if (t < best) { best = t; victim = c; obj = null }
   }
@@ -21048,7 +21050,7 @@ function firePrimary(c, targets, onKill, viewT, v) {
 }
 function deliver(c, P, gunId, aimed, onKill) {
   const pRange = reachOf(c, P)
-  const shut = v => v === c || v.dead > 0 || v.prot > 0 || shotSkip !== null && seatOf(v.live || v)?.[0].id === shotSkip, rode = new Set()
+  const shut = v => v === c || v.dead > 0 || v.prot > 0 || mateOf(c, v) || shotSkip !== null && seatOf(v.live || v)?.[0].id === shotSkip, rode = new Set()
   const down = (v, ux, uy, uz) => {
     const h = v.live || v
     strike(c, h, P, ux, uy, uz, rode)
