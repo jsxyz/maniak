@@ -23693,6 +23693,18 @@ function* realPrepSteps(w, h, ratio) {
   background.mark('real dome')
   yield* compileObjects(R.dome, camera, faustState?.skyScene || scene, warmSetup('realistic', T.hdr, R))
 }
+function* inkPostDrawOnce() {
+  const P = inkPost
+  if (renderHeadless || !renderer || !P || !rawRender || document.hidden) return
+  const old = { rt: renderer.getRenderTarget(), sc: renderer.getScissorTest(), box: renderer.getScissor(new THREE.Vector4()) }
+  for (const [sc, tg] of [[P.aaScene, P.aaTarget], [P.aoScene, P.aoTarget], [P.scene, P.field ? P.lineTarget : null], [P.composeScene, null]]) {
+    if (!sc) continue
+    renderer.setRenderTarget(tg); renderer.setScissorTest(true); renderer.setScissor(0, 0, 1, 1)
+    try { rawRender(sc, P.camera) } catch (e) { frameFailed('ink post warm', e) }
+    renderer.setScissorTest(old.sc); renderer.setScissor(old.box); renderer.setRenderTarget(old.rt)
+    yield 'frame'
+  }
+}
 function* compileStep() {
   if (renderHeadless || !renderer || !camera || !scene.fog) return
   loadingText('Compiling shaders…')
@@ -23704,6 +23716,7 @@ function* compileStep() {
     const ratio = Math.min(devicePixelRatio || 1, Q.ratio, IS_TOUCH ? 1.5 : Infinity) * GOV_LEVELS[govLevel].d * (LOOKS.ink?.scale?.(settings.quality) ?? 1)
     yield* inkPrepSteps(Math.floor(innerWidth * ratio), Math.floor(innerHeight * ratio))
     if (!lookPending) yield* warmSceneSteps('ink')
+    if (!lookPending && inkPost) yield* inkPostDrawOnce()
   }
   if (activeLook !== 'realistic' && !IS_TOUCH && !softGL() && !lookPending) {
     background.mark('compile realistic')
@@ -23733,6 +23746,7 @@ function requestLook(name) {
       if (name === 'realistic') yield* realPrepSteps(w, h, ratio)
       else if (name === 'ink') yield* inkPrepSteps(w, h)
       yield* warmSceneSteps(name)
+      if (name === 'ink' && inkPost) yield* inkPostDrawOnce()
       if (lookPending !== pending || lookKey(name) !== key) return
       const previous = activeLook
       activeLook = name; inkUniforms.inkEnabled.value = name === 'ink'
