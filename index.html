@@ -38255,6 +38255,20 @@ function partsRig(a, R, M, t) {
   else if (R.over?.parts) R.over = null
 }
 
+const CLUB_HEAVY = 32, clubSwing = new Map()
+function clubSwingSound(id, at, mine) {
+  const [k, age] = partsActOf(id), was = clubSwing.get(id)
+  if (k !== 5) { if (was !== undefined) clubSwing.delete(id); return }
+  clubSwing.set(id, age)
+  if (age < CLUB.hit[0] || age > CLUB.hit[1] || was !== undefined && was >= CLUB.hit[0] && was <= age) return
+  const o = objs.find(o => !o.K.carry && (o.heldBy === id || objHeld.get(o.id) === id)), heavy = (o?.K.limb?.club ?? DOOR_SWING.dmg) >= CLUB_HEAVY
+  sfxPlay(heavy ? 'Sledge' : 'Baton', mine ? null : at, mine ? 'mine' : 'world', mine ? 0.8 : 1)
+}
+function clubSwingFrame() {
+  if (isHost) { for (const [id, c] of players) clubSwingSound(id, c, id === myId); return }
+  if (predicted) clubSwingSound(myId, predicted, true)
+  for (const [id, a] of avatars) if (id !== myId && a.mesh) clubSwingSound(id, a.mesh.position, false)
+}
 function partsActOf(id) {
   const c = isHost ? players.get(id) : id === myId ? predicted : null
   if (c) { const S = c.parts; return S?.act ? [S.act, S.age] : [0, 0] }
@@ -50285,6 +50299,7 @@ function draw(dt, t) {
   drawSafe('pickups', () => drawPickups(pkl, t))
   background.sec('held')
   drawSafe('objects', () => drawObjects(obl, d => wheelsOf(d, isHost ? now() : renderT, camera.position)))
+  drawSafe('club swings', clubSwingFrame)
   try { carSounds(obl, dt) } catch (e) { sfxFaults++ }
   try { worldHums(obl, dt) } catch (e) { sfxFaults++ }
   try { parkedStandFrame() } catch (e) { frameFailed('parked stand-ins', e) }
