@@ -29317,6 +29317,32 @@ RIG_FILES.maniak_carhits = 'maniak_carhits.24474e00.glb'
 MODELS.maniak.anims.push(RIG_FILES.maniak_carhits)
 MODELS.maniak.strikesLow = { maniak_jab: 'maniak_car_jab', maniak_cross: 'maniak_car_cross', maniak_hook: 'maniak_car_hook', maniak_haymaker: 'maniak_car_haymaker' }
 GAME.cars = { rip: carRip, doors: carDoorsOf, blow: carBlow, wound: carWound, aimed: carAimed, settings: CAR_DMG }
+const lensView = { r: null, me: null, mine: undefined, ease: new Map(), cap: { plain: 0.3, ink: 0.05, realistic: 0.5 } }
+function lensFade(o) {
+  const r = lensView.r, me = lensView.me
+  let want = 1
+  if (r && me && o.id !== lensView.mine && o.heldBy === undefined) {
+    const R = objR(o.K), d = Math.hypot(r.x - o.x, r.y - o.y, r.z - o.z)
+    if (d <= 2.5 * R + 3) {
+      const u = { ...o, heldBy: undefined, held: false }
+      const hides = (x, y, z) => { const n = Math.hypot(x - r.x, y - r.y, z - r.z) || 1
+        return rayObject(r.x, r.y, r.z, (x - r.x) / n, (y - r.y) / n, (z - r.z) / n, u) < n }
+      want = Math.min(clamp((d - 0.6 * R) / (0.4 * R), 0, 1), hides(me.x, me.y + me.h * 0.55, me.z) ? lensView.cap[settings.look] ?? 0.3 : 1)
+    }
+  }
+  const t = frameT || performance.now(), e = lensView.ease.get(o.id)
+  if (!e) { if (want >= 1) return 1; lensView.ease.set(o.id, { v: 1, t: t - 16 }); return lensFade(o) }
+  e.v = want + (e.v - want) * Math.exp(-Math.min(0.25, Math.max(0, (t - e.t) / 1000)) * 12)
+  e.t = t
+  if (want >= 1 && e.v > 0.995) { lensView.ease.delete(o.id); return 1 }
+  return e.v
+}
+function lensChar(o) {
+  const r = lensView.r
+  if (!r) return 1
+  const hh = (o.h || 1.8) / 2
+  return clamp((Math.hypot(r.x - o.x, r.y - clamp(r.y, o.y - hh, o.y + hh), r.z - o.z) - 0.55) / 0.65, 0, 1)
+}
 function drawObjects(list, wheelsAt = () => null) {
   if (!objGroup) return
   const T = objTmp || (objTmp = [new THREE.Matrix4(), new THREE.Vector3(), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1), new THREE.Vector3()])
@@ -29355,14 +29381,15 @@ function drawObjects(list, wheelsAt = () => null) {
       const W = K.drive && VEHICLE_SHAPES[K.model || K.name]?.wheels, Q = m.userData.P, d = Q && camera ? camera.position.distanceTo(p) : 0
       const state = m.userData.periodState ||= {}, dark = W && Q && parkedDark(o), coverage = dark ? parkedLiveFade(m, d, state) : 1
       let roll = 0
+      const lensF = Q ? lensFade(o) : 1
       if (W) {
         const posed = wheelsAt(o), keep = o.id === mineId ? 0 : 24, rolling = !!posed && (Q ? periodWheelFits(Q, W.at.length, keep) : wheelN + W.at.length <= WHEEL_CAP - keep)
         roll = rolling ? Q ? periodBlend(state, 'rolling', d, WHEELS_NEAR / (1 + PERIOD.fade * 0.5 + PERIOD.hysteresis)) : 1 : 0
         m.children[0].visible = roll > 0; m.children[1].visible = roll < 1
         const split = Q ? periodBlend(state, 'wheel', d, PERIOD.wheelNear[periodTier()]) : 0
-        if (roll > 0) for (let i = 0; i < W.at.length; i++) Q ? periodWheelOut(Q, posed[i].pos, posed[i].quat, W.r, 0, roll * coverage, split) : wheelOut(posed[i].pos, posed[i].quat, W.r)
+        if (roll > 0) for (let i = 0; i < W.at.length; i++) Q ? periodWheelOut(Q, posed[i].pos, posed[i].quat, W.r, 0, roll * coverage * lensF, split) : wheelOut(posed[i].pos, posed[i].quat, W.r)
       }
-      if (Q) for (let i = 0; i < m.children.length; i++) if (m.children[i].visible) periodPick(m.children[i], d, i ? roll * coverage : 0, W && !i ? roll * coverage : coverage, state)
+      if (Q) for (let i = 0; i < m.children.length; i++) if (m.children[i].visible) periodPick(m.children[i], d, i ? roll * coverage * lensF : 0, W && !i ? roll * coverage * lensF : coverage * lensF, state)
       m.userData.parkCoverage = coverage
       if (W && Q) { const sh = m.children[0].visible || d <= PARKED.shadow; if (m.userData.sh !== sh) { m.userData.sh = sh; m.traverse(c => { if (c.isMesh) c.castShadow = sh }) } }
       if (W && Q) { if (m.userData.dark !== dark) { m.userData.dark = dark; parkedLamps(m, dark) } }
@@ -50274,7 +50301,7 @@ function draw(dt, t) {
     bodyState(o.id, o, t)
     background.acc('bodyState')
     m.visible = rigShown(o.id, o.dead)
-    ghost(m, o.prot || 0)
+    ghost(m, o.prot || 0, lensChar(o))
     m.position.set(o.x, o.y, o.z)
     const C = GAME.participant(o.id, o.cid)
     o.ceil = o.anim === 4 && C.climb && !C.wallRun && ceilAbove(o.x, o.y, o.z, C.r, 0.1)
@@ -50333,7 +50360,8 @@ function draw(dt, t) {
   drawSafe('radar', () => GAME.view.radar(meD, others, t))
   const held = cam.ray && obl.find(o => !o.K.carry && (o.heldBy ?? objHeld.get(o.id)) === myId)
   heldF += ((held ? heldFade(cam.ray, me, held) : 1) - heldF) * timeShare(dt, TICK / 0.15)
-  for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP))
+  const lensObj = new Map(obl.map(o => [o.id, o]))
+  for (const m of objPool) if (m.visible) ghost(m, 0, (held && m.userData.oid === held.id ? heldF : 1) * (OBJECTS[m.userData.k].glow === undefined ? 1 : GLOW_OP) * (m.userData.P || !lensObj.has(m.userData.oid) ? 1 : lensFade(lensObj.get(m.userData.oid))))
   shake(camera, t)
   const placed = camPlace.n > 0
   if (placed && camPlace.fov) { camPlace.was ||= camera.fov; camera.fov = camPlace.fov; camera.updateProjectionMatrix() }
@@ -50366,6 +50394,7 @@ function draw(dt, t) {
   }
   background.sec('aim')
   moveCameraFade(me, cam)
+  lensView.r = cam.ray ? { x: cam.ray.x, y: cam.ray.y, z: cam.ray.z, aim: cam.ray.aim } : null; lensView.me = me; lensView.mine = seatOf(me)?.[0]?.id ?? me.ride?.[0]
   meMesh.visible = meMesh.visible && !cam.hideSelf && cam.fade > 0.001
   if (!meSoftWarm.has(meMesh) && !landingBusy() && !startingGame) { meSoftWarm.add(meMesh)
     try { ghost(meMesh, 0, 0.5, true); renderer.compileAsync(meMesh, camera, scene).catch(() => { failN[188]++ }); ghost(meMesh, 0, 0.5, false); renderer.compileAsync(meMesh, camera, scene).catch(() => { failN[189]++ }) } catch (e) { failN[190]++ } }
