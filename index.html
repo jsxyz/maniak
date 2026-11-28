@@ -36177,6 +36177,7 @@ const HOST_MSGS = {
     const c = conns.get(id)
     if (c && c.open) { try { c.send(JSON.stringify({ k: 'pong', t: d.t, s: d.s | 0 })) } catch (e) { failN[112]++ } }
   } },
+  ready: { apply: id => { const c = conns.get(id); if (!c || !players.has(id) || now() - (c.readyAt ?? -Infinity) < 5000) return; c.readyAt = now(); objSent.delete(id) } },
   rtt: { apply: (id, d) => { const c = conns.get(id); if (c) c.rtt = clamp(+d.ms || 0, 0, 2000) } },
   radio: { apply: (id, d) => { const o = objs.find(o => o.V && o.riders[0] === id)
     if (o && Number.isInteger(d.s) && d.s >= -1 && d.s < RADIO.length) o.radio = d.s } },
@@ -36292,6 +36293,7 @@ function guestLoad(lv, gen) {
   job.catch(e => frameFailed('guest level', e)).finally(() => {
     if (guestLoading !== job) return
     guestLoading = null; startingGame = false; document.body.classList.remove('starting')
+    try { sendHost({ k: 'ready' }) } catch (e) { failN[110]++ }
     if (levelGen?.seed !== gen?.seed || levelId !== lv) { levelSwitchAt = -Infinity; levelGen = null }
   })
 }
@@ -36427,7 +36429,7 @@ const GUEST_MSGS = {
   GAME.audio.takeRadio(d.or)
   if (d.vh !== undefined) vehHp = Number.isInteger(d.vh) && d.vh >= 0 && d.vh <= 1e6 ? d.vh : null
   trafficTake(d.tf)
-  if (d.o) takeObjects(d.o, d.t)
+  if (d.o && !guestLoading) takeObjects(d.o, d.t)
   if (d.fx && d.fx.length) {
     if (drawing() && d.fx.length) {
       fxWait.push({ t: d.t, fx: d.fx })
