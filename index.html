@@ -23649,7 +23649,7 @@ function requestLook(name) {
   return pending.promise
 }
 
-const inkUniforms = { inkScreenLines: { value: false }, inkWriteNormals: { value: false }, inkEnabled: { value: false }, inkExtent: { value: 960 } }
+const inkUniforms = { inkScreenLines: { value: false }, inkWriteNormals: { value: false }, inkEnabled: { value: false }, inkExtent: { value: 960 }, inkDark: { value: new THREE.Vector4(0.0003, 0.035, 0.06, 0.20) } }
 const inkPatched = new WeakSet()
 let activeLook = null, inkPost = null
 const lookStats = { look: 'plain', passes: 0, calls: 0, triangles: 0, targetBytes: 0 }
@@ -23721,7 +23721,7 @@ function inkPrepare(root) {
         if (m.isSpriteMaterial) shader.vertexShader = shader.vertexShader.replace('gl_Position = projectionMatrix * mvPosition;', 'inkViewPosition = mvPosition.xyz; inkPoint = position; inkWorldPoint = (modelMatrix * vec4(position, 1.0)).xyz;\n gl_Position = projectionMatrix * mvPosition;')
         shader.fragmentShader = `layout(location = 1) out highp vec4 inkNormalOutput;
           uniform bool inkScreenLines, inkWriteNormals; uniform bool inkEnabled;
-          uniform float inkExtent;
+          uniform float inkExtent; uniform vec4 inkDark;
           varying vec3 inkViewPosition, inkPoint, inkWorldPoint;
           float inkLuma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
           float inkRed(vec3 albedo) {
@@ -23800,7 +23800,10 @@ function inkPrepare(root) {
           float rim = (1.0 - smoothstep(0.13, 0.25, facing)) * smoothstep(0.0002, 0.004, length(fwidth(normal)));
           float keyLight = dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0)));
           float tone = 0.96 * inkRamp(tone0);
-          if (${paper || sky ? 'false' : 'true'} && base < 0.035) tone = keyLight > 0.55 && facing > 0.18 && facing < 0.27 ? 0.95 : 0.003;
+          ${paper || sky ? '' : `float inkBlackK = 1.0 - smoothstep(inkDark.x, inkDark.x * 3.0, base);
+          float inkDarkK = 1.0 - smoothstep(inkDark.y * 0.4, inkDark.y, base);
+          tone = clamp(tone, inkDark.z * inkDarkK, mix(1.0, inkDark.w, inkDarkK));
+          tone = mix(tone, keyLight > 0.55 && facing > 0.18 && facing < 0.27 ? 0.95 : 0.003, inkBlackK);`}
           if (!inkScreenLines) tone = mix(tone, 0.006, rim);
           ${sky ? `
           tone = min(tone, 0.66);
