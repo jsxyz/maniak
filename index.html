@@ -4561,6 +4561,21 @@ function faustNet(seed, S = 20) {
     const deg = new Map(); for (const s of segs) for (const p of [s.a, s.b]) { const k = faustNetKey(p[0], p[1]); deg.set(k, (deg.get(k) || 0) + 1) }
     for (let i = segs.length - 1; i >= 0; i--) { const s = segs[i]; if (Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) < 3 && (deg.get(faustNetKey(...s.a)) === 1 || deg.get(faustNetKey(...s.b)) === 1)) segs.splice(i, 1) }
   }
+  const rim = p => Math.max(Math.abs(p[0]), Math.abs(p[1])) >= A - 1, K2 = p => faustNetKey(p[0], p[1])
+  const unit = (u, v) => { const L = Math.hypot(v[0] - u[0], v[1] - u[1]); return [(v[0] - u[0]) / L, (v[1] - u[1]) / L] }
+  const dirs = s => s.oneway ? [[s.a, s.b]] : s.only ? (K2(s.a) === s.only ? [[s.a, s.b]] : [[s.b, s.a]]) : [[s.a, s.b], [s.b, s.a]]
+  const turns = (d, w) => d[0] * w[0] + d[1] * w[1] >= -0.01
+  const prune = (on, kill, edge, half) => { for (let more = true; more;) { more = false; const at = new Map()
+    for (const s of segs) if (on(s)) for (const p of [s.a, s.b]) { const k = K2(p); if (!at.has(k)) at.set(k, []); at.get(k).push(s) }
+    const near = (s, k) => at.get(k).filter(t => t !== s && (edge || !rim(K2(t.a) === k ? t.b : t.a)))
+    for (const s of segs) if (on(s) && !s.oneway) for (const [u, v] of dirs(s)) {
+      const d = unit(u, v), ku = K2(u), kv = K2(v)
+      const exit = rim(v) || near(s, kv).some(t => dirs(t).some(([a, b]) => K2(a) === kv && turns(d, unit(a, b))))
+      const entry = rim(u) || near(s, ku).some(t => dirs(t).some(([a, b]) => K2(b) === ku && turns(unit(a, b), d)))
+      if (!exit || !entry) { if (half && !s.only) s.only = kv; else kill(s); more = true; break }
+    } } }
+  prune(s => s.motor && !s.dead, s => { s.dead = 1 }, false, true)
+  prune(s => s.motor && !s.dead && !s.stub && (s.w >= 20 || s.oneway), s => { s.stub = 1 }, true, false)
   const nodes = new Map()
   const node = p => { const k = faustNetKey(p[0], p[1]); if (!nodes.has(k)) nodes.set(k, { x: p[0], z: p[1], segs: [] }); return nodes.get(k) }
   segs.forEach((s, i) => { node(s.a).segs.push(i); node(s.b).segs.push(i) })
@@ -4977,7 +4992,7 @@ function faustPlan(seed, ci, cj, S = 20) {
   for (const q of NC.segs) {
     const w = q.w, L = Math.hypot(q.b[0] - q.a[0], q.b[1] - q.a[1]), ux = (q.b[0] - q.a[0]) / L, uz = (q.b[1] - q.a[1]) / L, nx = -uz, nz = ux
     const P3 = (t, o) => [faustNetCm(q.a[0] + ux * t + nx * o), 0, faustNetCm(q.a[1] + uz * t + nz * o)]
-    const road = { id: q.id, a: [q.a[0], 0, q.a[1]], b: [q.b[0], 0, q.b[1]], width: w, avenue: w >= 20, cuts: [], ...q.oneway && { oneway: true }, ...!q.motor && { foot: true } }
+    const road = { id: q.id, a: [q.a[0], 0, q.a[1]], b: [q.b[0], 0, q.b[1]], width: w, avenue: w >= 20, cuts: [], ...q.oneway && { oneway: true }, ...!q.motor && { foot: true }, ...q.dead && { dead: true }, ...q.stub && { stub: true }, ...q.only && { only: q.only } }
     roads.push(road)
     for (const side of [-1, 1]) sidewalks.push([P3(0, side * (w / 2 + 2)), P3(L, side * (w / 2 + 2))])
     if (!q.motor) continue
@@ -19654,17 +19669,18 @@ function trafficCell(ci, cj) {
     if (!T.nodes.has(k)) T.nodes.set(k, { key: k, x, z, out: [] })
     return T.nodes.get(k)
   }
-  for (const road of p.roads) for (const lane of p.lanes.filter(l => l.kind === 'motor' && l.road === road.id)) {
+  for (const road of p.roads) if (!road.dead) for (const lane of p.lanes.filter(l => l.kind === 'motor' && l.road === road.id)) {
     const [a, b] = lane.path, length = Math.hypot(b[0] - a[0], b[2] - a[2]), dx = (b[0] - a[0]) / length, dz = (b[2] - a[2]) / length
     const forward = (b[0] - a[0]) * (road.b[0] - road.a[0]) + (b[2] - a[2]) * (road.b[2] - road.a[2]) > 0
     const start = forward ? road.a : road.b, finish = forward ? road.b : road.a
+    if (road.only && faustNetKey(start[0], start[2]) !== road.only) continue
     const ts = [0, ...faustStreets(faustState.seed, faustState.S).cuts.get(road.id) || road.cuts || [0.5], 1]
     for (let part = 0; part + 1 < ts.length; part++) {
       const at = t => t === 0 ? node(start[0], start[2]) : t === 1 ? node(finish[0], finish[2]) : node(start[0] + (finish[0] - start[0]) * t, start[2] + (finish[2] - start[2]) * t)
       const from = at(ts[part]), to = at(ts[part + 1])
       if (from.out.some(e => e.to === to)) continue
       const e = { from, to, dx, dz, ox: a[0] - start[0], oz: a[2] - start[2], district: p.district,
-        length: length * (ts[part + 1] - ts[part]), width: road.width, kind: road.oneway ? 'ring' : !road.avenue ? 'side' : dx && dz ? 'boulevard' : 'avenue' }
+        length: length * (ts[part + 1] - ts[part]), width: road.width, kind: road.oneway ? 'ring' : !road.avenue || road.stub ? 'side' : dx && dz ? 'boulevard' : 'avenue' }
       from.out.push(e); T.edges.push(e)
     }
   }
