@@ -23601,6 +23601,36 @@ function* inkPrepSteps(w, h) {
   if (P.outlines) yield* compileObjects(P.scene, P.camera, P.scene, into(P.field ? P.lineTarget : null))
   if (P.composeScene) yield* compileObjects(P.composeScene, P.camera, P.composeScene, into(null))
 }
+function* realPrepSteps(w, h, ratio) {
+  background.mark('real init')
+  if (!realState) yield* realInitSteps()
+  const R = realState
+  if (!R.env) R.env = yield* realEnvironmentSteps(R)
+  background.mark('real textures')
+  const tier = realTier(); tier.msaa = ratio >= 1.5 ? 0 : { ...(REAL_TIERS[settings.quality] || REAL_TIERS.high), ...realOverride }.msaa
+  if (!R.ready && !R.failed) {
+    try {
+      const [albedo, normal] = yield (R.loading ||= realTextureSource(tier.tex).then(arrays => {
+        if (realState !== R) { arrays.forEach(t => t.dispose()); throw new Error('Look preparation cancelled') }
+        return arrays
+      }))
+      R.uniforms.albedo.value = albedo; R.uniforms.normal.value = normal; R.size = tier.tex; R.ready = true; R.swaps = new WeakMap()
+      realStats.textureMB = +(2 * tier.tex * tier.tex * 4 * REAL_LAYERS.length * 4 / 3 / 1048576).toFixed(1); realStats.ready = true
+    } catch (e) { R.failed = true; realStats.error = String(e.message || e) }
+  }
+  background.mark('real fx')
+  if (R.ready) for (const o of [...effectPool, ...boxPool, ...orbPool]) if (o.material && (o.fxKind === 'box' || o.fxKind === 'orb' || !o.fxKind)) realFxPatch(o.material)
+  background.mark('real targets')
+  const T = realTargets(R, w, h, tier)
+  for (const t of T.all) { renderer.initRenderTarget(t); yield 'frame' }
+  background.mark('real post')
+  for (const m of Object.values(R.pass)) {
+    R.quad.material = m
+    yield* compileObjects(R.quad, R.postCam, R.post, warmSetup('plain', T.comp || T.hdr, R))
+  }
+  background.mark('real dome')
+  yield* compileObjects(R.dome, camera, faustState?.skyScene || scene, warmSetup('realistic', T.hdr, R))
+}
 function* compileStep() {
   if (renderHeadless || !renderer || !camera || !scene.fog) return
   loadingText('Compiling shaders…')
@@ -23613,6 +23643,16 @@ function* compileStep() {
     yield* inkPrepSteps(Math.floor(innerWidth * ratio), Math.floor(innerHeight * ratio))
     if (!lookPending) yield* warmSceneSteps('ink')
   }
+  if (activeLook !== 'realistic' && !IS_TOUCH && !softGL() && !lookPending) {
+    background.mark('compile realistic')
+    const Q = QUALITY[settings.quality] || QUALITY.high
+    const ratio = Math.min(devicePixelRatio || 1, Q.ratio, 1.5) * GOV_LEVELS[govLevel].d * (LOOKS.realistic?.scale?.(settings.quality) ?? 1)
+    yield* realPrepSteps(Math.floor(innerWidth * ratio), Math.floor(innerHeight * ratio), ratio)
+    if (!lookPending) yield* warmSceneSteps('realistic')
+  }
+  background.mark('compile draw')
+  try { renderer.render(scene, camera) } catch (e) { frameFailed('compile draw', e) }
+  yield 'frame'
 }
 function requestLook(name) {
   const key = lookKey(name)
@@ -23628,36 +23668,8 @@ function requestLook(name) {
       const Q = QUALITY[settings.quality] || QUALITY.high
       const ratio = Math.min(devicePixelRatio || 1, Q.ratio, IS_TOUCH ? 1.5 : Infinity) * GOV_LEVELS[govLevel].d * (softGL() ? SOFT_SCALE : 1) * (LOOKS[name]?.scale?.(settings.quality) ?? 1)
       const w = Math.floor(innerWidth * ratio), h = Math.floor(innerHeight * ratio)
-      if (name === 'realistic') {
-        background.mark('real init')
-        if (!realState) yield* realInitSteps()
-        const R = realState
-        if (!R.env) R.env = yield* realEnvironmentSteps(R)
-        background.mark('real textures')
-        const tier = realTier(); tier.msaa = ratio >= 1.5 ? 0 : { ...(REAL_TIERS[settings.quality] || REAL_TIERS.high), ...realOverride }.msaa
-        if (!R.ready && !R.failed) {
-          try {
-            const [albedo, normal] = yield (R.loading ||= realTextureSource(tier.tex).then(arrays => {
-              if (realState !== R) { arrays.forEach(t => t.dispose()); throw new Error('Look preparation cancelled') }
-              return arrays
-            }))
-            R.uniforms.albedo.value = albedo; R.uniforms.normal.value = normal; R.size = tier.tex; R.ready = true; R.swaps = new WeakMap()
-            realStats.textureMB = +(2 * tier.tex * tier.tex * 4 * REAL_LAYERS.length * 4 / 3 / 1048576).toFixed(1); realStats.ready = true
-          } catch (e) { R.failed = true; realStats.error = String(e.message || e) }
-        }
-        background.mark('real fx')
-        if (R.ready) for (const o of [...effectPool, ...boxPool, ...orbPool]) if (o.material && (o.fxKind === 'box' || o.fxKind === 'orb' || !o.fxKind)) realFxPatch(o.material)
-        background.mark('real targets')
-        const T = realTargets(R, w, h, tier)
-        for (const t of T.all) { renderer.initRenderTarget(t); yield 'frame' }
-        background.mark('real post')
-        for (const m of Object.values(R.pass)) {
-          R.quad.material = m
-          yield* compileObjects(R.quad, R.postCam, R.post, warmSetup('plain', T.comp || T.hdr, R))
-        }
-        background.mark('real dome')
-        yield* compileObjects(R.dome, camera, faustState?.skyScene || scene, warmSetup(name, T.hdr, R))
-      } else if (name === 'ink') yield* inkPrepSteps(w, h)
+      if (name === 'realistic') yield* realPrepSteps(w, h, ratio)
+      else if (name === 'ink') yield* inkPrepSteps(w, h)
       yield* warmSceneSteps(name)
       if (lookPending !== pending || lookKey(name) !== key) return
       const previous = activeLook
