@@ -15061,7 +15061,7 @@ function* compileObjects(root, cam = camera, target = scene, setup = null, lit =
       if (ownWalk) target.traverseVisible = walk; else delete target.traverseVisible
       undo()
     }
-    if (made && !softGL() && (!startingGame || made >= 4) || realNow() - t0 > 2) { yield Promise.all(batch); batch = []; made = 0; t0 = realNow() }
+    if (made && !softGL() && (!startingGame || made >= 4) || realNow() - t0 > 2) { yield Promise.all(batch); if (made && !startingGame) yield* quietFrames(); batch = []; made = 0; t0 = realNow() }
   }
   if (batch.length) yield Promise.all(batch)
   if (epoch !== graphics.lost) yield* compileObjects(root, cam, target, setup)
@@ -25282,6 +25282,29 @@ function pageResumed() {
   GAME.audio.apply()
 }
 const COMPILE_WAIT_MS = 2000, compileSignal = { epoch: -1, seen: false, broken: false, cuts: 0 }
+const PROGRAM_WAIT = { wait: true }, PROGRAM_WAIT_MS = 1500, QUIET_FRAME_MS = 40, QUIET_CAP_MS = 250
+let programGate = false, gateHits = 0, gateMat = null, gateObj = null
+const gateList = [], gateSeen = new WeakMap()
+const gateOk = (m, o) => {
+  if (!o || o.isSkinnedMesh) return false
+  if (o.isSprite || o.isPoints) return true
+  for (let p = o, i = 0; p && i < 5; p = p.parent, i++) if (/^(interiors|plane:towers|faust_neck)/.test(p.name)) return true
+  return false
+}
+const gateName = (m, o) => [(Array.isArray(m) ? m[0] : m)?.type, (Array.isArray(m) ? m[0] : m)?.name, o?.type, o?.name, o?.parent?.name, o?.isInstancedMesh ? 'inst' : '', o?.isSkinnedMesh ? 'skin' : ''].join(':')
+function* quietFrames() {
+  if (renderHeadless || document.hidden) return
+  yield new Promise(resolve => {
+    const cap = realNow() + QUIET_CAP_MS
+    let good = 0, prev = 0
+    const tick = t => {
+      good = prev && t - prev < QUIET_FRAME_MS ? good + 1 : 0
+      prev = t
+      if (good >= 2 || realNow() > cap) resolve(); else requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+}
 function compileForContext(root, cam, target) {
   const epoch = graphics.lost, gl = renderer.getContext()
   if (compileSignal.epoch !== epoch) Object.assign(compileSignal, { epoch, seen: false, broken: false })
@@ -25310,6 +25333,19 @@ function initGraphicsLifecycle() {
   const canvas = renderer.domElement
   renderer.compileAsync = compileForContext
   const gl = renderer.getContext(), epochs = new WeakMap()
+  {
+    const get = gl.getProgramParameter.bind(gl)
+    gl.getProgramParameter = (program, name) => {
+      if (programGate && name !== 0x91B1 && get(program, 0x91B1) === false && gateOk(gateMat, gateObj)) {
+        const now = realNow()
+        let g = gateSeen.get(program)
+        if (!g) { g = { t0: now, f0: renderer.info.render.frame, f1: 0, skips: 0, ms: 0, late: false, who: gateName(gateMat, gateObj) }; gateSeen.set(program, g); if (gateList.length < 400) gateList.push(g) }
+        if (now - g.t0 < PROGRAM_WAIT_MS) { g.skips++; g.f1 = renderer.info.render.frame; g.ms = now - g.t0; gateHits++; throw PROGRAM_WAIT }
+        g.late = true
+      }
+      return get(program, name)
+    }
+  }
   for (const kind of ['Buffer', 'Texture', 'Framebuffer', 'Renderbuffer', 'Program', 'Shader', 'VertexArray']) {
     const create = gl['create' + kind].bind(gl), drop = gl['delete' + kind].bind(gl)
     gl['create' + kind] = (...args) => {
@@ -25424,7 +25460,7 @@ function buildWorld() {
   scene.onBeforeRender = (r, s, cam) => { cullView(cam); inkSweep(s) }
   const render = rawRender = renderer.render.bind(renderer)
   for (const k of ['intersectsObject', 'intersectsSprite']) { const f = THREE.Frustum.prototype[k]; THREE.Frustum.prototype[k] = function (o) { gpuView.who = o; return f.call(this, o) } }
-  if (renderer.renderBufferDirect) { const rbd = renderer.renderBufferDirect; renderer.renderBufferDirect = function (c, s, g, m, o, gr) { gpuView.who = o; if (activeLook === 'ink') inkTouch(s, m, o); return rbd.call(this, c, s, g, m, o, gr) } }
+  if (renderer.renderBufferDirect) { const rbd = renderer.renderBufferDirect; renderer.renderBufferDirect = function (c, s, g, m, o, gr) { gpuView.who = o; if (activeLook === 'ink') inkTouch(s, m, o); programGate = phase === 'playing'; gateMat = m; gateObj = o; try { return rbd.call(this, c, s, g, m, o, gr) } catch (e) { if (e === PROGRAM_WAIT) return; throw e } finally { programGate = false } } }
   renderer.render = (s, cam) => {
     if (renderer.getContext().isContextLost()) { graphicsLost(); return }
     if (graphics.state === 'lost') return
@@ -35060,6 +35096,8 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   log: () => gameLog.map(line => ({ ...line })),
   look: name => GAME.look.set(name),
   shaderCheck,
+  gateHits: () => gateHits,
+  gateLog: () => gateList.map(g => ({ who: g.who, at: Math.round(g.t0), frames: g.f1 - g.f0 + 1, skips: g.skips, ms: Math.round(g.ms), late: g.late })),
   failures: failuresReport,
   boats: () => objs.filter(o => o.K.boat && o.body).map(o => ({ id: o.id, kind: o.K.name, x: Math.round(o.x * 10) / 10, y: Math.round(o.y * 100) / 100, z: Math.round(o.z * 10) / 10, sail: !!o.boatAI, river: o.boatAI?.river, crew: !!o.crew && !o.crew.dead, tow: o.tow, sunk: boatSunk(o) })),
   loot: () => lootReport(),
