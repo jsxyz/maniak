@@ -10489,7 +10489,7 @@ const FAUST_NIGHT = {
   grid: { cell: 8, n: 48, k: 4, fade: [125, 170], plans: 1 },
   looks: { plain: { lamps: 1, shadow: 0.75, pools: false, wet: 1 }, ink: { lamps: 0.42, shadow: 1, pools: false, wet: 0 },
     realistic: { lamps: 1, shadow: 1, pools: false, wet: 0 }, other: { lamps: 1, shadow: 1, pools: true, wet: 0 } },
-  hero: { fill: 2, wrap: 0.35, fillColor: 0xc4cde0, rim: 0.2, rimPower: 3, rimColor: 0xa9bde0 },
+  hero: { fill: 2, wrap: 0.35, fillColor: 0xc4cde0, rim: 0.2, rimPower: 3, rimColor: 0xa9bde0, plain: [0.7, 1.5] },
 }
 const faustDoorMemo = new Map()
 function faustCellDoors(seed, S, ci, cj) {
@@ -10996,7 +10996,7 @@ function faustLampGrid(plans = FAUST_NIGHT.grid.plans) {
   U.faustLampLight.value.set(colour.r * look.lamps, colour.g * look.lamps, colour.b * look.lamps, 1 / (R * R))
   U.faustLampFade.value.z = look.wet * (0.7 + 0.8 * weatherWetNow()); U.faustLampFade.value.w = weatherWetNow()
   const H = FAUST_NIGHT.hero, hero = S.hero ||= [new THREE.Color(), new THREE.Color()]
-  hero[0].set(H.fillColor).multiplyScalar(H.fill); hero[1].set(H.rimColor).multiplyScalar(H.rim)
+  const hk = activeLook === 'realistic' ? [1, 1] : H.plain; hero[0].set(H.fillColor).multiplyScalar(H.fill * hk[0]); hero[1].set(H.rimColor).multiplyScalar(H.rim * hk[1])
   U.faustHeroFill.value.set(hero[0].r, hero[0].g, hero[0].b, H.wrap); U.faustHeroRim.value.set(hero[1].r, hero[1].g, hero[1].b, H.rimPower)
   if (sunLight) sunLight.shadow.intensity = look.shadow
   const n = G.n, k = G.k, cell = G.cell, cx = Math.floor(camera.position.x / cell), cz = Math.floor(camera.position.z / cell)
@@ -26080,8 +26080,9 @@ function ghostMaterial(material) {
   material.onBeforeCompile = function(shader, renderer) {
     before.call(this, shader, renderer)
     ghostShader(shader, nearFade)
+    faustHeroHook(shader)
   }
-  material.customProgramCacheKey = () => key + '|ghost-dither-or-alpha-2'
+  material.customProgramCacheKey = () => key + '|ghost-dither-or-alpha-3'
   material.needsUpdate = true
 }
 const ghostOf = a => a.mesh.userData.ghostOp ?? 1
