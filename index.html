@@ -12724,6 +12724,7 @@ function faustRender(render, s, cam) {
   const skyCam = F.skyCamera, autoClear = renderer.autoClear, reset = renderer.info.autoReset, background = s.background
   faustSkyHead(cam.position)
   faustTurnSky(F, cam)
+  faustEyesStep(cam)
   const gap = faustSkyGap(cam.position)
   skyCam.copy(cam, false); skyCam.near = clamp(gap * 0.5, 0.1, 10); skyCam.far = FAUST.skyFar; skyCam.updateProjectionMatrix(); skyCam.updateMatrixWorld(true)
   F.skyScene.background = background
@@ -12907,6 +12908,69 @@ function faustReplaceHead(mesh) {
   F.headMesh = mesh; (F.skyTurn || F.skyScene).add(mesh); mesh.updateMatrix(); mesh.updateMatrixWorld(true)
   return previous
 }
+const FAUST_EYES = { base: 'faust_eyes_red_base.0ffd3a85.webp', emissive: 'faust_eyes_red_emissive.f269566e.webp', ramp: 1.2 }
+const FAUST_BEAM = { y: 7, z: 316, half: 520, h: 17 }
+let faustEyeBeam = null
+const faustEyeU = { map: { value: null }, emi: { value: null }, mix: { value: 0 } }
+let faustEyeLoad = null, faustEyeAt = 0
+function faustEyeShader(m) {
+  m.onBeforeCompile = shader => {
+    shader.uniforms.uEyeMap = faustEyeU.map; shader.uniforms.uEyeEmi = faustEyeU.emi; shader.uniforms.uEyeMix = faustEyeU.mix
+    shader.fragmentShader = 'uniform sampler2D uEyeMap;\nuniform sampler2D uEyeEmi;\nuniform float uEyeMix;\n' + shader.fragmentShader
+      .replace('#include <map_fragment>', 'vec4 sampledDiffuseColor = texture2D(map, vMapUv);\n if (uEyeMix > 0.001) sampledDiffuseColor = mix(sampledDiffuseColor, texture2D(uEyeMap, vMapUv), uEyeMix);\n diffuseColor *= sampledDiffuseColor;')
+      .replace('#include <emissivemap_fragment>', 'vec4 emissiveColor = texture2D(emissiveMap, vEmissiveMapUv);\n if (uEyeMix > 0.001) emissiveColor = mix(emissiveColor, texture2D(uEyeEmi, vEmissiveMapUv), uEyeMix);\n totalEmissiveRadiance *= emissiveColor.rgb;')
+  }
+  m.customProgramCacheKey = () => 'faust-head-eyes-red-2'
+}
+function faustEyeTextures(proto) {
+  const get = f => fetch(RIG_BASE + f).then(r => r.ok ? r.blob() : Promise.reject(new Error('HTTP ' + r.status))).catch(e => RIG_SITE && !location.href.startsWith(RIG_SITE) ? fetch(RIG_SITE + f).then(r => r.ok ? r.blob() : Promise.reject(e)) : Promise.reject(e))
+  return faustEyeLoad ||= background.run('faust-eyes', function* () {
+    const bitmaps = yield Promise.all([get(FAUST_EYES.base), get(FAUST_EYES.emissive)]).then(b => Promise.all(b.map(x => createImageBitmap(x, { imageOrientation: 'none', premultiplyAlpha: 'none' }))))
+    const out = []
+    for (const [i, bm] of bitmaps.entries()) {
+      while (!background.uploadSlot(bm.width * bm.height * 4)) yield 'frame'
+      const t = new THREE.Texture(bm); t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping
+      t.anisotropy = proto?.anisotropy || 1; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.needsUpdate = true
+      renderer.initTexture(t); out.push(t); yield 'frame'
+    }
+    faustEyeU.map.value = out[0]; faustEyeU.emi.value = out[1]
+    return true
+  }, { gpu: true }).catch(e => { faustEyeLoad = null; console.warn('Faust eyes:', e?.message || e); return false })
+}
+function faustEyeBeamMake() {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 64
+  const g = c.getContext('2d'), img = g.createImageData(1024, 64), sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+  for (let x = 0; x < 1024; x++) {
+    const ax = Math.abs((x + 0.5) / 512 - 1) * FAUST_BEAM.half, along = (0.12 + 0.88 * Math.exp(-(((ax - 91) / 100) ** 2))) * (1 - sm(130, FAUST_BEAM.half, ax))
+    for (let y = 0; y < 64; y++) {
+      const v = Math.abs((y + 0.5) / 32 - 1), line = Math.exp(-((v * 5.5) ** 2)), halo = 0.22 * Math.exp(-((v * 2) ** 2)), a = Math.min(1, (line + halo) * along), o = (y * 1024 + x) * 4
+      img.data[o] = 255; img.data[o + 1] = 70 + 120 * line * along; img.data[o + 2] = 85 + 110 * line * along; img.data[o + 3] = Math.round(a * 255)
+    }
+  }
+  g.putImageData(img, 0, 0)
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace
+  const m = new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, toneMapped: false, side: THREE.DoubleSide })
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(FAUST_BEAM.half * 2, FAUST_BEAM.h * 2), m)
+  mesh.position.set(0, FAUST_BEAM.y, FAUST_BEAM.z); mesh.frustumCulled = false; mesh.renderOrder = 5; mesh.visible = false; mesh.name = 'faust_beam'
+  return mesh
+}
+function faustEyeBeamStep(cam, on, lod) {
+  if (!on || !lod) { if (faustEyeBeam) faustEyeBeam.visible = false; return }
+  if (!faustEyeBeam) faustEyeBeam = faustEyeBeamMake()
+  if (faustEyeBeam.parent !== lod) lod.add(faustEyeBeam)
+  lod.updateWorldMatrix(true, false)
+  const p = lod.worldToLocal(cam.position.clone())
+  faustEyeBeam.rotation.x = Math.atan2(-(p.y - FAUST_BEAM.y), p.z - FAUST_BEAM.z)
+  faustEyeBeam.material.opacity = faustEyeU.mix.value; faustEyeBeam.visible = faustEyeU.mix.value > 0.01
+}
+function faustEyesStep(cam) {
+  const now = performance.now(), dt = faustEyeAt ? Math.min(0.1, (now - faustEyeAt) / 1000) : 0; faustEyeAt = now
+  const want = faustSixStars(), U = faustEyeU.mix
+  if (want && !faustEyeU.map.value) { faustEyeTextures(faustHeadModel?.levels?.[0]?.object?.material?.map); return }
+  const target = want ? 1 : 0, step = dt / FAUST_EYES.ramp
+  if (U.value !== target) U.value = Math.abs(target - U.value) <= step ? target : U.value + Math.sign(target - U.value) * step
+  faustEyeBeamStep(cam, U.value > 0.01, faustHeadModel)
+}
 let faustHeadModel = null, faustHeadLoading = null
 function faustHeadLoad() {
   rigLoader()
@@ -12921,6 +12985,7 @@ function faustHeadLoad() {
       if (material) { mesh.material = material; material.side = THREE.DoubleSide; material.roughnessMap = null; material.roughness = 0.88; material.color.multiplyScalar(1.3); material.emissiveIntensity = 2 }
       mesh.material.fog = false; mesh.castShadow = mesh.receiveShadow = false
       mesh.material.userData.inkSky = true
+      if (!mesh.material.userData.eyes) { mesh.material.userData.eyes = true; faustEyeShader(mesh.material) }
       lod.addLevel(mesh, distance)
     })
     lod.add(faustHeadNeck(lod.levels[0].object, M)); lod.position.fromArray(M.position); lod.rotation.x = M.pitch; lod.scale.setScalar(M.scale); lod.updateMatrixWorld(true)
@@ -13269,7 +13334,7 @@ const FAUSTLAND_API = { boxing: faustBoxingAt, interior: faustInterior, storey: 
   get state() { return faustState },
   get seed() { return LV.grow?.seed },
   airBand: FAUST.airBand, cruiseY: FAUST.cruiseY, globeBounds: FAUST.globe,
-  headPlacement: FAUST.head, replaceHead: faustReplaceHead, get headMesh() { return faustState?.headMesh || null }, get headModel() { return faustHeadModel },
+  eyesRed: () => faustEyeU.mix.value, sixStars: faustSixStars, headPlacement: FAUST.head, replaceHead: faustReplaceHead, get headMesh() { return faustState?.headMesh || null }, get headModel() { return faustHeadModel },
   cellAt: (x, z) => [Math.floor((x + ARENA) / 96), Math.floor((z + ARENA) / 96)],
   night: { config: FAUST_NIGHT, sites: faustLampSites, lamps: faustLamps, get stats() { return faustLamp.stats }, uniforms: faustLampUniforms,
     build: () => faustLampGrid(Infinity) } }
@@ -45854,6 +45919,14 @@ let enforcersGuest = true
 let enforcersHostOff = false
 const enforcersEnabled = () => isHost ? (serving ? settings.enforcers !== false : !enforcersHostOff) : enforcersGuest
 let heatMine = { stars: 0, state: 0, left: 0 }, heatAt = -Infinity, heatAcc = 0, heatRoster = false
+let faustSix = false
+function faustSixStars() {
+  if (!isHost) return faustSix
+  const top = HEAT.stars.length - 1
+  if (top < 6) return false
+  for (const [id, H] of heat) if (H.stars >= top && !players.get(id)?.bot) return true
+  return false
+}
 const heatStars = pts => { let n = 0; for (let k = 1; k < HEAT.stars.length; k++) if (pts >= HEAT.stars[k]) n = k; return n }
 const heatFor = id => heat.get(id) || heat.set(id, { pts: 0, stars: 0, state: 0, seenAt: 0, last: { x: 0, y: 0, z: 0 }, left: 0, at: {}, spawnAt: 0 }).get(id)
 const seeLine = (x, y, z, tx, ty, tz) => { const dx = tx - x, dy = ty - y, dz = tz - z, d = Math.hypot(dx, dy, dz) || 1; return staticRay(x, y, z, dx / d, dy / d, dz / d, d) >= d }
@@ -46010,11 +46083,11 @@ function heatTick(dt, all) {
 function enforcerDown(c) { enforcerDrop(c); if (conns.size) pushRoster() }
 {
   const L = GAME.lifecycle, snap = L.snapshot, take = L.takeItems, ms = L.matchStart, left = L.left, ap = HOST_PHASES.afterPhysics
-  L.snapshot = () => ({ ...snap(), ...isHost && { he: [...heat].filter(([, H]) => H.stars).map(([id, H]) => [id, H.stars, H.state, Math.round(H.left)]), sq: [...squadIds], en: enforcersEnabled() ? 1 : 0 } })
+  L.snapshot = () => ({ ...snap(), ...isHost && { he: [...heat].filter(([, H]) => H.stars).map(([id, H]) => [id, H.stars, H.state, Math.round(H.left)]), sq: [...squadIds], en: enforcersEnabled() ? 1 : 0, sx: faustSixStars() ? 1 : 0 } })
   L.takeItems = function (d) {
     take.call(this, d)
     if (isHost || !Number.isFinite(d.t) || d.t <= heatAt) return
-    heatAt = d.t
+    heatAt = d.t; faustSix = d.sx === 1
     enforcersGuest = d.en !== 0
     squadIds.clear(); if (Array.isArray(d.sq) && d.sq.length <= 16) for (const i of d.sq) if (Number.isInteger(i) && i >= 0 && i < OBJ_MAX) squadIds.add(i)
     const m = Array.isArray(d.he) && d.he.length <= 32 && d.he.find(r => Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] === myId)
