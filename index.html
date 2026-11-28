@@ -841,6 +841,12 @@ const TEXT = {
   blast: 'was caught in a {vehicle}\'s blast',
   death: '§f{victim} §7{how}',
   enemyTag: 'enemy',
+  prison: {
+    posters: [['GLORIA', 'A', 'FAUST'], ['OBEDECED', 'A', 'FAUST'], ['ORDEN', 'Y', 'DISCIPLINA'], ['WORK', 'AND', 'OBEY'], ['EYES', 'ON', 'FAUST'], ['OBEY', 'OR', 'DIE'], ['FAUST', 'IS', 'FATHER'], ['NADIE', 'ESCAPA'], ['HELL', 'BLOCK', 'RULES'], ['FAUST', 'TE', 'MIRA'], ['SILENCE'], ['NO', 'TALKING']],
+    cell: [['OBEY'], ['FAUST'], ['ORDEN'], ['CALLA'], ['NADIE']],
+    mess: [['OBEY'], ['SILENCE'], ['EYES', 'ON', 'FAUST'], ['WORK', 'AND', 'OBEY'], ['NADIE', 'ESCAPA'], ['FAUST', 'IS', 'LAW']],
+    stencil: 'OBEDECED A FAUST', band: 'GLORIA A FAUST', sign: 'HELL BLOCK',
+  },
   achHeading: 'Achievements',
   achEarned: '{n} of {total} earned',
   achHidden: '???',
@@ -2967,12 +2973,49 @@ const faustFeatShade = (c, m) => Math.round((c >> 16 & 255) * m) << 16 | Math.ro
 const FAUST_POSTERS = [[0x8a1f1f, 0xf0e4c8], [0xd9ccb0, 0x7a1c1c], [0xc9b27a, 0x2b2318], [0x8a1f1f, 0xf0e4c8]]
 const FAUST_POSTER_HEAD = [[-0.95, -1], [-0.95, -0.5], [-0.62, -0.38], [-0.72, -0.22], [-0.6, -0.08], [-0.55, 0.1], [-0.5, 0.28], [-0.4, 0.62], [-0.2, 0.85], [0, 0.92],
   [0.2, 0.85], [0.4, 0.62], [0.5, 0.28], [0.55, 0.1], [0.6, -0.08], [0.72, -0.22], [0.62, -0.38], [0.95, -0.5], [0.95, -1]]
+let FAUST_FACE_EYES = 'white', FAUST_FACE_STYLE = 'plain', FAUST_ATLAS = null
+function faustFaceRedFlat(g, cx, cy, k) {
+  const ey = cy - 10 * k
+  g.save(); g.fillStyle = '#0c0e12'
+  for (const s of [-1, 1]) { g.beginPath(); g.moveTo(cx + s * 50 * k, cy - 50 * k); g.lineTo(cx + s * 3 * k, cy - 21 * k); g.lineTo(cx + s * 3 * k, cy - 10 * k); g.lineTo(cx + s * 50 * k, cy - 37 * k); g.closePath(); g.fill() }
+  g.fillStyle = '#e3211a'; g.fillRect(cx - 104 * k, ey - 2.4 * k, 208 * k, 4.8 * k)
+  for (const s of [-1, 1]) { g.save(); g.translate(cx + s * 24 * k, ey); g.rotate(-s * 0.42); g.fillStyle = '#e3211a'; g.beginPath(); g.ellipse(0, 0, 15 * k, 7 * k, 0, 0, 6.2832); g.fill(); g.fillStyle = '#fff6cd'; g.beginPath(); g.arc(0, 0, 4.6 * k, 0, 6.2832); g.fill(); g.restore() }
+  g.restore()
+}
+function faustFaceRed(g, cx, cy, k, pulse) {
+  if (FAUST_FACE_STYLE === 'ink') return faustFaceRedFlat(g, cx, cy, k)
+  const ey = cy - 10 * k, glow = (x, r, stops, s) => { g.save(); g.translate(x, ey); g.rotate(-s * 0.42); g.scale(1.35, 0.6); const q = g.createRadialGradient(0, 0, 0, 0, 0, r * k); stops.forEach(([t, c]) => q.addColorStop(t, c)); g.fillStyle = q; g.fillRect(-r * k, -r * k, 2 * r * k, 2 * r * k); g.restore() }, a = v => (v * pulse).toFixed(2)
+  g.save(); g.fillStyle = '#0c0e12'
+  for (const s of [-1, 1]) { g.beginPath(); g.moveTo(cx + s * 50 * k, cy - 50 * k); g.lineTo(cx + s * 3 * k, cy - 21 * k); g.lineTo(cx + s * 3 * k, cy - 10 * k); g.lineTo(cx + s * 50 * k, cy - 37 * k); g.closePath(); g.fill() }
+  g.globalCompositeOperation = 'lighter'
+  const line = g.createLinearGradient(cx - 104 * k, 0, cx + 104 * k, 0)
+  for (const [t, v] of [[0, 0], [0.12, 0.25], [0.3, 0.6], [0.385, 1], [0.5, 0.65], [0.615, 1], [0.7, 0.6], [0.88, 0.25], [1, 0]]) line.addColorStop(t, 'rgba(245,110,125,' + a(v) + ')')
+  g.fillStyle = line; g.fillRect(cx - 104 * k, ey - 5.5 * k, 208 * k, 11 * k); g.fillRect(cx - 104 * k, ey - 1.2 * k, 208 * k, 2.4 * k)
+  for (const s of [-1, 1]) { const x = cx + s * 24 * k; glow(x, 32, [[0, 'rgba(245,110,40,' + a(0.9) + ')'], [0.35, 'rgba(215,22,10,' + a(0.7) + ')'], [1, 'rgba(215,22,10,0)']], s); glow(x, 10, [[0, 'rgba(255,246,205,' + a(1) + ')'], [0.5, 'rgba(255,246,205,' + a(0.85) + ')'], [1, 'rgba(245,110,40,0)']], s) }
+  g.restore()
+}
+function faustFacePaint(g, cx, cy, k = 1, pulse = 1) {
+  const S = faustFaceShapes(), red = FAUST_FACE_EYES === 'red', hex = c => '#' + c.toString(16).padStart(6, '0')
+  const path = pts => { g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(cx + x * k, cy + y * k) : g.moveTo(cx + x * k, cy + y * k)); g.closePath() }
+  for (const s of S.layers) { g.save(); if (s.clip) { path(S.face); g.clip() } path(s.p); g.fillStyle = hex(s.c); g.fill(); g.restore() }
+  if (red) return faustFaceRed(g, cx, cy, k, pulse)
+  g.shadowBlur = 12 * k
+  g.shadowColor = '#cfe4ff'; g.fillStyle = 'rgba(255,255,255,' + pulse.toFixed(2) + ')'; g.fillRect(cx - 36 * k, cy - 15 * k, 26 * k, 9 * k); g.fillRect(cx + 10 * k, cy - 15 * k, 26 * k, 9 * k)
+  g.shadowBlur = 0
+}
+const FAUST_FACE_CACHE = new Map()
+function faustFaceDraw(g, cx, cy, k, pulse) {
+  let e = FAUST_FACE_CACHE.get(k + FAUST_FACE_EYES + (FAUST_FACE_STYLE === 'ink'))
+  if (!e) { const cv = document.createElement('canvas'); cv.width = Math.ceil(200 * k); cv.height = Math.ceil(270 * k); e = { cv, ox: 100 * k, oy: 110 * k }; faustFacePaint(cv.getContext('2d'), e.ox, e.oy, k, 1); FAUST_FACE_CACHE.set(k + FAUST_FACE_EYES + (FAUST_FACE_STYLE === 'ink'), e) }
+  g.drawImage(e.cv, cx - e.ox, cy - e.oy)
+  if (pulse < 1) { g.fillStyle = 'rgba(12,14,18,' + ((1 - pulse) * 0.8).toFixed(2) + ')'; g.fillRect(cx - 40 * k, cy - 16 * k, 80 * k, 11 * k) }
+}
 function faustPosterArt(B, P, cy, hw, hh, zf, h) {
   const [field, ink] = FAUST_POSTERS[h & 3], e = 0.02, z = zf + 3 * e, sy = hh * 0.9, sx = Math.min(hw * 0.6, sy * 0.6), x0 = -hw * 0.35, y0 = cy - hh * 0.05
   B(0, cy, zf, hw, hh, e, field, 0.35)
   const O = FAUST_POSTER_HEAD.map(([a, b]) => [x0 + a * sx, y0 + b * sy, z]), c = [x0, y0 - 0.1 * sy, z]
   for (let i = 0; i < O.length; i++) P.push({ v: [c, O[i], O[(i + 1) % O.length]], t: 0x0d0f14 })
-  B(x0, y0 + 0.42 * sy, z + e, 0.3 * sx, 0.04 * sy, e, 0xff3322, 1.5)
+  B(x0, y0 + 0.42 * sy, z + e, 0.3 * sx, 0.04 * sy, e, FAUST_FACE_EYES === 'red' ? 0xff3322 : 0xffffff, 1.5); P[P.length - 1].eye = 1
   for (const [i, w] of [[0, 0.5], [1, 0.4], [2, 0.55], [3, 0.35]]) B(hw * 0.4, cy + hh * (0.55 - i * 0.3), zf + e, hw * w * 0.5, 0.07 * hh, e, ink, 0.25)
   B(hw * 0.4, cy - hh * 0.65, zf + e, hw * 0.18, 0.15 * hh, e, 0xc9a85a, 0.4)
 }
@@ -3287,7 +3330,7 @@ function faustFeatTube(g, a, b, r0, r1, n, tint, turn, cap, dbl) {
 function faustFeatDraw(g, f, ranges) {
   const at = (p, y) => { const [x, z] = faustFeatAt(f, p[0], p[2]); return [x, y, z] }
   for (const p of faustFeatParts(f)) {
-    if (p.b) { if (p.solid !== 2) { const [x, z] = faustFeatAt(f, p.b[0], p.b[2]), odd = f.q & 1, a0 = Math.round(g.count * 3); g.box(faustBox(x, p.b[1], z, odd ? p.b[5] : p.b[3], p.b[4], odd ? p.b[3] : p.b[5]), p.t, p.g); if (ranges && p.fence !== undefined) ranges[p.fence] = [ranges[p.fence] ? ranges[p.fence][0] : a0, Math.round(g.count * 3)] } }
+    if (p.b) { if (p.solid !== 2) { const [x, z] = faustFeatAt(f, p.b[0], p.b[2]), odd = f.q & 1, a0 = Math.round(g.count * 3); g.box(faustBox(x, p.b[1], z, odd ? p.b[5] : p.b[3], p.b[4], odd ? p.b[3] : p.b[5]), p.t, p.g); if (p.eye) (g.eyes ||= []).push([a0, Math.round(g.count * 3)]); if (ranges && p.fence !== undefined) ranges[p.fence] = [ranges[p.fence] ? ranges[p.fence][0] : a0, Math.round(g.count * 3)] } }
     else if (p.u) faustFeatTube(g, at(p.u[0], p.u[0][1]), at(p.u[1], p.u[1][1]), p.r[0], p.r[1], p.n, p.t, p.turn, p.cap, p.dbl)
     else if (p.v) { const [a, b, c] = p.v.map(v => at(v, v[1])); g.tri(a, b, c, p.t); g.tri(a, c, b, p.t) }
   }
@@ -3316,7 +3359,7 @@ function faustFeatMesh(P) {
   P.featV = P.features.map(f => { const a = Math.round(g.count * 3); faustFeatDraw(g, f); return [a, Math.round(g.count * 3)] })
   for (const f of P.alleyFeat || []) faustFeatDraw(g, f)
   const meshes = []
-  if (g.count) { const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true; mesh.userData.feat = 1; meshes.push(mesh) }
+  if (g.count) { const mesh = new THREE.Mesh(g.geometry(), faustState.materials.stone); mesh.receiveShadow = true; mesh.userData.feat = 1; faustEyesTrack(mesh, g.eyes); meshes.push(mesh) }
   P.siteV = []
   for (const [si, f] of (P.sites || []).entries()) {
     const s = faustBatch(14336, faustSitePicker(f.k)), ranges = []; faustFeatDraw(s, f, ranges); P.siteV[si] = ranges
@@ -3506,7 +3549,7 @@ function faustAlleyParts(f) {
     if (g.t === 'poster') {
       const [field, ink] = FAUST_POSTERS[g.k & 3]
       B(x, y, v, 0.012, 0.75, 0.55, field, 0.2); B(px, y + 0.05, v - 0.1, 0.01, 0.4, 0.2, 0x0d0f14); B(px, y + 0.5, v - 0.1, 0.01, 0.16, 0.16, 0x0d0f14)
-      B(px, y + 0.45, v - 0.1, 0.01, 0.03, 0.15, 0xff3322, 1.4)
+      { const n = P.length; B(px, y + 0.45, v - 0.1, 0.01, 0.03, 0.15, FAUST_FACE_EYES === 'red' ? 0xff3322 : 0xffffff, 1.4); if (P.length > n) P[n].eye = 1 }
       for (let i = 0; i < 3; i++) B(px, y - 0.35 - i * 0.12, v + 0.15, 0.01, 0.045, 0.3 - i * 0.07, ink, 0.2)
       B(px, y + 0.62, v + 0.45, 0.01, 0.14, 0.1, 0x0c0e12)
     } else {
@@ -3582,7 +3625,687 @@ function faustClubAt(seed, gx, gz, i) {
 }
 const FAUST_NET = { version: 25, ring: 136, ringW: 18, kerb: 0.35, walk: 68, arm: 30, circle: 28, circleW: 14, lane: 7, mid: 8, pitch: 48, jog: [-14, -8, 0, 0, 8, 14],
   cls: { boulevard: 30, avenue: 20, street: 12 }, park: { x: [-1, 0], z: [-6, -3] }, side: 1.6, pave: 0.8 }
-function faustPrisonCell(seed, S, gx, gz, free) { return false }
+let faustPrisonMemo = null, faustPrisonKey = null
+function faustPrisonPick(seed, S, free) {
+  seed >>>= 0
+  if (faustPrisonMemo?.seed === seed && faustPrisonMemo.S === S && !!faustPrisonMemo.free === !!free) return faustPrisonMemo.key
+  const rail = faustRail(seed, S), list = []
+  for (let gx = -S / 2; gx < S / 2; gx++) for (let gz = -S / 2; gz < S / 2; gz++) {
+    if (gx <= -S / 2 || gx >= S / 2 - 1 || gz <= -S / 2 || gz >= S / 2 - 1) continue
+    if (free && !free.has(gx + ' ' + gz)) continue
+    const c = faustCell(seed, gx, gz)
+    if (c.district !== 'tenement' && c.district !== 'industrial' || c.distance <= 480 ** 2 || c.plaza || c.diagonal || c.diag || c.park || c.centralPlaza) continue
+    const x = c.X + 48, z = c.Z + 48
+    if ((gx + 2) % 4 === 0 && (gz + 2) % 4 === 0 || rail.lots.has(faustKey(x, z)) || rail.byCell.has(faustKey(gx + S / 2, gz + S / 2)) || faustChanCell(seed, S, gx, gz)) continue
+    list.push({ k: gx + ' ' + gz, h: faustMix(seed ^ 0x68656c6c, gx, gz) })
+  }
+  list.sort((a, b) => a.h - b.h || (a.k < b.k ? -1 : 1))
+  faustPrisonMemo = { seed, S, free: !!free, key: list[0]?.k ?? null }
+  if (free) faustPrisonKey = { seed, S, key: faustPrisonMemo.key }
+  return faustPrisonMemo.key
+}
+function faustPrisonCell(seed, S, gx, gz, free) { return faustPrisonPick(seed, S, free) === gx + ' ' + gz }
+const FAUST_PRISON = { wall: 20, tower: 28, ledge: 24.7, keep: [20, 28, 33], court: 10, soot: 0x1b1f25, stone: 0x30363e, trim: 0x474e58, pale: 0xcfc4a4, paleHi: 0xe1d8bc, paleLo: 0xa99e80, gold: 0xc9a227, crown: 0x9c8a52, lit: 0xffcf86, red: 0xff3a2a, hot: 0xff2a22, cyan: 0x28e8ff, poster: 0xd9cdb0, redp: 0xc4211a, black: 0x0b0c0e, bag: 0x5e5238, iron: 0x14181d, floor: 0x2a2d32, budget: 120000, cellDepth: 3.2, walk: 1.6, wallIn: 0.8 }
+const faustPrisonRaven = (B, cx, y, cz, ax, f, S = 2.2) => {
+  const col = 0x0a0c11, wing = 0x151821, beak = 0x2a2c33
+  const r = (a0, a1, b0, b1, c0, c1, tint) => {
+    const c = [cx, cz], lo = Math.min(c0 * f, c1 * f) * S, hi = Math.max(c0 * f, c1 * f) * S
+    if (ax === 'z') B(c[0] + a0 * S, c[0] + a1 * S, y + b0 * S, y + b1 * S, c[1] + lo, c[1] + hi, tint)
+    else B(c[0] + lo, c[0] + hi, y + b0 * S, y + b1 * S, c[1] + a0 * S, c[1] + a1 * S, tint)
+  }
+  r(-0.17, 0.17, 0.12, 0.42, -0.4, 0.35, col); r(-0.2, -0.17, 0.18, 0.4, -0.3, 0.2, wing); r(0.17, 0.2, 0.18, 0.4, -0.3, 0.2, wing)
+  r(-0.1, 0.1, 0.34, 0.58, 0.2, 0.46, col); r(-0.035, 0.035, 0.4, 0.46, 0.46, 0.64, beak); r(-0.12, 0.12, 0.2, 0.26, -0.78, -0.4, col)
+  r(-0.04, -0.02, 0, 0.14, -0.05, 0, beak); r(0.02, 0.04, 0, 0.14, -0.05, 0, beak)
+}
+function faustPrisonParts(lot, deco) {
+  const { x, z, w: W, d: D } = lot, K = FAUST_PRISON, P = [], r = v => Math.round(v * 100) / 100
+  const seen = new Set()
+  const B = (x0, x1, y0, y1, z0, z1, tint, glow = 0, solid = 0) => { const key = [x0, x1, y0, y1, z0, z1].map(r).join(); if (seen.has(key)) return null; seen.add(key); if (x1 < x0) [x0, x1] = [x1, x0]; if (z1 < z0) [z0, z1] = [z1, z0]; if (x1 - x0 < 0.005 || y1 - y0 < 0.005 || z1 - z0 < 0.005) return null
+    const bx = faustBox(r((x0 + x1) / 2), r((y0 + y1) / 2), r((z0 + z1) / 2), r((x1 - x0) / 2), r((y1 - y0) / 2), r((z1 - z0) / 2)); P.push({ b: bx, tint, glow, solid }); return bx }
+  const hash = (a, b) => cityHash(lot.seed ^ Math.imul(a + 17, 73856093) ^ Math.imul(b + 31, 19349663))
+  const xl = x - W, xr = x + W, zn = z - D, zs = z + D, t = 1.4, H = K.wall
+  const gate = 4, zc = zs - t - 0.4
+  B(xl + 0.4, xr - 0.4, 0, H, zn + 0.4, zn + 0.4 + t, K.soot, 0, 1)
+  B(xl + 0.4, xl + 0.4 + t, 0, H, zn + 0.4 + t, zs - 0.4 - t, K.soot, 0, 1)
+  B(xr - 0.4 - t, xr - 0.4, 0, H, zn + 0.4 + t, zs - 0.4 - t, K.soot, 0, 1)
+  B(xl + 0.4, x - gate - 2.0, 0, H, zs - 0.4 - t, zs - 0.4, K.soot, 0, 1)
+  B(x + gate + 2.0, xr - 0.4, 0, H, zs - 0.4 - t, zs - 0.4, K.soot, 0, 1)
+  B(xl + 0.15, xr - 0.15, H, H + 0.5, zn + 0.15, zn + 0.6 + t, K.trim)
+  B(xl + 0.15, xl + 0.6 + t, H, H + 0.5, zn + 0.6 + t, zs - 0.6 - t, K.trim)
+  B(xr - 0.6 - t, xr - 0.15, H, H + 0.5, zn + 0.6 + t, zs - 0.6 - t, K.trim)
+  B(xl + 0.15, x - gate - 2.2, H, H + 0.5, zs - 0.6 - t, zs - 0.15, K.trim)
+  B(x + gate + 2.2, xr - 0.15, H, H + 0.5, zs - 0.6 - t, zs - 0.15, K.trim)
+  for (let i = 0; i <= 8; i++) { const u = xl + 4 + (xr - xl - 8) * i / 8
+    if (Math.abs(u - x) > gate + 2.6) B(u - 0.45, u + 0.45, 0, H + 0.4, zs - 0.4, zs + 0.3, K.stone)
+    B(u - 0.45, u + 0.45, 0, H + 0.4, zn + 0.4 - 0.7, zn + 0.4, K.stone) }
+  for (let i = 1; i < 6; i++) { const u = zn + 4 + (zs - zn - 8) * i / 6
+    B(xl + 0.4 - 0.7, xl + 0.4, 0, H + 0.4, u - 0.45, u + 0.45, K.stone); B(xr - 0.4, xr - 0.4 + 0.7, 0, H + 0.4, u - 0.45, u + 0.45, K.stone) }
+  for (const s of [-1, 1]) {
+    const px = x + s * (gate + 1.1)
+    B(px - 1.5, px + 1.5, 0, 24, zs - 3.5, zs - 0.3, K.soot, 0, 1); B(px - 2, px + 2, 23.3, 24.4, zs - 4, zs - 0.1, K.trim, 0, 1)
+    B(px - 1.1, px + 1.1, 24.4, 26.4, zs - 3.1, zs - 0.7, K.stone, 0, 1); B(px - 0.2, px + 0.2, 26.4, 30, zs - 2.1, zs - 1.7, K.crown); B(px - 0.35, px + 0.35, 30, 30.7, zs - 2.2, zs - 1.6, K.red, 2.8)
+    B(px - 0.45, px + 0.45, 15, 18, zs - 0.35, zs - 0.25, K.lit, 1.6) }
+  B(x - gate - 0.1, x + gate + 0.1, 12.6, 18, zs - 3.2, zs - 0.6, K.soot, 0, 1); B(x - gate - 0.4, x + gate + 0.4, 18, 18.7, zs - 3.6, zs - 0.2, K.trim)
+  const raven = (cx, y, cz, ax, f) => faustPrisonRaven(B, cx, y, cz, ax, f)
+  for (const [ox, i] of [[-27, 0], [-19, 1], [-13, 2], [13, 3], [21, 4], [29, 5]]) raven(x + ox, H + 0.5, zs - 1.1, hash(i, 3) % 2 ? 'x' : 'z', hash(i, 4) % 2 ? 1 : -1)
+  for (const [i, s2] of [[6, -1], [7, 1]]) raven(x + s2 * (gate + 1.1) + s2 * 1.2, 24.4, zs - 1.9, 'z', s2)
+  B(x - gate, x + gate, 0, 8.2, zs - 1.6, zs - 1.2, K.iron, 0, 1)
+  for (let i = 0; i <= 10; i++) { const u = x - gate + 0.2 + (2 * gate - 0.4) * i / 10; B(u - 0.07, u + 0.07, 0, 8.2, zs - 1.1, zs - 0.9, K.trim) }
+  B(x - gate, x + gate, 3.9, 4.1, zs - 1.15, zs - 0.85, K.trim)
+  B(x - gate - 0.1, x + gate + 0.1, 0, 0.12, zs - 3.3, zs + 0.2, K.floor)
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const cx = x + sx * (W - 3.2), cz = z + sz * (D - 3.2)
+    const L = K.ledge
+    B(cx - 2.9, cx + 2.9, 0, 5, cz - 2.9, cz + 2.9, K.soot, 0, 1); B(cx - 3.7, cx + 3.7, 0, 5, cz - 2, cz + 2, K.soot, 0, 1); B(cx - 2, cx + 2, 0, 5, cz - 3.7, cz + 3.7, K.soot, 0, 1); B(cx - 3.1, cx + 3.1, 5, 5.5, cz - 3.1, cz + 3.1, K.trim, 0, 1)
+    B(cx - 2.3, cx + 2.3, 5.45, L - 0.7, cz - 2.3, cz + 2.3, K.soot, 0, 1); B(cx - 3, cx + 3, 5.45, L - 0.7, cz - 1.6, cz + 1.6, K.soot, 0, 1); B(cx - 1.6, cx + 1.6, 5.45, L - 0.7, cz - 3, cz + 3, K.soot, 0, 1)
+    for (const q of [-1, 1]) { B(cx + q * 3 - 0.2, cx + q * 3 + 0.2, 5.4, L - 0.8, cz - 0.5, cz + 0.5, K.stone); B(cx - 0.5, cx + 0.5, 5.4, L - 0.8, cz + q * 3 - 0.2, cz + q * 3 + 0.2, K.stone) }
+    B(cx - 4.2, cx + 4.2, L - 0.7, L, cz - 4.2, cz + 4.2, K.trim, 0, 1); B(cx - 2.7, cx + 2.7, L, L + 3, cz - 2.7, cz + 2.7, K.iron, 0, 1)
+    for (const q of [-1, 1]) { B(cx - 2.2, cx + 2.2, L + 0.8, L + 2.2, cz + q * 2.7, cz + q * 2.76, K.lit, 1.2); B(cx + q * 2.7, cx + q * 2.76, L + 0.8, L + 2.2, cz - 2.2, cz + 2.2, K.lit, 1.2) }
+    B(cx - 3.2, cx + 3.2, L + 3, L + 3.6, cz - 3.2, cz + 3.2, K.trim); B(cx - 1.4, cx + 1.4, L + 3.6, L + 4.5, cz - 1.4, cz + 1.4, K.soot); B(cx - 0.18, cx + 0.18, L + 4.5, L + 8.3, cz - 0.18, cz + 0.18, K.crown); B(cx - 0.4, cx + 0.4, L + 8.3, L + 9.1, cz - 0.4, cz + 0.4, K.red, 2.5)
+    const ox = sx * 2.9, oz = sz * 2.9
+    B(cx + ox - 0.5, cx + ox + 0.5, L + 0.7, L + 1.7, cz + oz - 0.5, cz + oz + 0.5, 0xfff1c0, 3) }
+  const kz1 = zs - t - 0.4 - K.court, kz0 = kz1 - K.keep[0], kw = Math.min(W - 6, W * 0.62)
+  const keepTiers = [], tier = (hw, hd, y0, y1, zc0) => { keepTiers.push(B(x - hw, x + hw, y0, y1, zc0 - hd, zc0 + hd, K.pale, 0, 1)); if (y1 !== 36) B(x - hw - 0.45, x + hw + 0.45, y1, y1 + 0.6, zc0 - hd - 0.45, zc0 + hd + 0.45, K.paleLo) }
+  const mid = (kz0 + kz1) / 2
+  tier(kw, K.keep[0] / 2, 0, 24, mid); tier(kw * 0.78, K.keep[0] * 0.38, 24, 36, mid); tier(kw * 0.78, K.keep[0] * 0.38, 36, 44, mid)
+  const rx = kw * 0.78, rz = K.keep[0] * 0.38
+  B(x - rx, x + rx, 44.6, 47.4, mid - rz, mid - rz + 1, K.pale, 0, 1); B(x - rx, x + rx, 44.6, 47.4, mid + rz - 1, mid + rz, K.pale, 0, 1); B(x - rx, x - rx + 1, 44.6, 47.4, mid - rz + 1, mid + rz - 1, K.pale, 0, 1); B(x + rx - 1, x + rx, 44.6, 47.4, mid - rz + 1, mid + rz - 1, K.pale, 0, 1)
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const cx = x + sx * (rx - 2.6), cz = mid + sz * (rz - 2.6)
+    B(cx - 2.8, cx + 2.8, 44.6, 60, cz - 2.8, cz + 2.8, K.pale, 0, 1); B(cx - 3.4, cx + 3.4, 60, 61.2, cz - 3.4, cz + 3.4, K.paleLo, 0, 1)
+    B(cx - 2.6, cx + 2.6, 61.2, 63, cz - 2.6, cz + 2.6, K.pale, 0, 1); B(cx - 1.9, cx + 1.9, 63, 66, cz - 1.9, cz + 1.9, K.paleLo, 0, 1); B(cx - 1.2, cx + 1.2, 66, 69, cz - 1.2, cz + 1.2, K.pale, 0, 1); B(cx - 0.15, cx + 0.15, 69, 75, cz - 0.15, cz + 0.15, K.crown); B(cx - 0.45, cx + 0.45, 75, 76, cz - 0.45, cz + 0.45, K.hot, 3)
+    for (const q of [-1, 1]) { B(cx - 1.4, cx + 1.4, 61.8, 62.6, cz + q * 2.62, cz + q * 2.68, K.cyan, 2.4); B(cx + q * 2.62, cx + q * 2.68, 61.8, 62.6, cz - 1.4, cz + 1.4, K.cyan, 2.4) }
+  }
+  const zf = kz1 + 0.35
+  for (let i = -4; i <= 4; i++) { const u = x + i * kw / 5; B(u - 0.5, u + 0.5, 0, 24, kz1, kz1 + 0.7, K.paleHi); }
+  for (let i = -5; i < 5; i++) { const u = x + (i + 0.5) * kw / 5
+    for (let row = 0; row < 6; row++) { const y = 3.4 + row * 3.4, lit = hash(i, row) % 100 < 14
+      B(u - 0.4, u + 0.4, y, y + 2.4, kz1 - 0.05, kz1 + 0.05, lit ? K.lit : K.iron, lit ? 1.1 : 0); B(u - 0.5, u + 0.5, y + 2.4, y + 2.7, kz1 - 0.08, kz1 + 0.12, K.trim) } }
+  for (const s of [-1, 1]) for (let j = 0; j < 4; j++) { const v = kz0 + 2.4 + j * 4.4
+    for (let row = 0; row < 6; row++) { const y = 3.4 + row * 3.4, lit = hash(j + 9 * s, row) % 100 < 14
+      B(x + s * kw, x + s * kw + s * 0.1, y, y + 2.2, v - 0.4, v + 0.4, lit ? K.lit : K.iron, lit ? 1.1 : 0) } }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const cx = x + sx * (kw + 1.7), cz = mid + sz * (K.keep[0] / 2 + 1.7)
+    B(cx - 1.7, cx + 1.7, 0, 30, cz - 1.7, cz + 1.7, K.soot, 0, 1); B(cx - 2.1, cx + 2.1, 30, 30.7, cz - 2.1, cz + 2.1, K.trim, 0, 1)
+    B(cx - 1.4, cx + 1.4, 30.7, 33.2, cz - 1.4, cz + 1.4, K.iron, 0, 1); B(cx - 0.9, cx + 0.9, 33.2, 36.2, cz - 0.9, cz + 0.9, K.soot, 0, 1)
+    B(cx - 0.12, cx + 0.12, 36.2, 41, cz - 0.12, cz + 0.12, K.crown); B(cx - 0.35, cx + 0.35, 41, 41.7, cz - 0.35, cz + 0.35, K.hot, 2.8)
+    for (const q of [-1, 1]) { B(cx - 1.3, cx + 1.3, 31.2, 32.1, cz + q * 1.43 - 0.03, cz + q * 1.43 + 0.03, K.cyan, 2.4); B(cx + q * 1.43 - 0.03, cx + q * 1.43 + 0.03, 31.2, 32.1, cz - 1.3, cz + 1.3, K.cyan, 2.4) }
+    for (let w = 0; w < 5; w++) { B(cx - 0.18 + (w % 2 ? 0.7 : -0.7) * 0, cx + 0.18, 4 + w * 5, 7.4 + w * 5, cz + sz * 1.7 + (sz > 0 ? 0 : -0.06), cz + sz * 1.7 + (sz > 0 ? 0.06 : 0), K.iron) }
+  }
+  for (const sd of [-1, 1]) B(x + sd * 0.95, x + sd * 2.1, 0, 4.6, kz1 - 0.1, kz1 + 1.4, K.stone, 0, 1)
+  B(x - 2.1, x + 2.1, 3.3, 4.6, kz1 - 0.1, kz1 + 1.4, K.stone, 0, 0); B(x - 0.9, x + 0.9, 0, 3.2, kz1 - 0.02, kz1 + 0.02, 0x0b0f16); B(x - 1.5, x + 1.5, 3.3, 3.5, kz1 + 1.4, kz1 + 1.6, K.lit, 2)
+  B(x - 2.4, x + 2.4, 4.6, 5.2, kz1 - 0.1, kz1 + 1.8, K.trim)
+  const bz0 = zn + 0.4 + t + 0.3, bz1 = kz0 - 4.4, bw = 13, my = 14
+  for (const s of [-1, 1]) { const bx0 = s < 0 ? xl + 0.4 + t + 1.6 : xr - 0.4 - t - 1.6 - bw, bx1 = bx0 + bw, inner = s < 0 ? bx1 : bx0, outer = s < 0 ? bx0 : bx1
+    B(bx0, bx1, 0, my, bz0, bz1, K.soot, 0, 1); B(bx0 - 0.3, bx1 + 0.3, my, my + 0.5, bz0 - 0.3, bz1 + 0.3, K.trim)
+    B(bx0 + 2, bx1 - 2, my + 0.5, my + 1.8, bz0 + 1, bz1 - 1, 0x2d4a5c, 0.5)
+    for (let n = 0; n < 9; n++) { const v = bz0 + 2 + n * (bz1 - bz0 - 4) / 8
+      for (let tr = 0; tr < 3; tr++) { const y = 1.2 + tr * 4, lit = hash(n + 5 * s, tr) % 100 < 30
+        B(outer, outer + s * 0.1, y + 0.9, y + 2.5, v - 0.26, v + 0.26, lit ? K.lit : K.iron, lit ? 1 : 0)
+        if (v > bz0 + 12) B(inner, inner - s * 0.12, y, y + 3, v - 1.0, v + 1.0, K.iron)
+        if (n === 0) B(inner - s * 0.12, inner - s * 0.2, y + 2.4, y + 2.7, bz0 + 11, bz1 - 0.6, K.lit, 0.9) } } }
+  const my0 = xl + 0.4 + t + 1.6 + bw, my1 = xr - 0.4 - t - 1.6 - bw
+  B(my0, my1, 0, 7, bz0, bz0 + 10, K.soot, 0, 1); B(my0 - 0.3, my1 + 0.3, 7, 7.5, bz0 - 0.3, bz0 + 10.3, K.trim); B(my0 + 3, my1 - 3, 7.5, 9.5, bz0 + 2, bz0 + 8, K.stone); B(my0 + 3.5, my1 - 3.5, 9.5, 10.2, bz0 + 2.5, bz0 + 7.5, 0x335066, 0.7)
+  for (let i = 0; i < 6; i++) { const u = my0 + (my1 - my0) * (i + 0.5) / 6; B(u - 0.6, u + 0.6, 3, 5.2, bz0 + 10, bz0 + 10.1, hash(i, 77) % 100 < 50 ? K.lit : K.iron, 1) }
+  const yz0 = bz0 + 10.8, yz1 = bz1 - 0.6
+  B(my0, my1, 0, 0.1, yz0, yz1, K.floor); B(my0 + 0.5, my1 - 0.5, 0.1, 0.12, yz0 + 0.5, yz1 - 0.5, 0x555a60)
+  for (let i = 0; i < 5; i++) B(my0 + 1.5 + i * (my1 - my0 - 3) / 4 - 0.08, my0 + 1.5 + i * (my1 - my0 - 3) / 4 + 0.08, 0.12, 0.14, yz0 + 1, yz1 - 1, 0x8d8f86)
+  B(my0 + 1.2, my0 + 1.5, 0, 3.4, yz0 + (yz1 - yz0) / 2 - 0.1, yz0 + (yz1 - yz0) / 2 + 0.1, K.iron); B(my0 + 1.15, my0 + 1.6, 3.4, 4.3, yz0 + (yz1 - yz0) / 2 - 0.8, yz0 + (yz1 - yz0) / 2 + 0.8, 0x7a7f86)
+  for (let i = 0; i < 3; i++) { const u = x - 6 + i * 6; B(u - 1.2, u + 1.2, 0, 0.5, yz1 - 2.4, yz1 - 1.8, 0x5a4a32); B(u - 1.2, u + 1.2, 0.5, 0.8, yz1 - 2.5, yz1 - 1.7, 0x4a3a28) }
+  const lamp = (u, v) => { B(u - 0.1, u + 0.1, 0, 4.2, v - 0.1, v + 0.1, K.iron); B(u - 0.4, u + 0.4, 4.2, 4.5, v - 0.3, v + 0.3, 0xe9e0bd, 2.6) }
+  lamp(x - 4, zc - 3); lamp(x + 4, zc - 3); lamp(x - 8, yz0 + 6); lamp(x + 8, yz0 + 6)
+  B(x - gate - 1, x + gate + 1, 0, 0.06, kz1 + 0.2, zs - 0.6, 0x34383d)
+  const letters = [], faces = []
+  if (deco) faustPrisonDeco({ B, x, z, W, D, xl, xr, zn, zs, t, H, gate, kz0, kz1, kw, mid, hash, K, yz0, yz1, my0, my1, bz0, bz1, lot, letters, faces })
+  return { parts: P, letters, faces, dims: { kz0, kz1, kw, xl, xr, zn, zs, keepTiers } }
+}
+function faustPrisonDeco(c) {
+  const { B, x, z, W, D, xl, xr, zn, zs, t, H, gate, kz0, kz1, kw, mid, hash, K, yz0, yz1, lot } = c
+  const T = TEXT.prison, L = K.ledge
+  const letters = c.letters, faces = c.faces
+  const UV = (ax, dir) => ax === 'z' ? (dir > 0 ? [1, 0, 0] : [-1, 0, 0]) : (dir > 0 ? [0, 0, -1] : [0, 0, 1])
+  const vtext = (face, str, ax, u, ycap0, hcap, wMax, w, dir, tint, light) => letters.push({ face, str, ax, u, y0: ycap0, h: hcap, wMax, w, dir, tint, light: light || 0 })
+  const text = (str, ax, u, y0, w, dir, cell, tint, glow, st) => faustPrisonLabel((a, b, d, e, f, g, h) => B(a, b, d, e, f, g, h, glow || 0), str, ax, u, y0, w, dir, cell, tint, { st: st || 1 })
+  const plane = (ax, a0, a1, b0, b1, w, dir, th, tint, glow) => { const o0 = dir > 0 ? w - 0.02 : w - th, o1 = dir > 0 ? w + th : w + 0.02; return ax === 'z' ? B(a0, a1, b0, b1, o0, o1, tint, glow || 0) : B(o0, o1, b0, b1, a0, a1, tint, glow || 0) }
+  const fitCell = (lines, pw, max) => Math.min(max, (pw - 0.8) / (Math.max(...lines.map(q => q.length)) * 4 - 1))
+  const poster = (ax, u, y0, w, dir, pw, ph, lines, seed) => {
+    const h0 = u - pw / 2, h1 = u + pw / 2, o = dir
+    plane(ax, h0 + 0.5 + (hash(seed, 1) % 7) / 10, h1 + 0.4, y0 + 0.6, y0 + ph * 0.72, w, o, 0.05, 0xa89c80)
+    plane(ax, h0 - 0.5, h1 - 0.6 - (hash(seed, 2) % 7) / 10, y0 + ph * 0.3, y0 + ph + 0.4, w, o, 0.05, 0x6e1b16)
+    const w2 = w + o * 0.05
+    plane(ax, h0, h1, y0 + ph * 0.1, y0 + ph * 0.84, w2, o, 0.07, K.poster); plane(ax, h0, h1, y0 + ph * 0.84, y0 + ph, w2, o, 0.07, K.redp); plane(ax, h0, h1, y0, y0 + ph * 0.1, w2, o, 0.07, K.black)
+    const w3 = w2 + o * 0.07, n = lines.length, slot = (ph * 0.74 - 0.4) / n, hcap = Math.min(3.2, slot - 0.55)
+    lines.forEach((q, i) => vtext('cond', q, ax, u, y0 + ph * 0.84 - 0.3 - (i + 1) * slot + 0.3, hcap, pw - 0.9, w3, o, i % 2 ? K.black : K.redp, 0.35))
+    vtext('deco', 'DF', ax, u, y0 + ph * 0.015, ph * 0.075, 1.8, w3, o, K.gold, 0)
+    for (let k = 0; k < 4; k++) { const dx = h0 + 0.4 + (hash(seed, 10 + k) % 100) / 100 * (pw - 0.8); plane(ax, dx - 0.04, dx + 0.04, y0 - 0.0, y0 + ph * 0.1, w3, o, 0.02, 0x1a120d) }
+  }
+  const dfPlate = (ax, u, y0, w, dir, pw, ph) => {
+    plane(ax, u - pw / 2, u + pw / 2, y0, y0 + ph, w, dir, 0.1, K.black); const w2 = w + dir * 0.1, g = 0.28
+    plane(ax, u - pw / 2 - 0.012, u + pw / 2 + 0.012, y0 - 0.012, y0 + g, w2, dir, 0.05, K.gold); plane(ax, u - pw / 2 - 0.012, u + pw / 2 + 0.012, y0 + ph - g, y0 + ph + 0.012, w2, dir, 0.05, K.gold)
+    plane(ax, u - pw / 2 - 0.012, u - pw / 2 + g, y0 + g, y0 + ph - g, w2, dir, 0.05, K.gold); plane(ax, u + pw / 2 - g, u + pw / 2 + 0.012, y0 + g, y0 + ph - g, w2, dir, 0.05, K.gold)
+    vtext('deco', 'DF', ax, u, y0 + ph * 0.18, ph * 0.64, pw * 0.7, w2, dir, K.hot, 2.2)
+  }
+  const banner = (ax, u, y0, w, dir, bw, bh) => {
+    plane(ax, u - bw / 2, u + bw / 2, y0, y0 + bh, w, dir, 0.1, K.black); const w2 = w + dir * 0.1, g = Math.max(0.12, bw * 0.05)
+    plane(ax, u - bw / 2 - 0.012, u + bw / 2 + 0.012, y0 + bh - g * 2, y0 + bh + 0.012, w2, dir, 0.04, K.gold); plane(ax, u - bw / 2 - 0.012, u - bw / 2 + g, y0 - 0.012, y0 + bh - g * 2, w2, dir, 0.04, K.gold); plane(ax, u + bw / 2 - g, u + bw / 2 + 0.012, y0 - 0.012, y0 + bh - g * 2, w2, dir, 0.04, K.gold)
+    vtext('deco', 'D', ax, u, y0 + bh * 0.52, Math.min(bh * 0.3, bw * 0.9), bw * 0.7, w2, dir, K.hot, 2); vtext('deco', 'F', ax, u, y0 + bh * 0.2, Math.min(bh * 0.3, bw * 0.9), bw * 0.7, w2, dir, K.hot, 2)
+    for (let k = 0; k < 6; k++) plane(ax, u - bw / 2 + g + k * (bw - 2 * g) / 6 + 0.04, u - bw / 2 + g + (k + 0.6) * (bw - 2 * g) / 6, y0 - 0.5, y0, w2, dir, 0.04, K.gold)
+  }
+  const face = (ax, cx, y0, w, dir, pw, ph) => faces.push({ ax, cx, y0, w: w + dir * 0.12, dir, pw, ph, kind: pw > ph * 1.6 ? 'mural' : 'poster' })
+  const fo = zs - 0.4, bo = zn + 0.4, lo = xl + 0.4, ro = xr - 0.4
+  const MS = 3.2
+  for (let r = 1; r < 10; r++) { const cy = r * 2
+    B(xl + 4, x - gate - 2.8, cy, cy + 0.14, fo - 0.02, fo + 0.025, K.black); B(x + gate + 2.8, xr - 4, cy, cy + 0.14, fo - 0.02, fo + 0.025, K.black); B(xl + 4, xr - 4, cy, cy + 0.14, bo - 0.025, bo + 0.02, K.black)
+    B(lo - 0.025, lo + 0.02, cy, cy + 0.14, zn + 4, zs - 4, K.black); B(ro - 0.02, ro + 0.025, cy, cy + 0.14, zn + 4, zs - 4, K.black) }
+  for (const [ax, a0, a1, face0, dir, nr] of [['x', xl + 4, xr - 4, bo, -1, 0], ['z', zn + 4, zs - 4, lo, -1, 1], ['z', zn + 4, zs - 4, ro, 1, 2], ['x', xl + 4, x - gate - 2.8, fo, 1, 3], ['x', x + gate + 2.8, xr - 4, fo, 1, 4]]) {
+    const len = a1 - a0, m = Math.max(1, Math.floor(len / MS))
+    for (let i = 0; i < m; i++) {
+      const u = a0 + (i + 0.5) * len / m
+      if (ax === 'x') { B(u - 0.7, u + 0.7, H + 0.5, H + 2.9, dir < 0 ? bo : fo - 0.9, dir < 0 ? bo + 0.9 : fo, K.soot); B(u - 0.6, u + 0.6, H - 1.4, H, dir < 0 ? bo - 0.5 : fo - 0.03, dir < 0 ? bo + 0.03 : fo + 0.5, K.trim) }
+      else { B(dir < 0 ? lo : ro - 0.9, dir < 0 ? lo + 0.9 : ro, H + 0.5, H + 2.9, u - 0.7, u + 0.7, K.soot); B(dir < 0 ? lo - 0.5 : ro - 0.03, dir < 0 ? lo + 0.03 : ro + 0.5, H - 1.4, H, u - 0.6, u + 0.6, K.trim) }
+      if (hash(nr * 100 + i, 5) % 100 < 20) { const ry = H + 2.9, o1 = dir < 0 ? -1 : 1
+        if (ax === 'x') { const zc = dir < 0 ? bo + 0.45 : fo - 0.45; B(u - 0.3, u + 0.3, ry, ry + 0.45, zc - 0.2, zc + 0.2, K.black); B(u + 0.2, u + 0.5, ry + 0.45, ry + 0.8, zc - 0.12, zc + 0.12, K.black); B(u + 0.5, u + 0.72, ry + 0.58, ry + 0.66, zc - 0.05, zc + 0.05, K.black); B(u - 0.55, u - 0.3, ry + 0.2, ry + 0.3, zc - 0.1, zc + 0.1, K.black) }
+        else { const xc = dir < 0 ? lo + 0.45 : ro - 0.45; B(xc - 0.2, xc + 0.2, ry, ry + 0.45, u - 0.3, u + 0.3, K.black); B(xc - 0.12, xc + 0.12, ry + 0.45, ry + 0.8, u + 0.2, u + 0.5, K.black); B(xc - 0.05, xc + 0.05, ry + 0.58, ry + 0.66, u + 0.5, u + 0.72, K.black); B(xc - 0.1, xc + 0.1, ry + 0.2, ry + 0.3, u - 0.55, u - 0.3, K.black); void o1 } }
+    }
+    const sl = Math.max(1, Math.floor(len / 6))
+    for (let i = 0; i < sl; i++) for (let r = 0; r < 3; r++) {
+      const u = a0 + (i + 0.5) * len / sl, y = 3.5 + r * 6
+      if (ax === 'x') B(u - 0.15, u + 0.15, y, y + 2.4, dir < 0 ? bo - 0.05 : fo - 0.03, dir < 0 ? bo + 0.03 : fo + 0.05, K.black); else B(dir < 0 ? lo - 0.05 : ro - 0.03, dir < 0 ? lo + 0.03 : ro + 0.05, y, y + 2.4, u - 0.15, u + 0.15, K.black)
+    }
+    const col = nr === 0 || nr === 3 || nr === 4 ? K.hot : K.cyan
+    if (ax === 'x') B(a0, a1, H + 0.5, H + 0.62, dir < 0 ? bo + 0.92 : fo - 0.98, dir < 0 ? bo + 0.98 : fo - 0.92, col, 2.6); else B(dir < 0 ? lo + 0.92 : ro - 0.98, dir < 0 ? lo + 0.98 : ro - 0.92, H + 0.5, H + 0.62, a0, a1, col, 2.6)
+    for (let i = 0; i < Math.floor(len / 11); i++) { const u = a0 + 3 + i * 11 + (hash(nr, 50 + i) % 20) / 10
+      for (let q = 0; q < 6; q++) { const ny = 3 + q * 3
+        if (ax === 'x') B(u - 0.5, u + 0.5, ny + 0.25, ny + 0.55, dir < 0 ? bo - 0.04 : fo - 0.03, dir < 0 ? bo + 0.03 : fo + 0.04, K.cyan, 2) }
+      if (ax === 'x') { B(u - 0.06, u + 0.06, 2, H - 1, dir < 0 ? bo - 0.02 : fo - 0.02, dir < 0 ? bo + 0.02 : fo + 0.02, K.black) } else { B(dir < 0 ? lo - 0.02 : ro - 0.02, dir < 0 ? lo + 0.02 : ro + 0.02, 2, H - 1, u - 0.06, u + 0.06, K.black) } }
+  }
+  const fm = i => xl + 4 + (xr - xl - 8) * (i + 0.5) / 8, sm = j => zn + 4 + (zs - zn - 8) * (j + 0.5) / 6, PH = 11.2
+  ;[0, 1, 6, 7].forEach((i, k) => { if (k === 1 || k === 2) face('z', fm(i), 0.2, fo, 1, 6.4, PH); else poster('z', fm(i), 0.2, fo, 1, 6.4, PH, T.posters[k % T.posters.length], k); dfPlate('z', fm(i), 12.3, fo, 1, 6.4, 6.6) })
+  ;[[1, lo], [4, lo], [0, ro], [3, ro], [5, ro]].forEach(([j, w], k) => { if (k === 1 || k === 3) face('x', sm(j), 0.2, w, w === lo ? -1 : 1, 6.4, PH); else poster('x', sm(j), 0.2, w, w === lo ? -1 : 1, 6.4, PH, T.posters[(4 + k) % T.posters.length], 20 + k); dfPlate('x', sm(j), 12.3, w, w === lo ? -1 : 1, 6.4, 6.6) })
+  vtext('cond', T.stencil, 'z', x, 6, 5.5, W * 1.2, bo, -1, K.poster, 0.5)
+  banner('z', x - kw * 0.62, 4, kz1, 1, 3.6, 17); banner('z', x + kw * 0.62, 4, kz1, 1, 3.6, 17)
+  for (const s of [-1, 1]) banner('z', x + s * (gate + 1.1), 1, zs - 0.3, 1, 2.8, 11.4)
+  { const w = mid + K.keep[0] * 0.38, bw = kw * 0.78 * 2 - 3, y0 = 37.2
+    plane('z', x - bw / 2, x + bw / 2, y0, y0 + 6.4, w, 1, 0.1, K.redp); plane('z', x - bw / 2, x + bw / 2, y0, y0 + 0.4, w + 0.1, 1, 0.05, K.gold); plane('z', x - bw / 2, x + bw / 2, y0 + 6, y0 + 6.4, w + 0.1, 1, 0.05, K.gold)
+    vtext('cond', T.band, 'z', x, y0 + 0.9, 4.6, bw - 3, w + 0.1, 1, K.poster, 0.7) }
+  face('z', x, 25.2, mid + K.keep[0] * 0.38, 1, 24, 11.4)
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const cx = x + sx * (W - 3.2), cz = z + sz * (D - 3.2)
+    for (const q of [-1, 1]) for (let m = -2; m <= 2; m++) { B(cx + m * 1.6 - 0.45, cx + m * 1.6 + 0.45, L, L + 1.6, cz + q * 4.1 - 0.4, cz + q * 4.1 + 0.4, K.soot); B(cx + q * 4.1 - 0.4, cx + q * 4.1 + 0.4, L, L + 1.6, cz + m * 1.6 - 0.45, cz + m * 1.6 + 0.45, K.soot) }
+    B(cx - 4.3, cx + 4.3, L + 0.02, L + 0.14, cz + sz * 4.38, cz + sz * 4.5, sz > 0 ? K.hot : K.cyan, 2.6); B(cx + sx * 4.38, cx + sx * 4.5, L + 0.02, L + 0.14, cz - 4.3, cz + 4.3, sx > 0 ? K.cyan : K.hot, 2.6)
+    B(cx + sx * 2.7 - 0.25, cx + sx * 2.7 + 0.25, L + 3.7, L + 4.4, cz + sz * 2.7 - 0.25, cz + sz * 2.7 + 0.25, K.iron); B(cx + sx * 3.1 - 0.12, cx + sx * 3.1 + 0.12, L + 3.9, L + 4.2, cz + sz * 3.1 - 0.12, cz + sz * 3.1 + 0.12, K.hot, 3)
+    for (let k = 0; k < 4; k++) B(Math.min(cx + sx * 3.0, cx + sx * 3.08), Math.max(cx + sx * 3.0, cx + sx * 3.08), 6 + k * 4.4, 9.5 + k * 4.4, cz - 0.4 + k * 0.25, cz - 0.3 + k * 0.25, K.black)
+  }
+  const rx = kw * 0.78, rz = K.keep[0] * 0.38
+  for (const sz of [-1, 1]) for (let i = -7; i <= 7; i++) { const u = x + i * rx / 7.4; B(u - 0.6, u + 0.6, 47.4, 49.2, mid + sz * rz - (sz > 0 ? 1 : 0), mid + sz * rz + (sz > 0 ? 0 : 1), K.pale) }
+  for (const sx of [-1, 1]) for (let i = -1; i <= 1; i++) { const v = mid + i * rz * 0.6; B(x + sx * rx - (sx > 0 ? 1 : 0), x + sx * rx + (sx > 0 ? 0 : 1), 47.4, 49.2, v - 0.6, v + 0.6, K.pale) }
+  for (const i of [-6, -3, 2, 5]) faustPrisonRaven(B, x + i * rx / 7.4, 49.2, mid + rz - 0.5, 'z', hash(i, 9) % 2 ? 1 : -1, 3.4)
+  B(x - rx + 1, x + rx - 1, 44.65, 44.77, mid + rz - 1.05, mid + rz - 0.95, K.hot, 2.6); B(x - rx + 1, x + rx - 1, 44.65, 44.77, mid - rz + 0.95, mid - rz + 1.05, K.cyan, 2.6)
+  const sgn = zs - 0.33
+  B(x - 9.5, x + 9.5, 13.2, 17.8, sgn - 0.05, sgn + 0.1, K.iron); B(x - 9.6, x + 9.6, 17.8, 18.1, sgn - 0.06, sgn + 0.14, K.cyan, 2.6); B(x - 9.6, x + 9.6, 12.9, 13.2, sgn - 0.06, sgn + 0.14, K.cyan, 2.6)
+  B(x - 9.6, x - 9.3, 12.9, 18.1, sgn - 0.06, sgn + 0.14, K.cyan, 2.6); B(x + 9.3, x + 9.6, 12.9, 18.1, sgn - 0.06, sgn + 0.14, K.cyan, 2.6)
+  vtext('deco', T.sign, 'z', x, 13.8, 3.2, 17, sgn + 0.1, 1, K.hot, 3)
+  for (let k = 0; k < 8; k++) B(x - gate + 0.4 + k * 1.0, x - gate + 0.6 + k * 1.0, 0, 8.2, zs - 1.7, zs - 1.6, K.iron)
+  for (let k = 0; k < 8; k++) B(x - gate, x + gate, 0.8 + k * 1.0, 0.9 + k * 1.0, zs - 1.75, zs - 1.55, K.iron)
+  for (let k = 0; k < 10; k++) B(x - gate + 0.2 + k * 0.8, x - gate + 0.3 + k * 0.8, 0, 0.9, zs - 1.7, zs - 1.55, K.trim)
+  for (let k = 0; k < 15; k++) { const u = x - 3.4 + k * 0.486; B(u - 0.09, u + 0.09, 8.7, 12.6, zs - 2.7, zs - 2.5, K.iron); B(u - 0.12, u + 0.12, 8.3, 8.8, zs - 2.72, zs - 2.48, K.trim) }
+  for (const hy of [9.1, 12.0]) B(x - 3.5, x + 3.5, hy, hy + 0.2, zs - 2.75, zs - 2.45, K.iron)
+  B(x - 3.5, x + 3.5, 12.45, 12.6, zs - 2.75, zs - 2.45, K.trim); B(x - 3.5, x + 3.5, 8.6, 12.4, zs - 3.1, zs - 3.04, K.redp, 0.55)
+  for (const s of [-1, 1]) { B(x + s * gate - 0.18, x + s * gate + 0.18, 0, 8.4, zs - 4, zs - 3.4, K.cyan, 2.6); B(x - gate, x + gate, 8.4, 8.8, zs - 4, zs - 3.4, K.cyan, 2.6) }
+  B(x - gate + 0.2, x + gate - 0.2, 8.0, 8.1, zs - 3.95, zs - 3.45, K.hot, 2.8)
+  for (let r = 0; r < 3; r++) for (let q = 0; q < 14; q++) B(x - 17 + q * 2.6 + (r % 2) * 0.4 + 0.03, x - 17 + q * 2.6 + (r % 2) * 0.4 + 1.23, r * 0.4, r * 0.4 + 0.4, zs - 8 - ((q % 3) * 0.1) + 0.037, zs - 7.2 - ((q % 3) * 0.1) + 0.037, K.bag)
+  for (let r = 0; r < 3; r++) for (let q = 0; q < 8; q++) B(x - 6 + q * 1.5, x - 6 + q * 1.5 + 1.1, r * 0.4, r * 0.4 + 0.4, zs - 11.4, zs - 10.8, K.bag)
+  const gx = x + 9, gz = (yz0 + yz1) / 2
+  B(gx - 2.5, gx + 2.5, 0, 0.7, gz - 3, gz + 3, K.stone); B(gx - 0.2, gx + 0.2, 0.7, 7.5, gz - 2.4, gz - 2, K.black); B(gx - 0.2, gx + 0.2, 0.7, 7.5, gz + 2, gz + 2.4, K.black); B(gx - 0.3, gx + 0.3, 7.3, 7.8, gz - 2.5, gz + 2.5, K.black)
+  B(gx - 0.04, gx + 0.04, 5.3, 7.3, gz - 0.04, gz + 0.04, K.poster); B(gx - 0.2, gx + 0.2, 4.8, 5.4, gz - 0.2, gz + 0.2, K.poster)
+  const bx = x - 9
+  B(bx - 1.2, bx + 1.2, 0, 0.5, gz - 1.2, gz + 1.2, K.stone); B(bx - 0.5, bx + 0.5, 0.5, 1.2, gz - 0.5, gz + 0.5, K.soot); B(bx + 0.8, bx + 1.0, 0.5, 1.8, gz + 0.1, gz + 0.3, K.black); B(bx + 0.5, bx + 1.3, 1.8, 2.0, gz + 0.05, gz + 0.35, K.hot, 1.2)
+  for (const s of [-1, 1]) { B(x + s * 16 - 0.12, x + s * 16 + 0.12, 0, 9, gz - 0.12, gz + 0.12, K.black); B(x + s * 16 - 0.7, x + s * 16 + 0.7, 9, 9.5, gz - 0.7, gz + 0.7, K.iron); B(x + s * 16 - 0.5, x + s * 16 + 0.5, 8.9, 9, gz - 0.5, gz + 0.5, s > 0 ? K.hot : K.cyan, 3) }
+  void kz0; void lot
+}
+function faustPrisonLot(lot, boxes) {
+  const { parts, dims } = faustPrisonParts(lot), K = FAUST_PRISON
+  lot.height = 60; lot.prisonSolids = parts.filter(p => p.solid).map(p => p.b)
+  const mid = (dims.kz0 + dims.kz1) / 2
+  lot.mass = dims.keepTiers
+  lot.skyMass = [faustBox(lot.x, 5, lot.z - 6, lot.w, 5, lot.d - 8), lot.mass[0], lot.mass[1], lot.mass[2], faustBox(lot.x, 8, lot.z + lot.d - 1.5, lot.w, 8, 1.5)]
+  lot.door = [lot.x, dims.kz1]
+  lot.keepLot = { ...lot, prison: undefined, keepLot: undefined, district: 'core', gothic: false, stop: false, venue: undefined, landmark: undefined, club: undefined, alley: undefined, backDoors: undefined,
+    z: mid, w: dims.kw, d: K.keep[0] / 2, height: 44, mass: lot.mass, skyMass: lot.mass.slice(0, 2), floorTypes: ['lobby', 'mess', 'cells', 'cells', 'cells', 'office', 'office', 'office', 'office', 'office', 'office'], atrium: { k0: 2, k1: 4, hx: dims.kw - K.wallIn - 9.5, hz: K.keep[0] / 2 - K.wallIn - K.cellDepth - K.walk } }
+  boxes.push(...lot.prisonSolids)
+}
+const DS_CELL = 25
+const faustCellKey = (chunk, tier) => DS_CELL * 4294967296 + chunk * 1024 + tier
+const faustCellOpen = (B, k) => typeof dsState !== 'undefined' && typeof faustState !== 'undefined' && !!faustState && !!dsState?.all?.has(faustCellKey(B.ci * faustState.S + B.cj, k))
+function faustCellRecord(key) {
+  const F = faustState, local = key - DS_CELL * 4294967296, chunk = Math.floor(local / 1024), tier = local % 1024
+  if (!F || !(local >= 0) || chunk >= F.S * F.S || tier < 2 || tier > 4) return null
+  const lot = faustGet(Math.floor(chunk / F.S), chunk % F.S)?.plan?.lots?.find(l => l.prison)
+  return lot ? { chunk, at: [lot.keepLot.x, tier * 4 + 1, lot.keepLot.z], p: { tier } } : null
+}
+function faustCellRefresh(rec) {
+  const F = faustState
+  if (!F) return
+  const ci = Math.floor(rec.chunk / F.S), cj = rec.chunk % F.S, li = faustGet(ci, cj)?.plan?.lots?.findIndex(l => l.prison)
+  if (!(li >= 0)) return
+  const id = ci + ' ' + cj + ' ' + li, B = faustIn.plans.get(id), O = faustIn.open.get(id), tier = (rec.key - DS_CELL * 4294967296) % 1024
+  if (B) B.cache?.delete(tier)
+  if (O) inStoreyDrop(O, tier)
+  const D = faustIn.drawn.get(id)
+  if (D) inUndraw(D, tier)
+}
+function faustCellLever(lot, tier) {
+  const K = FAUST_IN, T = K.stair, sw = 2 * T.width + T.well, cw = sw + 2 * K.part, sx = lot.keepLot.x - cw / 2 + K.part, sd1 = sx + sw - 0.75
+  const cl = 2 * T.landing + T.run + 2 * K.part
+  return { x: sd1 + 0.5, y: tier * 4, z: lot.keepLot.z + cl / 2 }
+}
+function faustPrisonLeverUse(c) {
+  if (!isHost || !faustState || !LV.faust || c.dead > 0) return false
+  const lot = faustPrisonSiteOf()
+  if (!lot || Math.abs(c.x - lot.x) > lot.w || Math.abs(c.z - lot.z) > lot.d) return false
+  const chunk = Math.floor((lot.x + ARENA) / 96) * faustState.S + Math.floor((lot.z + ARENA) / 96)
+  for (let tier = 2; tier <= 4; tier++) {
+    const L = faustCellLever(lot, tier)
+    if (Math.abs(c.y - (L.y + 1)) > 1.8 || Math.hypot(c.x - L.x, c.z - L.z) > 2.3) continue
+    if (dsState?.all?.has(faustCellKey(chunk, tier))) return true
+    if (!dsBreak(DS_CELL, faustCellKey(chunk, tier), 0)) return false
+    heatCrime(c, 'breakin', c.x, c.z, 3, true)
+    return true
+  }
+  return false
+}
+function faustCutRect(a0, a1, b0, b1, V) {
+  if (!V || a1 <= V[0] || a0 >= V[1] || b1 <= V[2] || b0 >= V[3]) return [[a0, a1, b0, b1]]
+  const out = [], m0 = Math.max(a0, V[0]), m1 = Math.min(a1, V[1])
+  if (a0 < V[0]) out.push([a0, V[0], b0, b1])
+  if (a1 > V[1]) out.push([V[1], a1, b0, b1])
+  if (b0 < V[2]) out.push([m0, m1, b0, V[2]])
+  if (b1 > V[3]) out.push([m0, m1, V[3], b1])
+  return out
+}
+function faustAtriumAt(B, k, part) {
+  const A = B.atrium
+  if (!A || !(part === 'f' ? k >= A.k0 && k <= A.k1 : k >= A.k0 - 1 && k <= A.k1 - 1)) return null
+  return [B.x - A.hx, B.x + A.hx, B.z - A.hz, B.z + A.hz]
+}
+function faustAtriumHit(B, k, x, z) {
+  const V = faustAtriumAt(B, k, 'c')
+  return !!V && x > V[0] && x < V[1] && z > V[2] && z < V[3]
+}
+const FAUST_PRISON_DIGITS = { 0: [7, 5, 5, 5, 7], 1: [2, 6, 2, 2, 7], 2: [7, 1, 7, 4, 7], 3: [7, 1, 7, 1, 7], 4: [5, 5, 7, 1, 1], 5: [7, 4, 7, 1, 7], 6: [7, 4, 7, 5, 7], 7: [7, 1, 1, 1, 1], 8: [7, 5, 7, 5, 7], 9: [7, 5, 7, 1, 7] }
+function faustPrisonLabel(box, text, ax, u, y0, w, dir, cell, tint, more) {
+  const start = u - (text.length * 4 - 1) * cell / 2
+  for (let k = 0; k < text.length; k++) {
+    const rows = text[k] === 'O' ? [7, 5, 5, 5, 7] : FAUST_PRISON_DIGITS[text[k]] || FAUST_GLYPHS[text[k]]
+    if (!rows) continue
+    for (let rw = 0; rw < 5; rw++) for (let c = 0; c < 3; c++) {
+      if (!(rows[rw] >> (2 - c) & 1) || c && rows[rw] >> (3 - c) & 1) continue
+      let m = 1
+      while (c + m < 3 && rows[rw] >> (2 - c - m) & 1) m++
+      const st = more?.st || 1, flip = ax === 'z' ? dir < 0 : dir > 0, a0 = flip ? u + (text.length * 4 - 1) * cell / 2 - (k * 4 + c + m) * cell : start + (k * 4 + c) * cell, ya = y0 + (4 - rw) * cell * st, o0 = dir > 0 ? w : w - 0.03, o1 = dir > 0 ? w + 0.03 : w
+      if (ax === 'z') box(a0, a0 + m * cell, ya, ya + cell * st, o0, o1, tint, more); else box(o0, o1, ya, ya + cell * st, a0, a0 + m * cell, tint, more)
+    }
+  }
+}
+function faustMessDeco(box, R, fy) {
+  const slogans = TEXT.prison.mess, red = 0xc4211a, cream = 0xd9cdb0, black = 0x0b0c0e
+  const text = (str, ax, u, y0, w, dir, cell, tint) => faustPrisonLabel(box, str, ax, u, y0, w, dir, cell, tint, {})
+  let n = 0
+  for (const [plane, dir] of [[R.x0 + 0.04, 1], [R.x1 - 0.04, -1]]) for (let q = 0; q < 4; q++) {
+    const u = R.z0 + (R.z1 - R.z0) * (q + 0.5) / 4, lines = slogans[n++ % slogans.length], o0 = dir > 0 ? plane : plane - 0.05, o1 = dir > 0 ? plane + 0.05 : plane
+    box(o0, o1, fy + 1.1, fy + 3.0, u - 1.3, u + 1.3, cream, { f: 63 }); box(o0, o1, fy + 3.0, fy + 3.5, u - 1.3, u + 1.3, red, {}); box(o0, o1, fy + 0.9, fy + 1.1, u - 1.3, u + 1.3, black, {})
+    lines.forEach((ln, i) => text(ln, 'x', u, fy + 2.5 - i * 0.95, dir > 0 ? plane + 0.05 : plane - 0.05, dir, Math.min(0.15, 2.3 / (Math.max(...lines.map(q => q.length)) * 4 - 1)), i % 2 ? black : red))
+  }
+  for (let k = 0; k < 6; k++) { const u = R.x0 + (R.x1 - R.x0) * (k + 0.5) / 6; box(u - 0.03, u + 0.03, fy + 2.8, fy + 3.6, (R.z0 + R.z1) / 2 - 0.03, (R.z0 + R.z1) / 2 + 0.03, 0x15161a, {}) }
+}
+let FAUST_FACE_SHAPES = null
+function faustFaceShapes() {
+  if (FAUST_FACE_SHAPES) return FAUST_FACE_SHAPES
+  const bez = (p0, p1, p2, p3, n) => { const o = []; for (let i = 0; i <= n; i++) { const t = i / n, u = 1 - t; o.push([u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0], u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]]) } return o }
+  const quad = (p0, c, p1, n) => { const o = []; for (let i = 0; i <= n; i++) { const t = i / n, u = 1 - t; o.push([u * u * p0[0] + 2 * u * t * c[0] + t * t * p1[0], u * u * p0[1] + 2 * u * t * c[1] + t * t * p1[1]]) } return o }
+  const dome = [], right = [], left = []
+  for (let i = 0; i <= 24; i++) { const a = Math.PI * (1 - i / 24); dome.push([62 * Math.cos(a), -30 - 76 * Math.sin(a)]) }
+  for (let i = 0; i <= 40; i++) { const t = i / 40, y = -30 + 180 * t; right.push([62 + 22 * t + 10 * Math.sin(t * 17 + 0.5), y]); left.push([-(62 + 22 * t + 10 * Math.sin(t * 17 + 2.3)), y]) }
+  const tail = []
+  { const rx = right[right.length - 1][0], lx = left[left.length - 1][0]; for (let i = 1; i < 18; i++) tail.push([rx + (lx - rx) * i / 18, 150 + 9 * Math.abs(Math.sin(i * 1.25))]) }
+  const hair = [...dome, ...right, ...tail, ...left.reverse()]
+  const strands = []
+  for (const s of [-1, 1]) for (const j of [0, 1]) {
+    const up = [], dn = []
+    for (let i = 0; i <= 30; i++) { const t = i / 30, x = s * (58 + 22 * t + 9 * Math.sin(t * 17 + 1.4 + j * 2.3) - 12 * j), y = -8 + 150 * t; up.push([x + 2.3, y]); dn.push([x - 2.3, y]) }
+    strands.push({ p: [...up, ...dn.reverse()], c: 0x3b4660 })
+  }
+  const face = [...bez([-40, -66], [-52, -30], [-50, 20], [-38, 52], 12), [-16, 76], [16, 76], ...bez([38, 52], [50, 20], [52, -30], [40, -66], 12), ...quad([40, -66], [0, -78], [-40, -66], 10)]
+  const rect = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+  const mouth = quad([-22, 54], [0, 45], [22, 54], 8), mouthPoly = [...mouth.map(([x, y]) => [x, y - 2]), ...mouth.map(([x, y]) => [x, y + 2]).reverse()]
+  FAUST_FACE_SHAPES = { face, layers: [
+    { p: hair, c: 0x12151b }, ...strands, { p: face, c: 0x6c8fc4 }, { p: rect(8, -90, 100, 160), c: 0x4a6396, clip: 1 },
+    { p: [[-46, 6], [-30, 8], [-14, 60], [-34, 54]], c: 0x5873a6, clip: 1 }, { p: [[46, 6], [30, 8], [14, 60], [34, 54]], c: 0x3a5088, clip: 1 },
+    { p: [[-50, -32], [-4, -25], [4, -25], [50, -32], [48, -17], [4, -11], [-4, -11], [-48, -17]], c: 0x0c0e12 }, { p: rect(-40, -16, -8, -4), c: 0x0c0e12 }, { p: rect(8, -16, 40, -4), c: 0x0c0e12 },
+    { p: [[1, -10], [9, 26], [-3, 30], [-2, -8]], c: 0x3f5a8e }, { p: rect(-10, 28, 10, 31), c: 0x1a1d24 }, { p: mouthPoly, c: 0x1a1d24 }] }
+  return FAUST_FACE_SHAPES
+}
+function faustPrisonWallFace(box, room, cx, y0, zp, dir, pw, ph, ax = 'z') {
+  const hw = Math.min(pw / 2, ph / 3), z0 = Math.min(zp, zp + dir * 0.03), z1 = Math.max(zp, zp + dir * 0.03), f = ax === 'z' ? (dir > 0 ? 16 : 32) : (dir > 0 ? 1 : 2)
+  if (ax === 'z') box(cx - hw, cx + hw, y0, y0 + ph, z0, z1, 0xffffff, { m: 3, p: 'faust', f })
+  else box(z0, z1, y0, y0 + ph, cx - hw, cx + hw, 0xffffff, { m: 3, p: 'faust', f })
+}
+function faustPrisonLobbyDeco(X) {
+  const { box, P, C, B, y, R } = X, K = FAUST_PRISON, red = 0x8a1410, cream = 0xd9cdb0, black = 0x0b0c0e, gold = K.gold
+  const cx = (C.x0 + C.x1) / 2, hw = Math.min((C.x1 - C.x0) / 2 - 0.1, 1.9), zc = C.z1
+  box(cx - hw, cx + hw, y + 2.75, y + 3.95, zc, zc + 0.04, red, { f: 63 }); box(cx - hw, cx + hw, y + 2.75, y + 2.81, zc + 0.04, zc + 0.07, gold, {}); box(cx - hw, cx + hw, y + 3.89, y + 3.95, zc + 0.04, zc + 0.07, gold, {})
+  faustPrisonLabel(box, 'GLORIA A FAUST', 'z', cx, y + 3.15, zc + 0.07, 1, Math.min(0.062, (2 * hw - 0.3) / 55), cream, {})
+  const lines = TEXT.prison.cell || TEXT.prison.mess, zm = (R.z0 + R.z1) / 2
+  let n = 0
+  for (const [xw, dir] of [[R.x0 + 0.03, 1], [R.x1 - 0.03, -1]]) for (const dz of [0]) {
+    const zc2 = zm + dz
+    if (n % 2 === 0) faustPrisonWallFace(box, undefined, zc2, y + 1.15, xw, dir, 2.8, 2.6, 'x')
+    else { const xlo = Math.min(xw, xw + dir * 0.03), xhi = Math.max(xw, xw + dir * 0.03)
+      box(xlo, xhi, y + 1.15, y + 3.75, zc2 - 1.4, zc2 + 1.4, red, { f: 63 })
+      for (const [b0, b1] of [[1.15, 1.3], [3.6, 3.75]]) { const g0 = xw + dir * 0.03, g1 = xw + dir * 0.07; box(Math.min(g0, g1), Math.max(g0, g1), y + b0, y + b1, zc2 - 1.4, zc2 + 1.4, gold, {}) }
+      lines[n % lines.length].forEach((ln, k) => faustPrisonLabel(box, ln, 'x', zc2, y + 2.2 - k * 0.7, xw + dir * 0.07, dir, Math.min(0.14, 2.4 / (ln.length * 4 - 1)), cream, {})) }
+    n++
+  }
+  for (const xl of [B.door.x - 1.15, B.door.x + 1.15]) box(xl - 0.06, xl + 0.06, y + 0.06, y + 0.085, R.z0 + 0.1, R.z1 - 0.1, 0xd9b400, { f: 4 })
+}
+function faustCellFloor(X) {
+  const { box, room, node, link, light, wallX, wallZ, fitRoom, rooms, P, C, y, K, IN_TINT, wallTint, Y1, B, sd0, sd1, nDoorOut } = X
+  const A = B.atrium, x0 = B.x - A.hx, x1 = B.x + A.hx, cd = FAUST_PRISON.cellDepth, wk = FAUST_PRISON.walk
+  const zf = P.z1 - cd, zb = P.z0 + cd, vf = zf - wk, vb = zb + wk, mz = (P.z0 + P.z1) / 2
+  const n = Math.max(2, Math.round(2 * A.hx / 2.4)), cw = 2 * A.hx / n, steel = IN_TINT.steel
+  const railX = (a, b, z) => {
+    if (b - a < 0.05) return
+    box(a, b, y + 1.04, y + 1.1, z - 0.03, z + 0.03, steel, { c: 1, m: 1 }); box(a, b, y + 0.5, y + 0.55, z - 0.02, z + 0.02, steel, { m: 1 })
+    const m = Math.max(1, Math.ceil((b - a) / 1.8))
+    for (let i = 0; i <= m; i++) { const u = a + (b - a) * i / m; box(u - 0.03, u + 0.03, y, y + 1.04, z - 0.03, z + 0.03, steel, { c: 1, m: 1, f: 63 ^ 8 ^ 4 }) }
+  }
+  const railZ = (a, b, x) => {
+    if (b - a < 0.05) return
+    box(x - 0.03, x + 0.03, y + 1.04, y + 1.1, a, b, steel, { c: 1, m: 1 }); box(x - 0.02, x + 0.02, y + 0.5, y + 0.55, a, b, steel, { m: 1 })
+    const m = Math.max(1, Math.ceil((b - a) / 1.8))
+    for (let i = 0; i <= m; i++) { const u = a + (b - a) * i / m; box(x - 0.03, x + 0.03, y, y + 1.04, u - 0.03, u + 0.03, steel, { c: 1, m: 1, f: 63 ^ 8 ^ 4 }) }
+  }
+  const bx0 = sd0 - 0.3, bx1 = sd1 + 0.3
+  if (vf > C.z1 + 0.05) { box(bx0, bx1, y - K.slab, y, C.z1, vf, IN_TINT.concrete, { c: 1, f: 4 }); railZ(C.z1, vf, bx0); railZ(C.z1, vf, bx1) }
+  railX(x0, bx0, vf); railX(bx1, x1, vf); railX(x0, x1, vb); railZ(vb, vf, x0); railZ(vb, vf, x1)
+  const wF = room(x0, x1, vf, zf, 'hallway'), wB = room(x0, x1, zb, vb, 'hallway')
+  const frontNodes = [], backNodes = [], frontX = []
+  const gapsF = [], gapsB = []
+  for (let i = 0; i < n; i++) {
+    const a = x0 + i * cw, b = a + cw, cx = (a + b) / 2
+    gapsF.push([cx - 0.55, cx + 0.55, 2.4]); gapsB.push([cx - 0.55, cx + 0.55, 2.4])
+    for (const front of [true, false]) {
+      const r = room(a, b, front ? zf : P.z0, front ? P.z1 : zb, 'cell')
+      rooms[r].aprons = [[cx - 0.7, cx + 0.7, front ? zf : zb - 1.4, front ? zf + 1.4 : zb]]
+      const nw = node(cx, y, front ? (vf + zf) / 2 : (zb + vb) / 2, front ? wF : wB), ni = node(cx, y, front ? zf + 1.0 : zb - 1.0, r)
+      link(nw, ni); (front ? frontNodes : backNodes).push(nw); if (front) frontX.push(cx)
+      fitRoom(r)
+    }
+  }
+  const open = faustCellOpen(B, X.k), barsAt = (cx, z) => {
+    if (open) return
+    box(cx - 0.55, cx + 0.55, y, y + 0.06, z - 0.03, z + 0.03, steel, { c: 1, bars: 1, m: 1 }); box(cx - 0.55, cx + 0.55, y + 2.34, y + 2.4, z - 0.03, z + 0.03, steel, { c: 1, bars: 1, m: 1 })
+    for (let j = 0; j < 7; j++) { const u = cx - 0.5 + j / 6; box(u - 0.02, u + 0.02, y, y + 2.4, z - 0.02, z + 0.02, steel, { c: 1, bars: 1, m: 1 }) }
+    box(cx - 0.55, cx + 0.55, y + 1.1, y + 1.16, z - 0.035, z + 0.035, steel, { c: 1, bars: 1, m: 1 }); box(cx + 0.38, cx + 0.5, y + 0.95, y + 1.2, z - 0.07, z + 0.07, 0x2a2d30, { c: 1, bars: 1, m: 1 })
+  }
+  for (let i = 0; i < n; i++) { const cx = x0 + (i + 0.5) * cw, jt = (i % 24) * 0.0011; barsAt(cx, zf + jt); barsAt(cx, zb + jt) }
+  { const lx = sd1 + 0.5, lz = C.z1, col = open ? 0x3fe86a : 0xff3322, hz = 0xe3b400
+    box(lx - 0.36, lx + 0.36, y + 1.75, y + 2.6, lz, lz + 0.07, 0x1d2023, { c: 1, m: 1 })
+    box(lx - 0.38, lx + 0.38, y + 1.73, y + 1.78, lz, lz + 0.09, hz, { m: 1 }); box(lx - 0.38, lx + 0.38, y + 2.57, y + 2.62, lz, lz + 0.09, hz, { m: 1 }); box(lx - 0.38, lx - 0.33, y + 1.73, y + 2.62, lz, lz + 0.09, hz, { m: 1 }); box(lx + 0.33, lx + 0.38, y + 1.73, y + 2.62, lz, lz + 0.09, hz, { m: 1 })
+    box(lx - 0.04, lx + 0.04, y + 1.85, y + 2.47, lz + 0.07, lz + 0.09, 0x050607, { m: 1 })
+    box(lx - 0.045, lx + 0.045, open ? y + 2.15 : y + 1.85, open ? y + 2.47 : y + 2.17, lz + 0.09, lz + 0.15, col, { m: 2 }); box(lx - 0.1, lx + 0.1, open ? y + 2.35 : y + 1.85, open ? y + 2.51 : y + 2.01, lz + 0.09, lz + 0.22, 0x2a2d30, { m: 1 })
+    box(lx - 0.2, lx + 0.2, y + 2.7, y + 3.05, lz, lz + 0.12, 0x1d2023, { m: 1 }); box(lx - 0.15, lx + 0.15, y + 2.75, y + 3, lz + 0.12, lz + 0.14, col, { m: 2 })
+    light(lx, y + 2.0, lz + 0.8, wF, 1.5, col)
+    faustPrisonLabel(box, 'CELL', 'z', lx, y + 3.2, lz, 1, 0.04, hz, { m: 1 }) }
+  const dark = 0x373b3e, rust = 0x6b4a30, paper = 0xd9d4c2
+  for (let i = 0; i < n; i++) {
+    const a = x0 + i * cw, b = a + cw, cx = (a + b) / 2, jt = (i % 24) * 0.0011
+    for (const front of [true, false]) {
+      const blanket = [0x58606a, 0x6a5a48, 0x4f6a52, 0x66505a][(i + (front ? 1 : 0)) % 4], zw = front ? P.z1 - 0.06 : P.z0 + 0.06, dz = front ? -1 : 1, left = (i + (front ? 0 : 1)) % 2 ? 1 : -1, bx = left > 0 ? a + 0.06 : b - 0.86
+      box(bx, bx + 0.8, y + 0.36, y + 0.44, Math.min(zw, zw + dz * 1.9), Math.max(zw, zw + dz * 1.9), IN_TINT.steel, { c: 1, f: 63 ^ 8 }); box(bx + 0.03, bx + 0.77, y + 0.44, y + 0.52, Math.min(zw, zw + dz * 1.86), Math.max(zw, zw + dz * 1.86), blanket, { f: 63 ^ 8 ^ 4 })
+      box(bx, bx + 0.8, y + 1.36, y + 1.44, Math.min(zw, zw + dz * 1.9), Math.max(zw, zw + dz * 1.9), IN_TINT.steel, { c: 1 }); box(bx + 0.03, bx + 0.77, y + 1.44, y + 1.52, Math.min(zw, zw + dz * 1.86), Math.max(zw, zw + dz * 1.86), blanket, {})
+      for (const px of [bx, bx + 0.76]) for (const pz of [zw, zw + dz * 1.86]) box(px, px + 0.04, y, y + 1.9, Math.min(pz, pz + dz * 0.04), Math.max(pz, pz + dz * 0.04), IN_TINT.steel, { c: 1, f: 63 ^ 8 ^ 4 })
+      const tx = left > 0 ? b - 0.55 : a + 0.08
+      box(tx, tx + 0.47, y, y + 0.4, Math.min(zw, zw + dz * 0.55), Math.max(zw, zw + dz * 0.55), IN_TINT.steel, { c: 1, f: 63 ^ 8 }); box(tx + 0.03, tx + 0.44, y + 0.4, y + 0.44, Math.min(zw, zw + dz * 0.5), Math.max(zw, zw + dz * 0.5), 0xcfcbbd, { f: 63 ^ 8 ^ 4 })
+      box(tx + 0.06, tx + 0.41, y + 0.85, y + 1.0, Math.min(zw, zw + dz * 0.4), Math.max(zw, zw + dz * 0.4), 0xb9b6aa, { c: 1 })
+      box(cx - 0.3, cx + 0.3, y + 1.9, y + 1.98, Math.min(zw, zw + dz * 0.04), Math.max(zw, zw + dz * 0.04), paper, {})
+      const zface = front ? zf - 0.078 - jt : zb + 0.078 + jt
+      faustPrisonLabel(box, String(X.k) + String(i + 1).padStart(2, '0'), 'z', cx, y + 2.55, zface, front ? -1 : 1, 0.06, paper, {})
+    }
+  }
+  { const pl = TEXT.prison.cell || TEXT.prison.mess, cream = 0xd9cdb0, black = 0x0b0c0e
+    for (let i = 1; i < n; i++) for (const front of [true, false]) {
+      if ((i * 5 + X.k + (front ? 1 : 0)) % 3) continue
+      const xb = x0 + i * cw, ln = pl[(i * 3 + X.k + (front ? 1 : 0)) % pl.length][0], dir = front ? -1 : 1, zp = front ? zf - 0.1 : zb + 0.1, rw = front ? wF : wB, zt = zp + dir * 0.1, zlo = Math.min(zp, zt), zhi = Math.max(zp, zt)
+      box(xb - 0.6, xb + 0.6, y + 0.8, y + 2.9, Math.min(zp, zp + dir * 0.03), Math.max(zp, zp + dir * 0.03), black, { f: 63 })
+      faustPrisonWallFace(box, rw, xb, y + 1.25, zp + dir * 0.03, dir, 1.08, 1.62)
+      void zlo; void zhi
+      faustPrisonLabel(box, ln, 'z', xb, y + 0.9, zp + dir * 0.14, dir, Math.min(0.05, 1.0 / (ln.length * 4 - 1)), cream, {})
+    } }
+  for (const front of [true, false]) {
+    let u = x0
+    const gz0 = front ? zf - 0.1 : zb + 0.075, gz1 = front ? zf - 0.075 : zb + 0.1
+    for (const [ga, gb] of front ? gapsF : gapsB) { box(u, ga, y, y + 1.1, gz0, gz1, dark, {}); u = gb }
+    box(u, x1, y, y + 1.1, gz0, gz1, dark, {})
+  }
+  for (const [za, zbb] of [[vf + 0.1, vf + 0.3], [vb - 0.3, vb - 0.1]]) box(x0, x1, y, y + 0.014, za, zbb, 0xd9b400, { f: 4 })
+  for (const [ax, w, dir, u] of [['z', C.z1, 1, (C.x0 + sd0) / 2], ['z', C.z0, -1, (C.x0 + C.x1) / 2], ['x', C.x1, 1, (C.z0 + C.z1) / 2], ['x', C.x0, -1, (C.z0 + C.z1) / 2]]) faustPrisonLabel(box, String(X.k), ax, u, y + 1.5, w, dir, 0.22, 0xe3b400, { m: 1 })
+  box(C.x0, C.x1, y, y + 0.35, C.z1, C.z1 + 0.04, 0x3a3320, {})
+  wallX(x0, x1, zf, gapsF, wallTint); wallX(x0, x1, zb, gapsB, wallTint)
+  for (let i = 0; i <= n; i++) { const xb = x0 + i * cw; wallZ(zf, P.z1, xb, [], wallTint); wallZ(P.z0, zb, xb, [], wallTint) }
+  for (let i = 1; i < frontNodes.length; i++) { link(frontNodes[i - 1], frontNodes[i]); link(backNodes[i - 1], backNodes[i]) }
+  const sx = (sd0 + sd1) / 2, near = frontNodes[frontX.reduce((b, v, i) => Math.abs(v - sx) < Math.abs(frontX[b] - sx) ? i : b, 0)]
+  link(nDoorOut, near)
+  for (const side of [-1, 1]) {
+    const e = side < 0 ? x0 : x1, rd = room(side < 0 ? P.x0 : e, side < 0 ? e : P.x1, P.z0, P.z1, 'living')
+    rooms[rd].aprons = [[Math.min(e, e + side * 1.6), Math.max(e, e + side * 1.6), vf, zf], [Math.min(e, e + side * 1.6), Math.max(e, e + side * 1.6), zb, vb]]
+    const nf = node(e + side * 1.0, y, (vf + zf) / 2, rd), nb = node(e + side * 1.0, y, (zb + vb) / 2, rd), nc = node(e + side * 3.0, y, mz, rd)
+    link(nf, nc); link(nb, nc); link(side < 0 ? frontNodes[0] : frontNodes.at(-1), nf); link(side < 0 ? backNodes[0] : backNodes.at(-1), nb)
+    fitRoom(rd)
+  }
+  for (let u = x0 + 3; u < x1 - 1; u += 9) for (const [zl, rw] of [[(vf + zf) / 2, wF], [(zb + vb) / 2, wB]]) {
+    light(u, y + 3.2, zl, rw, 1.2, 0x7fdcff); box(u - 0.35, u + 0.35, y + 3.6, Y1, zl - 0.06, zl + 0.06, 0x9fe8ff, { m: 2, r: rw })
+    for (const q of [-0.45, 0.45]) box(u + q - 0.015, u + q + 0.015, y + 3.1, y + 3.6, zl - 0.1, zl + 0.1, 0x202226, {})
+    box(u - 0.5, u + 0.5, y + 3.08, y + 3.12, zl - 0.1, zl + 0.1, 0x202226, {})
+  }
+  { const cxm = (C.x0 + C.x1) / 2, gold = FAUST_PRISON.gold
+    for (let u = x0 + 7.5; u < x1 - 3; u += 9) { if (Math.abs(u - cxm) < (C.x1 - C.x0) / 2 + 1.2) continue
+      box(u - 0.7, u + 0.7, y + 0.7, y + 3.46, mz - 0.025, mz + 0.025, 0x0b0c0e, { f: 63 }); for (const e of [-0.7, 0.62]) box(u + e, u + e + 0.08, y + 0.7, y + 3.5, mz - 0.03, mz + 0.03, gold, {}); box(u - 0.7, u + 0.7, y + 3.42, y + 3.5, mz - 0.03, mz + 0.03, gold, {})
+      faustPrisonLabel(box, 'DF', 'z', u, y + 2.3, mz + 0.03, 1, 0.12, gold, {}); faustPrisonLabel(box, 'DF', 'z', u, y + 2.3, mz - 0.03, -1, 0.12, gold, {})
+      for (const e of [-0.6, 0.6]) box(u + e - 0.012, u + e + 0.012, y + 3.5, Y1, mz - 0.012, mz + 0.012, 0x202226, {}) }
+    faustPrisonWallFace(box, wB, cxm, y + 2.0, C.z0 - 0.02, -1, 1.5, 1.2)
+    for (let u = x0 + 3; u < x1 - 1; u += 9) for (const [zl, rw] of [[(vf + zf) / 2 + 0.55, wF], [(zb + vb) / 2 - 0.55, wB]]) box(u - 0.05, u + 0.05, y + 3.52, y + 3.6, zl - 0.05, zl + 0.05, 0xff2a22, { m: 2, r: rw }) }
+  light(B.x - 8, y + 3.0, mz, wF, 1.4, 0xff3a2a); light(B.x + 8, y + 3.0, mz, wF, 1.4, 0xff3a2a)
+  for (const ex of [x0 + 0.3, x1 - 0.3]) box(ex - 0.2, ex + 0.2, y + 3.2, y + 3.5, mz - 0.2, mz + 0.2, 0xff2a22, { m: 2, r: wF })
+  for (const zr of [vf, vb]) { for (let u = x0 + 0.3; u < x1 - 0.2; u += 0.9) box(u - 0.025, u + 0.025, y + 1.1, y + 2.9, zr - 0.025, zr + 0.025, 0x1c1e22, {}); for (const ry of [1.6, 2.2, 2.85]) box(x0, x1, y + ry, y + ry + 0.05, zr - 0.03, zr + 0.03, 0x1c1e22, {}) }
+  for (let i = 0; i < n; i++) { const cx = x0 + (i + 0.5) * cw; if ((i * 7 + X.k) % 3) continue
+    for (const [zface, sg] of [[zf - 0.11, -1], [zb + 0.11, 1]]) { box(cx - 0.62, cx - 0.56, y + 0.5, y + 2.4, Math.min(zface, zface + sg * 0.02), Math.max(zface, zface + sg * 0.02), 0x2a1d15, {}); box(cx + 0.58, cx + 0.62, y + 0.9, y + 2.4, Math.min(zface, zface + sg * 0.02), Math.max(zface, zface + sg * 0.02), 0x3a2a1c, {}) } }
+  for (let u = x0 + 4.5; u < x1 - 2; u += 9) for (const zl of [(vf + zf) / 2 + 0.4, (zb + vb) / 2 - 0.4]) { box(u - 0.02, u + 0.02, y + 2.3, Y1, zl - 0.02, zl + 0.02, 0x15161a, {}); for (let q = 0; q < 6; q++) box(u - (q % 2 ? 0.04 : 0.07), u + (q % 2 ? 0.04 : 0.07), y + 2.3 + q * 0.2, y + 2.38 + q * 0.2, zl - 0.04, zl + 0.04, 0x1e2024, {}) }
+}
+function faustInteriorLot(l) { return l.keepLot || l }
+function faustLotDoor(l) { return l.door || [l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, l.z + l.d] }
+function* faustPrisonDraw(g, lot) {
+  const { parts, letters } = faustPrisonParts(lot, true)
+  for (let i = 0; i < parts.length; i++) { const p = parts[i]; g.box(p.b, p.tint, p.glow); if ((i & 255) === 255) yield }
+  yield
+  const box = (x0, x1, y0, y1, z0, z1, tint, more) => g.box(faustBox((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2), tint, more?.m ? 1.5 : 0)
+  for (let li = 0; li < letters.length; li++) {
+    const q = letters[li]; if ((li & 3) === 3) yield
+    const off = q.dir * 0.03, c = q.ax === 'z' ? [q.u, q.y0 + q.h / 2, q.w + off] : [q.w + off, q.y0 + q.h / 2, q.u]
+    const U = q.ax === 'z' ? (q.dir > 0 ? [1, 0, 0] : [-1, 0, 0]) : (q.dir > 0 ? [0, 0, -1] : [0, 0, 1])
+    if (!faustLetters(g, q.face, q.str, c, U, [0, 1, 0], q.wMax, q.h, q.tint, q.light, 0.55, 0.06)) faustPrisonLabel(box, q.str, q.ax, q.u, q.y0, q.w + off, q.dir, Math.min(q.h / 5.5, q.wMax / (q.str.length * 4)), q.tint, q.light ? { m: 1 } : {})
+  }
+}
+const faustPrisonBeamList = []
+let faustPrisonBeamGeo = null
+const FAUST_POSTER_TEX = new Map(), FAUST_POSTER_MATS = new Map(), FAUST_POSTER_PH = {}
+function faustPosterTex(kind) {
+  const key = kind + FAUST_FACE_EYES + FAUST_FACE_STYLE, hit = FAUST_POSTER_TEX.get(key)
+  if (hit) return hit
+  const W = kind === 'mural' ? 960 : 320, H = kind === 'mural' ? 456 : 560, cv = document.createElement('canvas')
+  cv.width = W; cv.height = H
+  const g = cv.getContext('2d'), gold = '#c9a227'
+  g.fillStyle = '#6e1b16'; g.fillRect(0, 0, W, H)
+  g.fillStyle = '#3d0b0b'; for (let i = 1; i < 12; i++) if (i !== 6) g.fillRect(W * i / 12 - W * 0.014, H * 0.04, W * 0.028, H * 0.92)
+  const k = Math.min(H * 0.8 / 258, W * 0.84 / 184)
+  faustFacePaint(g, W / 2, H / 2 - 23 * k, k, 1)
+  g.strokeStyle = gold; g.lineWidth = Math.max(4, H * 0.018); g.strokeRect(g.lineWidth / 2, g.lineWidth / 2, W - g.lineWidth, H - g.lineWidth)
+  if (FAUST_FACE_STYLE === 'realistic') {
+    const ppm = H / (FAUST_POSTER_PH[kind] || 7), row = 0.075 * ppm, cols = 0.22 * ppm
+    g.fillStyle = 'rgba(0,0,0,0.34)'
+    for (let r = 0, y = 0; y < H; r++, y += row) { g.fillRect(0, y, W, Math.max(1, row * 0.12)); for (let x = (r & 1) * cols / 2; x < W; x += cols) g.fillRect(x, y, Math.max(1, cols * 0.045), row) }
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.userData.shared = true
+  FAUST_POSTER_TEX.set(key, t)
+  return t
+}
+function faustPosterMat(kind) {
+  let m = FAUST_POSTER_MATS.get(kind)
+  if (!m) { m = new THREE.MeshBasicMaterial({ map: faustPosterTex(kind), color: 0xc2c2c2 }); m.userData.shared = true; FAUST_POSTER_MATS.set(kind, m) }
+  return m
+}
+function faustPrisonFacesAdd(root, lot) {
+  lot.prisonFaces ||= faustPrisonParts(lot, true).faces
+  for (const f of lot.prisonFaces) {
+    FAUST_POSTER_PH[f.kind] = f.ph
+    const geo = new THREE.PlaneGeometry(f.pw, f.ph), mesh = new THREE.Mesh(geo, faustPosterMat(f.kind))
+    mesh.rotation.y = f.ax === 'z' ? (f.dir > 0 ? 0 : Math.PI) : (f.dir > 0 ? Math.PI / 2 : -Math.PI / 2)
+    if (f.ax === 'z') mesh.position.set(f.cx, f.y0 + f.ph / 2, f.w); else mesh.position.set(f.w, f.y0 + f.ph / 2, f.cx)
+    mesh.frustumCulled = true; root.add(mesh)
+  }
+}
+const FAUST_EYE_MESHES = new Set(), FAUST_EYE_COLOR = new THREE.Color()
+function faustEyesTrack(mesh, ranges) {
+  if (ranges?.length) { mesh.userData.eyeRanges = ranges; FAUST_EYE_MESHES.add(new WeakRef(mesh)) }
+}
+function faustEyesRefresh() {
+  FAUST_ATLAS?.repaint()
+  for (const [kind, m] of FAUST_POSTER_MATS) m.map = faustPosterTex(kind)
+}
+function faustEyesSet(on) {
+  const next = on ? 'red' : 'white'
+  if (next === FAUST_FACE_EYES) return
+  FAUST_FACE_EYES = next
+  faustEyesRefresh()
+  FAUST_EYE_COLOR.setHex(on ? 0xff3322 : 0xffffff)
+  for (const ref of FAUST_EYE_MESHES) {
+    const mesh = ref.deref(), c = mesh?.geometry?.attributes.color
+    if (!c) { FAUST_EYE_MESHES.delete(ref); continue }
+    for (const [i0, i1] of mesh.userData.eyeRanges) for (let i = i0; i < i1; i += 3) { c.array[i] = FAUST_EYE_COLOR.r; c.array[i + 1] = FAUST_EYE_COLOR.g; c.array[i + 2] = FAUST_EYE_COLOR.b }
+    c.needsUpdate = true
+  }
+}
+let FAUST_EYES_FORCE = null
+function faustEyesPoll() {
+  const style = activeLook === 'ink' || activeLook === 'realistic' ? activeLook : 'plain'
+  if (style !== FAUST_FACE_STYLE) { FAUST_FACE_STYLE = style; faustEyesRefresh() }
+  faustEyesSet(FAUST_EYES_FORCE ?? (typeof faustSixStars === 'function' && faustSixStars()))
+}
+function faustPrisonBeamsAdd(root, lot) {
+  faustPrisonFacesAdd(root, lot)
+  const mat = faustState?.beamMaterial
+  if (!mat) return
+  if (!faustPrisonBeamGeo) { faustPrisonBeamGeo = new THREE.CylinderGeometry(0.4, 6, 70, 12, 1, true); faustPrisonBeamGeo.translate(0, -35, 0); faustPrisonBeamGeo.userData.shared = true }
+  const K = FAUST_PRISON, ps = []
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) ps.push([lot.x + sx * (lot.w - 3.2), K.ledge + 1.8, lot.z + sz * (lot.d - 3.2), (sx * 2 + sz) * 1.7, sx, sz, 0.6])
+  for (const sx of [-1, 1]) ps.push([lot.x + sx * 5.1, 27, lot.z + lot.d - 1.9, sx * 2.3, sx, 0, -0.8])
+  for (const q of ps) {
+    const beam = new THREE.Mesh(faustPrisonBeamGeo, mat)
+    beam.position.set(q[0], q[1], q[2]); beam.frustumCulled = false; beam.renderOrder = 2
+    beam.userData.phase = q[3]; beam.userData.head = Math.atan2(q[5], q[4]); beam.userData.pitch = q[6]
+    faustPrisonBeamList.push(beam); root.add(beam)
+  }
+}
+function faustPrisonBeamTick(t) {
+  for (let i = faustPrisonBeamList.length - 1; i >= 0; i--) {
+    const beam = faustPrisonBeamList[i]
+    if (!beam.parent) { faustPrisonBeamList.splice(i, 1); continue }
+    beam.visible = activeLook !== 'ink'
+    const a = t * 0.55 + beam.userData.phase
+    const hd = beam.userData.head + Math.sin(a) * (beam.userData.pitch < 0 ? 0.3 : 0.55)
+    faustDir.set(Math.cos(hd) * 0.85, -beam.userData.pitch, Math.sin(hd) * 0.85).normalize()
+    beam.quaternion.setFromUnitVectors(faustDown, faustDir)
+    beam.updateMatrix(); beam.matrixWorld.copy(beam.matrix)
+  }
+}
+const FAUST_PRISON_GUARDS = { join: 140, rest: 25 }
+let faustPrisonState = null, faustPrisonSite = null
+function faustPrisonPosts(lot) {
+  const { x, z, w: W, d: D } = lot, zs = z + D, out = [], face = (dx, dz) => Math.atan2(-dx, -dz)
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) out.push({ row: 'prisonArmed', x: x + sx * (W - 3.2) + sx * 3.5, y: FAUST_PRISON.ledge, z: z + sz * (D - 3.2) + sz * 3.5, yaw: face(sx, sz), tower: true })
+  for (const s of [-1, 1]) out.push({ row: 'prisonArmed', x: x + s * 3.4, y: 0.1, z: zs - 5.2, yaw: face(0, 1) })
+  const yz = (zs - 34.6 + z - D + 12.9) / 2
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) out.push({ row: 'prisonBaton', x: x + sx * 8, y: 0.1, z: yz + sz * 5, yaw: face(-sx, -sz) })
+  return out
+}
+function slPrison(cell, P, ci, cj) {
+  for (const lot of P.lots) if (lot.prison) faustPrisonPosts(lot).forEach((q, n) => {
+    cell.agents.push({ id: SL_VENUE_ID + (ci * 512 + cj) * 1024 + 512 + n, kind: SL_K.idle, body: n < 6 ? 1 : 2, tint: n < 6 ? [0.46, 0.5, 0.58] : [0.55, 0.52, 0.5], x: q.x, z: q.z, yaw: q.yaw + Math.PI, y: q.y,
+      clip: n < 6 ? 'arms_folded' : 'idle', ph: (n * 0.37) % 1, venue: 'prison', role: 'guard', prison: n })
+  })
+}
+function faustPrisonAwake() { return !!faustPrisonState?.awake }
+function faustPrisonSiteOf() {
+  const F = faustState
+  if (!F || !LV.faust) return null
+  if (faustPrisonSite?.seed === F.seed && faustPrisonSite.S === F.S) return faustPrisonSite.lot
+  faustNet(F.seed, F.S)
+  const key = faustPrisonKey?.seed === F.seed >>> 0 && faustPrisonKey.S === F.S ? faustPrisonKey.key : null
+  let lot = null
+  if (key) { const [gx, gz] = key.split(' ').map(Number); lot = faustPlan(F.seed, gx + F.S / 2, gz + F.S / 2, F.S).lots.find(l => l.prison) || null }
+  faustPrisonSite = { seed: F.seed, S: F.S, lot }
+  if (lot) lot.posts = faustPrisonPosts(lot)
+  return lot
+}
+function faustPrisonInfo() {
+  const S = faustPrisonState, lot = faustPrisonSite?.lot
+  return { has: !!S, awake: !!S?.awake, lot: lot && { x: lot.x, z: lot.z, w: lot.w, d: lot.d }, err: S?.err, tries: S?.tries, addFail: S?.addFail, noRow: S?.noRow, ticks: S?.ticks, enf: enforcersEnabled(), host: isHost, faust: LV.faust,
+    rows: { armed: ENFORCER_ROWS.prisonArmed.length, baton: ENFORCER_ROWS.prisonBaton.length, free: ENFORCER_ROWS.prisonArmed.filter(r => !players.has(BOT_ID0 + r)).length + '/' + ENFORCER_ROWS.prisonBaton.filter(r => !players.has(BOT_ID0 + r)).length, police: ENFORCER_ROWS.armed.filter(r => !players.has(BOT_ID0 + r)).length + '/' + ENFORCER_ROWS.baton.filter(r => !players.has(BOT_ID0 + r)).length },
+    guards: S && [...S.guards].map(([n, id]) => { const c = players.get(id); return { n, id, post: lot?.posts?.[n] && [lot.posts[n].x, lot.posts[n].y, lot.posts[n].z], at: c && [+c.x.toFixed(1), +c.y.toFixed(1), +c.z.toFixed(1)], hp: c && c.hp, hunt: c?.ai?.hunt, dead: c?.dead } }) }
+}
+function faustPrisonSleep(S) {
+  for (const id of S.guards.values()) { const c = players.get(id); if (c?.ai?.post !== undefined) enforcerDrop(c) }
+  S.guards.clear(); S.awake = false; if (conns.size) pushRoster()
+}
+function faustPrisonTick(dt, all) {
+  const S = faustPrisonState ||= { guards: new Map(), crimeAt: new Map(), gap: 0, awake: false, rest: 0 }
+  S.ticks = (S.ticks | 0) + 1
+  if (!isHost || !LV.faust || !enforcersEnabled()) { if (S.awake) faustPrisonSleep(S); return }
+  const lot = faustPrisonSiteOf()
+  if (!lot) return
+  const humans = all.filter(c => !c.bot && c.id < BOT_ID0 && !(c.dead > 0)), T = tickAt || now()
+  for (const p of humans) {
+    if (Math.abs(p.x - lot.x) < lot.w - 0.5 && Math.abs(p.z - lot.z) < lot.d - 0.5 && T - (S.crimeAt.get(p.id) ?? -1e9) > 6000) { S.crimeAt.set(p.id, T); heatCrime(p, 'breakin', p.x, p.z, 3, true) }
+  }
+  const wanted = humans.filter(p => heat.get(p.id)?.stars && Math.hypot(p.x - lot.x, p.z - lot.z) < FAUST_PRISON_GUARDS.join)
+  if (wanted.length) { S.awake = true; S.rest = 0 }
+  else if (S.awake && (S.rest += dt) > FAUST_PRISON_GUARDS.rest) { faustPrisonSleep(S); return }
+  if (!S.awake) return
+  for (const [n, id] of S.guards) {
+    const c = players.get(id)
+    if (!c || c.ai?.post !== n) { S.guards.delete(n); continue }
+    if (c.ai.hunt === -999 && wanted.length) { c.ai.hunt = wanted.reduce((a, p) => Math.hypot(p.x - c.x, p.z - c.z) < Math.hypot(a.x - c.x, a.z - c.z) ? p : a).id; c.still = undefined; if (!lot.posts[n].tower) c.ai.pin = false }
+  }
+  if ((S.gap -= dt) > 0) return
+  S.gap = 0.1
+  for (const [n, post] of lot.posts.entries()) {
+    if (S.guards.has(n)) continue
+    S.tries = (S.tries | 0) + 1
+    const i = ENFORCER_ROWS[post.row].find(r => !players.has(BOT_ID0 + r))
+    if (i === undefined) { S.noRow = (S.noRow | 0) + 1; continue }
+    ENFORCER_AT = [post.x, post.y + 0.6, post.z, post.yaw]
+    const ok = addBot(i)
+    ENFORCER_AT = null
+    if (!ok) { S.addFail = (S.addFail | 0) + 1; continue }
+    const c = players.get(BOT_ID0 + i)
+    setCharPos(c, post.x, post.y + c.h + c.r + 0.05, post.z)
+    c.prot = 0; c.knT = 0; c.knUp = 0; c.yaw = c.ai.yaw = post.yaw
+    c.ai.hunt = wanted.length ? wanted.reduce((a, p) => Math.hypot(p.x - post.x, p.z - post.z) < Math.hypot(a.x - post.x, a.z - post.z) ? p : a).id : -999
+    c.ai.post = n; c.ai.pin = !!post.tower; c.ai.hp0 = c.hp
+    S.guards.set(n, c.id); heatRoster = true
+    break
+  }
+}
 function faustDiagAt(gx, gz) {
   if (gz - gx === 4 && !(gx === -3 && gz === 1) && gx >= -10 && gx <= 9) return 1
   if (gx === gz && Math.abs(gx + 0.5) >= 2.5 && Math.abs(gx + 0.5) <= 8.5) return 1
@@ -4268,8 +4991,8 @@ function faustPlan(seed, ci, cj, S = 20) {
       lot.club = { name: hs % 4, door: [r(dx), r(z + d)], bouncer: [r(dx + 1.7), r(z + d + 0.9)], queue: [1, 2, 3].map(k => [r(dx + 1.7 + k * 0.9), r(z + d + 0.9)]),
         back: al ? [r(x + al.side * w), r(z + (hs >>> 5 & 1 ? 1 : -1) * 0.45 * d)] : [r(x + (hs >>> 5 & 1 ? 1 : -1) * 0.45 * w), r(z - d)], backOut: al ? [al.side, 0] : [0, -1], stage: hs >>> 4 & 1 ? 1 : -1 }
     }
-    if (sl.prison) lot.prison = true
-    else if (!lot.landmark && !lot.venue) { const venue = faustVenueFor(seed, gx, gz, i, style, layout, stop, diagonal, gothic); if (venue) lot.venue = venue }
+    if (sl.prison) { lot.prison = true; faustPrisonLot(lot, boxes); lots.push(lot); continue }
+    if (!lot.landmark && !lot.venue) { const venue = faustVenueFor(seed, gx, gz, i, style, layout, stop, diagonal, gothic); if (venue) lot.venue = venue }
     lots.push(lot); boxes.push(...mass)
     if (style !== 'industrial' && style !== 'tenement') {
       for (const side of [-1,1]) for (const k of [-0.86,0,0.86]) {
@@ -4474,7 +5197,7 @@ function inLiftHouse(x, z, H) {
   return out
 }
 function faustInterior(plan, li) {
-  const lot = plan.lots[li], { x, z, w, d, height: H, district: style, gothic, stop, mass } = lot, K = FAUST_IN, T = K.wall
+  const lot = faustInteriorLot(plan.lots[li]), { x, z, w, d, height: H, district: style, gothic, stop, mass } = lot, K = FAUST_IN, T = K.wall
   const rng = genRng(lot.seed ^ 0x3800b1d), pick = list => list[rng() * list.length | 0]
   const tower = style === 'core' || style === 'civic', vol = tower ? mass : [mass[0]]
   const masses = vol.map(m => ({ x0: inCm(m.cx - m.ex), x1: inCm(m.cx + m.ex), z0: inCm(m.cz - m.ez), z1: inCm(m.cz + m.ez), y0: inCm(m.cy - m.ey), y1: inCm(m.cy + m.ey) }))
@@ -4492,7 +5215,7 @@ function faustInterior(plan, li) {
     tenement: ['hall', 'hall', 'hall'], industrial: ['warehouse'] }
   const venue = ['liquor', 'conv', 'club', 'boxing'].includes(lot.venue) ? lot.venue : null
   const backDoors = [...lot.backDoors || [], ...faustVenueRec(lot)?.back && faustVenueRec(lot).backOut ? [{ x: faustVenueRec(lot).back[0], z: faustVenueRec(lot).back[1], out: faustVenueRec(lot).backOut }] : []].filter((q, i, all) => q.out && (q.out[1] < 0 || q.out[0] !== 0) && all.findIndex(r => r.x === q.x && r.z === q.z && r.out[0] === q.out[0] && r.out[1] === q.out[1]) === i)
-  const ground0 = H >= 120 || plan.layout === 1 ? 'lobby' : pick(kinds[style] || ['lobby']), ground = venue ? venue : lot.landmark === 'store' ? 'sales' : ground0
+  const ground0 = lot.floorTypes ? lot.floorTypes[0] : H >= 120 || plan.layout === 1 ? 'lobby' : pick(kinds[style] || ['lobby']), ground = venue ? venue : lot.landmark === 'store' ? 'sales' : ground0
   const unit0 = style === 'tenement' ? pick(['shop', 'shop', 'bar', 'diner']) : null, unit = unit0, unit2 = style === 'tenement' ? pick(['shop', 'shop', 'bar', 'diner']) : null
   const upper = lot.landmark === 'store' ? 'sales' : style === 'tenement' ? 'flat' : style === 'industrial' ? 'store' : 'office'
   const dx = style === 'industrial' ? x - 0.6 * w : x
@@ -4513,7 +5236,7 @@ function faustInterior(plan, li) {
     piers.push([b.cx - b.ex, b.cx + b.ex, door ? 4.6 : b.cy - b.ey, b.cy + b.ey, b.cz - b.ez, b.cz + b.ez].map(inCm))
   })
   const B = { version: 2, id: plan.ci + ' ' + plan.cj + ' ' + li, ci: plan.ci, cj: plan.cj, li, slot, chunk: plan.ci * plan.S + plan.cj, seed: lot.seed, style, gothic, stop: !!stop,
-    x, z, w, d, H, ground, unit, unit2, upper, door, core, storeys, masses, solids, piers, roof: { y: H, exit: !stop }, ...lot.landmark === 'cathedral' ? { landmark: 'cathedral' } : {}, ...venue ? { venue, ...lot.club ? { club: lot.club } : {}, ...lot.boxing ? { boxing: lot.boxing } : {} } : {}, ...backDoors.length ? { backDoors } : {} }
+    x, z, w, d, H, ground, unit, unit2, upper, door, core, storeys, masses, solids, piers, roof: { y: H, exit: !stop }, ...lot.floorTypes ? { floorTypes: lot.floorTypes, atrium: lot.atrium } : {}, ...lot.landmark === 'cathedral' ? { landmark: 'cathedral' } : {}, ...venue ? { venue, ...lot.club ? { club: lot.club } : {}, ...lot.boxing ? { boxing: lot.boxing } : {} } : {}, ...backDoors.length ? { backDoors } : {} }
   B.hash = inHash(B)
   return B
 }
@@ -4693,7 +5416,7 @@ function faustStorey(B, k) {
   const light = (x, ly, z, r, power, color) => lights.push([inCm(x), inCm(ly), inCm(z), r, power, color])
   const node = (x, ny, z, r, more) => (nodes.push({ i: nodes.length, x: inCm(x), y: inCm(ny), z: inCm(z), r, ...more }), nodes.length - 1)
   const link = (a, b) => { if (a !== b && a >= 0 && b >= 0) edges.push([a, b]) }
-  const type = k === 0 ? B.ground : B.upper
+  const type = B.floorTypes?.[k] ?? (k === 0 ? B.ground : B.upper)
   const sx = C.stairX, sw = 2 * ST.width + ST.well, Lz1 = C.z1 - K.part, Lz0 = C.z0 + K.part
   const hw = K.hall, sides = inWindows(B, k).filter(w => w.face >= 2)
   const pier = (z, lo, hi) => {
@@ -4710,17 +5433,17 @@ function faustStorey(B, k) {
   const ring = room(G.x0, G.x1, G.z0, G.z1, 'ring'), core = room(C.x0, C.x1, C.z0, C.z1, 'core')
   const deco = B.style === 'core' || B.style === 'civic' || B.H > 300, base = s.mass === 0
   const mass = B.masses[s.mass], mx = (mass.x0 + mass.x1) / 2, mz = (mass.z0 + mass.z1) / 2
-  const slabParts = (y0, y1, t, more) => {
-    box(P.x0, P.x1, y0, y1, C.z1, P.z1, t, more); box(P.x0, P.x1, y0, y1, P.z0, C.z0, t, more)
-    box(P.x0, C.x0, y0, y1, C.z0, C.z1, t, more); box(C.x1, P.x1, y0, y1, C.z0, C.z1, t, more)
+  const slabParts = (y0, y1, t, more, V) => {
+    const sb = (a0, a1, b0, b1) => { for (const [p0, p1, q0, q1] of faustCutRect(a0, a1, b0, b1, V)) box(p0, p1, y0, y1, q0, q1, t, more) }
+    sb(P.x0, P.x1, C.z1, P.z1); sb(P.x0, P.x1, P.z0, C.z0); sb(P.x0, C.x0, C.z0, C.z1); sb(C.x1, P.x1, C.z0, C.z1)
   }
-  const floorTint = { lobby: IN_TINT.marble, shop: IN_TINT.tile, bar: IN_TINT.wood, diner: IN_TINT.tile, liquor: IN_TINT.wood, conv: IN_TINT.tile, club: IN_TINT.carpet, hall: IN_TINT.lino, warehouse: IN_TINT.concrete, boxing: IN_TINT.concrete,
-    office: IN_TINT.lino, flat: IN_TINT.woodLight, store: IN_TINT.concrete, sales: IN_TINT.woodLight }[type] || IN_TINT.lino
+  const floorTint = B.atrium && type !== 'cells' && type !== 'mess' ? 0x41454b : { lobby: IN_TINT.marble, shop: IN_TINT.tile, bar: IN_TINT.wood, diner: IN_TINT.tile, liquor: IN_TINT.wood, conv: IN_TINT.tile, club: IN_TINT.carpet, hall: IN_TINT.lino, warehouse: IN_TINT.concrete, boxing: IN_TINT.concrete,
+    office: IN_TINT.lino, flat: IN_TINT.woodLight, store: IN_TINT.concrete, sales: IN_TINT.woodLight, cells: 0x2b2d30, mess: 0x34373b }[type] || IN_TINT.lino
   if (k === 0) slabParts(-0.04, 0.06, floorTint, { f: 4, m: type === 'lobby' ? 1 : 0, r: -1 })
-  else slabParts(y - K.slab, y, floorTint, { f: 4, c: 1, m: type === 'lobby' ? 1 : 0, r: -1 })
-  slabParts(Y1, y + K.storey, IN_TINT.plaster, last ? { f: 8, r: -1 } : { f: 8, c: 1, r: -1 })
-  const wallTint = { lobby: IN_TINT.stone, shop: IN_TINT.plaster, bar: IN_TINT.wood, diner: IN_TINT.cream, liquor: IN_TINT.woodLight, conv: IN_TINT.cream, club: IN_TINT.red, warehouse: IN_TINT.concrete, boxing: IN_TINT.wood,
-    store: IN_TINT.concrete }[type] || (chance(0.5) ? IN_TINT.plaster : IN_TINT.plasterCool)
+  else slabParts(y - K.slab, y, floorTint, { f: 4, c: 1, m: type === 'lobby' ? 1 : 0, r: -1 }, faustAtriumAt(B, k, 'f'))
+  slabParts(Y1, y + K.storey, B.atrium || type === 'cells' || type === 'mess' ? 0x3a3d43 : IN_TINT.plaster, last ? { f: 8, r: -1 } : { f: 8, c: 1, r: -1 }, faustAtriumAt(B, k, 'c'))
+  const wallTint = B.atrium && type !== 'cells' && type !== 'mess' ? 0x5c626a : { lobby: IN_TINT.stone, shop: IN_TINT.plaster, bar: IN_TINT.wood, diner: IN_TINT.cream, liquor: IN_TINT.woodLight, conv: IN_TINT.cream, club: IN_TINT.red, warehouse: IN_TINT.concrete, boxing: IN_TINT.wood,
+    store: IN_TINT.concrete, cells: 0x44484c, mess: 0x3b4046 }[type] || (chance(0.5) ? IN_TINT.plaster : IN_TINT.plasterCool)
   const wins = inWindows(B, k)
   const T = K.wall
   const BDS = k === 0 ? (B.backDoors || []).map(q => q.out[1] < 0 ? { axis: 0, side: -1, u: q.x } : { axis: 1, side: q.out[0] > 0 ? 1 : -1, u: q.z }) : []
@@ -4766,7 +5489,7 @@ function faustStorey(B, k) {
     }
     piece(u, along1, 0, K.storey - K.slab, f | (after ? 0 : lo) | hi)
   }
-  const coreTint = deco ? IN_TINT.stone : IN_TINT.plasterCool, stairTint = deco ? IN_TINT.marbleDark : IN_TINT.concrete
+  const coreTint = B.atrium || type === 'cells' || type === 'mess' ? 0x6a7078 : deco ? IN_TINT.stone : IN_TINT.plasterCool, stairTint = B.atrium || type === 'cells' || type === 'mess' ? 0x454a52 : deco ? IN_TINT.marbleDark : IN_TINT.concrete
   const sd0 = sx + 0.75, sd1 = sx + sw - 0.75, lx0 = sx + sw + K.part, lift = C.lift
   const wallZ = (z0, z1, x, gaps, t = coreTint, h = K.storey - K.slab, more) => {
     let u = z0
@@ -4816,7 +5539,7 @@ function faustStorey(B, k) {
   box(aX[1] - 0.04, aX[1] + 0.04, y + 0.95, y + 1.0, midZ[1], lowZ[0], IN_TINT.brass, { m: 1 })
   light((sx + sx1) / 2, y + 3.3, (lowZ[0] + lowZ[1]) / 2, core, 1.1, 0xffe2b0)
   light((sx + sx1) / 2, y + ST.rise + 3.1, (midZ[0] + midZ[1]) / 2, core, 0.9, 0xffe2b0)
-  box((sx + sx1) / 2 - 0.18, (sx + sx1) / 2 + 0.18, y + 3.55, Y1, (lowZ[0] + lowZ[1]) / 2 - 0.18, (lowZ[0] + lowZ[1]) / 2 + 0.18, 0xfff1d0, { m: 2, r: core })
+  box((sx + sx1) / 2 - 0.18, (sx + sx1) / 2 + 0.18, y + 3.55, Y1, (lowZ[0] + lowZ[1]) / 2 - 0.18, (lowZ[0] + lowZ[1]) / 2 + 0.18, B.atrium ? 0x9fb2c0 : 0xfff1d0, { m: 2, r: core })
   const nDoorOut = node((sd0 + sd1) / 2, y, C.z1 + 1.1, ring), nLand = node((sd0 + sd1) / 2, y, (lowZ[0] + lowZ[1]) / 2, core, { landing: k })
   const ax = (aX[0] + aX[1]) / 2, bx = (bX[0] + bX[1]) / 2
   const nA0 = node(ax, y, lowZ[0] + 0.2, core, { stairs: 1 }), nA1 = node(ax, y + ST.rise, midZ[1] - 0.3, core, { stairs: 1 })
@@ -4901,7 +5624,7 @@ function faustStorey(B, k) {
     { x0: G.x1, x1: P.x1, z0: G.z0, z1: G.z1, along: 1, face: 1 },
   ]
   const roomKinds = { office: ['office', 'office', 'office', 'pool', 'meeting', 'records'], flat: ['bed', 'living', 'kitchen', 'bed', 'living'],
-    store: ['store'], lobby: ['shop', 'shop', 'office'], shop: ['storeroom', 'office'], bar: ['storeroom', 'kitchen'], diner: ['kitchen', 'storeroom'],
+    store: ['store'], lobby: B.atrium ? ['storeroom', 'records', 'meeting'] : ['shop', 'shop', 'office'], shop: ['storeroom', 'office'], bar: ['storeroom', 'kitchen'], diner: ['kitchen', 'storeroom'],
     hall: ['bed', 'living', 'kitchen'], warehouse: ['store'], liquor: ['storeroom', 'storeroom', 'office'], conv: ['storeroom', 'office'], club: ['storeroom', 'storeroom'] }
   const ringNodes = []
   const lobbyFront = []
@@ -4914,11 +5637,12 @@ function faustStorey(B, k) {
   const ringAt = (x, z) => [Math.min(Math.max(x, G.x0 + hw / 2), G.x1 - hw / 2), Math.min(Math.max(z, G.z0 + hz0 / 2), G.z1 - hz1 / 2)]
   const toRing = (id, x, z) => ringNodes.push([id, ringT(x, z)])
   toRing(nDoorOut, (sd0 + sd1) / 2, C.z1 + 1.1)
-  const open = type === 'warehouse' || type === 'store' || type === 'boxing' || type === 'sales'
+  const open = type === 'warehouse' || type === 'store' || type === 'mess' || type === 'boxing' || type === 'sales'
   if (open) {
     rooms[ring] = { ...rooms[ring], x0: P.x0, x1: P.x1, z0: P.z0, z1: P.z1, kind: type }
     if (type === 'sales') fitSales(type); else fitHall(type)
-  } else for (const Z of zones) {
+  } else if (type === 'cells') faustCellFloor({ box, room, node, link, light, wallX, wallZ, fitRoom, rooms, P, C, y, k, K, IN_TINT, wallTint, Y1, B, sd0, sd1, nDoorOut })
+  else for (const Z of zones) {
     const depth = Z.along ? Z.x1 - Z.x0 : Z.z1 - Z.z0
     if (depth < 2.6) continue
     { const at = Z.along ? (Z.face > 0 ? Z.x0 : Z.x1) : (Z.face > 0 ? Z.z0 : Z.z1)
@@ -5016,13 +5740,13 @@ function faustStorey(B, k) {
     gaps.sort((p, q) => p[0] - q[0])
     if (Z.along) wallZ(Z.z0, Z.z1, wallAt, gaps.map(([a, b, t]) => [a, b, t]), wallTint); else wallX(Z.x0, Z.x1, wallAt, gaps, wallTint)
   }
-  if (!open) for (const [x, z] of [[G.x0 + hw / 2, G.z1 - hz1 / 2], [G.x1 - hw / 2, G.z1 - hz1 / 2], [G.x1 - hw / 2, G.z0 + hz0 / 2], [G.x0 + hw / 2, G.z0 + hz0 / 2]]) toRing(node(x, y, z, ring), x, z)
+  if (!open && type !== 'cells') for (const [x, z] of [[G.x0 + hw / 2, G.z1 - hz1 / 2], [G.x1 - hw / 2, G.z1 - hz1 / 2], [G.x1 - hw / 2, G.z0 + hz0 / 2], [G.x0 + hw / 2, G.z0 + hz0 / 2]]) toRing(node(x, y, z, ring), x, z)
   ringNodes.sort((p, q) => p[1] - q[1])
-  if (!open) for (let j = 0; j < ringNodes.length; j++) link(ringNodes[j][0], ringNodes[(j + 1) % ringNodes.length][0])
-  for (let t = 0.5; t < 4; t += 1) { const [x, z] = t < 1 ? [(G.x0 + G.x1) / 2, G.z1 - hz1 / 2] : t < 2 ? [G.x1 - hw / 2, (G.z0 + G.z1) / 2] : t < 3 ? [(G.x0 + G.x1) / 2, G.z0 + hz0 / 2] : [G.x0 + hw / 2, (G.z0 + G.z1) / 2]
+  if (!open && type !== 'cells') for (let j = 0; j < ringNodes.length; j++) link(ringNodes[j][0], ringNodes[(j + 1) % ringNodes.length][0])
+  if (type !== 'cells') for (let t = 0.5; t < 4; t += 1) { const [x, z] = t < 1 ? [(G.x0 + G.x1) / 2, G.z1 - hz1 / 2] : t < 2 ? [G.x1 - hw / 2, (G.z0 + G.z1) / 2] : t < 3 ? [(G.x0 + G.x1) / 2, G.z0 + hz0 / 2] : [G.x0 + hw / 2, (G.z0 + G.z1) / 2]
     if (x > C.x0 - 0.2 && x < C.x1 + 0.2 && z > C.z0 - 0.2 && z < C.z1 + 0.2) continue
-    light(x, y + 3.3, z, ring, open ? 1.4 : 0.9, type === 'office' ? 0xdce8ff : 0xffd9a0)
-    box(x - 0.25, x + 0.25, y + 3.62, Y1, z - 0.25, z + 0.25, 0xfff4dc, { m: 2, r: ring })
+    light(x, y + 3.3, z, ring, open ? 1.4 : 0.9, B.atrium ? 0xa9bfcc : type === 'office' ? 0xdce8ff : 0xffd9a0)
+    box(x - 0.25, x + 0.25, y + 3.62, Y1, z - 0.25, z + 0.25, B.atrium ? 0x9fb2c0 : 0xfff4dc, { m: 2, r: ring })
   }
   if (k === 0) {
     const [ix, , iz] = B.door.in, into = rooms.findIndex((r, i) => i > 1 && ix > r.x0 && ix < r.x1 && iz > r.z0 && iz < r.z1)
@@ -5038,14 +5762,14 @@ function faustStorey(B, k) {
   function fitRoom(r) {
     enter(r)
     const kind = R.kind, cx = (R.x0 + R.x1) / 2, cz = (R.z0 + R.z1) / 2, area = w * d
-    const lit0 = kind === 'lobby' || kind === 'hallway' || chance({ office: 0.75, pool: 0.85, meeting: 0.6, records: 0.5, bed: 0.55, living: 0.8, kitchen: 0.75, club: 0 }[kind] ?? 0.95)
+    const lit0 = kind === 'lobby' || kind === 'hallway' || chance({ office: 0.75, pool: 0.85, meeting: 0.6, records: 0.5, bed: 0.55, living: 0.8, kitchen: 0.75, club: 0, cell: 0.4 }[kind] ?? 0.95)
     const near = (q, ea, eb) => Math.min(q.a1, eb) - Math.max(q.a0, ea) > 0.6
     const wl = k === 0 && B.venue !== 'club' && kind !== 'lobby' && kind !== 'hallway' ? wins.filter(q => q.piece !== undefined && (q.face === 0 ? Math.abs(R.z1 - P.z1) < 0.6 && near(q, R.x0, R.x1) : q.face === 1 ? Math.abs(R.z0 - P.z0) < 0.6 && near(q, R.x0, R.x1)
       : q.face === 2 ? Math.abs(R.x1 - P.x1) < 0.6 && near(q, R.z0, R.z1) : Math.abs(R.x0 - P.x0) < 0.6 && near(q, R.z0, R.z1))) : []
     const lit = wl.length ? wl.some(q => faustPieceLit(B.seed, B.venue, q.face, q.piece)) : lit0
     R.lit = lit
-    const warm = { office: 0xffe0b0, pool: 0xdce8ff, meeting: 0xffe6c0, records: 0xd0dcf0, shop: 0xfff0d8, bar: 0xffb070, diner: 0xf4f8ff,
-      lobby: 0xffd8a0, hallway: 0xffcf90, bed: 0xffc880, living: 0xffc880, kitchen: 0xf0f0e0, liquor: 0xffb878, conv: 0xeaf4ff, club: 0xff4a78 }[kind] || 0xffe0b0
+    const warm = B.atrium ? 0xa9bfcc : { office: 0xffe0b0, pool: 0xdce8ff, meeting: 0xffe6c0, records: 0xd0dcf0, shop: 0xfff0d8, bar: 0xffb070, diner: 0xf4f8ff,
+      lobby: 0xffd8a0, hallway: 0xffcf90, bed: 0xffc880, living: 0xffc880, kitchen: 0xf0f0e0, liquor: 0xffb878, conv: 0xeaf4ff, club: 0xff4a78, cell: 0xb4d6c0 }[kind] || 0xffe0b0
     const lamps = Math.max(1, Math.round(area / 22)), gx = Math.max(1, Math.round(Math.sqrt(lamps * w / d))), gz = Math.max(1, Math.round(lamps / gx))
     for (let i = 0; i < gx; i++) for (let j = 0; j < gz; j++) {
       const lx = R.x0 + w * (i + 0.5) / gx, lz = R.z0 + d * (j + 0.5) / gz
@@ -5053,9 +5777,11 @@ function faustStorey(B, k) {
       if (lit) light(lx, y + 3.2, lz, r, kind === 'lobby' ? 1.6 : kind === 'bar' || kind === 'club' ? 0.9 : 1.2, warm)
       if (kind === 'lobby') {
         box(lx - 0.02, lx + 0.02, y + 3.0, Y1, lz - 0.02, lz + 0.02, IN_TINT.brass, { m: 1 })
-        box(lx - 0.45, lx + 0.45, y + 2.75, y + 3.0, lz - 0.45, lz + 0.45, lit ? 0xfff0d0 : IN_TINT.paper, { m: lit ? 2 : 0, r })
+        const hs = B.atrium ? 0.28 : 0.45
+        box(lx - hs, lx + hs, y + 2.75, y + 3.0, lz - hs, lz + hs, lit ? (B.atrium ? 0x9fb2c0 : 0xfff0d0) : IN_TINT.paper, { m: lit ? 2 : 0, r })
+        if (B.atrium) for (const [qx, qz] of [[-hs, -hs], [hs, -hs], [-hs, hs], [hs, hs]]) box(lx + qx - 0.025, lx + qx + 0.025, y + 2.72, y + 3.02, lz + qz - 0.025, lz + qz + 0.025, 0x14161a, {})
         box(lx - 0.3, lx + 0.3, y + 3.0, y + 3.12, lz - 0.3, lz + 0.3, IN_TINT.brass, { m: 1 })
-      } else box(lx - 0.3, lx + 0.3, y + 3.55, Y1, lz - 0.3, lz + 0.3, lit ? 0xfff6e0 : IN_TINT.paper, { m: lit ? 2 : 0, r })
+      } else box(lx - 0.3, lx + 0.3, y + 3.55, Y1, lz - 0.3, lz + 0.3, lit ? (B.atrium ? 0x9fb2c0 : 0xfff6e0) : IN_TINT.paper, { m: lit ? 2 : 0, r })
     }
     const fy = y + (k === 0 ? 0.06 : 0)
     const desk = (x0, x1, z0, z1, side) => {
@@ -5111,7 +5837,7 @@ function faustStorey(B, k) {
         box(qx - 0.4, qx + 0.4, fy, Y1, qz - 0.4, qz + 0.4, IN_TINT.marbleDark, { c: 1, m: 1, f: 63 ^ 4 ^ 8 }); box(qx - 0.5, qx + 0.5, Y1 - 0.4, Y1, qz - 0.5, qz + 0.5, IN_TINT.brass, { m: 1, f: 63 ^ 4 })
         box(qx - 0.5, qx + 0.5, fy, fy + 0.3, qz - 0.5, qz + 0.5, IN_TINT.marbleDark, { m: 1, f: 63 ^ 8 }); take(qx - 0.5, qx + 0.5, qz - 0.5, qz + 0.5)
       }
-      posters.push({ x: (C.x0 + C.x1) / 2, y: y + 3.1, z: C.z1 + 0.02, w: 1.6, h: 0.9, face: 16, p: 'faust' })
+      if (B.atrium) faustPrisonLobbyDeco({ box, P, C, B, y, R }); else posters.push({ x: (C.x0 + C.x1) / 2, y: y + 3.1, z: C.z1 + 0.02, w: 1.6, h: 0.9, face: 16, p: 'faust' })
       place(2.2, 0.6, 2, (x0, x1, z0, z1) => { box(x0, x1, fy + 0.42, fy + 0.5, z0, z1, IN_TINT.wood, { c: 1 }); box(x0 + 0.1, x0 + 0.2, fy, fy + 0.42, z0, z1, IN_TINT.dark); box(x1 - 0.2, x1 - 0.1, fy, fy + 0.42, z0, z1, IN_TINT.dark) }, true)
     } else if (kind === 'hallway') {
       let best = null
@@ -5373,7 +6099,7 @@ function faustStorey(B, k) {
     box(kx0 + 0.1, kx1 - 0.1, fy + 1.3, fy + 2.5, kz - 0.07, kz - 0.02, 0x15191c, { f: 32, ...rf })
     for (let i = 0; i < 6; i++) { const a = kx0 + 0.25 + rng() * 0.4, b = Math.min(kx1 - 0.2, a + 0.5 + rng() * 1.0); box(a, b, fy + 2.3 - i * 0.17, fy + 2.33 - i * 0.17, kz - 0.09, kz - 0.07, 0xe6e2d6, { f: 32, ...rf }) }
     spots.push({ kind: 'counter', x: (kx0 + kx1) / 2, y: fy, z: kz - 1.0, face: [0, -1] })
-    light((kx0 + kx1) / 2, y + 3.0, kz - 1.5, ring, 0.9, 0xffb878); light(dr.x, y + 3.1, kz - 2.0, ring, 0.8, 0xffc880)
+    light((kx0 + kx1) / 2, y + 3.0, kz - 1.5, ring, 0.9, B.atrium ? 0xa9bfcc : 0xffb878); light(dr.x, y + 3.1, kz - 2.0, ring, 0.8, B.atrium ? 0xa9bfcc : 0xffc880)
     spots.push({ kind: 'bouncer', x: dr.x + 0.9, y: fy, z: kz - 1.0, face: [0, 1] }, { kind: 'bouncer', x: dr.x - 0.9, y: fy, z: kz - 1.0, face: [0, 1] })
     for (const [bx, bz] of [[cx - 5.2, cz - 4.4], [cx + 5.2, cz - 4.4]]) {
       col(bx - 0.28, bx + 0.28, fy, fy + 0.9, bz - 0.28, bz + 0.28, IN_TINT.steel, { m: 1, ...rf }); box(bx - 0.08, bx + 0.08, fy + 0.9, fy + 0.94, bz - 0.08, bz + 0.08, 0xff7a30, { m: 2, ...rf }); light(bx, fy + 1.2, bz, ring, 0.35, 0xff7a30)
@@ -5394,7 +6120,7 @@ function faustStorey(B, k) {
           if (i % 2 === 0) { if (clear(Math.min(X(0.02), X(0.5)), Math.max(X(0.02), X(0.5)), zc - 1.0, zc + 1.0, true)) { bx(0.02, 0.5, fy, fy + 0.42, zc - 1.0, zc + 1.0, IN_TINT.wood, { c: 1, f: 63 ^ 8 ^ (face === 1 ? 2 : 1), r: ring }); take(Math.min(X(0.02), X(0.5)), Math.max(X(0.02), X(0.5)), zc - 1.0, zc + 1.0) } }
           else { bx(0.35, 0.37, fy + 1.55, Y1, zc - 0.01, zc + 0.01, IN_TINT.dark, { r: ring }); bx(0.17, 0.57, fy + 0.55, fy + 1.55, zc - 0.2, zc + 0.2, 0x7a2218, { f: 63 ^ 8, r: ring }); bx(0.17, 0.57, fy + 1.4, fy + 1.55, zc - 0.21, zc + 0.21, IN_TINT.dark, { f: 63 ^ 8, r: ring }); bx(0.35, 0.37, fy + 1.6, Y1, zc + 1.0 - 0.01, zc + 1.0 + 0.01, IN_TINT.dark, { r: ring }); bx(0.17, 0.57, fy + 0.5, fy + 1.6, zc + 1.0 - 0.22, zc + 1.0 + 0.22, 0x6b6f76, { f: 63 ^ 8, r: ring }); bx(0.17, 0.57, fy + 1.45, fy + 1.6, zc + 1.0 - 0.23, zc + 1.0 + 0.23, IN_TINT.dark, { f: 63 ^ 8, r: ring }) }
         }
-        for (const zl of [za + 1.2, (za + zb) / 2 + 2.2, zb - 1.0]) bx(0.02, 0.1, fy + 2.35, fy + 2.5, zl - 0.35, zl + 0.35, 0xffc070, { m: 2, f: face, r: ring })
+        for (const zl of [za + 1.2, (za + zb) / 2 + 2.2, zb - 1.0]) bx(0.02, 0.1, fy + 2.35, fy + 2.5, zl - 0.35, zl + 0.35, B.atrium ? 0x7f98a8 : 0xffc070, { m: 2, f: face, r: ring })
         posters.push({ x: X(0.012), y: fy + 1.9, z: za + 0.9, w: 0.8, h: 1.1, face, p: 'poster' }, { x: X(0.012), y: fy + 1.9, z: zb - 0.9, w: 0.8, h: 1.1, face, p: 'poster' })
       }
     }
@@ -5444,11 +6170,12 @@ function faustStorey(B, k) {
     place(1.2, 1.2, 5, (x0, x1, z0, z1) => { box(x0 + 0.5, x1 - 0.5, fy, fy + 1.45, z0 + 0.5, z1 - 0.5, 0x2a2018, { c: 1 }); box(x0, x1, fy + 1.45, fy + 1.5, z0, z1, IN_TINT.brass, { c: 1 }); box(x0 + 0.3, x1 - 0.3, fy + 1.5, fy + 2.1, z0 + 0.35, z1 - 0.35, pick([IN_TINT.red, IN_TINT.cream, IN_TINT.green]), { c: 1 }); box(x0 + 0.45, x1 - 0.45, fy + 2.1, fy + 2.45, z0 + 0.45, z1 - 0.45, IN_TINT.cream, { c: 1 }) })
     for (let lz = R.z0 + 2; lz < (kind === 'boxing' ? bxBack : R.z1 - 1); lz += 6) for (const lx of [ax, (ax + R.x1) / 2, (ax + R.x0) / 2]) {
       if (lx > C.x0 - 0.8 && lx < C.x1 + 0.8 && lz > C.z0 - 0.8 && lz < C.z1 + 0.8) continue
-      const on = !chance(0.2)
-      light(lx, y + 3.3, lz, ring, on ? 1.3 : 0, 0xe8f0ff); box(lx - 0.6, lx + 0.6, y + 3.5, y + 3.6, lz - 0.12, lz + 0.12, on ? 0xf0f6ff : IN_TINT.paper, { m: on ? 2 : 0, r: ring })
+      const on = kind === 'mess' ? chance(0.35) : !chance(0.2)
+      light(lx, y + 3.3, lz, ring, on ? 1.3 : 0, kind === 'mess' ? 0x8fe4ff : 0xe8f0ff); if (!faustAtriumHit(B, k, lx, lz)) box(lx - 0.6, lx + 0.6, y + 3.5, y + 3.6, lz - 0.12, lz + 0.12, on ? (kind === 'mess' ? 0x9fe8ff : 0xf0f6ff) : IN_TINT.paper, { m: on ? 2 : 0, r: ring })
     }
     if (kind === 'boxing') fitBoxing()
     if (kind === 'warehouse') posters.push(wallPoster(R, fy + 2, 'poster'))
+    if (kind === 'mess') faustMessDeco(box, R, fy)
     for (const rz of [R.z0 + 0.6, ...rows.map(rz => rz + 2.2), R.z1 - 1.2].filter(v => v > R.z0 + 0.3 && v < R.z1 - 0.3)) {
       const m = node(ax, y, rz, ring, { hall: 1 }); main.push(m)
       for (const ex of [R.x1 - 1.0, R.x0 + 1.0]) if (Math.abs(ex - ax) > 3) {
@@ -5477,6 +6204,13 @@ function faustStorey(B, k) {
           if (x0 < C.x1 + 1.4 && x1 > C.x0 - 1.4 && z0 < C.z1 + 2.8 && z1 > C.z0 - 1.4) continue
           if (BDS.some(BD => BD.axis === 1 && z1 > BD.u - 1.5 && z0 < BD.u + 1.5 && (dir > 0) === (BD.side > 0))) continue
           if (z1 > cz0 - 0.2 && z0 < cz1 + 0.2 && (x0 < Math.max(ax, C.x1) && x1 > Math.min(ax, C.x0))) continue
+          if (kind === 'mess') {
+            box(x0, x1, fy + 0.72, fy + 0.78, z0, z1, IN_TINT.steel, { c: 1 })
+            for (const q of [x0 + 0.15, x1 - 0.25]) box(q, q + 0.1, fy, fy + 0.72, z0 + 0.2, z1 - 0.2, IN_TINT.steel, { f: 63 ^ 8 ^ 4 })
+            box(x0 + 0.05, x1 - 0.05, fy, fy + 0.45, z0 - 0.38, z0 - 0.06, IN_TINT.steel, { c: 1, f: 63 ^ 8 })
+            box(x0 + 0.05, x1 - 0.05, fy, fy + 0.45, z1 + 0.06, z1 + 0.38, IN_TINT.steel, { c: 1, f: 63 ^ 8 })
+            take(x0, x1, z0 - 0.4, z1 + 0.4); continue
+          }
           for (const q of [0, 1]) for (const r of [0, 1]) box(q ? x1 - 0.08 : x0, q ? x1 : x0 + 0.08, fy, fy + 3.2, r ? z1 - 0.08 : z0, r ? z1 : z0 + 0.08, 0x2f5d8a)
           for (const ly of [1.05, 2.15]) box(x0, x1, fy + ly, fy + ly + 0.08, z0, z1, 0xb8742a, { c: 1 })
           for (const ly of [0, 1.13, 2.23]) if (chance(0.8)) box(x0 + 0.1, x1 - 0.1, fy + ly + 0.02, fy + ly + 0.85, z0 + 0.1, z1 - 0.1, pick([IN_TINT.crate, 0x8a7a5a, 0x5a5048]), { c: 1 })
@@ -5488,14 +6222,15 @@ function faustStorey(B, k) {
     free.push([ax - 0.9, ax + 0.9, R.z0, R.z1], [Math.min(ax, C.x0) - 0.6, Math.max(ax, C.x1) + 0.6, cz0, cz1])
     for (const BD of BDS) free.push(BD.axis === 0 ? [BD.u - 1.4, BD.u + 1.4, P.z0, P.z0 + 2.2] : BD.side < 0 ? [P.x0, P.x0 + 2.2, BD.u - 1.4, BD.u + 1.4] : [P.x1 - 2.2, P.x1, BD.u - 1.4, BD.u + 1.4])
     if (kind === 'boxing') free.push([R.x0, R.x1, bxBack - 0.5, R.z1])
-    place(1.2, 1.2, 4, (x0, x1, z0, z1) => { box(x0, x1, fy, fy + 1.1, z0, z1, IN_TINT.crate, { c: 1 }); if (chance(0.5)) box(x0 + 0.1, x1 - 0.2, fy + 1.1, fy + 1.9, z0 + 0.1, z1 - 0.2, 0x8a7a5a, { c: 1 }) })
+    if (kind !== 'mess') place(1.2, 1.2, 4, (x0, x1, z0, z1) => { box(x0, x1, fy, fy + 1.1, z0, z1, IN_TINT.crate, { c: 1 }); if (chance(0.5)) box(x0 + 0.1, x1 - 0.2, fy + 1.1, fy + 1.9, z0 + 0.1, z1 - 0.2, 0x8a7a5a, { c: 1 }) })
     for (let lz = R.z0 + 2; lz < (kind === 'boxing' ? bxBack : R.z1 - 1); lz += 6) for (const lx of [ax, (ax + R.x1) / 2, (ax + R.x0) / 2]) {
       if (lx > C.x0 - 0.8 && lx < C.x1 + 0.8 && lz > C.z0 - 0.8 && lz < C.z1 + 0.8) continue
-      const on = !chance(0.2)
-      light(lx, y + 3.3, lz, ring, on ? 1.3 : 0, 0xe8f0ff); box(lx - 0.6, lx + 0.6, y + 3.5, y + 3.6, lz - 0.12, lz + 0.12, on ? 0xf0f6ff : IN_TINT.paper, { m: on ? 2 : 0, r: ring })
+      const on = kind === 'mess' ? chance(0.35) : !chance(0.2)
+      light(lx, y + 3.3, lz, ring, on ? 1.3 : 0, kind === 'mess' ? 0x8fe4ff : 0xe8f0ff); if (!faustAtriumHit(B, k, lx, lz)) box(lx - 0.6, lx + 0.6, y + 3.5, y + 3.6, lz - 0.12, lz + 0.12, on ? (kind === 'mess' ? 0x9fe8ff : 0xf0f6ff) : IN_TINT.paper, { m: on ? 2 : 0, r: ring })
     }
     if (kind === 'boxing') fitBoxing()
     if (kind === 'warehouse') posters.push(wallPoster(R, fy + 2, 'poster'))
+    if (kind === 'mess') faustMessDeco(box, R, fy)
     for (const rz of [R.z0 + 0.6, ...rows.map(rz => rz + 2.2), R.z1 - 1.2].filter(v => v > R.z0 + 0.3 && v < R.z1 - 0.3)) {
       const m = node(ax, y, rz, ring, { hall: 1 }); main.push(m)
       for (const ex of [R.x1 - 1.0, R.x0 + 1.0]) if (Math.abs(ex - ax) > 3) {
@@ -9642,7 +10377,7 @@ function faustCellDoors(seed, S, ci, cj) {
   if (!r) {
     const P = faustPlan(seed, ci, cj, S), doors = []
     for (const l of P.lots) {
-      doors.push([l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, l.z + l.d, 0, 1])
+      { const D0 = faustLotDoor(l); doors.push([D0[0], D0[1], 0, 1]) }
       for (const b of l.backDoors || []) doors.push([b.x, b.z, b.out[0], b.out[1]])
       { const c = faustVenueRec(l); if (c?.back && c.backOut) doors.push([c.back[0], c.back[1], c.backOut[0], c.backOut[1]]) }
     }
@@ -9726,7 +10461,7 @@ function faustShopGlass(batch, B, V, slot = B.slot) {
   const S = FAUST_NIGHT.shops, shift = (slot - B.slot) * 1048576
   for (const w of inWindows(B, 0)) {
     if (typeof dsState === 'object' && dsState?.all?.has(w.key + shift)) continue
-    const h = cityHash(B.seed ^ Math.imul(w.face * 32 + w.bay + 7, 0x85ebca6b)), lit = faustPieceLit(B.seed, B.venue, w.face, w.piece), cool = (h >>> 8 & 1) === 1, blinds = (h >>> 10) % 100 < 55 ? 1 : 0.55
+    const h = cityHash(B.seed ^ Math.imul(w.face * 32 + w.bay + 7, 0x85ebca6b)), lit = faustPieceLit(B.seed, B.venue, w.face, w.piece), cool = B.atrium || B.prison || B.keepLot ? true : (h >>> 8 & 1) === 1, blinds = (h >>> 10) % 100 < 55 ? 1 : 0.55
     const a = Math.round(batch.count * 3), sg = w.face === 0 || w.face === 2 ? 1 : -1, fwd = w.face === 0 || w.face === 3
     const quad = (u0, u1, y0, y1, off, tint, gb, gt, back) => {
       const P = (u, y) => w.face < 2 ? [u, y, w.plane + sg * off] : [w.plane + sg * off, y, u]
@@ -11355,8 +12090,8 @@ function faustStreetSpace(P) {
     const r = slLotRing(l), p = 0.7
     paths.push([r[0] - p, r[1] - p, r[2] + p, r[1] + p], [r[0] - p, r[3] - p, r[2] + p, r[3] + p],
       [r[0] - p, r[1] - p, r[0] + p, r[3] + p], [r[2] - p, r[1] - p, r[2] + p, r[3] + p])
-    const dx = l.district === 'industrial' ? l.x - l.w * 0.6 : l.x
-    doors.push([dx - 1.6, l.z + l.d - 0.5, dx + 1.6, l.z + 15])
+    const D0 = faustLotDoor(l), dx = D0[0]
+    doors.push([dx - 1.6, D0[1] - 0.5, dx + 1.6, l.z + 15])
     for (const d of [...l.backDoors || [], ...faustVenueRec(l)?.back && faustVenueRec(l).backOut ? [{ x: faustVenueRec(l).back[0], z: faustVenueRec(l).back[1], out: faustVenueRec(l).backOut }] : []])
       doors.push([Math.min(d.x, d.x + d.out[0] * 5) - 1.6, Math.min(d.z, d.z + d.out[1] * 5) - 1.6, Math.max(d.x, d.x + d.out[0] * 5) + 1.6, Math.max(d.z, d.z + d.out[1] * 5) + 1.6])
     if (l.district === 'tenement') for (const s of faustTenementEscapes(l)) solid.push([l.x + s * (l.w + 1.1) - 1.15, l.z - 3.1, l.x + s * (l.w + 1.1) + 1.15, l.z + 3.1])
@@ -11397,7 +12132,7 @@ function faustStreetPlan(P) {
       const f = { k: 'escape', x: l.x + sg * l.w, z: l.z, q: sg > 0 ? 1 : 3, li, h: l.seed, s: 1 }, r = faustStreetBounds(f, faustStreetParts(f))
       if (!space.roads.some(b => faustStreetHit(r, b, 0.18))) out.push({ ...f, r })
     }
-    for (const side of [-1, 1]) if (faustShopKind(l, side) === 'plain') {
+    for (const side of [-1, 1]) if (faustShopKind(l, side) === 'plain' && !l.prison) {
       const f = { k: 'awning', x: l.x + side * l.w * 0.45, z: l.z + l.d + 0.3, q: 0, li, h: cityHash(l.seed ^ side), s: 1 }, r = faustStreetBounds(f, faustStreetParts(f))
       if (!out.some(o => o.r && faustStreetHit(r, o.r, 0.2)) && !space.roads.some(b => faustStreetHit(r, b, 0.18)) && !space.doors.some(b => faustStreetHit(r, b))) out.push({ ...f, r })
     }
@@ -11515,6 +12250,7 @@ function faustStreetDraw(g, P) {
 
 function* faustVisualSteps(c) {
   const cones = { p: [], c: [] }
+  let prisonB = null
   for (let w = 0, t0 = performance.now(); FAUST_FACES.promise && !FAUST_FACES.settled && w < 600 && performance.now() - t0 < 1500; w++) yield 'frame'
   c.signFace = !!FAUST_FACES.set
   const decoLots = [], glassLots = [], gothicLots = [], facade = faustBatch(3072), ornament = faustBatch(65536), { plan: P } = c, X = c.ci * 96 - ARENA, Z = c.cj * 96 - ARENA
@@ -11545,6 +12281,7 @@ function* faustVisualSteps(c) {
   yield
   for (const lot of P.lots) {
     const { x, z, w, d, height: H, gothic, mass, district, stop } = lot
+    if (lot.prison) { prisonB ||= faustBatch(FAUST_PRISON.budget); yield* faustPrisonDraw(prisonB, lot); yield; continue }
     const neo = faustGothic(lot)
     const art = faustArtDeco(lot), deco = art ? faustDecoStyle(lot).palette : null
     const B = faustInterior(P, P.lots.indexOf(lot)), house = district === 'tenement' ? mass[1] : district === 'industrial' ? mass[2] : null
@@ -11674,12 +12411,13 @@ function* faustVisualSteps(c) {
   let placed = false
   try {
   const lookV = dsLookV(c)
-  for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone], [doors, faustState.materials.stone]]) if (data.count) {
+  for (const [data, mat] of [[facade, faustState.materials.facade], [ornament, faustState.materials.stone], ...prisonB ? [[prisonB, faustState.materials.stone]] : [], [doors, faustState.materials.stone]]) if (data.count) {
     const mesh = new THREE.Mesh(data.geometry(), mat); mesh.castShadow = data === facade; mesh.receiveShadow = true; root.add(mesh)
     if (data === facade) { realBoxes(mesh.geometry); mesh.onBeforeRender = dsFacadeBoxes }
-    else { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry); if (activeLook === 'realistic') realBoxes(mesh.geometry) }
+    else { if (data !== prisonB) { dsLampLook(c, mesh.geometry); dsPropsLook(c, mesh.geometry) } if (activeLook === 'realistic') realBoxes(mesh.geometry) }
   }
   for (const feat of faustFeatMesh(P)) { if (feat.userData.feat) dsFeatsLook(c, feat.geometry); else if (feat.userData.site !== undefined) dsFencesLook(c, feat); root.add(feat) }
+  for (const l of P.lots) if (l.prison) faustPrisonBeamsAdd(root, l)
   if (cones.p.length) root.add(faustCivicGlowMesh(cones))
   if (faustState.poolMaterial) for (const q of c.plan.ownLamps ?? faustLampOffsets(c.plan.diagonal)) {
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(18, 18), faustState.poolMaterial)
@@ -11859,6 +12597,7 @@ function faustTurnSky(F, cam) {
   if (F.headBound && b) { faustTurnVec.set(b[0] - G.x, b[1] - G.y, b[2] - G.z).applyEuler(T.rotation); F.headBound[0] = G.x + faustTurnVec.x; F.headBound[1] = G.y + faustTurnVec.y; F.headBound[2] = G.z + faustTurnVec.z }
 }
 function faustRender(render, s, cam) {
+  faustEyesPoll()
   const F = faustState
   if (!LV.faust || s !== scene || !F?.skyScene || renderHeadless) return render(s, cam)
   if (!faustHeadLoading && (FAUST_HEAD.software || !softGL())) faustHeadLoad()
@@ -11886,6 +12625,7 @@ function faustRender(render, s, cam) {
     const radius = near ? 34 : 130; pool.visible = !inkLook; pool.position.set(hit.x, near ? 0.12 : 0, hit.z); pool.rotation.y = yaw; pool.scale.set(radius, 1, radius * Math.min(stretch, 2))
   }
   if (!F.roofBeams && airLinesMemo?.lines) faustRoofBeams()
+  faustPrisonBeamTick(t)
   for (const beam of F.roofBeams || []) {
     const phase = beam.userData.phase
     faustDir.set(Math.sin(t * 0.23 + phase) * 0.5, 1, Math.cos(t * 0.19 + phase * 1.3) * 0.5).normalize()
@@ -12462,7 +13202,7 @@ function inDoorsNear(x, z, r) {
     const ci = Math.floor((x + ARENA) / 96) + i, cj = Math.floor((z + ARENA) / 96) + j, c = F?.chunks.get(faustKey(ci, cj))
     if (!c || ci < 0 || cj < 0 || ci >= LV.grow.S || cj >= LV.grow.S) continue
     c.plan.lots.forEach((l, li) => {
-      const dx = (l.district === 'industrial' ? l.x - 0.6 * l.w : l.x) - x, dz = l.z + l.d - z
+      const D0 = faustLotDoor(l), dx = D0[0] - x, dz = D0[1] - z
       const nearBack = inNearBack(l, x, z, r)
       if ((dx * dx + dz * dz < r * r || nearBack) && (faustIn.open.has(ci + ' ' + cj + ' ' + li) || !c.physics || inCanOpen(c, inBuilding(ci + ' ' + cj + ' ' + li)))) out.push(ci + ' ' + cj + ' ' + li)
     })
@@ -13477,7 +14217,7 @@ function inMaterials() {
     m.customProgramCacheKey = () => 'faust-interior-1'
     return m
   }
-  const posters = new THREE.CanvasTexture(inPosterAtlas()); posters.colorSpace = THREE.SRGBColorSpace; posters.anisotropy = 4
+  const posters = new THREE.CanvasTexture(inPosterAtlas()); posters.colorSpace = THREE.SRGBColorSpace; posters.anisotropy = 4; FAUST_ATLAS.tex = posters
   faustIn.mats = [patch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, envMapIntensity: 0.15 })),
     patch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.15, envMapIntensity: 0.45 })),
     patch(new THREE.MeshStandardMaterial({ vertexColors: true, map: posters, roughness: 0.8, metalness: 0, envMapIntensity: 0.1 }))]
@@ -13492,17 +14232,15 @@ function inPosterAtlas() {
   const rays = (cx, cy, n, c0, c1) => { for (let i = 0; i < n; i++) { g.fillStyle = i & 1 ? c0 : c1; g.beginPath(); g.moveTo(cx, cy); const a = i / n * Math.PI * 2, b = (i + 1) / n * Math.PI * 2; g.lineTo(cx + Math.cos(a) * 400, cy + Math.sin(a) * 400); g.lineTo(cx + Math.cos(b) * 400, cy + Math.sin(b) * 400); g.fill() } }
   const frame = (c, w = 10) => { g.strokeStyle = c; g.lineWidth = w; g.strokeRect(w / 2, w / 2, 256 - w, 384 - w); g.lineWidth = 2; g.strokeRect(w + 6, w + 6, 256 - 2 * w - 12, 384 - 2 * w - 12) }
   const faust = (bg, gilt) => {
-    g.fillStyle = bg; g.fillRect(0, 0, 256, 384); rays(128, 150, 24, 'rgba(255,220,150,0.10)', 'rgba(0,0,0,0)')
-    g.fillStyle = '#16100c'; g.beginPath(); g.moveTo(40, 330); for (let i = 0; i <= 12; i++) g.lineTo(40 + i * 14.6, 70 + Math.sin(i * 1.7) * 14 + (i === 0 || i === 12 ? 120 : 0)); g.lineTo(216, 330); g.fill()
-    g.fillStyle = '#c8b49a'; g.beginPath(); g.ellipse(128, 160, 52, 70, 0, 0, Math.PI * 2); g.fill()
-    g.fillStyle = '#16100c'; for (const s of [-1, 1]) { g.beginPath(); g.moveTo(128 + s * 56, 90); g.quadraticCurveTo(128 + s * 70, 170, 128 + s * 60, 260); g.lineTo(128 + s * 44, 250); g.quadraticCurveTo(128 + s * 52, 170, 128 + s * 30, 100); g.fill() }
-    g.fillStyle = '#ff2a1a'; g.shadowColor = '#ff3a20'; g.shadowBlur = 14; g.fillRect(84, 146, 88, 10); g.shadowBlur = 0
-    g.fillStyle = '#7a6550'; g.fillRect(124, 160, 8, 34); g.fillStyle = '#3a2a22'; g.fillRect(104, 205, 48, 5)
-    g.fillStyle = '#20232a'; g.beginPath(); g.moveTo(40, 384); g.lineTo(70, 250); g.lineTo(186, 250); g.lineTo(216, 384); g.fill()
-    words(['DF'], 300, 54, gilt); frame(gilt)
+    g.fillStyle = bg; g.fillRect(0, 0, 256, 384); rays(128, 150, 24, 'rgba(255,220,150,0.045)', 'rgba(0,0,0,0)')
+    g.fillStyle = '#9fb2c6'; g.fillRect(0, 0, 0, 0)
+    faustFacePaint(g, 128, 150, 1.3)
+    g.fillStyle = '#20232a'; g.beginPath(); g.moveTo(78, 384); g.lineTo(96, 322); g.lineTo(160, 322); g.lineTo(178, 384); g.fill()
+    words(['DF'], 352, 40, gilt); frame(gilt)
   }
   cell(0, () => faust('#2a1f1a', '#c9a24a'))
   cell(7, () => { faust('#1a2228', '#b8b8b0'); words(['HE SEES YOU'], 352, 20, '#e8e0d0') })
+  FAUST_ATLAS = { tex: null, repaint() { g.clearRect(0, 0, 256, 384); cell(0, () => faust('#2a1f1a', '#c9a24a')); g.clearRect(7 % 4 * 256, 384, 256, 384); cell(7, () => { faust('#1a2228', '#b8b8b0'); words(['HE SEES YOU'], 352, 20, '#e8e0d0') }); if (this.tex) this.tex.needsUpdate = true } }
   const poster = (i, bg, ray, ink, lines, globe) => cell(i, () => {
     g.fillStyle = bg; g.fillRect(0, 0, 256, 384); rays(128, globe ? 150 : 120, 20, ray, bg)
     if (globe) { g.fillStyle = '#d8d0b8'; g.beginPath(); g.arc(128, 150, 62, 0, Math.PI * 2); g.fill(); g.strokeStyle = bg; g.lineWidth = 3
@@ -13759,8 +14497,8 @@ function inDoorsFrame() {
   for (const c of F.chunks.values()) if (c.visual) c.plan.lots.forEach((l, li) => {
     const id = c.ci + ' ' + c.cj + ' ' + li, D = faustIn.drawn.get(id)
     if (n >= 256 || D?.storeys.has(0) || D?.storeys.has('door')) return
-    const x = l.district === 'industrial' ? l.x - 0.6 * l.w : l.x
-    pose.position.set(x, 0.06, l.z + l.d - 0.35); pose.updateMatrix(); m.setMatrixAt(n++, pose.matrix)
+    const D0 = faustLotDoor(l), x = D0[0]
+    pose.position.set(x, 0.06, D0[1] - 0.35); pose.updateMatrix(); m.setMatrixAt(n++, pose.matrix)
   })
   m.count = n; m.instanceMatrix.needsUpdate = true
 }
@@ -14058,14 +14796,15 @@ function padsAdd(list, cells) {
 const BOT_ID0 = 100
 const ref = n => { const i = CHARS.findIndex(C => C.name === n); if (i < 0) throw 'no CHARS row ' + n; return i }
 for (const [i, B] of [...BOTS.entries()]) for (let k = 1; k < (B.copies | 0); k++) BOTS.push({ ...B, copyOf: i })
+BOTS.push(...Array.from({ length: 6 }, () => ({ ...ENFORCER_ARMED, prison: true, copies: 1 })), ...Array.from({ length: 4 }, () => ({ ...ENFORCER, prison: true, swarm: false, copies: 1 })))
 for (const [i, B] of BOTS.entries()) {
   const C = CHARS[ref(B.cid)], k = B.char ? ref(B.char) : CHARS.push({ r: C.r, h: C.h, speed: C.speed, jump: C.jump, hp: C.hp, ...B }) - 1
   BOTS[i] = { ...CHARS[k], ...B, cid: ref(B.cid) }
   if (B.alt) BOTS[i].altRow = { ...CHARS[ref(B.alt[0])], ...B, cid: ref(B.alt[0]) }
 }
 for (const C of CHARS) C.shift &&= ref(C.shift)
-const ENFORCER_ROWS = { baton: [], armed: [], heavy: [], pacifier: [] }
-const ENFORCER_KIND = B => B.elite ? 'pacifier' : B.heavy ? 'heavy' : B.far ? 'armed' : 'baton'
+const ENFORCER_ROWS = { baton: [], armed: [], heavy: [], pacifier: [], prisonArmed: [], prisonBaton: [] }
+const ENFORCER_KIND = B => B.prison ? (B.far ? 'prisonArmed' : 'prisonBaton') : B.elite ? 'pacifier' : B.heavy ? 'heavy' : B.far ? 'armed' : 'baton'
 BOTS.forEach((B, i) => { if (B.enforcer) ENFORCER_ROWS[ENFORCER_KIND(B)].push(i) })
 const DEAL_ROWS = { dealer: [], armed: [], lookout: [] }
 BOTS.forEach((B, i) => { if (B.deal) DEAL_ROWS[B.deal.lookout ? 'lookout' : B.far ? 'armed' : 'dealer'].push(i) })
@@ -22152,10 +22891,7 @@ function teleCard(sec) {
   g.fillStyle = 'rgba(255,255,255,0.07)'
   for (let k = 0; k < 9; k++) { const a = (k / 9 + sec / TELE_LOOP_S / 6) * Math.PI * 2; g.beginPath(); g.moveTo(130, 150); g.lineTo(130 + Math.cos(a) * 700, 150 + Math.sin(a) * 700); g.lineTo(130 + Math.cos(a + 0.12) * 700, 150 + Math.sin(a + 0.12) * 700); g.fill() }
   const x0 = 130, y0 = 175, sx = 105, sy = 135
-  g.fillStyle = '#0d0f14'; g.beginPath()
-  FAUST_POSTER_HEAD.forEach(([a, b], k) => k ? g.lineTo(x0 + a * sx, y0 - b * sy) : g.moveTo(x0 + a * sx, y0 - b * sy))
-  g.fill()
-  g.fillStyle = 'rgba(255,51,34,' + (0.75 + 0.25 * Math.sin(sec * 5)).toFixed(2) + ')'; g.fillRect(x0 - 0.3 * sx, y0 - 0.42 * sy - 0.04 * sy, 0.6 * sx, 0.08 * sy)
+  faustFaceDraw(g, x0, 150, 0.9, 0.75 + 0.25 * Math.sin(sec * 5))
   g.fillStyle = '#c9a85a'; g.fillRect(0, 0, TELE_W, 8); g.fillRect(0, TELE_H - 8, TELE_W, 8)
   g.font = 'bold 34px "Maniak Display", Impact, "Arial Black", sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle'
   const lines = []
@@ -34331,6 +35067,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     return n
   },
   camera: () => { const d = camera.getWorldDirection(new THREE.Vector3()), p = camera.position; return { position: [p.x, p.y, p.z], target: [p.x + d.x, p.y + d.y, p.z + d.z], fov: camera.fov } },
+  prison: () => faustPrisonInfo(),
   haunts: () => ({ log: JSON.parse(JSON.stringify(hauntLog)), crews: [...hauntCrews.values()].map(K => ({ key: K.key, owner: K.owner, env: K.env, ids: [...K.ids], help: K.help,
       bots: K.ids.map(id => players.get(id)).filter(Boolean).map(c => ({ id: c.id, kind: c.bot.haunt, at: [c.x, c.y, c.z].map(v => Math.round(v * 100) / 100), hp: Math.round(c.hp), dead: c.dead > 0,
         yaw: Math.round((c.yaw ?? 0) * 1000) / 1000, aiYaw: Math.round((c.ai.yaw ?? 0) * 1000) / 1000, lurk: !!c.ai.lurk, tgt: c.ai.tgt, flee: c.ai.fleeT > 0, rush: c.ai.rush?.ph ?? null, rushV: c.ai.rush?.v ?? null, rushTop: c.ai.rush?.top ?? null, rushK: c.rushK || 0,
@@ -34599,6 +35336,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   perf: () => ({ tier: settings.quality, tierAuto: qualityAuto || null, tierChosen: settings.qualityChosen, tierLog: govTierLog.slice(), ratio: renderer?.getPixelRatio(), gpu: gpuName(), drops: slDrops, dropsFrame: slDropFrame, lying: slLie.length, frozen: slFrozen.size, level: govLevel, ...GOV_LEVELS[govLevel], awake: govAwake(), bodies: objs.filter(o => o.body).length, who: simWho(), log: govLog.slice() }),
   perfSet: n => govSet(clamp(n | 0, 0, GOV_LEVELS.length - 1), 'hook', 0),
   fps(n) { if (n !== undefined) fpsCap = +n >= 5 && +n <= 240 ? +n : 0; return fpsCap },
+  faustEyes: on => { FAUST_EYES_FORCE = on === undefined ? null : !!on; faustEyesPoll() },
   telescreen: (n = 120) => teleState(n),
   background: (n = 300) => ({ fps: fpsCap, origin: performance.timeOrigin, seconds: GAME.background.seconds(), gate: GAME.background.gate, gated: GAME.background.stats.gated || 0, frames: GAME.background.frames(n), gpu: GAME.background.gpuEvents(), rests: GAME.background.stats.rests || 0, jobs: GAME.background.jobs, steps: GAME.background.stats.steps, long: [...GAME.background.stats.long],
     phase, startingGame, worldPreparing, guestLoading: !!guestLoading, look: activeLook, wanted: settings.look }),
@@ -36435,7 +37173,7 @@ const PARTS = {
   'Upper half': { of: 'object' },
 }
 const PART_ADAPTERS = {}, partsHeard = { grab: [], rip: [], throw: [], punt: [], land: [] }
-const partsUses = [c => LV.faust && typeof faustInLift === 'function' && faustInLift(c), c => LV.faust && typeof faustSewUse === 'function' && faustSewUse(c)]
+const partsUses = [c => LV.faust && typeof faustInLift === 'function' && faustInLift(c), c => LV.faust && typeof faustSewUse === 'function' && faustSewUse(c), c => LV.faust && typeof faustPrisonLeverUse === 'function' && faustPrisonLeverUse(c)]
 const partsEmit = (type, ...a) => { for (const fn of partsHeard[type] || []) try { fn(...a) } catch (e) { console.warn('parts listener', e) } }
 const PUNT_G = () => gunNamed('Punt'), FLUNG_G = () => gunNamed('Flung'), SLAM_G = () => gunNamed('Slam')
 function partsObjectKind(c, o) {
@@ -38341,7 +39079,7 @@ function hauntSpotInit(p, env) {
   if (!near && Math.abs(p.x) <= ARENA && Math.abs(p.z) <= ARENA) {
     const ci = Math.floor((p.x + ARENA) / 96), cj = Math.floor((p.z + ARENA) / 96)
     for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) for (const l of faustState.chunks.get(faustKey(i, j))?.plan.lots || [])
-      cands.push({ x: l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, z: l.z + l.d + 0.9, door: true, yaw: Math.PI })
+      { const D0 = faustLotDoor(l); cands.push({ x: D0[0], z: D0[1] + 0.9, door: true, yaw: Math.PI }) }
   }
   for (let k = 0; k < 20; k++) { const a = k / 20 * 2 * Math.PI, r = r0 + Math.random() * (r1 - r0); cands.push({ x: p.x + Math.sin(a) * r, z: p.z + Math.cos(a) * r }) }
   return { env, px: p.x, pz: p.z, foot, inside, near, r0, r1, A0, eye, cands, k: 0, best: null, bs: -Infinity }
@@ -39560,6 +40298,7 @@ function slCell(ci, cj) {
     cell.agents.push({ id: 0x600000 + (ci * 512 + cj) * 4 + sg.k * 2 + n, kind: SL_K.ped, body: body(), tint: tint(), route: slLoop(n ? [[a.x, z1], [a.x, z0]] : [[a.x, z0], [a.x, z1]], v, 0, null, -rng() * 3e5) })
   }
   slVenue(cell, P, ci, cj)
+  slPrison(cell, P, ci, cj)
   return slKeep(cell)
 }
 const SL_VENUE_ID = 0x2000000
@@ -40200,6 +40939,7 @@ function slPose(ag, t, o) {
     slFrozen.delete(ag.id)
   }
   o.y = 0; o.scale = 1; o.down = false; o.hidden = false; o.rec = null; o.lieRoll = 0; o.roll = 0; o.pitch = 0; o.dead = false; o.fw = 0
+  if (ag.prison !== undefined && faustPrisonAwake()) { o.hidden = true; o.scale = 0; o.x = ag.x; o.z = ag.z; o.yaw = ag.yaw; return o }
   const r = ag.kind === SL_K.exit ? slRecFor(ag, t) || ag.r : slRecFor(ag, t)
   if (ag.kind === SL_K.cyclist && !ag.route) slRider(ag.line, ag, t, o)
   else if (ag.kind !== SL_K.exit) slAmbient(ag, t, o)
@@ -44522,6 +45262,7 @@ dsKindRegister(DS_FEAT, { record: dsFeatRecord, apply: dsFeatApply, undo: dsFeat
 dsKindRegister(DS_LOOT, { record: lootRecord, apply() {}, undo() {}, fresh() {} })
 dsKindRegister(DS_LOOT_RING, { record: lootRingRecord, apply() {}, undo() {}, fresh() {} })
 dsKindRegister(DS_LOOT_SITE, { record: lootSiteRecord, apply() {}, undo() {}, fresh() {} })
+dsKindRegister(DS_CELL, { record: faustCellRecord, apply: faustCellRefresh, undo: faustCellRefresh, fresh() {} })
 function propBreak(o) {
   if (!isHost) return
   try { burst('chip', o.x, o.y, o.z, 0, 0.8, 1, 0x9a9488, 0.8); burst('dust', o.x, o.y, o.z, 0, 1, 0, 0xc9c0ae, 1); sfxPlay('Door rip', { x: o.x, y: o.y, z: o.z }, 'world', 0.8) } catch (e) { failN[167]++ }
@@ -44944,6 +45685,7 @@ function heatDismiss(all, humans, T) {
   for (const e of all) {
     if (!e.bot?.enforcer || seatOf(e)) continue
     const ai = e.ai, H = heat.get(ai.hunt), owner = players.get(ai.hunt)
+    if (ai.post !== undefined && ai.hunt === -999) continue
     const lost = !owner || !H?.stars, far = !lost && Math.hypot(owner.x - e.x, owner.z - e.z) > HEAT.spawn.keep + 30
     if (!lost && !far) { ai.gone = undefined; continue }
     ai.gone ??= T
@@ -44991,7 +45733,7 @@ function enforcerDown(c) { enforcerDrop(c); if (conns.size) pushRoster() }
   }
   L.matchStart = function () { ms.call(this); if (isHost) { heat.clear(); for (const e of enforcerList()) dropBot(e); dealerPurge(); hauntPurge(); if (conns.size) pushRoster() } }
   L.left = function (id) { heat.delete(id); return left.call(this, id) }
-  HOST_PHASES.afterPhysics = t => { ap(t); let s = realNow(); heatTick(t.dt, t.all); s = simLap('ap heat', s); dealerTick(t.dt, t.all); s = simLap('ap dealer', s); hauntTick(t.dt, t.all); ringTick(t.dt, t.all); simLap('ap haunt', s) }
+  HOST_PHASES.afterPhysics = t => { ap(t); let s = realNow(); heatTick(t.dt, t.all); s = simLap('ap heat', s); dealerTick(t.dt, t.all); s = simLap('ap dealer', s); hauntTick(t.dt, t.all); ringTick(t.dt, t.all); simLap('ap haunt', s); try { faustPrisonTick(t.dt, t.all) } catch (e) { const S = faustPrisonState ||= { guards: new Map(), crimeAt: new Map(), gap: 0 }; S.err = String(e?.stack || e).slice(0, 400); if (!S.warned) { S.warned = 1; console.warn('prison guards: ' + (e?.message || e)) } } }
 }
 function heatHud() {
   const off = isHost && !enforcersEnabled()
@@ -45625,7 +46367,7 @@ const testTools = (() => {
       for (let r = 1; r <= 3; r++) {
         const out = []
         for (let i = Math.max(0, ci - r); i <= Math.min(S - 1, ci + r); i++) for (let j = Math.max(0, cj - r); j <= Math.min(S - 1, cj + r); j++)
-          for (const l of faustGet(i, j).plan.lots) { const x = l.district === 'industrial' ? l.x - 0.6 * l.w : l.x, z = l.z + l.d
+          for (const l of faustGet(i, j).plan.lots) { const D0 = faustLotDoor(l), x = D0[0], z = D0[1]
             out.push({ x, z, y0: 0, what: 'door of a ' + (l.district || '') + ' lot', spot: { x, z: z + 3, face: [0, -1] } }) }
         if (out.length) return out
       }
@@ -45764,7 +46506,22 @@ const testTools = (() => {
     if (t?.resolve) t.resolve(t)
     return t
   }
-  return { tp, near, where, things, find, repair }
+  const tpy = a => {
+    if (!isHost) return refuse('Only the host can use test commands.')
+    const w = String(a || '').replace(/,/g, ' ').trim().split(/\s+/), n = w.slice(-3).map(Number), q = w.slice(0, -3).join(' ').toLowerCase()
+    if (n.length !== 3 || !n.every(Number.isFinite)) return sysMsg('§cUsage: §f/tpy [name] <x> <z> <y>', 'c')
+    let c = me(true)
+    if (q) {
+      const all = [...roster].filter(([id]) => id < BOT_ID0 && players.get(id)), exact = all.filter(([, p]) => p.name.toLowerCase() === q), hit = exact.length ? exact : all.filter(([, p]) => p.name.toLowerCase().startsWith(q))
+      if (hit.length !== 1) return sysMsg('§c' + (hit.length ? hit.length + ' players match §f' : 'No player called §f') + esc(q), 'c')
+      c = players.get(hit[0][0])
+      if (c.dead > 0) return sysMsg('§c' + esc(hit[0][1].name) + ' is down.', 'c')
+    }
+    if (!c) return
+    const [x, y, z] = tpTo(c, n[0], n[1], n[2], null, 3)
+    sysMsg('§7Teleported to x §f' + x.toFixed(1) + ' §7z §f' + z.toFixed(1) + ' §7y §f' + y.toFixed(1), 'c')
+  }
+  return { tp, tpy, near, where, things, find, repair }
 })()
 const GIVE = { squad: 'Car', block: 'Cinderblock', sports: 'Sports car', wreck: 'Wreck', door: 'Car door fl', maniak: 'Maniak car' }
 function giveSquad(me) {
@@ -45928,6 +46685,7 @@ const blackbox = (() => {
 })()
 Object.assign(GAME.commands, {
   tp:    { args: '[<name>] <x> <z> [<heading>]', help: 'host only, test: teleport to the street under a point; a named player (full name or a unique prefix), else you', run: testTools.tp },
+  tpy:   { args: '[<name>] <x> <z> <y>', help: 'host only, test: teleport (a named player, else you) onto the floor under a point at a height y (an upper floor of a building)', run: testTools.tpy },
   near:  { args: '<thing> [go]', help: 'host only, test: find the nearest (' + testTools.things() + '), go to teleport beside it', run: testTools.near },
   where: { args: '', help: 'test: your x, z, heading and city cell', run: testTools.where },
   repair: { args: 'props [all]', help: 'host only, test: clear the broken hydrants, mailboxes and meters of your save tile (all: every loaded tile)', run: testTools.repair },
@@ -50611,9 +51369,9 @@ function* mapBuildSteps(seed, S) {
       lots: plan.lots.map(l => [l.x, l.z, l.w, l.d, l.height, l.gothic ? 1 : 0, l.stop ? 1 : 0]) })
     for (const r of plan.roads) segs.push([r.a[0], r.a[2], r.b[0], r.b[2], r.width, r.diagonal || /:diagonal$/.test(r.id) ? 'diag' : r.avenue ? 'avenue' : 'street'])
     for (const l of plan.lots) {
-      const k = l.landmark || l.venue
+      const k = l.landmark || l.venue || (l.prison ? 'prison' : '')
       if (!k || k === 'boxing') continue
-      const name = k === 'club' ? clubName(l.club ? l.club.name : 0) : k === 'hotel' ? 'HOTEL ' + FAUST_HOTEL[l.seed >>> 9 & 3] : k === 'store' ? FAUST_STORE[l.seed >>> 9 & 3] : k === 'theatre' ? 'THEATRE' : k === 'cathedral' ? 'CATHEDRAL' : k === 'liquor' ? 'LIQUOR STORE' : 'CONVENIENCE STORE'
+      const name = k === 'prison' ? 'HELL BLOCK' : k === 'club' ? clubName(l.club ? l.club.name : 0) : k === 'hotel' ? 'HOTEL ' + FAUST_HOTEL[l.seed >>> 9 & 3] : k === 'store' ? FAUST_STORE[l.seed >>> 9 & 3] : k === 'theatre' ? 'THEATRE' : k === 'cathedral' ? 'CATHEDRAL' : k === 'liquor' ? 'LIQUOR STORE' : 'CONVENIENCE STORE'
       D.places.push({ x: l.x, z: l.z, kind: k, name, min: k === 'liquor' || k === 'conv' ? 0.55 : k === 'club' ? 0.3 : 0.1 })
     }
     for (const s of plan.sites || []) D.places.push({ x: s.x, z: s.z, kind: 'site', name: MAP_SITES[s.k] || 'WORKS', min: s.k === 'site_freight' ? 0.45 : 0.3 })
