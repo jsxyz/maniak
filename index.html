@@ -11060,7 +11060,7 @@ function faustHeroHook(shader) {
 const FAUST_SURFACE = {
   layers: ['stucco', 'siding', 'brick', 'shingle', 'tile', 'glass', 'wood', 'grass', 'concrete', 'asphalt', 'tin', 'dirt', 'door', 'garage', 'paint', 'metal', 'leaf', 'line'],
   scale: { stucco: 2, siding: 1.2, brick: 0.9, shingle: 1.6, tile: 1.2, glass: 1, wood: 1, grass: 2, concrete: 1.5, asphalt: 3, tin: 1.5, dirt: 2, door: 1, garage: 1, paint: 2, metal: 1, leaf: 0.8, line: 2 },
-  real: { stucco: 'stucco', siding: 'siding', brick: 'houseBrick', shingle: 'shingle', tile: 'brick', wood: 'wood', grass: 'grass', concrete: 'concrete', asphalt: 'asphalt', tin: 'iron', dirt: 'stucco', paint: 'stucco', metal: 'steel', line: 'paintWhite' },
+  real: { stucco: 'stucco', siding: 'siding', brick: 'houseBrick', shingle: 'shingle', tile: 'brick', wood: 'wood', grass: 'grass', concrete: 'concrete', asphalt: 'asphalt', tin: 'tin', dirt: 'stucco', paint: 'stucco', metal: 'steel', line: 'paintWhite' },
   kinds: { body: { fallback: 'stucco' }, roof: { fallback: 'shingle' }, shed: { fallback: 'tin' }, picket: { fallback: 'wood' }, flat: { fallback: 'concrete' },
     pane: { fallback: 'paint', quad: true }, lit: { fallback: 'glass', quad: true } },
   tints() {
@@ -24283,7 +24283,8 @@ const REAL_MEAN = [[0.241, 0.241, 0.239], [0.255, 0.170, 0.107], [0.127, 0.120, 
   [0.275, 0.268, 0.242], [0.489, 0.470, 0.445]]
 const REAL_KIND = { stone: 0, brick: 1, concrete: 2, asphalt: 3, sidewalk: 4, setts: 5, granite: 6, darkGranite: 7,
   paintWhite: 8, paintYellow: 9, paintBike: 10, iron: 11, steel: 12, brass: 13, door: 14, shadow: 15, lamp: 16,
-  pier: 17, cornice: 18, crown: 19, shutter: 20, signNeon: 21, signPaint: 22, grass: 23, wood: 24, shingle: 25, stucco: 26, siding: 27, houseBrick: 28, water: 29, painted: 30 }
+  pier: 17, cornice: 18, crown: 19, shutter: 20, signNeon: 21, signPaint: 22, grass: 23, wood: 24, shingle: 25, stucco: 26, siding: 27, houseBrick: 28, water: 29, painted: 30, tin: 31 }
+const REAL_TIN = { pitch: 0.16, tilt: 0.3 }
 const REAL_PAINTED = [0x9a3b2e, 0x2f5d7c, 0x3e6b45, 0xb08a2a, 0x8c8f93, 0xc8c2b0, 0x6a3d5a, 0xa65d2a, 0x9a3a2e, 0xb7bcc0, 0xcfc9bd, 0xa8432e, 0x7a2f2a, 0x56606b, 0x2f4a5c]
 const REAL_TINTS = [
   [0x704e3b, 'signPaint'], [0x723b38, 'signPaint'], [0x35503c, 'signPaint'], [0x627d83, 'signPaint'], [0x282f32, 'signPaint'],
@@ -24352,7 +24353,7 @@ RealK realKind(int k) {
   else if (k == 6) { m.layer = 5.0; m.scale = 1.4; m.wet = 0.45; m.rough = 0.5; }
   else if (k == 7) { m.layer = 5.0; m.scale = 2.0; m.gain = 0.9; m.rough = 0.22; m.wet = 0.3; }
   else if (k >= 8 && k <= 10) { m.layer = 3.0; m.scale = 3.2; m.gain = 0.8; m.wet = 0.8; m.sat = 0.8; }
-  else if (k == 11) { m.layer = -1.0; m.gain = 0.8; m.rough = 0.42; m.metal = 0.35; m.wet = 0.2; }
+  else if (k == 11 || k == 31) { m.layer = -1.0; m.gain = 0.8; m.rough = 0.42; m.metal = 0.35; m.wet = 0.2; }
   else if (k == 12) { m.layer = -1.0; m.rough = 0.2; m.metal = 1.0; }
   else if (k == 13) { m.layer = -1.0; m.rough = 0.28; m.metal = 1.0; m.sat = 1.0; }
   else if (k == 14) { m.layer = 0.0; m.scale = 1.2; m.sat = 0.3; }
@@ -24623,6 +24624,7 @@ RealSurf realSurface() {
   realTex(max(m.layer, 0.0), uv / m.scale, s, nT);
   vec3 tone = mix(vec3(dot(tint, REAL_LW)), tint, m.sat) * m.gain;
   if (m.layer < 0.0) { s.albedo = vec3(1.0); s.ao = 1.0; nT = k == 12 ? vec3(0.0, 0.0, 1.0) : normalize(vec3(realNoise(uv * 3.0) - 0.5, realNoise(uv * 3.0 + 9.0) - 0.5, 5.0)); }
+  if (k == 31) { float tinW = 6.2831853 / ${REAL_TIN.pitch.toFixed(3)}, tinA = ${REAL_TIN.tilt.toFixed(2)} * (1.0 - smoothstep(0.7, 2.0, fwidth(uv.x) * tinW)); nT = normalize(vec3(cos(uv.x * tinW) * tinA, 0.0, 1.0)); }
   s.albedo = mix(vec3(dot(s.albedo, REAL_LW)), s.albedo, m.sat) * tone;
   if (k == 28) s.albedo *= REAL_MEAN[1] / dot(REAL_MEAN[1], REAL_LW);
   if (k == 27) { float cb = fract(vRealW.y / 0.17); nT.y += cb < 0.15 ? -0.9 : 0.25 * cb; s.albedo *= cb < 0.12 ? 0.7 : 1.0; s.ao *= cb < 0.12 ? 0.55 : 1.0; }
