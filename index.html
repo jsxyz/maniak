@@ -23754,13 +23754,20 @@ function* inkPostDrawOnce() {
     yield 'frame'
   }
 }
+const compileTimes = []
 function* compileStep() {
   if (renderHeadless || !renderer || !camera || !scene.fog) return
+  const t0 = realNow(), counts = () => renderer.info.programs.length
+  let label = 'Plain', n0 = counts(), tp = t0
+  const say = () => { if (startingGame) loadingText('Compiling shaders: ' + label + ', ' + (counts() - n0) + ' programs, ' + Math.round((realNow() - t0) / 1000) + ' s') }
+  const ticker = setInterval(say, 250)
+  const next = name => { compileTimes.push({ label, ms: Math.round(realNow() - tp), programs: counts() - n0 }); label = name; n0 = counts(); tp = realNow(); say() }
+  try {
   loadingText('Compiling shaders…')
   background.mark('compile plain'); yield* warmSceneSteps('plain')
-  if (activeLook !== 'plain') { background.mark('compile ' + activeLook); yield* warmSceneSteps(activeLook) }
+  if (activeLook !== 'plain') { next(LOOKS[activeLook]?.label || activeLook); background.mark('compile ' + activeLook); yield* warmSceneSteps(activeLook) }
   if (activeLook !== 'ink' && !softGL() && !lookPending) {
-    background.mark('compile ink')
+    next('Ink'); background.mark('compile ink')
     const Q = QUALITY[settings.quality] || QUALITY.high
     const ratio = Math.min(devicePixelRatio || 1, Q.ratio, IS_TOUCH ? 1.5 : Infinity) * GOV_LEVELS[govLevel].d * (LOOKS.ink?.scale?.(settings.quality) ?? 1)
     yield* inkPrepSteps(Math.floor(innerWidth * ratio), Math.floor(innerHeight * ratio))
@@ -23768,15 +23775,17 @@ function* compileStep() {
     if (!lookPending && inkPost) yield* inkPostDrawOnce()
   }
   if (activeLook !== 'realistic' && !IS_TOUCH && !softGL() && !lookPending) {
-    background.mark('compile realistic')
+    next('Realistic'); background.mark('compile realistic')
     const Q = QUALITY[settings.quality] || QUALITY.high
     const ratio = Math.min(devicePixelRatio || 1, Q.ratio, 1.5) * GOV_LEVELS[govLevel].d * (LOOKS.realistic?.scale?.(settings.quality) ?? 1)
     yield* realPrepSteps(Math.floor(innerWidth * ratio), Math.floor(innerHeight * ratio), ratio)
     if (!lookPending) yield* warmSceneSteps('realistic')
   }
-  background.mark('compile draw')
+  next('first frame'); background.mark('compile draw')
   try { renderer.render(scene, camera) } catch (e) { frameFailed('compile draw', e) }
   yield 'frame'
+  next('done')
+  } finally { clearInterval(ticker) }
 }
 function requestLook(name) {
   const key = lookKey(name)
@@ -35293,6 +35302,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
   log: () => gameLog.map(line => ({ ...line })),
   look: name => GAME.look.set(name),
   shaderCheck,
+  compileTimes: () => compileTimes,
   gateHits: () => gateHits,
   gateLog: () => gateList.map(g => ({ who: g.who, at: Math.round(g.t0), frames: g.f1 - g.f0 + 1, skips: g.skips, ms: Math.round(g.ms), late: g.late })),
   failures: failuresReport,
