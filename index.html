@@ -23008,7 +23008,6 @@ function inkPrepare(root) {
           float keyLight = max(0.0, dot(normal, normalize(mat3(viewMatrix) * vec3(-28.0, 18.0, 14.0))));
           light = max(light, 0.10 + 0.55 * keyLight);
           float lum = pow(clamp(light / 0.8, 0.0, 1.0), 0.8);
-          diffuseColor.a *= 0.9;
           float inkRedK = inkRed(diffuseColor.rgb);
           float alb = mix(inkAlbedo(base, 0.30, 0.13), 0.7, inkRedK);
           float facing = abs(dot(normal, normalize(-inkViewPosition)));
@@ -23112,7 +23111,7 @@ function inkPrepare(root) {
         const normalOutput = m.depthWrite && !m.isSpriteMaterial
           ? `inkNormalOutput = inkWriteNormals ? vec4(${lit ? 'inkSurfaceNormal' : 'normalize(cross(dFdx(inkViewPosition), dFdy(inkViewPosition)))'} * 0.5 + 0.5, 1.0) : vec4(0.0);`
           : `inkNormalOutput = vec4(${m.blending === THREE.MultiplyBlending ? '1.0' : '0.0'});`
-        shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `${normalOutput}\nif (inkEnabled) { ${shade} }\n#include <opaque_fragment>`)
+        shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `${normalOutput}\nif (inkEnabled) { ${shade} }\n#include <opaque_fragment>${character ? '\nif (inkEnabled) gl_FragColor.a = 0.9;' : ''}`)
         if (!sky) shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', `#include <fog_fragment>
           if (inkEnabled) {
             float edgeFade = smoothstep(inkExtent - 288.0, inkExtent - 96.0, max(abs(inkWorldPoint.x), abs(inkWorldPoint.z)))
@@ -23177,11 +23176,12 @@ function inkDispose(keepDisplay = false) {
   if (!inkPost) return
   inkPost.target.dispose(); inkPost.aaTarget.dispose(); inkPost.separateNormals && inkPost.normalTarget.dispose()
   inkPost.normalMaterial?.dispose(); inkPost.lineTarget?.dispose(); inkPost.composeMesh?.material.dispose(); inkPost.mesh.geometry.dispose()
-  inkPost.mesh.material.dispose(); inkPost.aaMesh.material.dispose()
+  inkPost.mesh.material.dispose(); inkPost.aaMesh.material.dispose(); inkPost.aoTarget.dispose(); inkPost.aoMesh.material.dispose()
   const size = renderer.getSize(new THREE.Vector2())
   renderer.setSize(size.x, size.y, false)
   inkPost = null
 }
+const INK_AO = { strength: 0.9, shape: [0.08, 1.4, 3.2, 0.02], band: [0.05, 0.7] }
 function inkTarget(width, height, outlines, displayWidth = width, displayHeight = height, separateNormals = false, field = false) {
   if (inkPost && (inkPost.outlines !== outlines || inkPost.separateNormals !== separateNormals || inkPost.field !== field)) inkDispose(outlines)
   if (!inkPost) {
@@ -23196,14 +23196,16 @@ function inkTarget(width, height, outlines, displayWidth = width, displayHeight 
     const normalTarget = separateNormals ? new THREE.WebGLRenderTarget(displayWidth, displayHeight, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true }) : outlines ? target : null
     if (separateNormals) normalTarget.depthTexture = new THREE.DepthTexture(displayWidth, displayHeight, THREE.UnsignedIntType)
     const normalMaterial = separateNormals ? new THREE.MeshNormalMaterial({ toneMapped: false }) : null
+    const aoTarget = new THREE.WebGLRenderTarget(Math.ceil(width / 2), Math.ceil(height / 2), { depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter })
     const material = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, toneMapped: false,
-      uniforms: { fieldOnly: { value: field }, inkFog: { value: new THREE.Vector3(0, 1, 0) }, colour: { value: aaTarget.texture }, normals: { value: separateNormals ? normalTarget.texture : target.textures[1] }, depth: { value: normalTarget?.depthTexture },
+      uniforms: { fieldOnly: { value: field }, aoTex: { value: aoTarget.texture }, aoK: { value: INK_AO.strength }, aoTexel: { value: new THREE.Vector2() }, inkFog: { value: new THREE.Vector3(0, 1, 0) }, colour: { value: aaTarget.texture }, normals: { value: separateNormals ? normalTarget.texture : target.textures[1] }, depth: { value: normalTarget?.depthTexture },
         texel: { value: new THREE.Vector2() }, nearFar: { value: new THREE.Vector2() }, projection: { value: new THREE.Vector2() }, geometryTexel: { value: new THREE.Vector2() }, up: { value: new THREE.Vector3() } },
       vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
-      fragmentShader: `uniform sampler2D colour, normals, depth; uniform bool fieldOnly; uniform vec3 inkFog;
+      fragmentShader: `uniform sampler2D colour, normals, depth, aoTex; uniform bool fieldOnly; uniform float aoK; uniform vec2 aoTexel; uniform vec3 inkFog;
         uniform vec2 texel, geometryTexel, nearFar, projection; uniform vec3 up; varying vec2 vUv;
         float distanceAt(vec2 p) { float d = texture2D(depth, p).x; return nearFar.x * nearFar.y / (nearFar.y - d * (nearFar.y - nearFar.x)); }
         vec3 pointAt(vec2 p, float z) { p = (floor(p / geometryTexel) + 0.5) * geometryTexel; return vec3((p * 2.0 - 1.0) * projection * z, -z); }
+        float aoAt(vec2 p) { vec2 h = aoTexel; return 0.25 * (texture2D(aoTex, p + h).r + texture2D(aoTex, p - h).r + texture2D(aoTex, p + vec2(h.x, -h.y)).r + texture2D(aoTex, p + vec2(-h.x, h.y)).r); }
         float boundary(vec2 offset, vec4 centre, float z, bool forward) {
           vec2 p = vUv + offset * texel;
           vec4 adjacent = texture2D(normals, p);
@@ -23233,32 +23235,48 @@ function inkTarget(width, height, outlines, displayWidth = width, displayHeight 
           float edge = max(max(inside.x == 1.0 ? 1.0 : 0.0, inside.y == 1.0 ? 1.0 : 0.0),
                            max(inside.z == 1.0 ? 1.0 : 0.0, inside.w == 1.0 ? 1.0 : 0.0));
           float fogLine = inkFog.z * smoothstep(inkFog.x, inkFog.y, z);
-          float ao = 0.0;
-          if (n.a > 0.5 && dot(n.rgb * 2.0 - 1.0, up) < 0.9) {
-            float R = clamp(z * 0.02, 0.8, 40.0);
-            float px = clamp(R / (2.0 * z * projection.y) / texel.y, 2.0, 28.0);
-            float occluded = 0.0, valid = 0.0, near = 0.0;
-            vec3 here = pointAt(vUv, z), surf = normalize(n.rgb * 2.0 - 1.0);
-            for (int i = 0; i < 4; i++) {
-              float a = float(i) * 1.570796 + 0.3927;
-              vec2 ray = vec2(cos(a), sin(a)) * px * texel;
-              vec2 at = vUv + ray * 0.8;
-              near = max(near, max(1.0 - smoothstep(0.92, 0.98, texture2D(colour, vUv + ray * 0.45).a),
-                                   1.0 - smoothstep(0.92, 0.98, texture2D(colour, vUv + ray * 1.25).a)));
-              float h = dot(pointAt(at, distanceAt(at)) - here, surf);
-              valid += 1.0 - smoothstep(1.2 * R, 2.0 * R, h);
-              occluded += smoothstep(0.08 * R, 0.25 * R, h) * (1.0 - smoothstep(0.8 * R, 1.2 * R, h));
-            }
-            ao = clamp(occluded / max(valid, 2.0) * 2.2, 0.0, 1.0) * (1.0 - near);
-          }
           vec4 sceneColour = texture2D(colour, vUv);
-          ao *= smoothstep(0.92, 0.98, sceneColour.a);
-          vec3 shaded = sceneColour.rgb * (1.0 - 0.62 * ao * (1.0 - fogLine));
+          vec3 shaded = sceneColour.rgb * (1.0 - aoK * aoAt(vUv) * smoothstep(0.92, 0.98, sceneColour.a));
           gl_FragColor = vec4(mix(shaded, vec3(0.004), edge * (1.0 - 0.9 * fogLine)), 1.0);
           #include <colorspace_fragment>
         }` })
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material), postScene = new THREE.Scene()
     mesh.frustumCulled = false; postScene.add(mesh)
+    const u0 = material.uniforms
+    const aoMaterial = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, toneMapped: false,
+      uniforms: { colour: u0.colour, normals: u0.normals, depth: u0.depth, inkFog: u0.inkFog, nearFar: u0.nearFar, projection: u0.projection, geometryTexel: u0.geometryTexel,
+        aoShape: { value: new THREE.Vector4().fromArray(INK_AO.shape) }, aoBand: { value: new THREE.Vector2().fromArray(INK_AO.band) } },
+      vertexShader: material.vertexShader,
+      fragmentShader: `uniform sampler2D colour, normals, depth; uniform vec3 inkFog; uniform vec2 nearFar, projection, geometryTexel, aoBand; uniform vec4 aoShape; varying vec2 vUv;
+        float distanceAt(vec2 p) { float d = texture2D(depth, p).x; return nearFar.x * nearFar.y / (nearFar.y - d * (nearFar.y - nearFar.x)); }
+        vec3 pointAt(vec2 p, float z) { p = (floor(p / geometryTexel) + 0.5) * geometryTexel; return vec3((p * 2.0 - 1.0) * projection * z, -z); }
+        void main() {
+          vec4 n = texture2D(normals, vUv);
+          float body = smoothstep(0.92, 0.98, texture2D(colour, vUv).a), ao = 0.0;
+          if (n.a > 0.5 && body > 0.0) {
+            float z = distanceAt(vUv), R = clamp(z * aoShape.x, aoShape.y, aoShape.z);
+            vec3 N = normalize(n.rgb * 2.0 - 1.0), here = pointAt(vUv, z);
+            vec3 T = normalize(abs(N.y) < 0.9 ? cross(N, vec3(0.0, 1.0, 0.0)) : cross(N, vec3(1.0, 0.0, 0.0)));
+            vec3 B = cross(N, T);
+            vec2 cell = mod(floor(gl_FragCoord.xy), 4.0), lo = mod(cell, 2.0), hi = floor(cell / 2.0);
+            float spin = (abs(lo.x - lo.y) * 8.0 + lo.y * 4.0 + abs(hi.x - hi.y) * 2.0 + hi.y + 0.5) / 16.0, occluded = 0.0;
+            for (int i = 0; i < 16; i++) {
+              float f = (float(i) + 0.5) / 16.0, a = f * 15.0796 + spin * 6.2831853, rr = sqrt(f);
+              vec3 p = here + (T * (cos(a) * rr) + B * (sin(a) * rr) + N * sqrt(max(1.0 - rr * rr, 0.0))) * (R * mix(0.3, 1.0, f));
+              float zs = -p.z;
+              vec2 uv = p.xy / (projection * max(zs, 0.1)) * 0.5 + 0.5;
+              if (zs < 0.1 || uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) continue;
+              float sceneZ = distanceAt(uv);
+              float character = 1.0 - smoothstep(0.92, 0.98, texture2D(colour, uv).a);
+              float near = 1.0 - smoothstep(R, 2.5 * R, abs(z - sceneZ));
+              occluded += smoothstep(0.0, 0.15 * R, zs - sceneZ - aoShape.w * R) * near * (1.0 - character);
+            }
+            ao = smoothstep(aoBand.x, aoBand.y, occluded / 16.0) * body * (1.0 - inkFog.z * smoothstep(inkFog.x, inkFog.y, z));
+          }
+          gl_FragColor = vec4(ao, 0.0, 0.0, 1.0);
+        }` })
+    const aoMesh = new THREE.Mesh(mesh.geometry, aoMaterial), aoScene = new THREE.Scene()
+    aoMesh.frustumCulled = false; aoScene.add(aoMesh)
     const aaMaterial = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, toneMapped: false,
       uniforms: { colour: { value: target.texture }, texel: { value: new THREE.Vector2() } },
       vertexShader: material.vertexShader,
@@ -23289,9 +23307,10 @@ function inkTarget(width, height, outlines, displayWidth = width, displayHeight 
     let composeMesh = null, composeScene = null
     if (field) {
       const composeMaterial = new THREE.ShaderMaterial({ depthTest: false, depthWrite: false, toneMapped: false,
-        uniforms: { colour: { value: aaTarget.texture }, lines: { value: lineTarget.texture }, geometrySize: { value: new THREE.Vector2() }, cellPixels: { value: new THREE.Vector2() } },
+        uniforms: { colour: { value: aaTarget.texture }, aoTex: { value: aoTarget.texture }, aoK: { value: INK_AO.strength }, aoTexel: { value: new THREE.Vector2() }, lines: { value: lineTarget.texture }, geometrySize: { value: new THREE.Vector2() }, cellPixels: { value: new THREE.Vector2() } },
         vertexShader: material.vertexShader,
-        fragmentShader: `uniform sampler2D colour, lines; uniform vec2 geometrySize, cellPixels; varying vec2 vUv;
+        fragmentShader: `uniform sampler2D colour, lines, aoTex; uniform float aoK; uniform vec2 aoTexel, geometrySize, cellPixels; varying vec2 vUv;
+          float aoAt(vec2 p) { vec2 h = aoTexel; return 0.25 * (texture2D(aoTex, p + h).r + texture2D(aoTex, p - h).r + texture2D(aoTex, p + vec2(h.x, -h.y)).r + texture2D(aoTex, p + vec2(-h.x, h.y)).r); }
           float coverage(float code, float distance) {
             float mode = floor(code * 3.0 + 0.5);
             if (mode < 0.5) return 0.0;
@@ -23302,16 +23321,18 @@ function inkTarget(width, height, outlines, displayWidth = width, displayHeight 
             vec4 sides = texture2D(lines, vUv); vec2 p = fract(vUv * geometrySize) * cellPixels;
             float edge = max(max(coverage(sides.r, cellPixels.x - p.x), coverage(sides.g, cellPixels.y - p.y)),
                              max(coverage(sides.b, p.x), coverage(sides.a, p.y)));
-            gl_FragColor = vec4(mix(texture2D(colour, vUv).rgb, vec3(0.004), edge), 1.0);
+            vec4 sceneColour = texture2D(colour, vUv);
+            vec3 shaded = sceneColour.rgb * (1.0 - aoK * aoAt(vUv) * smoothstep(0.92, 0.98, sceneColour.a));
+            gl_FragColor = vec4(mix(shaded, vec3(0.004), edge), 1.0);
             #include <colorspace_fragment>
           }` })
       composeMesh = new THREE.Mesh(mesh.geometry, composeMaterial); composeScene = new THREE.Scene()
       composeMesh.frustumCulled = false; composeScene.add(composeMesh)
     }
-    inkPost = { target, mesh, scene: postScene, camera: new THREE.Camera(), aaTarget, aaMesh, aaScene, outlines, normalTarget, normalMaterial, separateNormals, field, lineTarget, composeMesh, composeScene, zeroNormal: new Float32Array(4) }
+    inkPost = { target, mesh, scene: postScene, camera: new THREE.Camera(), aaTarget, aaMesh, aaScene, aoTarget, aoMesh, aoScene, outlines, normalTarget, normalMaterial, separateNormals, field, lineTarget, composeMesh, composeScene, zeroNormal: new Float32Array(4) }
   }
   if (inkPost.target.width !== width || inkPost.target.height !== height) {
-    inkPost.target.setSize(width, height); inkPost.aaTarget.setSize(width, height); inkPost.lineTarget?.setSize(width, height)
+    inkPost.target.setSize(width, height); inkPost.aaTarget.setSize(width, height); inkPost.lineTarget?.setSize(width, height); inkPost.aoTarget.setSize(Math.ceil(width / 2), Math.ceil(height / 2))
   }
   if (inkPost.separateNormals && (inkPost.normalTarget.width !== displayWidth || inkPost.normalTarget.height !== displayHeight)) inkPost.normalTarget.setSize(displayWidth, displayHeight)
   return inkPost
@@ -23383,6 +23404,9 @@ function inkRender(render, s, cam) {
         u.projection.value.set(1 / cam.projectionMatrix.elements[0], 1 / cam.projectionMatrix.elements[5])
         u.geometryTexel.value.set(1 / post.normalTarget.width, 1 / post.normalTarget.height)
         u.up.value.set(0, 1, 0).transformDirection(cam.matrixWorldInverse)
+        post.mesh.material.uniforms.aoTexel.value.set(1 / post.aoTarget.width, 1 / post.aoTarget.height)
+        if (post.composeMesh) post.composeMesh.material.uniforms.aoTexel.value.copy(post.mesh.material.uniforms.aoTexel.value)
+        renderer.setRenderTarget(post.aoTarget); render(post.aoScene, post.camera)
         if (post.field) {
           renderer.setRenderTarget(post.lineTarget); render(post.scene, post.camera)
           const c = post.composeMesh.material.uniforms
