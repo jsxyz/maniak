@@ -23588,6 +23588,32 @@ function* warmSceneSteps(name, roots = null) {
     }
   }
 }
+function* inkPrepSteps(w, h) {
+  const outlines = settings.quality !== 'low', field = outlines && (IS_TOUCH || settings.quality === 'medium')
+  const D = outlines ? inkDisplaySize(renderer.getSize(new THREE.Vector2())) : null, dw = outlines ? D.x : w, dh = outlines ? D.y : h
+  const separate = outlines && !IS_TOUCH && settings.quality === 'high' && (w !== dw || h !== dh)
+  const P = inkTarget(w, h, outlines, dw, dh, separate, field)
+  for (const t of new Set([P.target, P.aaTarget, P.normalTarget, P.lineTarget].filter(Boolean))) { renderer.initRenderTarget(t); yield 'frame' }
+  const into = t => () => { const old = renderer.getRenderTarget(); renderer.setRenderTarget(t); return () => renderer.setRenderTarget(old) }
+  for (const r of [P.aaScene, P.aoScene, P.scene, P.composeScene]) if (r) inkPrepare(r)
+  yield* compileObjects(P.aaScene, P.camera, P.aaScene, into(P.outlines ? P.aaTarget : null))
+  if (P.outlines) yield* compileObjects(P.aoScene, P.camera, P.aoScene, into(P.aoTarget))
+  if (P.outlines) yield* compileObjects(P.scene, P.camera, P.scene, into(P.field ? P.lineTarget : null))
+  if (P.composeScene) yield* compileObjects(P.composeScene, P.camera, P.composeScene, into(null))
+}
+function* compileStep() {
+  if (renderHeadless || !renderer || !camera || !scene.fog) return
+  loadingText('Compiling shaders…')
+  background.mark('compile plain'); yield* warmSceneSteps('plain')
+  if (activeLook !== 'plain') { background.mark('compile ' + activeLook); yield* warmSceneSteps(activeLook) }
+  if (activeLook !== 'ink' && !softGL() && !lookPending) {
+    background.mark('compile ink')
+    const Q = QUALITY[settings.quality] || QUALITY.high
+    const ratio = Math.min(devicePixelRatio || 1, Q.ratio, IS_TOUCH ? 1.5 : Infinity) * GOV_LEVELS[govLevel].d * (LOOKS.ink?.scale?.(settings.quality) ?? 1)
+    yield* inkPrepSteps(Math.floor(innerWidth * ratio), Math.floor(innerHeight * ratio))
+    if (!lookPending) yield* warmSceneSteps('ink')
+  }
+}
 function requestLook(name) {
   const key = lookKey(name)
   if (lookPending && lookPending.key !== key) { background.cancel('look'); lookPending = null }
@@ -23631,17 +23657,7 @@ function requestLook(name) {
         }
         background.mark('real dome')
         yield* compileObjects(R.dome, camera, faustState?.skyScene || scene, warmSetup(name, T.hdr, R))
-      } else if (name === 'ink') {
-        const outlines = settings.quality !== 'low', field = outlines && (IS_TOUCH || settings.quality === 'medium')
-        const D = outlines ? inkDisplaySize(renderer.getSize(new THREE.Vector2())) : null, dw = outlines ? D.x : w, dh = outlines ? D.y : h
-        const separate = outlines && !IS_TOUCH && settings.quality === 'high' && (w !== dw || h !== dh)
-        const P = inkTarget(w, h, outlines, dw, dh, separate, field)
-        for (const t of new Set([P.target, P.aaTarget, P.normalTarget, P.lineTarget].filter(Boolean))) { renderer.initRenderTarget(t); yield 'frame' }
-        const into = t => () => { const old = renderer.getRenderTarget(); renderer.setRenderTarget(t); return () => renderer.setRenderTarget(old) }
-        yield* compileObjects(P.aaScene, P.camera, P.aaScene, into(P.outlines ? P.aaTarget : null))
-        if (P.outlines) yield* compileObjects(P.scene, P.camera, P.scene, into(P.field ? P.lineTarget : null))
-        if (P.composeScene) yield* compileObjects(P.composeScene, P.camera, P.composeScene, into(null))
-      }
+      } else if (name === 'ink') yield* inkPrepSteps(w, h)
       yield* warmSceneSteps(name)
       if (lookPending !== pending || lookKey(name) !== key) return
       const previous = activeLook
@@ -34058,9 +34074,8 @@ function setLevel(i, gen) {
     background.mark('floors'); yield* floorsSteps()
     loadingText('Preparing the view…')
     warmEffects()
-    yield* warmWithin(3000, 'plain')
-    if (activeLook === settings.look) yield* warmWithin(2000, activeLook)
-    else requestLook(settings.look).catch(e => frameFailed('look preparation', e))
+    yield* compileStep()
+    if (activeLook !== settings.look) requestLook(settings.look).catch(e => frameFailed('look preparation', e))
     lsLeft = 8
     announce('§e' + LEVELS[levelId].name + '§7 it is.', 'b')
     yield 'frame'
@@ -35883,12 +35898,11 @@ function startHost() {
     if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('avatar'); { const c = players.get(0); if (c) yield* avatarSteps(0, looksCid(c), c.cap | 0) } yield; for (const [id, c] of [...players]) if (id !== 0 && players.get(id) === c) { yield* avatarSteps(id, looksCid(c), c.cap | 0); yield; const a = avatars.get(id); if (a?.animate) { background.mark('pose'); a.animate(a, 0, 0, now()); yield } background.mark('avatar') } background.mark('draw0'); background.sec(null); draw(0, now()); yield }
     loadingText('Preparing the view…')
     background.mark('effects'); warmEffects()
-    yield* warmWithin(3000, 'plain')
+    yield* compileStep()
     worldPreparing = false
     if (!serving) {
       background.mark('look')
-      if (activeLook === settings.look) yield* warmWithin(2000, activeLook)
-      else requestLook(settings.look).catch(e => frameFailed('look preparation', e))
+      if (activeLook !== settings.look) requestLook(settings.look).catch(e => frameFailed('look preparation', e))
       background.mark('open'); yield 'frame'
     }
     if (startLog) startLog.warmProgs = renderer?.info.programs.length
@@ -36216,9 +36230,8 @@ function guestLoad(lv, gen) {
     background.mark('floors'); yield* floorsSteps()
     loadingText('Preparing the view…')
     warmEffects()
-    yield* warmWithin(3000, 'plain')
-    if (activeLook === settings.look) yield* warmWithin(2000, activeLook)
-    else requestLook(settings.look).catch(e => frameFailed('look preparation', e))
+    yield* compileStep()
+    if (activeLook !== settings.look) requestLook(settings.look).catch(e => frameFailed('look preparation', e))
   }, { priority: 3, valid: () => !isHost && phase === 'playing' })
   job.catch(e => frameFailed('guest level', e)).finally(() => {
     if (guestLoading !== job) return
