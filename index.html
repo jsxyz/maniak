@@ -47750,7 +47750,10 @@ function railCarBoxes(end) {
   }
   b(shell, -L, -L + 0.1, K.floor, K.ceiling + 0.05, -w, w); b(shell, L - 0.1, L, K.floor, K.ceiling + 0.05, -w, w)
   if (end) b(shell, L, K.nose - 0.6, -0.6, 2.6, -1.25, 1.25)
-  return { shell, doors, panes }
+  const plates = { 1: [[], [], []], '-1': [[], [], []] }, seg = (RAIL.plat.inner + 0.05 - w) / 3
+  for (const sd of [-1, 1]) for (let k = 0; k < 3; k++) { const a = w + k * seg, e = k === 2 ? RAIL.plat.inner + 0.05 : w + (k + 1) * seg
+    for (const xo of K.doors) b(plates[sd][k], xo - K.door + 0.05, xo + K.door - 0.05, K.floor - 0.15, K.floor, sd > 0 ? a : -e, sd > 0 ? e : -a) }
+  return { shell, doors, panes, plates }
 }
 function railCarTris(boxes) {
   const out = []
@@ -47774,14 +47777,15 @@ function railInstall() {
   if (!LV.faust || !LV.grow) return
   const rail = faustRail(LV.grow.seed, LV.grow.S), cars = [], K = RAIL.car
   railState = { seed: LV.grow.seed, S: LV.grow.S, rail, cars, view: null, glass: new Map(), glassAt: new Map() }
-  const tris = [0, 1].map(end => { const B = railCarBoxes(end); return { shell: railCarTris(B.shell), 1: railCarTris(B.doors[1]), '-1': railCarTris(B.doors[-1]), panes: Object.entries(B.panes).map(([i, p]) => [+i, railCarTris(p)]) } })
+  const tris = [0, 1].map(end => { const B = railCarBoxes(end); return { shell: railCarTris(B.shell), 1: railCarTris(B.doors[1]), '-1': railCarTris(B.doors[-1]), panes: Object.entries(B.panes).map(([i, p]) => [+i, railCarTris(p)]), plate: { 1: B.plates[1].map(railCarTris), '-1': B.plates[-1].map(railCarTris) } } })
   for (const r of rail.routes) for (let k = 0; k < r.trains.length; k++) for (let j = 0; j < K.n; j++) {
     const end = j === 0 || j === K.n - 1 ? 1 : 0, car = { route: r, k, j, key: 'rail:' + r.id + ':' + k + ':' + j, n: cars.length, end }, T = tris[end], n = K.half + (end ? 0.8 : 0)
     const shut = side => t => carrierPose(car.carrier, t).open !== side
+    const plateOn = (side, k) => t => { const P = carrierPose(car.carrier, t); return P.open === side && (k === 0 || P.car.open * 3 >= k + 1 - 1e-6) }
     car.carrier = carrierAdd({ id: car.key, pose: t => railCarrierPose(car, t), radius: RAIL_CARRY.radius,
       volume: [[0, (K.floor + K.ceiling) / 2, 0, K.width - 0.1, (K.ceiling - K.floor) / 2 + 0.05, K.half - 0.15],
         [0, K.roof + 1.6, -(end ? 0.4 : 0), K.width - 0.25, 1.65, n - 0.2]],
-      parts: [{ tris: T.shell }, { tris: T[1], enabled: shut(1) }, { tris: T[-1], enabled: shut(-1) }, ...T.panes.map(([i, tris]) => ({ tris, pane: i, enabled: () => !railGlassOut(car, i) }))] })
+      parts: [{ tris: T.shell }, { tris: T[1], enabled: shut(1) }, { tris: T[-1], enabled: shut(-1) }, ...T.panes.map(([i, tris]) => ({ tris, pane: i, enabled: () => !railGlassOut(car, i) })), ...[-1, 1].flatMap(sd => [0, 1, 2].map(k => ({ tris: T.plate[sd][k], enabled: plateOn(sd, k) })))] })
     car.carrier.rail = car
     cars.push(car)
   }
@@ -48078,7 +48082,14 @@ function railTrainSets(S) {
       S.view.group.add(m); M[k].push(m) }) })
     return M
   }
-  S.view.trains = { end: car('car_end'), mid: car('car_mid'), door: mk('door', n * 8) }
+  if (!S.view.parts.plate) { const g = railGeo(), C = RAIL_VIEW.colors
+    g.set(0x4a5057, 0.9, 0.3); g.box(0, -0.075, 1.4, 0.7, 0.075, 1.4)
+    g.set(0x1b1d20, 0.6, 0.5); for (let k = 0; k < 14; k++) g.box(0, 0.006, 0.1 + k * 0.2, 0.62, 0.006, 0.035)
+    g.set(0xe0a030, 0.3, 0.5, 0.25); for (let k = 0; k < 5; k++) g.box(-0.5 + k * 0.25, 0.014, 2.62, 0.07, 0.01, 0.1)
+    g.set(C.edge, 0.7, 0.4); g.box(-0.66, 0.012, 1.4, 0.04, 0.012, 1.4); g.box(0.66, 0.012, 1.4, 0.04, 0.012, 1.4); g.box(0, 0.012, 2.76, 0.7, 0.012, 0.04)
+    g.set(C.enamel, 0, 0.8); g.box(0, -0.16, 0.3, 0.7, 0.01, 0.3)
+    S.view.parts.plate = { opaque: g.geometry(), glass: null } }
+  S.view.trains = { end: car('car_end'), mid: car('car_mid'), door: mk('door', n * 8), plate: (t => t ? railMeshes(S, t, n * 2, false) : null)(railTiers(S, 'plate')) }
 }
 const railCam = new THREE.Vector3(), railTmp = new THREE.Matrix4(), railLeaf = new THREE.Matrix4()
 function railFrame() {
@@ -48103,7 +48114,7 @@ function railFrame() {
   }
   const T = S.view.trains
   if (!T.end) return
-  const t = isHost ? drawnT() : renderT, K = RAIL.car, counts = { end: [0, 0, 0], mid: [0, 0, 0], door: [0, 0, 0] }, p = {}
+  const t = isHost ? drawnT() : renderT, K = RAIL.car, counts = { end: [0, 0, 0], mid: [0, 0, 0], door: [0, 0, 0], plate: [0, 0, 0] }, p = {}
   for (const kind of ['end', 'mid']) for (const lod of T[kind] || []) for (const m of lod) if (m?.userData.n !== undefined) m.userData.n = 0
   for (const c of S.cars) {
     railCar(c.route, c.k, c.j, t, p)
@@ -48120,8 +48131,17 @@ function railFrame() {
       for (const m of T.door[0]) if (m) m.setMatrixAt(counts.door[0], railTmp)
       counts.door[0]++
     }
+    if (T.plate && p.open > 0.01 && p.station >= 0) {
+      const was = p.open; p.open = 1; const sd = railOpenSide(S, p); p.open = was
+      if (sd) for (const xo of K.doors) {
+        railLeaf.set(sd, 0, 0, xo, 0, 1, 0, K.floor, 0, 0, sd * p.open, sd * (K.width - 0.05), 0, 0, 0, 1)
+        railTmp.multiplyMatrices(M, railLeaf)
+        for (const m of T.plate[0]) if (m) m.setMatrixAt(counts.plate[0], railTmp)
+        counts.plate[0]++
+      }
+    }
   }
-  for (const kind of ['end', 'mid', 'door']) (T[kind] || []).forEach((pair, lod) => pair.forEach(m => { if (m) { m.count = m.userData.n ?? counts[kind][lod]; m.instanceMatrix.needsUpdate = true } }))
+  for (const kind of ['end', 'mid', 'door', 'plate']) (T[kind] || []).forEach((pair, lod) => pair.forEach(m => { if (m) { m.count = m.userData.n ?? counts[kind][lod]; m.instanceMatrix.needsUpdate = true } }))
 }
 GAME.monorail = { plan: (seed, S) => faustRail(seed, S), car: railCar, get state() { return railState }, carrier: (route, k, j) => railState?.cars.find(c => c.route.id === route && c.k === k && c.j === j)?.key ?? null }
 
