@@ -4681,7 +4681,7 @@ function faustNetTiles(pads) {
   for (const p of pads || []) { const hw = (p[2] - p[0]) / 2, hd = (p[3] - p[1]) / 2; if (Math.min(hw, hd) >= 3) out.push([p[0] + hw, p[1] + hd, Math.min(hw, hd, 14.3)]) }
   return out.sort((a, b) => b[2] - a[2]).slice(0, 12)
 }
-function faustNetNav(net, at, target) {
+function faustNetNav(net, at, target, clear) {
   const direct = { corner: null, there: target.y < 5, pad: null }
   if (Math.hypot(at.x - target.x, at.z - target.z) < 24) return direct
   if (!net.nav) {
@@ -4693,12 +4693,25 @@ function faustNetNav(net, at, target) {
   }
   const N = net.nav, nearest = (x, z) => {
     let best = null, bd = Infinity
-    for (let r = 0; r <= 3 && !best; r++) for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) {
+    for (let r = 0; r <= 4 && !(best && bd <= (r - 1) * 96); r++) for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) {
+      if (Math.max(Math.abs(i), Math.abs(j)) !== r) continue
       for (const k of N.idx.get((Math.floor(x / 96) + i) + ' ' + (Math.floor(z / 96) + j)) || []) { const n = net.nodes.get(k), d = Math.hypot(n.x - x, n.z - z); if (d < bd) { bd = d; best = k } }
     }
     return best
   }
-  const s = nearest(at.x, at.z), t = nearest(target.x, target.z)
+  const clock = performance.now(), kept = at.navS && clock - at.navS[1] < 800 && net.nodes.has(at.navS[0]) ? at.navS[0] : null
+  let s = kept || nearest(at.x, at.z)
+  if (clear && !kept && s) {
+    const cands = []
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const k of N.idx.get((Math.floor(at.x / 96) + i) + ' ' + (Math.floor(at.z / 96) + j)) || []) {
+      const n = net.nodes.get(k), d = Math.hypot(n.x - at.x, n.z - at.z)
+      if (d < 90) cands.push([d, k, n])
+    }
+    cands.sort((p, q) => p[0] - q[0])
+    for (const [d, k, n] of cands.slice(0, 6)) if (d < 3 || clear(n.x, n.z, d)) { s = k; break }
+    at.navS = [s, clock]
+  }
+  const t = nearest(target.x, target.z)
   if (!s || !t || s === t) return direct
   const key = s + '>' + t
   let path = N.memo.get(key)
@@ -4722,7 +4735,12 @@ function faustNetNav(net, at, target) {
     if (N.memo.size > 256) N.memo.delete(N.memo.keys().next().value)
     N.memo.set(key, path)
   }
-  for (const k of path) { const n = net.nodes.get(k); if (Math.hypot(n.x - at.x, n.z - at.z) > 3) return { corner: { x: n.x, y: 0, z: n.z }, there: target.y < 5, pad: null } }
+  const n0 = path.length ? net.nodes.get(path[0]) : null, passed = n0 && at.navLast && at.navLast[0] === path[0] && clock - at.navLast[1] < 4000 && Math.hypot(n0.x - at.x, n0.z - at.z) < 40
+  for (let i = passed ? 1 : 0; i < path.length; i++) {
+    const n = net.nodes.get(path[i])
+    if (Math.hypot(n.x - at.x, n.z - at.z) > 3) { if (passed) at.navLast[1] = clock; return { corner: { x: n.x, y: 0, z: n.z }, there: target.y < 5, pad: null } }
+    if (i === 0) at.navLast = [path[0], clock]
+  }
   return direct
 }
 const NET_Y = { pad: 0.006, band: 0.016 }
@@ -10161,8 +10179,8 @@ function faustRingUrbanJob(F, Z, b) {
   }, { priority: 3, valid: () => faustState === F && F.ringIn === Z && world === w }).catch(e => frameFailed('ring interiors', e)).finally(() => Z.pending.delete(b.id))
 }
 
-function faustNav(at, target) {
-  if (FAUST_NET.version && faustState) return faustNetNav(faustNet(faustState.seed, faustState.S), at, target)
+function faustNav(at, target, clear) {
+  if (FAUST_NET.version && faustState) return faustNetNav(faustNet(faustState.seed, faustState.S), at, target, clear)
   const snap = v => Math.round(v / 96) * 96, ax = snap(at.x), az = snap(at.z), tx = snap(target.x), tz = snap(target.z)
   const dx = Math.abs(at.x - ax), dz = Math.abs(at.z - az)
   let x, z
@@ -16864,7 +16882,7 @@ function padBelow(b) {
 
 const feetOf = c => { const [x, y, z] = axisOf(c), k = c.h + c.r; return { x: c.x - x * k, y: c.y - y * k, z: c.z - z * k } }
 function navPlan(b, tgt, dt, car) {
-  if (LV.faust) return !car && (faustSewNav(b, tgt) || faustInNav(b, tgt)) || faustNav(car || b, tgt)
+  if (LV.faust) return !car && (faustSewNav(b, tgt) || faustInNav(b, tgt)) || faustNav(car || b, tgt, car ? undefined : (x, z, d) => staticRay(b.x, b.y - b.h - b.r + 0.45, b.z, (x - b.x) / d, 0, (z - b.z) / d, d) >= d - 1)
   if (!navWorker) startNav()
   if (!navUp) return null
   const ai = b.ai
