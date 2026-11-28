@@ -18463,7 +18463,8 @@ function placeObject(k, at, yaw) {
 }
 
 let objSeeds = []
-const seedOf = id => objSeeds[id] ?? parked.get(objFirst.get(id)) ?? 0
+const spawnSeed = id => ((Math.imul(id + 1, 2654435761) ^ Math.imul((levelGen?.seed ?? 0) | 0, 40503)) >>> 0) % 1e9
+const seedOf = id => objSeeds[id] ?? parked.get(objFirst.get(id)) ?? spawnSeed(id)
 const carHull = new Map()
 const objFirst = new Map()
 const plannedCells = new Set()
@@ -18556,10 +18557,12 @@ function predictObjects(c, lead = 0) {
 }
 
 function stepObjects() {
+  let sunk = null
   for (const o of objs) {
     if (o.row && !o.body.isActive()) continue
     o.body.getMotionState().getWorldTransform(tmpTrans)
     const p = tmpTrans.getOrigin(), q = tmpTrans.getRotation(), x = p.x(), y = p.y(), z = p.z()
+    if (y < -8 && isHost && (o.K.prop || o.K.piece) && o.heldBy === undefined) { (sunk ||= []).push(o); continue }
     if (!(y >= VOID_Y && Math.abs(x) <= WORLD && Math.abs(z) <= WORLD)) {
       inWorld(o); teleportBody(o.body, ...o.at, null, [0, 0, 0], [0, 0, 0]); o.body.activate()
       continue
@@ -18567,6 +18570,7 @@ function stepObjects() {
     Object.assign(o, { x, y, z, q: [q.x(), q.y(), q.z(), q.w()] })
     o.row = (o.k ?? '') + ',' + (o.id ?? '') + ',' + r2(x) + ',' + r2(y) + ',' + r2(z) + ',' + Math.round(o.q[0] * OBJ_Q) + ',' + Math.round(o.q[1] * OBJ_Q) + ',' + Math.round(o.q[2] * OBJ_Q) + ',' + Math.round(o.q[3] * OBJ_Q)
   }
+  if (sunk) for (const o of sunk) lootRetire(o)
 }
 
 const USE_S = 0.3
@@ -35323,7 +35327,7 @@ Object.defineProperty(globalThis, 'gameHooks', { value: Object.freeze({
     const under = objs.find(q => q.V && Math.hypot(q.x - x, q.z - z) < 2), hit = []
     staticRay(x, 300, z, 0, -1, 0, 600, hit)
     const y = under ? under.y + under.V.h / 2 + h : (hit.length ? hit[1] : 0) + h, yaw = under ? Math.atan2(-rotq(under.q, [0, 0, -1])[0], -rotq(under.q, [0, 0, -1])[2]) : 0
-    objSeeds[objs.length] = (Math.random() * 1e9) | 0
+    objSeeds[objs.length] = spawnSeed(objs.length)
     placeObject(k, [x, y, z], yaw)
     const o = objs.at(-1)
     if (!o?.V) return false
@@ -46769,7 +46773,7 @@ function testGive(a) {
   const K = OBJECTS[k], yaw = input.yaw, d = K.shape === 'hull' ? 5 : 3, spot = clearAhead(me, d, K.shape === 'hull' ? 1.6 : K.half ? Math.max(K.half[0], K.half[2]) : K.r || 0.5, 0.3)
   if (!spot) return sysMsg('§cNo clear ground ahead.', 'c')
   const { x, z, gy } = spot
-  objSeeds[objs.length] = (Math.random() * 1e9) | 0
+  objSeeds[objs.length] = spawnSeed(objs.length)
   placeObject(k, [x, K.shape === 'hull' ? gy : gy + (K.half ? K.half[1] : K.r || 0.5) + 0.05, z], yaw)
   sysMsg('§7A §f' + K.name.toLowerCase() + ' §7' + Math.round(Math.hypot(x - me.x, z - me.z)) + ' m ahead', 'c')
 }
