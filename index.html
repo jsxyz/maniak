@@ -23767,20 +23767,9 @@ function* compileStep() {
   loadingText('Compiling shaders…')
   background.mark('compile plain'); yield* warmSceneSteps('plain')
   if (activeLook !== 'plain') { next(LOOKS[activeLook]?.label || activeLook); background.mark('compile ' + activeLook); yield* warmSceneSteps(activeLook) }
-  if (activeLook !== 'ink' && !softGL() && !lookPending) {
-    next('Ink'); background.mark('compile ink')
-    const Q = QUALITY[settings.quality] || QUALITY.high
-    const ratio = Math.min(devicePixelRatio || 1, Q.ratio, IS_TOUCH ? 1.5 : Infinity) * GOV_LEVELS[govLevel].d * (LOOKS.ink?.scale?.(settings.quality) ?? 1)
-    yield* inkPrepSteps(Math.floor(innerWidth * ratio), Math.floor(innerHeight * ratio))
-    if (!lookPending) yield* warmSceneSteps('ink')
-    if (!lookPending && inkPost) yield* inkPostDrawOnce()
-  }
-  if (activeLook !== 'realistic' && !IS_TOUCH && !softGL() && !lookPending) {
-    next('Realistic'); background.mark('compile realistic')
-    const Q = QUALITY[settings.quality] || QUALITY.high
-    const ratio = Math.min(devicePixelRatio || 1, Q.ratio, 1.5) * GOV_LEVELS[govLevel].d * (LOOKS.realistic?.scale?.(settings.quality) ?? 1)
-    yield* realPrepSteps(Math.floor(innerWidth * ratio), Math.floor(innerHeight * ratio), ratio)
-    if (!lookPending) yield* warmSceneSteps('realistic')
+  if (settings.look !== activeLook) {
+    next(LOOKS[settings.look]?.label || settings.look); background.mark('compile ' + settings.look)
+    yield (lookPending?.promise || requestLook(settings.look)).catch(e => frameFailed('look preparation', e))
   }
   next('first frame'); background.mark('compile draw')
   try { renderer.render(scene, camera) } catch (e) { frameFailed('compile draw', e) }
@@ -23821,6 +23810,13 @@ function requestLook(name) {
       if (lookPending === pending) lookPending = null
     }
   }, { priority: 2, gpu: true, valid: () => lookPending === pending && settings.look === name && lookKey(name) === key })
+  if (!startingGame && !softGL() && name !== activeLook) {
+    const label = LOOKS[name]?.label || name, t0 = realNow(), n0 = renderer ? renderer.info.programs.length : 0
+    document.body.classList.add('starting')
+    const say = () => loadingText('Compiling shaders: ' + label + ', ' + ((renderer ? renderer.info.programs.length : 0) - n0) + ' programs, ' + Math.round((realNow() - t0) / 1000) + ' s')
+    say(); const ticker = setInterval(say, 250)
+    pending.promise.finally(() => { clearInterval(ticker); if (!startingGame) document.body.classList.remove('starting') })
+  }
   return pending.promise
 }
 
