@@ -842,6 +842,7 @@ const TEXT = {
   death: '§f{victim} §7{how}',
   enemyTag: 'enemy',
   ship: ['FAUST', 'MANIAK', 'FREAK', 'SIREN', 'TITAN'],
+  loading: { build: 'Building Faustland…', view: 'Preparing the view…', streets: 'Bringing the streets to life…', compile: 'Compiling shaders…', start: 'Starting…' },
   stations: ['Sinclair Row', 'Hell Block', 'Pacifier Yard', 'Teardrop Lane', 'Cathedral Steps', 'Victory Arcade', 'Dynamo Works',
       'Meridian', 'Titan Court', 'Radiant Square', 'Zenith', 'Electra', 'Foundry Gate', 'Bastion', 'Monument', 'Exchange',
       'Gargoyle Hill', 'Ironside', 'Lantern Quay', 'Obelisk', 'Propaganda Hall', 'Party Street', 'Trophy Row', 'Armory',
@@ -23833,7 +23834,7 @@ function* compileStep() {
   const ticker = setInterval(say, 250)
   const next = name => { compileTimes.push({ label, ms: Math.round(realNow() - tp), programs: counts() - n0 }); label = name; n0 = counts(); tp = realNow(); say() }
   try {
-  loadingText('Compiling shaders…')
+  loadingText(TEXT.loading.compile)
   background.mark('compile plain'); yield* warmSceneSteps('plain')
   if (activeLook !== 'plain') { next(LOOKS[activeLook]?.label || activeLook); background.mark('compile ' + activeLook); yield* warmSceneSteps(activeLook) }
   if (settings.look !== activeLook) {
@@ -34311,13 +34312,13 @@ let hostLoading = null
 function setLevel(i, gen) {
   if (startingGame) return Promise.resolve(false)
   background.cancel('world'); worldPreparing = false; landingReady = ''
-  startingGame = true; document.body.classList.add('starting'); loadingText('Building Faustland…')
+  startingGame = true; document.body.classList.add('starting'); loadingText(TEXT.loading.build)
   const job = hostLoading = background.run('host-level', function* () {
     if (isHost && dsPersist.key) { yield dsPersist.saving; yield dsPersistNow() }
     yield* loadLevelSteps(i, gen)
     background.mark('match'); hostEvent(); yield* resetMatchSteps(false)
     background.mark('floors'); yield* floorsSteps()
-    loadingText('Preparing the view…')
+    loadingText(TEXT.loading.view)
     warmEffects()
     yield* compileStep()
     if (activeLook !== settings.look) requestLook(settings.look).catch(e => frameFailed('look preparation', e))
@@ -36125,7 +36126,7 @@ function startHost() {
   let citySeed
   try { citySeed = faustParseSeed(el('#host-seed')?.value ?? faustRequestedSeed) ?? landingSeed ?? crypto.getRandomValues(new Uint32Array(1))[0] }
   catch (e) { document.body.classList.remove('starting'); setStatus(e.message, 'err'); return }
-  startingGame = true; document.body.classList.add('starting'); loadingText('Building Faustland…')
+  startingGame = true; document.body.classList.add('starting'); loadingText(TEXT.loading.build)
   isHost = true; myId = 0; phase = 'connecting'
   roomCodeStr = serveCode || roomCode(); roomOpen = false; scarsLater = false; if (!scarMesh) prepareScars()
   background.run('host-start', function* () {
@@ -36137,13 +36138,13 @@ function startHost() {
     background.mark('floors'); yield* floorsSteps()
     markStart('level')
     background.mark('match'); GAME.lifecycle.matchStart()
-    loadingText('Bringing the streets to life…')
+    loadingText(TEXT.loading.streets)
     for (const [id, c] of [...players]) if (c.bot && !c.bot.squad && c.owner === undefined) { dropBot(c); yield }
     { const sb = el('#set-bots'); if (sb && sb.value !== '') BOT_COUNT = clamp(+sb.value | 0, 0, regulars()) }
     background.mark('bots'); for (const i of foesWanted()) { addBot(i); yield }
     markStart('bots')
     if (!serving) { background.mark('hostIn'); hostIn(); yield; background.mark('avatar'); { const c = players.get(0); if (c) yield* avatarSteps(0, looksCid(c), c.cap | 0) } yield; for (const [id, c] of [...players]) if (id !== 0 && players.get(id) === c) { yield* avatarSteps(id, looksCid(c), c.cap | 0); yield; const a = avatars.get(id); if (a?.animate) { background.mark('pose'); a.animate(a, 0, 0, now()); yield } background.mark('avatar') } background.mark('draw0'); background.sec(null); draw(0, now()); yield }
-    loadingText('Preparing the view…')
+    loadingText(TEXT.loading.view)
     background.mark('effects'); warmEffects()
     yield* compileStep()
     worldPreparing = false
@@ -36472,11 +36473,11 @@ const LEVEL_SWITCH_MS = 5000
 let levelSwitchAt = -Infinity, levelMissTold = false, guestLoading = null
 function guestLoad(lv, gen) {
   background.cancel('world'); worldPreparing = false; landingReady = ''
-  startingGame = true; document.body.classList.add('starting'); loadingText('Building Faustland…')
+  startingGame = true; document.body.classList.add('starting'); loadingText(TEXT.loading.build)
   const job = guestLoading = background.run('guest-level', function* () {
     yield* loadLevelSteps(lv, gen)
     background.mark('floors'); yield* floorsSteps()
-    loadingText('Preparing the view…')
+    loadingText(TEXT.loading.view)
     warmEffects()
     yield* compileStep()
     if (activeLook !== settings.look) requestLook(settings.look).catch(e => frameFailed('look preparation', e))
@@ -54007,7 +54008,7 @@ function wireMenu() {
   const go = fn => () => {
     nameNow()
     startLog = { t0: now(), marks: [], frames: [], progs: renderer?.info.programs.length }
-    document.body.classList.add('starting'); loadingText('Starting…')
+    document.body.classList.add('starting'); loadingText(TEXT.loading.start)
     let begun = false
     const begin = () => {
       if (begun) return
